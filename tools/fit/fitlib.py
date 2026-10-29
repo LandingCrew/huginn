@@ -104,8 +104,19 @@ def segment_names(split_at):
 
 
 def build(D, include_nothing=True, latest_caps=False, v2=None, since=None, until=None, split_at=(),
-          recency=(5.0, 30.0)):
+          recency=(5.0, 30.0), laps='once'):
     """The dataset: one entry per decision, its choice set and the arrays the model reads.
+
+    laps: the nothing records of lapped stretches (0.23.51: ep.why "lap", one record per
+    need whose episode was open at a lap tick of the 60 s grid; core/NeedEpisodes.h).
+      'once'  (default) one per context: the laps of one tick share their context, so the
+              k needs open then would otherwise weigh one unanswered 60 s slice k times,
+              while a pick is one record however many needs are on. The record of the
+              lowest seq is kept.
+      'all'   every one, as written.
+      'none'  none: the data a build before 0.23.51 would have logged (ended episodes only).
+    Ended-episode records (why "end", every record before 0.23.51) are kept as before. A
+    record's meta carries ep_why ("end", "lap" or None for a pick).
 
     Build segmentation (the head's `build` of the segment that logged the decision):
       since, until  keep the decisions logged by plugin versions in [since, until] (both
@@ -153,6 +164,20 @@ def build(D, include_nothing=True, latest_caps=False, v2=None, since=None, until
         raise ValueError(f'split_at: {list(split_at)} are not all versions (0.23.41)')
     cuts = sorted(version(v) for v in split_at)
     decs.sort(key=lambda d: (d['launch'], d['seq']))
+    if laps not in ('once', 'all', 'none'):
+        raise ValueError(f"laps: {laps!r} is not 'once', 'all' or 'none'")
+    if laps != 'all':
+        lap_ctx = set()
+        kept = []
+        for d in decs:
+            if ep_why(d) == 'lap':
+                if laps == 'none' or d['ctxkey'] in lap_ctx:
+                    continue
+                lap_ctx.add(d['ctxkey'])
+            kept.append(d)
+        decs = kept
+        if not decs:
+            raise ValueError('no decisions to fit (only lap records, and laps="none")')
     # Plackett-Luce: picks sharing a context (menu co-picks), in seq order
     taken = defaultdict(set)
     items = {}
@@ -236,12 +261,23 @@ def build(D, include_nothing=True, latest_caps=False, v2=None, since=None, until
             if is_ch:
                 Y[di] = ri
         meta.append({'launch': d['launch'], 'out': d['out'], 'name': d['name'], 'kind': d['kind'],
-                     'ctxkey': d['ctxkey'], 'build': d['build'], 'case': d['case'], 'need_ep': d['ep']['gi'] if d['ep'] else None})
+                     'ctxkey': d['ctxkey'], 'build': d['build'], 'case': d['case'], 'need_ep': d['ep']['gi'] if d['ep'] else None,
+                     'ep_why': ep_why(d)})
     REC, rec_names = recent_families(D, [d for d, _ in recs], cols, caps, recency)
     return dict(CapMat=CapMat, xcol=xcol, CAPID=CAPID, X=XA, COV=COV, MASK=MASK, INHA=INHA, ITEM=ITEM, SLOT=SLOTA, UTIL=UTILA,
                 V2=V2, CLS=CLS, Y=Y, N=N, OUT=OUT, LA=LA, SEG=SEG, REC=REC, v2ok=v2ok, launches=launches, items=items,
                 classes=classes, meta=meta, K=K, J=J, needs=needs, cols=cols, R=R,
                 segments=segment_names(list(split_at)), recency_names=rec_names)
+
+
+def ep_why(d):
+    """A nothing record's stretch kind: 'lap' (a lapped stretch of a still-open episode,
+    0.23.51) or 'end' (the episode expired; every nothing record before 0.23.51); None for
+    a pick."""
+    if d['out'] != 'nothing':
+        return None
+    ep = d.get('ep') or {}
+    return ep.get('why', 'end')
 
 
 def pick_time(d):

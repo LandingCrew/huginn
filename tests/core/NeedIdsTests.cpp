@@ -69,7 +69,7 @@ TEST_CASE("need ids match needs.csv, in order, with their default curves")
 
 TEST_CASE("need ids: count, uniqueness, the deferred four")
 {
-    CHECK(kNeedCount == 96);  // 94 until 0.23.50 added time_to_edge and edge_approach; 93 until 0.23.30 added combat_regen_ok; 92 until 0.23.19 added deep_water_ahead
+    CHECK(kNeedCount == 97);  // 96 until 0.23.51 added loadout_quarterstaff; 94 until 0.23.50 added time_to_edge and edge_approach; 93 until 0.23.30 added combat_regen_ok; 92 until 0.23.19 added deep_water_ahead
     std::set<std::string_view> ids;
     std::set<std::string_view> deferred;
     for (const auto& n : kNeeds) {

@@ -13,7 +13,9 @@
 //   menu     anything else the player selected: the inventory, magic or
 //            favourites menu, a vanilla favourites hotkey, the player's own
 //            Wheeler wheels -- a pick from H \ A at the menu cost kappa
-//   nothing  a need episode ended with no selection (core/NeedEpisodes.h)
+//   nothing  a need episode ended with no selection (core/NeedEpisodes.h);
+//            since 0.23.51 also each lapped stretch of a still-open episode
+//            with no selection inside it (ep.why = "lap")
 //
 // The schema, field by field, with units and versioning:
 // docs/architecture/9-selection-log-v3.md. tools/replay/replay.py reads it.
@@ -138,7 +140,7 @@ namespace Huginn::Core::DecisionLog
         std::uint64_t id = 0;       // unique within the launch
         std::string utc;            // "YYYY-MM-DD HH:MM:SS.mmm" when taken
         double tSec = 0.0;          // steady seconds when taken (the caller's clock; not written)
-        std::string why;            // "press", "menu" (a selection menu opened), "onset"
+        std::string why;            // "press", "menu" (a selection menu opened), "onset", "lap" (0.23.51)
         std::string menu;           // the menu's name for why = "menu"
         Needs::NeedArray need{};    // the need vector (curve outputs, 0..1)
         Needs::NeedArray input{};   // what went into each curve (needs.csv r3_input)
@@ -212,11 +214,16 @@ namespace Huginn::Core::DecisionLog
         /// before the press (hands and nocked ammo; 0 for anything else, which
         /// an equip event shows was not worn).
         bool preEquipped = false;
-        // nothing only
+        // nothing only. A record stands for one STRETCH of a need episode
+        // (core/NeedEpisodes.h "lap", 0.23.51): the whole episode when it
+        // never lapped.
         int need = -1;
-        double durSec = 0.0;
-        float peak = 0.0f;
-        std::string onsetUtc;
+        double durSec = 0.0;        // the stretch's length
+        float peak = 0.0f;          // the highest value inside the stretch
+        std::string onsetUtc;       // the EPISODE's onset (the lap keeps it)
+        int lap = 0;                // 0 = the stretch from the onset; n = begun by the n-th lap
+        bool byLap = false;         // the stretch ended at a lap (the need still on), not at the expiry
+        double episodeSec = 0.0;    // the episode's onset to the stretch's end
     };
 
     struct Head
@@ -231,6 +238,10 @@ namespace Huginn::Core::DecisionLog
         // (EpisodeTracker::Abandon). Written as "deathDrops":1; a head without
         // it (0.23.15) recorded `nothing` for episodes a death cut short.
         bool deathDrops = true;
+        /// 0.23.51: the lap grid (core/NeedEpisodes.h "lap"), written as
+        /// "lapSec" and "lapMaxStepSec" when lapSec > 0. A head without them
+        /// (before 0.23.51) judged every episode whole: no lap records.
+        double lapSec = 60.0, lapMaxStepSec = 1.0;
         /// The [Needs] curves in force, index-aligned with the head's "needs"
         /// (0.23.41): written as "curves" when not empty, so a fit knows which
         /// curve made each logged value. A change of curves mid-launch (a hot

@@ -152,6 +152,13 @@ teaches -- and the per-load entry table).
 The selection log v3 (R4): `DecisionLog` (the records -- context, rows,
 decision -- and the encoder that turns them into JSON Lines, defining each cap
 and context once per file segment) and `NeedEpisodes.h` (when a need episode
-starts, ends and is answered: the "nothing pressed" outcome). The game side
+starts, ends and is answered: the "nothing pressed" outcome; since 0.23.51 an
+open episode is also cut into 60 s stretches of active time, each judged the
+same way: the laps).
+
+`WeaponLoadout.h` (0.23.51): which two-handed weapon is a quarterstaff (by
+keyword: the engine types Requiem / LoreRim quarterstaffs as warhammers), so
+the need vector reads it as `loadout_quarterstaff` instead of
+`loadout_two_handed`. The game side
 (`learning/SelectionLogV3*`) builds the records and writes the lines on a
 background thread. Schema: docs/architecture/9-selection-log-v3.md.

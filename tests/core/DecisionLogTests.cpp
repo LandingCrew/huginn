@@ -52,7 +52,7 @@ namespace
         Effect::Cap soup = Sorted({ { C("survival"), 0.5f }, { C("survival_hunger"), 0.5f } });
         Effect::Cap familiar = Sorted({ { C("summon"), 0.6f }, { C("summon_creature"), 0.6f }, { C("school_conjuration"), 1.0f } });
 
-        std::shared_ptr<const Context> press, menu, onset;
+        std::shared_ptr<const Context> press, menu, onset, lap;
         std::vector<Decision> decisions;
 
         static Head MakeHead()
@@ -288,6 +288,7 @@ namespace
             d4.durSec = 12.5;
             d4.peak = 0.71f;
             d4.onsetUtc = "2026-10-09 12:01:00.000";
+            d4.episodeSec = 12.5;   // never lapped: the whole episode
             decisions.push_back(d4);
 
             // 5. A wheel pick in the first context (already defined).
@@ -305,6 +306,35 @@ namespace
             d5.ctxAgeMs = 79000.0f;
             d5.preEquipped = true;   // the spell was already in the other hand
             decisions.push_back(d5);
+
+            // 6. (0.23.51) A lap: diseased since 12:02:00, its second stretch
+            // (begun by the first lap, 12:03:30) passed 60 s with nothing
+            // pressed. Joined to the context the lap took, with the episode's
+            // onset kept.
+            auto l = std::make_shared<Context>();
+            l->id = 4;
+            l->utc = "2026-10-09 12:03:30.000";
+            l->why = "lap";
+            l->need[N(Needs::NeedId::diseased)] = 1.0f;
+            l->input[N(Needs::NeedId::diseased)] = 1.0f;
+            l->pipeValid = true;
+            l->page = 0;
+            l->pageSlots = 8;
+            l->pipeAgeMs = 60.0f;
+            l->rows = onset->rows;   // the soup, shown
+            lap = l;
+            Decision d6 = Base(6, "2026-10-09 12:04:34.000");
+            d6.outcome = Outcome::Nothing;
+            d6.ctx = lap;
+            d6.ctxAgeMs = 64000.0f;
+            d6.need = static_cast<int>(N(Needs::NeedId::diseased));
+            d6.durSec = 60.0;
+            d6.peak = 1.0f;
+            d6.onsetUtc = "2026-10-09 12:02:00.000";
+            d6.lap = 1;
+            d6.byLap = true;
+            d6.episodeSec = 150.0;
+            decisions.push_back(d6);
         }
 
         std::string Encode() const
@@ -316,7 +346,7 @@ namespace
             // and cap ids start over.
             out += e.BeginSegment(MakeHead());
             Decision again = decisions[0];
-            again.seq = 6;
+            again.seq = 7;
             again.utc = "2026-10-09 13:00:00.000";
             out += e.Encode(again);
             return out;
@@ -405,5 +435,5 @@ TEST_CASE("decision log: the synthetic session matches the golden file")
         CHECK(line.front() == '{');
         CHECK(line.back() == '}');
     }
-    CHECK(n == 23);   // 21 before 0.23.46's summon row added a cap to each segment
+    CHECK(n == 25);   // 23 before 0.23.51's lap (a context and a decision); 21 before 0.23.46's summon row added a cap to each segment
 }

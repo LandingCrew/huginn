@@ -112,6 +112,7 @@ namespace Huginn::Learning::SelectionLogV3
     struct Stats
     {
         uint64_t key = 0, wheel = 0, menu = 0, nothing = 0;   // records queued
+        uint64_t nothingLaps = 0;                             // of the nothing: lapped stretches (0.23.51)
         uint64_t unlearned = 0;                               // of which learned = 0
         uint64_t written = 0, bytes = 0;                      // by the writer
         uint64_t writtenKey = 0, writtenWheel = 0, writtenMenu = 0, writtenNothing = 0;

@@ -55,14 +55,14 @@ class GoldenFile(unittest.TestCase):
         cls.decs = replay.load_v3([GOLDEN])
 
     def test_count_and_order(self):
-        self.assertEqual([d["seq"] for d in self.decs], [1, 2, 3, 4, 5, 6])
-        self.assertEqual([d["out"] for d in self.decs], ["key", "menu", "menu", "nothing", "wheel", "key"])
+        self.assertEqual([d["seq"] for d in self.decs], [1, 2, 3, 4, 5, 6, 7])
+        self.assertEqual([d["out"] for d in self.decs], ["key", "menu", "menu", "nothing", "wheel", "nothing", "key"])
 
     def test_head(self):
         h = self.decs[0]["head"]
         self.assertEqual(h["v"], 3)
         self.assertEqual(len(h["cols"]), 243)
-        self.assertEqual(len(h["needs"]), 96)  # 94 until 0.23.50 added time_to_edge and edge_approach; 93 until 0.23.30 added combat_regen_ok
+        self.assertEqual(len(h["needs"]), 97)  # 96 until 0.23.51 added loadout_quarterstaff; 94 until 0.23.50 added time_to_edge and edge_approach; 93 until 0.23.30 added combat_regen_ok
         self.assertEqual(h["cross"][4], "stack_count")
         # 0.23.46: covered at the end of cross, two row columns, the filter names.
         self.assertEqual(h["cross"][7], "covered")
@@ -71,7 +71,9 @@ class GoldenFile(unittest.TestCase):
         self.assertEqual(len(h["filters"]), 15)
         self.assertEqual(h["kinds"][7], "Armor")
         self.assertEqual(h["episode"], {"onset": 0.5, "expiry": 0.25, "minSec": 1.0, "graceSec": 4.0,
-                                        "answerSlackSec": 0.5, "deathDrops": 1})
+                                        "answerSlackSec": 0.5, "deathDrops": 1,
+                                        "lapSec": 60.0, "lapMaxStepSec": 1.0})   # 0.23.51: the lap grid
+        self.assertEqual(replay.head_lap_sec(h), 60.0)
         # 0.23.41: the [Needs] curves in force, one per need, index-aligned.
         self.assertEqual(len(h["curves"]), len(h["needs"]))
         curves = dict(zip(h["needs"], h["curves"]))
@@ -159,23 +161,37 @@ class GoldenFile(unittest.TestCase):
         self.assertIsNone(d["form"])
         self.assertIsNone(d["chosen"])
         self.assertEqual(d["ep"], {"need": "hunger", "i": 26, "durSec": 12.5, "peak": 0.71,
-                                   "onset": "2026-10-09 12:01:00.000"})
+                                   "onset": "2026-10-09 12:01:00.000", "why": "end", "lap": 0, "epSec": 12.5})
+        self.assertEqual(replay.nothing_stretch(d), ("end", 0, 12.5))
+        self.assertIsNone(replay.nothing_stretch(self.decs[0]))   # a pick
         self.assertEqual(d["ctx"]["why"], "onset")
         self.assertIsNone(d["ctx"]["race"])
         self.assertNotIn("summon", d["ctx"])   # 0.23.46: written only when valid
         self.assertEqual(d["ctx"]["rows"][0]["cap"], {"survival": 0.5, "survival_hunger": 0.5})
 
+    def test_lap(self):
+        # 0.23.51: the second stretch of a diseased episode, lapped unanswered.
+        d = self.decs[5]
+        self.assertEqual(d["out"], "nothing")
+        self.assertEqual(d["ep"], {"need": "diseased", "i": 18, "durSec": 60.0, "peak": 1,
+                                   "onset": "2026-10-09 12:02:00.000", "why": "lap", "lap": 1, "epSec": 150.0})
+        self.assertEqual(replay.nothing_stretch(d), ("lap", 1, 150.0))
+        self.assertEqual(d["ctx"]["why"], "lap")
+        self.assertEqual(d["ctx"]["utc"], "2026-10-09 12:03:30.000")   # the lap that began the stretch
+        self.assertEqual(d["ctx"]["need"], {"diseased": 1})
+        self.assertEqual(d["ctxAgeMs"], 64000)
+
     def test_held_detail_and_pre_press_equipped(self):
         # The onset context was taken inside the post-load window (heldFull 0).
         self.assertEqual([d["ctx"]["heldFull"] for d in self.decs[:5]], [1, 1, 1, 0, 1])
-        self.assertEqual([d["preEquipped"] for d in self.decs], [0, 0, 0, 0, 1, 0])
+        self.assertEqual([d["preEquipped"] for d in self.decs], [0, 0, 0, 0, 1, 0, 0])
 
     def test_wheel_reuses_the_first_context(self):
         self.assertIs(self.decs[4]["ctx"], self.decs[0]["ctx"])
         self.assertEqual(self.decs[4]["chosen"]["form"], "00012FCD")
 
     def test_second_segment_redefines(self):
-        d = self.decs[5]
+        d = self.decs[6]
         self.assertIsNot(d["ctx"], self.decs[0]["ctx"])   # a fresh table after the second head
         self.assertEqual(d["ctx"]["rows"][0]["cap"], self.decs[0]["ctx"]["rows"][0]["cap"])
 
@@ -191,6 +207,8 @@ class GoldenFile0_23_45(unittest.TestCase):
     def test_defaults(self):
         self.assertEqual([d["out"] for d in self.decs], ["key", "menu", "menu", "nothing", "wheel", "key"])
         h = self.decs[0]["head"]
+        self.assertIsNone(replay.head_lap_sec(h))                          # 0.23.51: no lap grid
+        self.assertEqual(replay.nothing_stretch(self.decs[3]), ("end", 0, 12.5))   # a whole episode
         self.assertEqual(len(h["row"]), 10)
         self.assertNotIn("filters", h)
         self.assertNotIn("covered", h["cross"])
@@ -426,7 +444,7 @@ class PythonRoundTrip(unittest.TestCase):
         data = b"\n".join(lines[:dec0] + [d[:cut]] + lines[heads[1]:]) + b"\n"
         decs, stats = self._read_bytes(data)
         self.assertEqual(stats["bad_lines"], 1)
-        self.assertEqual([x["seq"] for x in decs], [6])   # the next segment resyncs
+        self.assertEqual([x["seq"] for x in decs], [7])   # the next segment resyncs
 
     def test_truncated_gzip_ends_the_file_cleanly(self):
         data = gzip.compress(GOLDEN.read_bytes())[:-40]
@@ -461,7 +479,7 @@ class PythonRoundTrip(unittest.TestCase):
         decs, stats = self._read_bytes(data)
         # Segment 2's decision is of another launch than the head in force: not
         # joined to it.
-        self.assertEqual([x["seq"] for x in decs], [1, 2, 3, 4, 5])
+        self.assertEqual([x["seq"] for x in decs], [1, 2, 3, 4, 5, 6])
         self.assertEqual(stats["bad_lines"], 1)
         self.assertEqual(stats["lost_heads"], 1)
         self.assertEqual(stats["skipped"], 1)
@@ -471,7 +489,7 @@ class PythonRoundTrip(unittest.TestCase):
         data = b"\n".join(lines[:heads[1]] + [lines[heads[1]][:50]] + lines[heads[1] + 1:]) + b"\n"
         decs, stats = self._read_bytes(data)
         # Same launch, same head: decoded, and the lost head is counted.
-        self.assertEqual(len(decs), 6)
+        self.assertEqual(len(decs), 7)
         self.assertEqual((stats["bad_lines"], stats["lost_heads"]), (1, 1))
 
     def test_record_that_parses_but_is_incomplete(self):
@@ -480,16 +498,16 @@ class PythonRoundTrip(unittest.TestCase):
         data = b"\n".join(lines[:dec0] + [b'{"t":"dec","v":3}'] + lines[dec0 + 1:]) + b"\n"
         decs, stats = self._read_bytes(data)
         self.assertEqual(stats["bad_lines"], 1)
-        self.assertEqual(len(decs), 5)
+        self.assertEqual(len(decs), 6)
 
     def test_nul_padding_and_crlf(self):
         lines, heads = self.golden_lines()
         whole = b"\n".join(lines) + b"\n"
         decs, stats = self._read_bytes(whole + b"\x00" * 64 + b"\n" + b"\n".join(lines[heads[1]:]) + b"\n")
         self.assertEqual(stats["bad_lines"], 1)
-        self.assertEqual(len(decs), 7)
+        self.assertEqual(len(decs), 8)
         decs, stats = self._read_bytes(whole.replace(b"\n", b"\r\n"))
-        self.assertEqual((len(decs), stats["bad_lines"]), (6, 0))
+        self.assertEqual((len(decs), stats["bad_lines"]), (7, 0))
 
     def test_summary_runs(self):
         import contextlib
@@ -498,9 +516,10 @@ class PythonRoundTrip(unittest.TestCase):
         with contextlib.redirect_stdout(buf):
             replay.summarize_v3([GOLDEN])
         out = buf.getvalue()
-        self.assertIn("6 decisions", out)
+        self.assertIn("7 decisions", out)
         self.assertIn("key=2", out)
-        self.assertIn("nothing=1", out)
+        self.assertIn("nothing=2", out)
+        self.assertIn("nothing: 1 ended episode(s), 1 lapped stretch(es)", out)
 
 
 if __name__ == "__main__":

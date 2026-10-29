@@ -471,6 +471,47 @@ Logging only: `Huginn_Selections_v3.jsonl` beside the unchanged v2 log.
   die. The death in that run wrote two `nothing` records 3 s before the
   reload (falling 1.0 s, loadout_restoration 28.7 s); since 0.23.16 a death
   drops the open episodes and those in their grace, as a load does.)*
+- [x] **Data fixes before the real R6 fit (0.23.51, `r6-data-fixes`)**, two
+      defects the rehearsal of 2026-10-28 found. Logging only: no score in the
+      old engine changes.
+  - *"Nothing" for persistent needs: laps.* Hunger, thirst, diseased, cold,
+    warmth_deficit and fatigue never wrote a `nothing` record: any selection
+    anywhere in their hours-long episodes answered all of it, and a load
+    dropped them still open. 0 of the mage's 13,961 `nothing` records (~45 h,
+    2026-10-15..28), while hunger was on at 8.8% of the picks and diseased at
+    11.8%, so the three-outcome fit read them as predicting a pick. Now an open
+    episode is cut into stretches on a shared 60 s grid of active seconds
+    (unpaused, alive, at most 1 s per tick), and each unanswered stretch writes
+    a `nothing` record marked `ep.why: "lap"` (with `lap` and `epSec`), joined
+    to the context the lap took (`ctx.why: "lap"`); an episode that ends
+    within 60 s of its onset is judged as before. 60 s: one gap between picks
+    in five exceeds it (median 17 s), long unanswered episodes run a median of
+    75 s, and a replay on the log gives each persistent need about as many lap
+    records as picks with it on (hunger ~100 against ~170), ~0.4 MB/h. Active
+    seconds rather than game time: waits, sleep and fast travel jump the game
+    clock while no press is possible. `core/NeedEpisodes.h`; the rule and the
+    numbers: [schema, Laps](architecture/9-selection-log-v3.md#laps).
+    `tools/fit` reads them (`fitlib.build(laps=...)`: one per lap context by
+    default, since the needs open at one lap share it; `cv.py --laps`;
+    `v3load.py --list` counts them); `tools/replay` too
+    (`replay.nothing_stretch`, `head_lap_sec`). Records written before
+    0.23.51 read as whole episodes (`why: "end"`, lap 0).
+  - *The quarterstaff is not a two-handed loadout.* `loadout_two_handed` was
+    on at 27.7% of the mage's picks and in 33% of the contexts, 85% of those
+    with the Staff of Wandering Stars in hand (LoreRim Traits.esp, a
+    `kTwoHandAxe` warhammer with Requiem's and Animated Armoury's
+    quarterstaff keywords). A two-handed weapon with
+    `OCF_WeapTypeQuarterstaff2H`, `WeapTypeQuarterstaff` or
+    `WeapTypeQtrStaff` (all 967 two-handed quarterstaffs in the LoreRim dump
+    carry the first) is now its own need, `loadout_quarterstaff`, and leaves
+    `loadout_two_handed` off (`core/WeaponLoadout.h`; needs.csv, NeedIds.h
+    and the `[Needs]` block regenerated; 97 needs). The old engine's
+    `hasTwoHandedEquipped` is unchanged. Not changed: the item's own cap still
+    reads `weapon_type_warhammer` (the effect columns have no quarterstaff
+    type; its stats already grade among quarterstaffs, 0.23.30).
+  - [ ] **In game (you):** see the PR's checklist (a lap record in the log
+        after a minute of standing hungry or diseased without a pick;
+        `hg needs` with the staff in hand).
 
 ### R5. Data play (in game, you)
 

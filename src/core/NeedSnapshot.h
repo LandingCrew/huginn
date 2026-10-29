@@ -151,6 +151,7 @@ namespace Huginn::Core::Needs
         bool shield = false;
         bool oneHanded = false;
         bool twoHanded = false;
+        bool quarterstaff = false;    // 0.23.51: the two-handed weapon is a quarterstaff (core/WeaponLoadout.h)
         std::uint32_t handSchools = 0;  // School bits of the spells in either hand
 
         // --- Activity -------------------------------------------------------
@@ -206,7 +207,7 @@ namespace Huginn::Core::Needs
         HUGINN_NEED_FIELD(enchantedWeapon), HUGINN_NEED_FIELD(weaponCharge), HUGINN_NEED_FIELD(bow),
         HUGINN_NEED_FIELD(crossbow), HUGINN_NEED_FIELD(arrows), HUGINN_NEED_FIELD(bolts),
         HUGINN_NEED_FIELD(melee), HUGINN_NEED_FIELD(spell), HUGINN_NEED_FIELD(staff), HUGINN_NEED_FIELD(shield),
-        HUGINN_NEED_FIELD(oneHanded), HUGINN_NEED_FIELD(twoHanded), HUGINN_NEED_FIELD(handSchools),
+        HUGINN_NEED_FIELD(oneHanded), HUGINN_NEED_FIELD(twoHanded), HUGINN_NEED_FIELD(quarterstaff), HUGINN_NEED_FIELD(handSchools),
         HUGINN_NEED_FIELD(sneaking), HUGINN_NEED_FIELD(mounted),
     });
 #undef HUGINN_NEED_FIELD

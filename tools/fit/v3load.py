@@ -32,7 +32,14 @@ not write take the defaults in DEC_DEFAULTS.
 older rows: FB (the candidate filter that dropped a row that is not eligible,
 by name) and CR (the remaining seconds behind the `covered` cross-feature,
 -1 = no timer); the `covered` cross-feature itself (mapped by name like the
-others) and the context's `summon` object (None before 0.23.46)."""
+others) and the context's `summon` object (None before 0.23.46).
+
+0.23.51 cut an open need episode into stretches on a 60 s lap grid
+(core/NeedEpisodes.h "lap"): a nothing record's `ep` gained `why` ("end": the
+episode expired, "lap": the stretch reached the grid with the need still on),
+`lap` (the stretch's index) and `epSec` (the episode's onset to the stretch's
+end). An older record is a whole episode and reads why "end", lap 0, epSec =
+durSec (EP_DEFAULTS); the heads keep `episode.lapSec` (absent before)."""
 import argparse
 import json
 import pickle
@@ -46,6 +53,9 @@ from common import work
 DEC_DEFAULTS = {'char': None, 'list': '', 'gen': 1, 'name': None, 'form': None, 'kind': '', 'src': '',
                 'via': '', 'case': '', 'how': '', 'skip': '', 'confirmMs': 0, 'ctxAgeMs': 0, 'repeat': 0,
                 'learned': 1, 'preEquipped': 0, 'ep': None}
+# A nothing record's episode fields 0.23.51 added (see the module docstring);
+# epSec defaults to the record's own durSec.
+EP_DEFAULTS = {'why': 'end', 'lap': 0}
 # Context fields the loader rebuilds; every other field of a ctx record is kept as written.
 CTX_REBUILT = ('t', 'id', 'rows', 'need', 'in')
 OUTCOMES = ('key', 'wheel', 'menu', 'nothing')
@@ -142,6 +152,9 @@ def load(paths):
                 d['ctxkey'] = (head['launch'], r['ctx']) if r.get('ctx') is not None else None
                 ep = d['ep']
                 if ep:
+                    for k, v in EP_DEFAULTS.items():
+                        ep.setdefault(k, v)
+                    ep.setdefault('epSec', ep.get('durSec'))
                     i = ep.get('i')
                     ep['gi'] = hneed[i] if isinstance(i, int) and 0 <= i < len(hneed) else needix.get(ep.get('need'))
                 d['open'] = [hneed[i] for i in r.get('open', []) if 0 <= i < len(hneed)]
@@ -166,27 +179,39 @@ def keep_char(D, char):
 
 
 def listing(D):
-    """The characters, then the launches, with their decision counts by outcome (lines of text)."""
+    """The characters, then the launches, with their decision counts by outcome (lines of text);
+    "of them laps" counts the nothing records that are lapped stretches (0.23.51)."""
     by_char, by_launch = defaultdict(Counter), defaultdict(Counter)
+    laps_char, laps_launch = Counter(), Counter()
     lists, builds = defaultdict(set), defaultdict(set)
     for d in D['decs']:
         c, l = str(d['char']), (d['launch'], str(d['char']))
         by_char[c][d['out']] += 1
         by_launch[l][d['out']] += 1
+        if is_lap(d):
+            laps_char[c] += 1
+            laps_launch[l] += 1
         lists[c].add(d['list']); lists[l].add(d['list'])
         builds[l].add(d['build'])
     nlaunch = Counter(c for _, c in by_launch)
 
-    def counts(c):
-        return '  '.join(f'{o} {c[o]:5}' for o in OUTCOMES) + f'  total {sum(c.values()):6}'
+    def counts(c, laps):
+        return ('  '.join(f'{o} {c[o]:5}' for o in OUTCOMES) + f' (of them laps {laps:5})'
+                + f'  total {sum(c.values()):6}')
 
     lines = [f'{len(D["decs"])} decisions, {len(by_launch)} launches, {len(by_char)} character(s)', '', 'characters:']
     for c in sorted(by_char, key=lambda c: -sum(by_char[c].values())):
-        lines.append(f'  {c}  launches {nlaunch[c]:4}  {counts(by_char[c])}  lists {", ".join(sorted(lists[c]))}')
+        lines.append(f'  {c}  launches {nlaunch[c]:4}  {counts(by_char[c], laps_char[c])}  lists {", ".join(sorted(lists[c]))}')
     lines += ['', 'launches (launch, character, list, build):']
     for l in sorted(by_launch):
-        lines.append(f'  {l[0]}  {l[1]}  {", ".join(sorted(lists[l])):20} {", ".join(sorted(builds[l])):22} {counts(by_launch[l])}')
+        lines.append(f'  {l[0]}  {l[1]}  {", ".join(sorted(lists[l])):20} {", ".join(sorted(builds[l])):22} '
+                     f'{counts(by_launch[l], laps_launch[l])}')
     return lines
+
+
+def is_lap(d):
+    """A nothing record that stands for a lapped stretch of a still-open episode (0.23.51)."""
+    return d['out'] == 'nothing' and bool(d.get('ep')) and d['ep'].get('why') == 'lap'
 
 
 def main(argv=None):

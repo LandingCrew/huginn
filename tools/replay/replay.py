@@ -532,6 +532,27 @@ def head_curves(head):
     return {n: tuple(c) for n, c in zip(head.get("needs", []), head.get("curves", []))}
 
 
+def head_lap_sec(head):
+    """The lap grid a head names (0.23.51, episode.lapSec, active seconds), or
+    None: a head written before 0.23.51 judged every episode whole, so its
+    segment holds no lap records."""
+    ep = head.get("episode") or {}
+    return ep.get("lapSec")
+
+
+def nothing_stretch(d):
+    """For a nothing record, which stretch of its need episode it stands for
+    (core/NeedEpisodes.h "lap", 0.23.51): (why, lap, epSec) -- why "end" (the
+    episode expired; the stretch is its last) or "lap" (the stretch reached the
+    lap grid with the need still on), lap the stretch's index (0 = from the
+    onset), epSec the episode's onset to the stretch's end. A record written
+    before 0.23.51 is a whole episode: ("end", 0, durSec). None for a pick."""
+    ep = d.get("ep")
+    if d.get("out") != "nothing" or not isinstance(ep, dict):
+        return None
+    return (ep.get("why", "end"), ep.get("lap", 0), ep.get("epSec", ep.get("durSec")))
+
+
 def iter_v3(paths, stats=None):
     """Yield every decision of the given v3 files, in file order, resolved:
     its context (need/input by name, the rows with cap(i) by column name and
@@ -541,6 +562,9 @@ def iter_v3(paths, stats=None):
 
     0.23.46 additions, defaulted for older files: a row's "fb" and "cr" (None),
     x["covered"] (absent), the context's "summon" (absent: ctx.get("summon")).
+    0.23.51: a nothing record's ep may carry "why" ("end" / "lap"), "lap" and
+    "epSec" (lapped stretches of an open episode); nothing_stretch(d) reads
+    them with the defaults of an older record, head_lap_sec(head) the grid.
 
     Damage is skipped and counted, never raised (a crash or a full disk can
     tear the last record a launch wrote; the writer starts on a new line):
@@ -682,6 +706,7 @@ def summarize_v3(paths, char=None):
     if char is not None:
         decs = [d for d in decs if d.get("char") == char]
     by_out = defaultdict(int)
+    nothing_laps = 0
     rows = []
     hits = defaultdict(lambda: [0, 0])
     for d in decs:
@@ -690,6 +715,8 @@ def summarize_v3(paths, char=None):
         # by one need, 0.23.34); the summary must not raise on it.
         out = d.get("out", "?")
         by_out[out] += 1
+        stretch = nothing_stretch(d)
+        nothing_laps += 1 if stretch and stretch[0] == "lap" else 0
         rows.append(len(d["rows"]))
         c = d["chosen"]
         if c is None:
@@ -710,6 +737,9 @@ def summarize_v3(paths, char=None):
     for t, (n, b) in sorted(sizes.items()):
         print(f"  {t:5} {n:6d} lines {b:10d} bytes ({b / max(1, n):.0f} per line)")
     print("  outcomes: " + ", ".join(f"{k}={v}" for k, v in sorted(by_out.items())))
+    if by_out.get("nothing"):
+        print(f"  nothing: {by_out['nothing'] - nothing_laps} ended episode(s), "
+              f"{nothing_laps} lapped stretch(es) (0.23.51)")
     if rows:
         print(f"  rows per decision: mean {sum(rows) / len(rows):.1f}, max {max(rows)}")
     if decs:

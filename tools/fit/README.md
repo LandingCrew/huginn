@@ -67,7 +67,7 @@ after `cv.py picks`. The rest only need `v3.pkl`.
 
 ### cv.py
 
-`python cv.py [picks|three|sens] [--folds K] [--seed S] [--loo] [--spec TEXT ...] [--since V] [--until V] [--split-at V ...] [--split-needs all|NEED ...]`
+`python cv.py [picks|three|sens] [--folds K] [--seed S] [--loo] [--spec TEXT ...] [--since V] [--until V] [--split-at V ...] [--split-needs all|NEED ...] [--laps once|all|none]`
 
 - **Folds**: grouped K-fold by launch, `--folds 10` and `--seed 1` by default
   (`fitlib.launch_folds`): no launch is in two folds; the same seed gives the
@@ -82,6 +82,14 @@ after `cv.py picks`. The rest only need `v3.pkl`.
   `--split-at`) give the needs in `--split-needs` one column per segment
   (default: the needs whose sensor changed at 0.23.41 and the target families,
   `fitlib.BUILD_SPLIT_NEEDS`; `all` splits every need).
+- **Laps** (0.23.51, the `three` group): an open need episode writes a
+  `nothing` record for every unanswered 60 s stretch (`ep.why: "lap"`,
+  [schema, Laps](../../docs/architecture/9-selection-log-v3.md#laps)), one per
+  need open at the lap tick, all sharing one context. `--laps once` (default)
+  keeps one per context, so a slice weighs once however many needs were on;
+  `all` keeps every one; `none` drops them (the data a build before 0.23.51
+  logged). `fitlib.build(laps=...)`; a decision's `meta` carries `ep_why`.
+  `v3load.py --list` shows how many of the `nothing` records are laps.
 - **The yardstick**, for every spec against **A\*** (the old engine's ranking
   replayed from the logged utilities) on the same choice sets, with a
   bootstrap-over-launches 95% interval on model − A\*:

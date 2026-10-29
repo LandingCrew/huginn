@@ -10,6 +10,7 @@
 #include "StateManager.h"
 #include "StateConstants.h"
 #include "../Profiling.h"
+#include "../core/WeaponLoadout.h"
 #include "../util/InventoryUtil.h"
 
 namespace Huginn::State
@@ -33,6 +34,7 @@ namespace Huginn::State
       m_playerState.hasShieldEquipped = false;
       m_playerState.hasOneHandedEquipped = false;
       m_playerState.hasTwoHandedEquipped = false;
+      m_playerState.hasQuarterstaffEquipped = false;
       m_playerState.hasSpellEquipped = false;
       m_playerState.hasTorchEquipped = false;
       m_playerState.equippedTorchFormID = 0;
@@ -52,6 +54,7 @@ namespace Huginn::State
       bool newHasShieldEquipped = false;
       bool newHasOneHandedEquipped = false;
       bool newHasTwoHandedEquipped = false;
+      bool newHasQuarterstaffEquipped = false;   // 0.23.51: the need vector only (core/WeaponLoadout.h)
       bool newHasSpellEquipped = false;
       bool newHasTorchEquipped = false;
       RE::FormID newEquippedTorch = 0;
@@ -89,6 +92,8 @@ namespace Huginn::State
            case RE::WEAPON_TYPE::kTwoHandAxe:
             newHasTwoHandedEquipped = true;
             newHasMeleeEquipped = true;
+            newHasQuarterstaffEquipped = Core::Loadout::IsQuarterstaff(true,
+               [weapon](std::string_view kw) { return weapon->HasKeywordString(kw); });
             break;
            case RE::WEAPON_TYPE::kBow:
             newHasBowEquipped = true;
@@ -274,6 +279,10 @@ namespace Huginn::State
       }
       if (m_playerState.hasTwoHandedEquipped != newHasTwoHandedEquipped) {
         m_playerState.hasTwoHandedEquipped = newHasTwoHandedEquipped;
+        changed = true;
+      }
+      if (m_playerState.hasQuarterstaffEquipped != newHasQuarterstaffEquipped) {
+        m_playerState.hasQuarterstaffEquipped = newHasQuarterstaffEquipped;
         changed = true;
       }
       if (m_playerState.hasSpellEquipped != newHasSpellEquipped) {

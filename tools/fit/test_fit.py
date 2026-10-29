@@ -236,6 +236,83 @@ class NewAndUnknownKeys(TempWork):
         self.assertNotIn('char', decs[0])
 
 
+def lap_session(launch, char, build):
+    """The synthetic session plus two lapped stretches (0.23.51) that share one lap context:
+    hunger and diseased, both open at the lap tick, neither answered. The session's own
+    nothing (darkness) is written as a 0.23.50 build wrote it: no why / lap / epSec."""
+    head, seg1, seg2 = trv3.make_session()
+    head = dict(head, launch=launch, build=build)
+    ctx_l = {'id': 12, 'utc': '2026-10-09 15:01:30.000', 'why': 'lap',
+             'need': {'hunger': 0.8, 'diseased': 1}, 'input': {'hunger': 0.6, 'diseased': 1},
+             'pipe': {'ok': 1, 'page': 0, 'slots': 8, 'ageMs': 50}, 'race': None,
+             'wc': {'base': 0.165, 'max': 0.5}, 'rows': []}
+    laps = []
+    for seq, need, i in ((5, 'hunger', 26), (6, 'diseased', 18)):
+        d = dict(seg1[1], seq=seq, utc=f'2026-10-09 15:02:{seq:02d}.000', ctx=ctx_l, ctxAgeMs=64000,
+                 ep={'need': need, 'i': i, 'durSec': 60.0, 'peak': 1, 'onset': '2026-10-09 15:00:00.000',
+                     'why': 'lap', 'lap': 1, 'epSec': 90.0})
+        laps.append(d)
+    for d in seg1 + seg2 + laps:
+        d['launch'], d['char'] = launch, char
+    return trv3.encode([(head, seg1), (head, seg2 + laps)])
+
+
+class Laps(TempWork):
+    """0.23.51: the lapped-stretch nothing records, read by v3load (old records default to a
+    whole episode), listed, and kept once per context, all, or none by fitlib.build."""
+
+    def load(self):
+        self.quiet(v3load.main, [str(self.write('v3.jsonl', lap_session('20261030-100000', CHAR_A, '0.23.51 (abc1234)')))])
+        return common.load()
+
+    def test_v3load_defaults_and_reads_laps(self):
+        D = self.load()
+        noth = [d for d in D['decs'] if d['out'] == 'nothing']
+        self.assertEqual(len(noth), 3)
+        old = next(d for d in noth if d['ep']['need'] == 'darkness')
+        self.assertEqual((old['ep']['why'], old['ep']['lap'], old['ep']['epSec']), ('end', 0, 4.0))
+        laps = [d for d in noth if d['ep']['why'] == 'lap']
+        self.assertEqual(sorted(d['ep']['need'] for d in laps), ['diseased', 'hunger'])
+        self.assertEqual({d['ctxkey'] for d in laps}, {('20261030-100000', 12)})
+        self.assertEqual({D['needs'][d['ep']['gi']] for d in laps}, {'hunger', 'diseased'})
+        self.assertTrue(all(v3load.is_lap(d) for d in laps))
+        self.assertFalse(v3load.is_lap(old))
+
+    def test_listing_counts_laps(self):
+        p = self.write('v3.jsonl', lap_session('20261030-100000', CHAR_A, '0.23.51 (abc1234)'))
+        _, out = self.quiet(v3load.main, [str(p), '--list'])
+        line = next(ln for ln in out.splitlines() if ln.strip().startswith(CHAR_A))
+        self.assertIn('nothing     3 (of them laps     2)', line)
+        self.assertIn('total      6', line)
+
+    def test_build_laps_once_all_none(self):
+        D = self.load()
+
+        def whys(**kw):
+            S = fitlib.build(D, include_nothing=True, **kw)
+            return sorted(str(m['ep_why']) for m in S['meta']), S
+
+        once, S = whys()
+        self.assertEqual(once, ['None'] * 3 + ['end', 'lap'])   # one lap per context
+        lap = next(i for i, m in enumerate(S['meta']) if m['ep_why'] == 'lap')
+        self.assertEqual(S['meta'][lap]['need_ep'], D['needs'].index('hunger'))   # the lowest seq
+        self.assertEqual(S['Y'][lap], -1)                                          # nothing chosen
+        k = S['needs'].index('diseased')
+        self.assertEqual(S['N'][lap, k], 1)
+        self.assertEqual(whys(laps='all')[0], ['None'] * 3 + ['end', 'lap', 'lap'])
+        self.assertEqual(whys(laps='none')[0], ['None'] * 3 + ['end'])
+        with self.assertRaises(ValueError):
+            fitlib.build(D, laps='twice')
+        # The picks group never sees them.
+        S = fitlib.build(D, include_nothing=False)
+        self.assertEqual({m['ep_why'] for m in S['meta']}, {None})
+
+    def test_replay_reads_laps(self):
+        decs = replay.load_v3([self.write('v3.jsonl', lap_session('20261030-100000', CHAR_A, '0.23.51 (abc1234)'))])
+        self.assertEqual([replay.nothing_stretch(d) for d in decs if d['out'] == 'nothing'],
+                         [('end', 0, 4.0), ('lap', 1, 90.0), ('lap', 1, 90.0)])
+
+
 class ReplayChar(TempWork):
     def test_summarize_v3_keeps_one_character(self):
         p = self.write('v3.jsonl', session('20261010-100000', CHAR_A, '0.23.38 (x)', minute=1)
