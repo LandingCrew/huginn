@@ -2410,7 +2410,7 @@ void RunUnitTests()
         for (int i = 0; i < 10; ++i) {
             ScoredCandidate scored;
             scored.candidate = Candidate::SpellCandidate{};
-            scored.utility = 10.0f - static_cast<float>(i);
+            scored.RankOnUtility(10.0f - static_cast<float>(i));
             testCandidates.push_back(scored);
         }
 
@@ -3160,11 +3160,14 @@ void RunUnitTests()
                     return;
                 }
 
-                // Drawing the weight is what earns the label — same gate the
-                // display uses, so this closes weight → candidate → subtext.
+                // R8.3: the label speaks for an item whose own explanation is
+                // the reason (ScoredCandidate::explainedReason, set by the
+                // ranking from the largest theta n cap term); here the potion's
+                // explanation is the station's need.
                 Slot::SlotAssignment assignment{};
                 Scoring::ScoredCandidate scored{};
                 scored.candidate = st.potion;
+                scored.explainedReason = st.reason;
                 assignment.candidate = scored;
                 if (const auto got = Display::DeriveExplanationLabel(assignment, st.reason);
                     got != st.label) {
@@ -4332,7 +4335,7 @@ void RunUnitTests()
             spell.formID = static_cast<RE::FormID>(kBaseID + i);
             Scoring::ScoredCandidate sc{};
             sc.candidate = spell;
-            sc.utility = static_cast<float>(kTotal - i);  // descending
+            sc.RankOnUtility(static_cast<float>(kTotal - i));  // descending
             scored.push_back(sc);
         }
 
@@ -5049,14 +5052,15 @@ void RunUnitTests()
             }
 
             // Without a stamped reason, the tick's context reason is used — but
-            // only on an item that reason actually ranks (#64). A healing potion
-            // draws healingWeight, which is what LowHealth is read off.
+            // only on an item whose own explanation it is (#64; R8.3: the
+            // ranking sets explainedReason from the largest theta n cap term).
             Slot::SlotAssignment plain{};
             Scoring::ScoredCandidate plainScored{};
             Candidate::ItemCandidate plainPotion{};
             plainPotion.name = "Potion of Minor Healing";
             plainPotion.tags = Item::ItemTag::RestoreHealth;
             plainScored.candidate = plainPotion;
+            plainScored.explainedReason = Context::ContextReason::LowHealth;
             plain.candidate = plainScored;
 
             const auto contextLabel = Display::DeriveExplanationLabel(
@@ -5091,13 +5095,19 @@ void RunUnitTests()
             }
         }
 
-        // 17k: A context reason speaks only for slots it actually ranked (#64)
+        // 17k: A context reason speaks only for slots it actually explains
+        // (#64). R8.3: "explains" = the item's own explanation (the largest
+        // theta n cap term of its score, ScoredCandidate::explainedReason),
+        // which the ranking sets; here each case states it. Before R8.3 the
+        // test derived it from the context weights (ReasonAppliesTo).
         {
             const auto labelFor = [](Candidate::CandidateVariant candidate,
-                                     Context::ContextReason reason) {
+                                     Context::ContextReason reason,
+                                     Context::ContextReason explained = Context::ContextReason::None) {
                 Slot::SlotAssignment assignment{};
                 Scoring::ScoredCandidate scored{};
                 scored.candidate = std::move(candidate);
+                scored.explainedReason = explained;
                 assignment.candidate = scored;
                 return Display::DeriveExplanationLabel(assignment, reason);
             };
@@ -5125,7 +5135,8 @@ void RunUnitTests()
             enchantingPotion.name = "Potion of Enchanting";
             enchantingPotion.tags = Item::ItemTag::FortifyMagicSchool;
             enchantingPotion.school = Item::MagicSchool::Enchanting;
-            if (const auto label = labelFor(enchantingPotion, Context::ContextReason::AtEnchanter);
+            if (const auto label = labelFor(enchantingPotion, Context::ContextReason::AtEnchanter,
+                                        Context::ContextReason::AtEnchanter);
                 label != "At Enchanter") {
                 logger::error("TEST FAIL: AtEnchanter should label its own potion, got '{}'", label);
                 return;
@@ -5137,7 +5148,7 @@ void RunUnitTests()
             Candidate::SpellCandidate healingCase{};
             healingCase.name = "Healing";
             healingCase.tags = Spell::SpellTag::RestoreHealth;
-            if (const auto label = labelFor(healingCase, Context::ContextReason::LowHealth);
+            if (const auto label = labelFor(healingCase, Context::ContextReason::LowHealth, Context::ContextReason::LowHealth);
                 label != "Low HP") {
                 logger::error("TEST FAIL: LowHealth should label a healing spell, got '{}'", label);
                 return;
@@ -5146,7 +5157,7 @@ void RunUnitTests()
             Candidate::ScrollCandidate turnUndead{};
             turnUndead.name = "Scroll of Turn Undead";
             turnUndead.tags = Scroll::ScrollTag::AntiUndead;
-            if (const auto label = labelFor(turnUndead, Context::ContextReason::TargetUndead);
+            if (const auto label = labelFor(turnUndead, Context::ContextReason::TargetUndead, Context::ContextReason::TargetUndead);
                 label != "Undead") {
                 logger::error("TEST FAIL: TargetUndead should label an anti-undead scroll, got '{}'",
                     label);
@@ -5155,13 +5166,13 @@ void RunUnitTests()
 
             Candidate::AmmoCandidate steelArrows{};
             steelArrows.name = "Steel Arrow";
-            if (const auto label = labelFor(steelArrows, Context::ContextReason::NeedsAmmo);
+            if (const auto label = labelFor(steelArrows, Context::ContextReason::NeedsAmmo, Context::ContextReason::NeedsAmmo);
                 label != "Low Ammo") {
                 logger::error("TEST FAIL: NeedsAmmo should label ammo, got '{}'", label);
                 return;
             }
             // ...and the same arrows stay unlabelled under an unrelated reason.
-            if (const auto label = labelFor(steelArrows, Context::ContextReason::AtEnchanter);
+            if (const auto label = labelFor(steelArrows, Context::ContextReason::AtEnchanter, Context::ContextReason::NeedsAmmo);
                 !label.empty()) {
                 logger::error("TEST FAIL: AtEnchanter must not label ammo, got '{}'", label);
                 return;
@@ -5172,7 +5183,7 @@ void RunUnitTests()
             Candidate::ItemCandidate fireResist{};
             fireResist.name = "Potion of Resist Fire";
             fireResist.tags = Item::ItemTag::ResistFire;
-            if (const auto label = labelFor(fireResist, Context::ContextReason::OnFire);
+            if (const auto label = labelFor(fireResist, Context::ContextReason::OnFire, Context::ContextReason::OnFire);
                 label != "Fire Damage") {
                 logger::error("TEST FAIL: OnFire should label a resist-fire potion, got '{}'", label);
                 return;
@@ -5250,7 +5261,7 @@ void RunUnitTests()
             spell.formID = static_cast<RE::FormID>(0x1000 + i);
             spell.name = "WildcardTestSpell";
             scored.candidate = spell;
-            scored.utility = 10.0f - static_cast<float>(i);
+            scored.RankOnUtility(10.0f - static_cast<float>(i));
             pool.push_back(scored);
         }
 
@@ -7107,7 +7118,7 @@ void RunSlotSeatingTest()
 
             Scoring::ScoredCandidate sc{};
             sc.candidate = spell;
-            sc.utility = 10.0f - static_cast<float>(i);
+            sc.RankOnUtility(10.0f - static_cast<float>(i));
             list.push_back(sc);
         }
         return list;
@@ -7212,13 +7223,13 @@ void RunFillJobKeysTest()
         Candidate::WeaponCandidate w{};
         w.formID = 0x0BADF100; w.name = "FillProbeSword";
         w.tags = Weapon::WeaponTag::Melee;
-        Scoring::ScoredCandidate sc{}; sc.candidate = w; sc.utility = 3.0f;
+        Scoring::ScoredCandidate sc{}; sc.candidate = w; sc.RankOnUtility(3.0f);
         return sc;
     }();
     auto spell = [](RE::FormID id, std::string_view name, Spell::SpellType type) {
         Candidate::SpellCandidate s{};
         s.formID = id; s.name = name; s.type = type;
-        Scoring::ScoredCandidate sc{}; sc.candidate = s; sc.utility = 2.0f;
+        Scoring::ScoredCandidate sc{}; sc.candidate = s; sc.RankOnUtility(2.0f);
         return sc;
     };
 
@@ -7273,13 +7284,13 @@ void RunSlotClassCapTest()
     auto spell = [](size_t i, Spell::SpellType type, float utility) {
         Candidate::SpellCandidate s{};
         s.formID = 0x0BADF200 + static_cast<RE::FormID>(i); s.name = names[i]; s.type = type;
-        Scoring::ScoredCandidate sc{}; sc.candidate = s; sc.utility = utility;
+        Scoring::ScoredCandidate sc{}; sc.candidate = s; sc.RankOnUtility(utility);
         return sc;
     };
     auto food = [](RE::FormID id, Item::ItemType type) {
         Candidate::ItemCandidate f{};
         f.formID = id; f.name = "SlotClassCapFood"; f.sourceType = Candidate::SourceType::Food; f.type = type;
-        Scoring::ScoredCandidate sc{}; sc.candidate = f; sc.utility = 1.0f;
+        Scoring::ScoredCandidate sc{}; sc.candidate = f; sc.RankOnUtility(1.0f);
         return sc;
     };
 
@@ -7395,14 +7406,14 @@ void RunSlotClassCapHoldTest()
     auto spell = [](size_t i, Spell::SpellType type, float utility) {
         Candidate::SpellCandidate s{};
         s.formID = 0x0BADF300 + static_cast<RE::FormID>(i); s.name = names[i]; s.type = type;
-        Scoring::ScoredCandidate sc{}; sc.candidate = s; sc.utility = utility;
+        Scoring::ScoredCandidate sc{}; sc.candidate = s; sc.RankOnUtility(utility);
         return sc;
     };
     auto weapon = [](size_t i, float utility) {
         Candidate::WeaponCandidate w{};
         w.formID = 0x0BADF300 + static_cast<RE::FormID>(i); w.name = names[i];
         w.tags = Weapon::WeaponTag::Melee;
-        Scoring::ScoredCandidate sc{}; sc.candidate = w; sc.utility = utility;
+        Scoring::ScoredCandidate sc{}; sc.candidate = w; sc.RankOnUtility(utility);
         return sc;
     };
 
@@ -7521,14 +7532,14 @@ void RunHomeKeyTest()
     auto spell = [](size_t i, Spell::SpellType type, float utility) {
         Candidate::SpellCandidate s{};
         s.formID = kBase + static_cast<RE::FormID>(i); s.name = names[i]; s.type = type;
-        Scoring::ScoredCandidate sc{}; sc.candidate = s; sc.utility = utility;
+        Scoring::ScoredCandidate sc{}; sc.candidate = s; sc.RankOnUtility(utility);
         return sc;
     };
     auto weapon = [](size_t i, float utility) {
         Candidate::WeaponCandidate w{};
         w.formID = kBase + static_cast<RE::FormID>(i); w.name = names[i];
         w.tags = Weapon::WeaponTag::Melee;
-        Scoring::ScoredCandidate sc{}; sc.candidate = w; sc.utility = utility;
+        Scoring::ScoredCandidate sc{}; sc.candidate = w; sc.RankOnUtility(utility);
         return sc;
     };
 
@@ -7615,7 +7626,7 @@ void RunHomeKeyTest()
         p.formID = kBase + 8; p.name = names[8]; p.type = Item::ItemType::BuffPotion;
         return p;
     }();
-    Scoring::ScoredCandidate potionScored{}; potionScored.candidate = potionN; potionScored.utility = 0.35f;
+    Scoring::ScoredCandidate potionScored{}; potionScored.candidate = potionN; potionScored.RankOnUtility(0.35f);
     Override::OverrideCollection drowning;
     {
         Override::OverrideResult result;

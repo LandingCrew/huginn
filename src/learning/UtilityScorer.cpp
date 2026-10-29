@@ -5,6 +5,8 @@
 #include "state/StateManager.h"                 // GetPlayerVitals: vital envelopes tick every frame
 #include "override/OverrideConfig.h"                // URGENT_RESTORE_WINDOW_SEC: one "strongest" for slots and override
 #include "Profiling.h"
+#include "core/EffectColumns.h"   // [Recs]: the explanation's column names (R8.3)
+#include "core/NeedIds.h"         // ... and need names
 #include <algorithm>
 #include <chrono>
 #include <map>
@@ -28,18 +30,17 @@ namespace Huginn::Scoring
     // MAIN SCORING METHOD
     // =========================================================================
 
-    ScoredCandidateList UtilityScorer::ScoreCandidates(
+    ScoredCandidateList UtilityScorer::LegacyPass(
         const std::vector<Candidate::CandidateVariant>& candidates,
         const State::GameState& state,
         const State::PlayerActorState& player,
         const State::TargetCollection& targets,
         const State::WorldState& world,  // Stage 1f: Added WorldState
         float combatOnsetAgo,
-        const WildcardPage& displayPage,
         Context::ContextWeightMap* outWeights,
         std::vector<Legacy::Row>* outLegacy)
     {
-        SCOPED_TIMER("UtilityScorer::ScoreCandidates");
+        SCOPED_TIMER("UtilityScorer::LegacyPass");
 
         ScoredCandidateList scored;
         scored.reserve(candidates.size());
@@ -77,14 +78,9 @@ namespace Huginn::Scoring
         auto stateFeatures = Learning::StateFeatures::FromState(player, targets);
         auto phi = stateFeatures.ToArray();  // Pre-compute once for locked reader
 
-        // Forget what faded past its useful life (roadmap Phase 3 #3a). At most
-        // once a minute of play; the fading itself is read off the play clock
-        // per candidate below, so nothing here touches the weights. Replaced
-        // the 2%/hour weight decay.
-        {
-            Huginn_ZONE_NAMED("Score::Forget");
-            m_featureLearner.MaybeForgetFaded();
-        }
+        // The forget sweep (roadmap Phase 3 #3a) left this pass in R8.3: it
+        // runs from UpdateLoop beside the choice learner's, so it keeps
+        // running while bLegacyLearnFeature is off and this pass does not.
 
         // Acquire locked readers once for the entire scoring loop.
         // Eliminates per-candidate mutex acquire/release (~200 lock ops → 2).
@@ -135,14 +131,16 @@ namespace Huginn::Scoring
         const auto pass = Legacy::FloorPass(candidates, floorParams, hooks, scored, outLegacy);
         const float maxUtilitySeen = pass.maxUtilitySeen;
 
-        // Diagnostic: Rate-limited warning when 0 candidates pass the filter
-        // NOTE: Single-threaded (ScoreCandidates called from update thread only)
+        // Diagnostic, rate-limited. R8.3: no longer an empty page (every
+        // candidate is ranked on the choice score); it means no row gets the
+        // D2 feature this run.
+        // NOTE: Single-threaded (called from the update thread only)
         if (scored.empty() && !candidates.empty()) {
             static auto s_lastWarnTime = std::chrono::steady_clock::time_point{};
             auto now = std::chrono::steady_clock::now();
             if (std::chrono::duration_cast<std::chrono::seconds>(now - s_lastWarnTime).count() >= 5) {
-                logger::warn("[UtilityScorer] WARNING: 0/{} candidates passed minimumUtility={:.2f} "
-                    "(max utility seen: {:.4f}, baseRelevance: {:.4f})",
+                logger::debug("[UtilityScorer] Legacy pass: 0/{} candidates passed minimumUtility={:.2f} "
+                    "(max utility seen: {:.4f}, baseRelevance: {:.4f}); no row gets ln learn mult"sv,
                     candidates.size(), m_config.minimumUtility,
                     maxUtilitySeen, weights.baseRelevanceWeight);
                 s_lastWarnTime = now;
@@ -150,51 +148,48 @@ namespace Huginn::Scoring
         }
 
         if (pass.coldStartCount > 0) {
-            // Rate-limited: same cadence as the "0 candidates" diagnostic above
-            // NOTE: Single-threaded (ScoreCandidates called from update thread only)
+            // Rate-limited: same cadence as the diagnostic above
+            // NOTE: Single-threaded (called from the update thread only)
             static auto s_lastColdStartLog = std::chrono::steady_clock::time_point{};
             auto now = std::chrono::steady_clock::now();
             if (std::chrono::duration_cast<std::chrono::seconds>(now - s_lastColdStartLog).count() >= 5) {
-                logger::warn("[UtilityScorer] Cold start: {} candidates boosted via UCB context floor ({:.2f})",
+                logger::debug("[UtilityScorer] Legacy pass cold start: {} candidates boosted via UCB context floor ({:.2f})"sv,
                     pass.coldStartCount, m_config.coldStartUCBBoost);
                 s_lastColdStartLog = now;
             }
         }
 
-        // Rank-scaled favorites boost: replace Step 7's provisional uniform max
-        // boost with the documented rank-scaled value (ScorerConfig.h).
-        {
-            Huginn_ZONE_NAMED("Score::FavoritesAndTiers");
-            ApplyFavoritesRankScaling(scored);
-            ApplyPotionTierPreference(scored);
-        }
+        // R8.3: no favourites rank scaling and no potion tier preference here
+        // any more. They only ever reordered the ranking, and nothing ranks on
+        // utility now (the fallback ranking without a bootstrap included); the
+        // utility a row carries is the floor pass's, which the D2 feature was
+        // fitted on. ApplyFavoritesRankScaling / ApplyPotionTierPreference go
+        // in R8's PR 4 with their INI keys.
+        return scored;
+    }
 
-        // The whole list in rank order (R7) -- until ApplyWildcards below
-        // swaps a wildcard up into a rank position. It used to be only the
-        // top N (partial_sort), and the slot code takes the FIRST match in
-        // list order for a job key or an uncapped Regular key: with full pages
-        // it reached into the unsorted tail and took whichever match came
-        // first there, not the best. Stable, so exact ties (same utility, same
-        // DPS) keep the order the candidates were generated in rather than a
-        // heap's. Cost, measured in the R7 review on 500 rows: about 42 us a
-        // pass, against about 2 us for the old top-10 partial sort -- noise
-        // beside the scoring itself, and the pipeline runs only on change.
+    void UtilityScorer::RankAndApplyWildcards(ScoredCandidateList& scored, const WildcardPage& displayPage)
+    {
+        // The whole list in rank order (R7), on SlotScore's score (R8.3: the
+        // choice score mu; ln utility in the fallback ranking) -- until
+        // ApplyWildcards below swaps a wildcard up into a rank position. The
+        // slot code takes the FIRST match in list order for a job key or an
+        // uncapped Regular key, so the tail must be sorted too. Stable, so
+        // exact ties (same score, same DPS) keep the order the candidates were
+        // generated in. Cost (R7 review, 500 rows): about 42 us a pass.
         if (!scored.empty()) {
             Huginn_ZONE_NAMED("Score::Sort");
             std::stable_sort(scored.begin(), scored.end());
         }
 
         // Apply wildcards for exploration, keyed and sized against the page
-        // THIS tick allocates. Previously this called an overload that read
-        // SlotAllocator::GetSlotCount() live, so a page switch landing mid-tick
-        // could size wildcards against the new page while the pipeline allocated
-        // the snapshotted one — resolves TODO(page-consistency).
+        // THIS tick allocates. WildcardManager works on rank POSITIONS (a draw
+        // from below the slot, a swap up into it), never on score values, so
+        // it is sign-safe as it stands (R8.3); R10 replaces it.
         {
             Huginn_ZONE_NAMED("Score::Wildcards");
             m_wildcardMgr.ApplyWildcards(scored, displayPage);
         }
-
-        return scored;
     }
 
     void UtilityScorer::ApplyPotionTierPreference(ScoredCandidateList& scored) const
@@ -510,7 +505,7 @@ namespace Huginn::Scoring
     // =========================================================================
 
     void UtilityScorer::LogTopCandidates(
-        const ScoredCandidateList& ranked, size_t count, bool detail, bool force) const
+        const ScoredCandidateList& ranked, size_t count, bool detail, bool force, bool fallback) const
     {
         size_t numToLog = std::min(count, ranked.size());
 
@@ -536,19 +531,53 @@ namespace Huginn::Scoring
             return;
         }
 
-        logger::info("[Recs] === Top {}/{} candidates | u = ctx*(1+λ*learn)*mults ==="sv,
-            numToLog, ranked.size());
+        // R8.3: the ranking is the choice score mu. Each line: mu (and sd),
+        // the three largest theta[need][col] n a terms (the first is the
+        // explanation), b, and the D2 legacy feature (lm = ln learn mult on a
+        // row the old floors kept, "um" when they did not), then the old
+        // utility and its parts on the rows the legacy pass kept, for
+        // comparison only. The fallback ranking (no bootstrap) prints the old
+        // line, flagged. Phase 9 / R11 expand this.
+        logger::info("[Recs] === Top {}/{} candidates | {} ==="sv, numToLog, ranked.size(),
+            fallback ? "FALLBACK: s = ln u, u = ctx*(1+λ*learn)*mults"
+                     : "mu = Σ θ·n·cap + b + w·lm (+ recent, covered); terms need×col");
 
         for (size_t i = 0; i < numToLog; ++i) {
             const auto& scored = ranked[i];
             const auto& bd = scored.breakdown;
+            const auto& p = scored.choice;
 
-            logger::info("[Recs] {}. {} ({}) u={:.3f} | {}{}{}"sv,
+            std::string terms;
+            for (const auto& t : p.top) {
+                if (t.need < 0) break;
+                const auto ni = static_cast<size_t>(t.need);
+                const auto ci = static_cast<size_t>(t.col);
+                terms += fmt::format("{}{}×{}={:+.3f}", terms.empty() ? "" : " ",
+                    ni < Core::Needs::kNeedCount ? Core::Needs::kNeeds[ni].id : std::string_view("?"),
+                    ci < Core::Effect::kColumnCount ? Core::Effect::kColumns[ci].id : std::string_view("?"), t.value);
+            }
+            if (terms.empty()) terms = "learned";
+            const std::string legacy = scored.legacyScored
+                ? fmt::format(" | old u={:.3f} {}", scored.utility, detail ? bd.ToDetailString() : bd.ToCompactString())
+                : std::string(" | old: under the floors");
+
+            if (fallback) {
+                logger::info("[Recs] {}. {} ({}) s={:+.3f} u={:.3f} | {}{}{}"sv,
+                    i + 1, scored.GetName(), Candidate::SourceTypeToString(scored.GetSourceType()),
+                    scored.score, scored.utility,
+                    detail ? bd.ToDetailString() : bd.ToCompactString(),
+                    scored.isWildcard ? " [WC]" : "",
+                    scored.isColdStartBoosted ? " [COLD]" : "");
+                continue;
+            }
+            logger::info("[Recs] {}. {} ({}) mu={:+.3f} sd={:.3f} | {} | need={:+.3f} b={:+.3f} lm={:+.3f}{}{}{}{}{}"sv,
                 i + 1,
                 scored.GetName(),
                 Candidate::SourceTypeToString(scored.GetSourceType()),
-                scored.utility,
-                detail ? bd.ToDetailString() : bd.ToCompactString(),
+                scored.score, std::sqrt(std::max(p.var, 0.0)),
+                terms, p.needMu, p.b, p.lnLearnMult, p.utilMissing != 0.0 ? " um" : "",
+                p.covered > 0.0 ? fmt::format(" covered={:.2f}", p.covered) : std::string{},
+                legacy,
                 scored.isWildcard ? " [WC]" : "",
                 scored.isColdStartBoosted ? " [COLD]" : "");
         }

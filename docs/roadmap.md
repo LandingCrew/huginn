@@ -994,6 +994,71 @@ changed in the same PR, and the shipped INI loses the dead keys.
       - **In game (you):** the shadow columns appear in the v3 log; the pages
         match 0.23.55's (the old engine still ranks); the bootstrap line in
         the log; `Pipeline::ScoreShadow` in a Tracy trace under 1 ms.
+- [x] **Steps 4-5 of the order above, built in 0.24.0 (R8.3, the third PR on
+      `rewrite-r8`): the cutover -- the pipeline ranks on the choice score --
+      and the cosave.** The map's Phase 6 says what each piece is
+      ([9-implementation-map.md](architecture/9-implementation-map.md), "As
+      built (R8.3)"). **FLAG: the old scorer's learning score is now a LIVE
+      SCORE INPUT** (D2's `ln learn mult`, w = 1.36, on the rows the old floors
+      pass), behind `[Scoring] bLegacyLearnFeature` (default true).
+      ContextRuleEngine still runs every pipeline pass, but only to decide
+      which rows that feature is computed on.
+      - The scorer: every candidate that passes the filters is ranked on mu
+        (`ScoredCandidate::score`; `SlotScore()` returns it, remembered-only
+        rows -inf, overrides +inf; `operator<` is `Core::RanksBefore`, score
+        then DPS, generation order on a full tie). The old floors decide only
+        where the legacy feature applies; they drop nothing from the ranking.
+        kappa and the slot features enter only the logged logit, after the
+        allocation (`core/ChoiceLive.h`). The explanation (largest theta n cap
+        term) feeds the label and the reason hold in place of `DominantReason`.
+        `[Recs]` / `hg recs` print mu, sd, the top three terms, b and the
+        legacy feature. A missing or invalid bootstrap falls back to ranking on
+        ln utility over the floors' rows (an error line, `hg status`), without
+        the favourites rank scaling and the potion tier preference.
+      - The legacy switch is live and hot-reloadable: off, no legacy pass runs
+        (no context rules, prior, correlation or potion work), the feature is 0
+        and util missing 1 on every row; the old learner and UsageMemory keep
+        training.
+      - The cosave: `THTA` (the bootstrap's created_utc and SHA-256; the keyed
+        weights {key, mu, var} that moved from the bootstrap, since the load
+        gives every other key the file's value; early only: an answered
+        onset moves all 486 of its need's theta and strength variances, so
+        long play nears the full ~36k) and `BIAS` ({formID, mu, var, n, play minutes,
+        favourite bit}: the variance and the bit beyond the map's plan), pure
+        codec `core/ChoiceCosave`, written in BanditSerializer's callbacks by
+        `persist/ChoiceSerializer`. **BNDW STAYS** (D2 reads the old learner's
+        per-item state); "THTA/BIAS replace BNDW" waits until D2 is retired.
+        A load follows the old learner's decision: a reload of the same
+        character keeps the in-memory learning (b's 0xFF forms from the save);
+        otherwise THTA per key over the bootstrap (unknown keys dropped and
+        counted), BIAS for b; no THTA = the bootstrap, b under sBootstrapBias.
+        With the model off (no bootstrap), a save writes back the records
+        its load read, so a session without the file loses no learning.
+        `hg reset weights`, `hg reset all` and the dMenu reset return theta to
+        the bootstrap and clear b; `hg status` and the `[Soak]` heartbeat
+        (`choice theta=moved/entries b=`) report the counts; the learner latch
+        also fires on a theta or b update.
+      - The bootstrap's curves override the [Needs] line (encumbrance =
+        logistic 0.988677 73.4157; logged once; `hg needs` says where each
+        curve came from); configs/Huginn.ini's line matches, with a comment
+        (`tools/needs/make_need_ids.py --check` reads the bootstrap).
+      - Replay equivalence through the live path (the legacy switch, the
+        ranking pass, then the allocation's kappa): synthetic fixture 1.1e-11;
+        the mage's 1,865 decisions (219,049 rows) 9.3e-11, hit@8 0.7968, page
+        hit@1 0.5457, page NLL 1.289071, pick NLL 1.966564 -- identical.
+      - Behaviour changes to expect in play: pages are always full (nothing is
+        under a floor any more); the wildcard draws from the whole ranked list
+        below the slot, not only the floors' rows (R10 replaces it); external
+        equips of items the floors used to drop now classify as `miss` (a
+        ranked candidate), not `novel`, so the soak's accept denominators move;
+        the v3 rows' `util` lacks the favourites rank scaling and the potion
+        tier step; the situational label speaks only for items whose own
+        explanation is the page's reason (none in the fallback).
+      - **In game (you):** see the R8.3 PR for the checks: a save/reload keeps
+        the theta and b counts of `hg status`, `hg reset weights` returns theta
+        to the bootstrap, `bLegacyLearnFeature = 0` through `hg reload` keeps the
+        pages filled, a missing bootstrap ranks on the old utility, and the
+        `[Soak]` `rate` field against the model below.
 - [ ] With those sensors, doc 11 step 7: the attacker's race on every hit and
       `poison_damage_rate`, for anticipatory resists.
 - [ ] **Decide: which thread runs the update loop** (2026-10-09, two Tracy
@@ -1076,16 +1141,35 @@ changed in the same PR, and the shipped INI loses the dead keys.
       is frozen; not fixed there. It also labelled Potato Soup `Poisoned`:
       on LoreRim that soup carries Resist Poison (`[PopulateItemTags]`), no
       cure, so the new effect data should rank it as prevention, not a cure.
-- [ ] The need signature joins the pipeline skip gate (moved from R3 by its
+- [x] The need signature joins the pipeline skip gate (moved from R3 by its
       verifier, round 1 on #188): a quantised (0.05) need signature, so
       continuous needs re-score; it then replaces `ambientSignature` and the
-      elemental window. Not in R3 because it is not "logged only": modelled
+      elemental window. **Built in 0.24.0 (R8.3):** `Core::Needs::SignatureHash`
+      (FNV-1a over the K levels of `Signature`) of the vector NeedMonitor
+      evaluates each tick (with the bootstrap's curves, so the vector the
+      score reads) is compared in both gates (`NeedsForcedRun`,
+      `CheckHashSkip`); `ambientSignature`, the coordinator's elemental latch,
+      `StateManager::IsElementalWindowActive` and `m_elementalWindowActive`
+      are gone (the enrichment of isOnFire and the like stays for the legacy
+      context rules). The `[Soak]` heartbeat gained `rate runs/s=..
+      wildcard=..% wheeler/s=..` for the comparison below. One known loss: the
+      enrichment window's close (fixed 5 s) no longer forces a run by itself;
+      the damage-rate needs decay on their own clock (kDamageDecayTauSec) and
+      move the signature while they do, but not at that instant; the window
+      only feeds the legacy feature's context gate, so the cost is a stale
+      legacy feature until the next run. Not in R3 because it is not "logged only": modelled
       at 0.17 -> 4.6 pipeline runs/s in a melee fight and 0.01 -> 0.44 on a
       quiet dungeon walk, a wildcard on screen ~20% -> ~32% of quiet
       exploration (a roll happens on each run with none showing), Wheeler
       pushes ~4.6/s in fights, and the soak denominators move. Here, where
       the scorer reads the needs, re-scoring on a need step is the point;
       measure the wildcard share and the Wheeler push rate when it lands.
+      **Flapping** (no hysteresis; the levels round at x.025): argued, not
+      measured -- no need in needs.csv is known to sit on a boundary with
+      noise (0/1 facts, darkness held 5 s / 3 s, one-way vitals and decays,
+      distance needs that follow motion), and a run per tick (~10/s) is the
+      ceiling. **Soak gate:** quiet-scene `runs/s` above 1 (model 0.44)
+      stops the soak until `Signature` gets one level of hysteresis.
 - [ ] **After the rework, measure slot churn against this baseline.** The
       user, on the R3 build's LoreRim session (2026-10-09): "slot churn
       definitely increased". Measured in that session: 4-6 slot changes a

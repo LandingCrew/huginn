@@ -104,10 +104,11 @@ namespace Huginn {
 void ResetPipelineSubsystems() {
     if (g_utilityScorer) g_utilityScorer->Reset();
     if (g_usageMemory) g_usageMemory->Clear();
-    // R8.2: the new learner (shadow) back to the bootstrap: no cosave yet, so
-    // a load and `hg reset all` both start it from the file. b follows
-    // [Learning] sBootstrapBias against the character the load resolved.
-    if (g_choiceLearner) g_choiceLearner->ResetToBootstrap(g_activeCharacterID.load(std::memory_order_relaxed));
+    // R8.3: NOT the choice learner. A load restores it from the cosave
+    // (Persist::ResolveLoadedChoice, InitializeGameSystems step 6c, before
+    // this runs at step 8), and `hg reset all` / `hg reset weights` / the
+    // dMenu reset return it to the bootstrap themselves
+    // (SettingsReloader::ResetLearningData).
 
     Override::OverrideManager::GetSingleton().Reset();
     Candidate::CandidateGenerator::GetSingleton().Reset();

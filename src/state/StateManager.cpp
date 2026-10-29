@@ -168,9 +168,6 @@ namespace Huginn::State
       m_fallHpBefore = -1.0f;
       m_pendingLanding = {};
 
-      // --- Elemental window flag (stale true would hold the outer gate open) ---
-      m_elementalWindowActive.store(false, std::memory_order_relaxed);
-
       // --- R3 need sensors: timers, damage sums, the held families ---
       {
          std::unique_lock lock(m_needMutex);

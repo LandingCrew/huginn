@@ -209,11 +209,16 @@ namespace Huginn::Needs
 
    std::vector<std::string> FormatNeeds(const Core::Needs::NeedVector& v)
    {
+      // R8.3: each line says where its curve came from: the csv default, a
+      // [Needs] line, or the bootstrap (which overrides the line: theta was
+      // fitted with it).
+      const auto& settings = NeedSettings::GetSingleton();
       std::vector<std::string> lines;
       for (std::size_t i = 0; i < Core::Needs::kNeedCount; ++i) {
          if (Core::Needs::SignatureLevel(v.value[i]) == 0) continue;
          const auto& info = Core::Needs::kNeeds[i];
-         lines.push_back(fmt::format("{:<24} {:.2f}  (input {:g}){}", info.id, v.value[i], v.input[i],
+         lines.push_back(fmt::format("{:<24} {:.2f}  (input {:g}) curve {}{}", info.id, v.value[i], v.input[i],
+            NeedSettings::SourceName(settings.CurveSource(i)),
             info.deferred ? "  [deferred: no sensor]" : ""));
       }
       return lines;

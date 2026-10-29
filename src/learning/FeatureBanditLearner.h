@@ -89,7 +89,9 @@ namespace Huginn::Learning
       // Delete every entry whose retention fell under forgetBelow. One
       // shared-lock pass finds them; the unique lock is taken only when one
       // is due. Returns the number forgotten. MaybeForgetFaded runs it at
-      // most once a minute of play, from the scoring pass.
+      // most once a minute of play, from the update loop (UpdateLoop.cpp,
+      // since R8.3; it was the scoring pass, which the legacy switch can
+      // turn off).
       size_t ForgetFaded();
       size_t MaybeForgetFaded();
       [[nodiscard]] uint64_t GetForgottenTotal() const noexcept {
@@ -184,9 +186,10 @@ namespace Huginn::Learning
       // ally flap happened to move the hash. In a still scene nothing would
       // have moved it at all.
       //
-      // Update() ONLY. Not MaybeForgetFaded, which runs from inside the scoring
-      // loop (a forced run would re-enter it), and fading is gradual over
-      // hours -- the next run publishes it. Not ImportData or Clear either -- the load
+      // Update() ONLY. Not MaybeForgetFaded (it ran inside the scoring loop,
+      // where a forced run would re-enter it; from R8.3 it runs from the
+      // update loop), and fading is gradual over hours -- the next run
+      // publishes it. Not ImportData or Clear either -- the load
       // and reset paths already force a pass through
       // PipelineCoordinator::ResetCrossSaveState().
       //

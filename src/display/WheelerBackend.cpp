@@ -15,6 +15,7 @@
 #include "wheeler/WheelerSettings.h"
 #include "wheeler/WheelSync.h"   // RequiresUniqueID - what Wheeler will refuse
 #include "WheelUidFilter.h"
+#include "telemetry/SoakMetrics.h"   // R8.3: wheeler pushes/s
 
 namespace Huginn::Display
 {
@@ -35,6 +36,7 @@ namespace Huginn::Display
     void WheelerBackend::Push(const DisplayContext& ctx)
     {
         Huginn_ZONE_NAMED("Display::Wheeler");
+        Telemetry::SoakMetrics::GetSingleton().RecordWheelerPush();   // R8.3: the heartbeat's wheeler/s
         auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();
         auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
         auto& slotLocker = Slot::SlotLocker::GetSingleton();

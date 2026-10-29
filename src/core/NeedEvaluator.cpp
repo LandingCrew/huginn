@@ -222,6 +222,16 @@ namespace Huginn::Core::Needs
         return sig;
     }
 
+    std::uint64_t SignatureHash(const NeedSignature& sig) noexcept
+    {
+        std::uint64_t h = 1469598103934665603ull;
+        for (const std::uint8_t level : sig) {
+            h ^= level;
+            h *= 1099511628211ull;
+        }
+        return h;
+    }
+
     bool SignatureMoved(const NeedSignature& logged, const NeedSignature& now, int levels) noexcept
     {
         for (std::size_t i = 0; i < kNeedCount; ++i) {

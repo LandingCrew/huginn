@@ -270,6 +270,14 @@ namespace Huginn::Settings
             learnerItems = learner->GetItemCount();
             learner->Clear();
 
+            // R8.3: the choice learner too -- theta back to the bootstrap and b
+            // cleared (no sBootstrapBias seed: a reset forgets this character's
+            // b, the file's included). The old learner above is reset as before:
+            // it feeds the D2 legacy feature.
+            if (g_choiceLearner) {
+                g_choiceLearner->ResetToBootstrap(g_activeCharacterID.load(std::memory_order_relaxed), /*seedB=*/false);
+            }
+
             // Unlock all slots so the next scoring cycle can reassign immediately —
             // otherwise locked slots keep pinning recommendations scored by the
             // just-cleared table for the remainder of their lock duration.
@@ -390,7 +398,11 @@ namespace Huginn::Settings
         if (g_choiceLearner) {
             const auto cs = mainIni ? Learning::ChoiceSettings::FromIni(*mainIni) : Learning::ChoiceSettings{};
             g_choiceLearner->SetSettings(cs);
-            Scoring::Legacy::SetEnabled(cs.legacyLearnFeature);
+            // R8.3: a live score input. A change logs one line and re-scores
+            // the page now (the switch moves no sensor).
+            if (Scoring::Legacy::SetEnabled(cs.legacyLearnFeature) != cs.legacyLearnFeature) {
+                Slot::SlotAllocator::GetSingleton().MarkPageDirty();
+            }
             g_choiceLearner->SetMemoryLife(Learning::LearningSettings::GetSingleton().BuildConfig().memory);
             if (utilityScorer) {
                 g_choiceLearner->SetFavoritesBoost(utilityScorer->GetConfig().favoritesMode == Scoring::FavoritesMode::Boost);

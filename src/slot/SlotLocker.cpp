@@ -94,6 +94,14 @@ namespace Huginn::Slot
             if (plan.keepOverrideReason && base.overrideReason == Context::ContextReason::None) {
                 base.overrideReason = storedReason;
             }
+            // The explanation's reason (R8.3) is this run's, like the utility:
+            // a key not refreshed from a ranked row this run (a Remembrance-only
+            // row, the pre-filter data, an override's candidate, or nothing)
+            // has none, so the label and UpdateContextReason cannot read the
+            // situation of the tick it was locked on.
+            if (!plan.refreshUtility) {
+                held.candidate->explainedReason = Context::ContextReason::None;
+            }
         }
 
         // The steady clock in ms, for core::CombatUpsertMemory (one clock, any epoch).

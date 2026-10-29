@@ -1,4 +1,5 @@
 #include "BanditSerializer.h"
+#include "ChoiceSerializer.h"   // R8.3: THTA / BIAS ride in the same callbacks
 #include "Globals.h"
 
 #include <algorithm>
@@ -126,6 +127,11 @@ namespace Huginn::Persist
          logger::error("[Cosave] Failed to write the HCID record"sv);
       }
 
+      // ── THTA / BIAS (R8.3): the choice learner, beside BNDW (which STAYS:
+      // R6's D2 reads the old learner's state). Before BNDW, so a failure in
+      // that record's early returns cannot take these down.
+      SaveChoiceRecords(a_intfc);
+
       // ── BNDW record: FeatureBanditLearner weights + train counts ──────────
       if (g_featureBanditLearner) {
          if (!a_intfc->OpenRecord(kRecordType_BanditWeights, kBanditSerializationVersion)) {
@@ -192,6 +198,7 @@ namespace Huginn::Persist
       s_pendingBanditData = LoadedBanditData{};
       s_loadedCharacterID.reset();
       s_loadedClock.reset();
+      ResetPendingChoice();
 
       uint32_t type, version, length;
       while (a_intfc->GetNextRecordInfo(type, version, length)) {
@@ -347,6 +354,12 @@ namespace Huginn::Persist
                banditData.entries.size(), banditData.resolvedFormIDs, banditData.failedFormIDs, droppedCorrupt);
             break;
          }
+         case kRecordType_Theta:
+            LoadThetaRecord(a_intfc, version, length);
+            break;
+         case kRecordType_Bias:
+            LoadBiasRecord(a_intfc, version, length);
+            break;
          default:
             logger::warn("[Cosave] Unknown record type {:08X} — skipping"sv, type);
             break;
@@ -367,6 +380,7 @@ namespace Huginn::Persist
       s_pendingBanditData.reset();
       s_loadedCharacterID.reset();
       s_loadedClock.reset();
+      ResetPendingChoice();
       logger::debug("[Cosave] Revert: learner kept until the load decides"sv);
    }
 
@@ -383,7 +397,7 @@ namespace Huginn::Persist
       intfc->SetRevertCallback(RevertCallback);
    }
 
-   void ResolveLoadedLearner(Learning::FeatureBanditLearner& learner, bool isNewGame,
+   LoadDecision ResolveLoadedLearner(Learning::FeatureBanditLearner& learner, bool isNewGame,
       bool loadSucceeded)
    {
       if (isNewGame) {
@@ -393,7 +407,7 @@ namespace Huginn::Persist
          s_activeCharacterID = NewCharacterID();
          g_activeCharacterID.store(s_activeCharacterID, std::memory_order_relaxed);
          logger::info("[Cosave] New game: learner cleared, character ID {:016X}"sv, s_activeCharacterID);
-         return;
+         return LoadDecision::NewGame;
       }
 
       // A load that failed (a missing master, a corrupt save) restored
@@ -402,7 +416,7 @@ namespace Huginn::Persist
       if (!loadSucceeded) {
          s_pendingBanditData.reset();
          logger::warn("[Cosave] Load failed -- learner and character ID left as they were"sv);
-         return;
+         return LoadDecision::Failed;
       }
 
       // A save with no readable HCID record is a different character: it
@@ -428,7 +442,7 @@ namespace Huginn::Persist
                       "({} items, {} trains, clock {}); the save is not ahead ({} trains, clock {})"sv,
             s_activeCharacterID, learner.GetItemCount(), learner.GetTotalTrainCount(), memClock,
             saveTrains, *s_loadedClock);
-         return;
+         return LoadDecision::Reload;
       }
 
       // A different character, the first load since launch, or a later save
@@ -446,6 +460,7 @@ namespace Huginn::Persist
       g_activeCharacterID.store(s_activeCharacterID, std::memory_order_relaxed);
       logger::info("[Cosave] Loaded character {:016X} ({}): learner from the save ({} items, clock {})"sv,
          s_activeCharacterID, why, learner.GetItemCount(), learner.GetClock());
+      return LoadDecision::Replace;
    }
 
    bool ApplyPendingBanditData(Learning::FeatureBanditLearner& learner)

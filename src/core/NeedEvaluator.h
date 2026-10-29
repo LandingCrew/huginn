@@ -58,6 +58,12 @@ namespace Huginn::Core::Needs
     [[nodiscard]] std::uint8_t SignatureLevel(float v) noexcept;
     [[nodiscard]] NeedSignature Signature(const NeedArray& values) noexcept;
 
+    /// R8.3: the pipeline skip gate's key (PipelineCoordinator): the signature
+    /// folded to 64 bits (FNV-1a over the K levels). Vectors whose 0.05-step
+    /// levels agree everywhere share it; a step on any need changes it (a
+    /// collision costs one skipped run, at a 2^-64 chance).
+    [[nodiscard]] std::uint64_t SignatureHash(const NeedSignature& sig) noexcept;
+
     /// The [Needs] log line's deadband (0.23.16; logging only, the future skip
     /// gate keeps the plain signature): `now` is worth a line against the last
     /// LOGGED signature when a need turned on or off (level 0 <-> not 0) or

@@ -1,10 +1,10 @@
 #pragma once
 
 // =============================================================================
-// CHOICE SHADOW (R8.2) -- the new model's tick of one pipeline run
+// CHOICE SHADOW (R8.2; R8.3: the ranking's tick) -- the model's tick of one pipeline run
 // =============================================================================
-// PipelineCoordinator::ScoreShadow builds one ShadowRun per pipeline run, after
-// the old scoring and the allocation (the ranking is untouched): the learner's
+// PipelineCoordinator::RankOnChoice builds one ShadowRun per pipeline run (the
+// name is R8.2's, when the model ran in shadow; from R8.3 it ranks): the learner's
 // snapshot, the shadow need vector (the live curve outputs, the bootstrap's
 // curves re-read from their inputs), recent_<family> now, and the tick (v, W).
 // It scores every eligible row with it; the run is cached beside the eligible

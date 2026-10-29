@@ -299,8 +299,16 @@ namespace Huginn::Telemetry
         // One pipeline recompute produced `candidateCount` scored candidates and
         // `displayedCount` widget items; `overrideActive` = a safety override was
         // the top recommendation this run.
+        // R8.3: `wildcardShown` = a wildcard sits on the displayed page after
+        // this run; the heartbeat's wildcard share is the fraction of update
+        // ticks that follow such a run (the page holds until the next run).
         void RecordPipelineRun(std::size_t candidateCount, std::size_t displayedCount,
-            bool overrideActive);
+            bool overrideActive, bool wildcardShown = false);
+
+        // R8.3: one push to the Wheeler backend (WheelerBackend::Push). The
+        // heartbeat's wheeler/s, to compare a session against the need-gate
+        // model (about 4.6 pushes/s in a melee fight).
+        void RecordWheelerPush() noexcept { m_wheelerPushes.fetch_add(1, std::memory_order_relaxed); }
 
         // A pipeline tick was abandoned because a page switch landed mid-tick
         // (PipelineCoordinator::AllocateAndLock). Expected ~0; a nonzero heartbeat
@@ -352,7 +360,7 @@ namespace Huginn::Telemetry
         SoakMetrics(const SoakMetrics&) = delete;
         SoakMetrics& operator=(const SoakMetrics&) = delete;
 
-        void EmitHeartbeat(std::chrono::steady_clock::time_point now);
+        void EmitHeartbeat(std::chrono::steady_clock::time_point now, float windowSec);
 
         std::atomic<bool>    m_started{false};
         std::atomic<int64_t> m_processStart{0};  // steady_clock epoch ticks
@@ -390,6 +398,10 @@ namespace Huginn::Telemetry
         std::atomic<uint32_t> m_recomputes{0};
         std::atomic<uint32_t> m_overrideRuns{0};
         std::atomic<uint32_t> m_pageRaceBails{0};  // ticks abandoned to a mid-tick page switch
+        // R8.3 rates (window): Wheeler pushes, and ticks with a wildcard shown.
+        std::atomic<uint32_t> m_wheelerPushes{0};
+        std::atomic<uint32_t> m_wildcardTicks{0};
+        std::atomic<bool> m_wildcardOnScreen{false};   // as the last pipeline run left the page
         std::atomic<uint64_t> m_tickSumMicros{0};
         std::atomic<uint32_t> m_tickPeakMicros{0};
 

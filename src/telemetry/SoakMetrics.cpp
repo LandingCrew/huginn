@@ -3,6 +3,7 @@
 #include "Config.h"
 #include "Globals.h"
 #include "Profiling.h"
+#include "learning/ChoiceLearner.h"
 #include "learning/FeatureBanditLearner.h"
 
 #include <algorithm>
@@ -81,9 +82,10 @@ namespace Huginn::Telemetry
 
     void SoakMetrics::RecordPipelineRun([[maybe_unused]] std::size_t candidateCount,
         [[maybe_unused]] std::size_t displayedCount,  // read only by Huginn_PLOT (Tracy builds)
-        bool overrideActive)
+        bool overrideActive, bool wildcardShown)
     {
         m_recomputes.fetch_add(1, std::memory_order_relaxed);
+        m_wildcardOnScreen.store(wildcardShown, std::memory_order_relaxed);
         if (overrideActive) {
             m_overrideRuns.fetch_add(1, std::memory_order_relaxed);
         }
@@ -184,6 +186,9 @@ namespace Huginn::Telemetry
         const uint32_t micros = tickMs > 0.0f ? static_cast<uint32_t>(tickMs * 1000.0f) : 0u;
         m_ticks.fetch_add(1, std::memory_order_relaxed);
         m_tickSumMicros.fetch_add(micros, std::memory_order_relaxed);
+        if (m_wildcardOnScreen.load(std::memory_order_relaxed)) {
+            m_wildcardTicks.fetch_add(1, std::memory_order_relaxed);
+        }
 
         uint32_t prevPeak = m_tickPeakMicros.load(std::memory_order_relaxed);
         while (micros > prevPeak &&
@@ -197,11 +202,11 @@ namespace Huginn::Telemetry
         const float elapsedMs = std::chrono::duration<float, std::milli>(elapsed).count();
         if (elapsedMs >= Config::SOAK_HEARTBEAT_INTERVAL_MS) {
             m_windowStart.store(nowTicks, std::memory_order_relaxed);
-            EmitHeartbeat(now);
+            EmitHeartbeat(now, elapsedMs / 1000.0f);
         }
     }
 
-    void SoakMetrics::EmitHeartbeat(std::chrono::steady_clock::time_point now)
+    void SoakMetrics::EmitHeartbeat(std::chrono::steady_clock::time_point now, float windowSec)
     {
         // Read-and-reset the window counters.
         const uint32_t hit   = m_hit.exchange(0, std::memory_order_relaxed);
@@ -216,6 +221,8 @@ namespace Huginn::Telemetry
         const uint32_t recomputes   = m_recomputes.exchange(0, std::memory_order_relaxed);
         const uint32_t overrideRuns = m_overrideRuns.exchange(0, std::memory_order_relaxed);
         const uint32_t pageBails    = m_pageRaceBails.exchange(0, std::memory_order_relaxed);
+        const uint32_t wheelerPushes = m_wheelerPushes.exchange(0, std::memory_order_relaxed);
+        const uint32_t wildcardTicks = m_wildcardTicks.exchange(0, std::memory_order_relaxed);
         const uint64_t sumMicros    = m_tickSumMicros.exchange(0, std::memory_order_relaxed);
         const uint32_t peakMicros   = m_tickPeakMicros.exchange(0, std::memory_order_relaxed);
         const uint32_t pressRegular = m_pressRegular.exchange(0, std::memory_order_relaxed);
@@ -321,6 +328,23 @@ namespace Huginn::Telemetry
             learnerTrains = g_featureBanditLearner->GetTotalTrainCount();
             learnerForgot = g_featureBanditLearner->GetForgottenTotal();
         }
+        // R8.3: the choice learner beside the old one (theta entries moved
+        // from the bootstrap / all keyed entries, b items), or "off" in the
+        // fallback ranking.
+        std::string choiceStr = "off";
+        if (g_choiceLearner && g_choiceLearner->Ready()) {
+            const auto st = g_choiceLearner->GetStats();
+            choiceStr = std::format("theta={}/{} b={} picks={}", st.thetaMoved, st.thetaEntries, st.bEntries,
+                st.picksLearned);
+        }
+        // R8.3: the rates the need-signature gate was modelled at (runs/s
+        // 4.6 in a melee fight, 0.44 on a quiet walk; wildcard on screen 20%
+        // to 32% exploring; Wheeler 4.6 pushes/s in fights).
+        const float win = windowSec > 0.0f ? windowSec : 1.0f;
+        const std::string rateStr = std::format("runs/s={:.2f} wildcard={:.0f}% wheeler/s={:.2f}",
+            static_cast<float>(recomputes) / win,
+            ticks ? 100.0f * static_cast<float>(wildcardTicks) / static_cast<float>(ticks) : 0.0f,
+            static_cast<float>(wheelerPushes) / win);
 
         const int64_t upTicks = now.time_since_epoch().count() -
                                 m_processStart.load(std::memory_order_relaxed);
@@ -342,7 +366,8 @@ namespace Huginn::Telemetry
         logger::info(
             "[Soak] up={}h{:02}m{:02}s | equips hit={} near={} miss={} novel={} new={} accept={} skipped={} | "
             "recompute={}/{} ticks override={} pageBail={} | slotChurn={} | learn items={} trains={} forgot={} | tick avg={:.3f} peak={:.3f} ms | "
-            "goals reachIns={} (candidate={}) presses={} (regular={} labeled={} offPage={}) pageFlips={} | {}"sv,
+            "goals reachIns={} (candidate={}) presses={} (regular={} labeled={} offPage={}) pageFlips={} | {} | "
+            "choice {} | rate {}"sv,
             upH, upM, upS,
             hit, near_, miss, novel, learned, acceptStr, skipStr,
             recomputes, ticks, overrideRuns, pageBails,
@@ -351,7 +376,7 @@ namespace Huginn::Telemetry
             avgMs, peakMs,
             totalEquips + learned, hit + near_ + miss,
             pressTotal, pressRegular, pressLabeled, pressOffPage, pageFlips,
-            Core::Reach::FormatSplit(reach));
+            Core::Reach::FormatSplit(reach), choiceStr, rateStr);
 
         Huginn_PLOT("Huginn/Learner Items", static_cast<int64_t>(learnerItems));
         // Only plot windows that carry signal — zero-equip windows would drag the

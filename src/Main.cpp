@@ -298,7 +298,8 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
 
     // What the learner holds now: fresh for a new game, the in-memory learning
     // for a reload of the same character, the save's for anything else.
-    Persist::ResolveLoadedLearner(*g_featureBanditLearner, isNewGame, loadSucceeded);
+    // R8.3: the same decision goes to the choice learner at step 6c.
+    const auto loadDecision = Persist::ResolveLoadedLearner(*g_featureBanditLearner, isNewGame, loadSucceeded);
 
     if (!g_usageMemory) {
         g_usageMemory = std::make_unique<Huginn::Learning::UsageMemory>();
@@ -368,11 +369,13 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
         [] { return Wheeler::WheelerClient::GetSingleton().IsWheelOpen(); });
     if (haveMainIni) LoadWildcardConfigFromINI(g_utilityScorer->GetWildcardManager(), mainIni);
 
-    // ── 6c. ChoiceLearner (R8.2: the new model, in shadow) ─────────────
+    // ── 6c. ChoiceLearner (R8.3: the ranking's model) ─────────────────
     // Created, and the bootstrap file read, once (the first load): its
     // items resolve through TESDataHandler::LookupForm. A missing or invalid
-    // file logs one error and leaves the new model off. Every load resets it
-    // to the bootstrap (ResetPipelineSubsystems, step 8: no cosave in R8.2).
+    // file logs one error and the pipeline ranks on the old utility (the
+    // fallback; `hg status` says so). Then the load's cosave (THTA / BIAS)
+    // under the decision step 5 made (persist/ChoiceSerializer.h); not in
+    // ResetPipelineSubsystems, which would wipe what the save restored.
     {
         const auto choiceSettings = haveMainIni ? Learning::ChoiceSettings::FromIni(mainIni) : Learning::ChoiceSettings{};
         Scoring::Legacy::SetEnabled(choiceSettings.legacyLearnFeature);
@@ -386,11 +389,15 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
             static std::optional<Learning::ChoiceSubscriber> s_choiceSub;
             s_choiceSub.emplace(*g_choiceLearner);
             Learning::EquipEventBus::GetSingleton().Subscribe(&*s_choiceSub);
-            logger::info("[Choice] bLegacyLearnFeature = {} (R8.2: logged only; the shadow scores with the D2 feature on), "
+            logger::info("[Choice] bLegacyLearnFeature = {} (R8.3: a live score input, w = the bootstrap's), "
                          "fCoveredPrior = {:.3g}, fThetaProcessNoise = {:.3g}, fFavoriteLifeMult = {:.3g}, sBootstrapBias = {}"sv,
                 choiceSettings.legacyLearnFeature, choiceSettings.coveredPrior, choiceSettings.thetaProcessNoise,
                 choiceSettings.favoriteLifeMult, Core::Bootstrap::BiasModeName(choiceSettings.biasMode));
+            // R8.3: the bootstrap's curves replace the [Needs] lines of the
+            // needs they name (theta was fitted with them).
+            Needs::NeedSettings::GetSingleton().SetBootstrapCurves(g_choiceLearner->Curves());
         }
+        Persist::ResolveLoadedChoice(*g_choiceLearner, loadDecision, g_activeCharacterID.load(std::memory_order_relaxed));
     }
 
     // ── 7. OverrideManager ─────────────────────────────────────────────
