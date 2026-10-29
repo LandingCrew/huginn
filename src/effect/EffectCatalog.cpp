@@ -19,12 +19,23 @@ namespace Huginn::Effect
     {
         using namespace Core::Effect;
 
-        /// One slice of the main menu's load-order read. ~3.1 s of reading on
-        /// LoreRim is then ~780 slices, one a frame: ~13 s at 60 fps before the
-        /// worker starts mapping. The read finishes at once when a game starts
-        /// loading, so a quick Continue costs what is left of the 3 s in the
-        /// loading screen instead of a frozen menu.
-        constexpr auto kReadSliceBudget = std::chrono::milliseconds(4);
+        /// One slice of the main menu's load-order read. The read finishes at
+        /// once when a game starts loading, so a quick Continue costs what is
+        /// left of the ~3 s in the loading screen instead of a frozen menu.
+        ///
+        /// 12 ms since 0.23.48 (was 4). At 4 ms the LoreRim main menu read
+        /// too little before the player loaded: the log of 2026-10-28
+        /// 21:37:40.669 reads "load order read: 33375 forms, 10031 magic
+        /// effects; 3176 ms on the main thread in 228 slice(s), longest
+        /// 2016.4 ms, 7.0 s from start to end; the last 2016 ms at once
+        /// (kPreLoadGame)" -- 227 slices (one a frame, ~33 a second over the
+        /// 7 s, ~46 over the ~4.9 s before the load) read ~1.2 of the 3.2 s,
+        /// and the other 2 s held the main thread at kPreLoadGame. The main
+        /// menu needs no smooth frame rate: a 12 ms slice reads three times
+        /// as much per frame (~270 slices for ~3.2 s); per second somewhat
+        /// less than three times, by however much the longer slice slows the
+        /// menu's frames (not measured).
+        constexpr auto kReadSliceBudget = std::chrono::milliseconds(12);
 
         /// Set when a slice ended with forms left to read; the next Present
         /// (EffectCatalog::OnFrame) clears it and queues the next slice.
