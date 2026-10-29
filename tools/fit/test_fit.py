@@ -539,6 +539,730 @@ class PageTemperature(unittest.TestCase):
         self.assertEqual(fitlib.page_temperature(S, z, np.arange(n)), 1.0)
 
 
+# ---------------------------------------------------------------------------
+# honest yardstick, curve fit, bootstrap export (0.23.52)
+# ---------------------------------------------------------------------------
+import bootstrap   # noqa: E402
+import curve       # noqa: E402
+import export      # noqa: E402
+import honest      # noqa: E402
+import cv          # noqa: E402
+
+REPO = HERE.parents[1]
+GOLDEN_DIR = REPO / 'tests' / 'core' / 'fixtures' / 'bootstrap'
+SYN_NEEDS = ['encumbrance', 'hunger', 'health_deficit']
+SYN_COLS = ['utility_carry_weight', 'kind_food', 'restore_health']
+SYN_OBV = {(0, 0): 1.0, (1, 1): 1.0, (2, 2): 1.0}
+# item caps (rows of CapMat): Feather (carry only), Bread (food + a little carry), Potion
+# (restore), Sword (nothing), Apple (food), Elixir (restore)
+SYN_CAPS = np.array([[1.0, 0, 0], [0.2, 0.5, 0], [0, 0, 0.8], [0, 0, 0], [0, 0.3, 0], [0, 0, 0.4]])
+SYN_B = np.array([-0.5, 0.2, 0.0, 0.3, -0.2, 0.1])
+
+
+def synth_S(n=1500, seed=0, c_true=0.85, s_true=30.0, per_launch=25, w_carry=3.0, nothing=0.0, rec=False):
+    """A dataset in build()'s shape whose choices follow doc 9's model with a known encumbrance
+    curve: s_i = w_carry * logistic(r; c_true, s_true) * carry_i + 2 hunger food_i
+    + 3 health restore_i + b_i, menu rows at kappa 1. The logged encumbrance need is the shipped
+    curve (0.95, 40) of r, IN holds r. nothing: the share of decisions with no pick."""
+    rng = np.random.default_rng(seed)
+    R, K, J = len(SYN_CAPS), len(SYN_NEEDS), len(SYN_COLS)
+    r = rng.uniform(0.3, 1.1, n)
+    hunger, health = rng.uniform(0, 1, n), rng.uniform(0, 1, n) ** 2
+    N = np.stack([curve.logistic(r, 0.95, 40.0), hunger, health], axis=1)
+    IN = np.full((n, K), np.nan)
+    IN[:, 0] = r
+    INHA = np.ones((n, R))
+    for d in range(n):
+        INHA[d, rng.choice(R, 3, replace=False)] = 0.0
+    carry = SYN_CAPS[:, 0]                                    # graded, as the default spec reads it
+    s = (w_carry * curve.logistic(r, c_true, s_true)[:, None] * carry[None, :] + 2 * hunger[:, None] * SYN_CAPS[None, :, 1]
+         + 3 * health[:, None] * SYN_CAPS[None, :, 2] + SYN_B[None, :])
+    logit = s - INHA
+    P = np.exp(logit - logit.max(1, keepdims=True))
+    P /= P.sum(1, keepdims=True)
+    Y = np.array([rng.choice(R, p=p) for p in P], dtype=np.int32)
+    none = rng.random(n) < nothing
+    Y[none] = -1
+    OUT = np.array(['nothing' if y < 0 else ('key' if INHA[d, y] == 0 else 'menu') for d, y in enumerate(Y)], dtype=object)
+    LA = (np.arange(n) // per_launch).astype(np.int32)
+    launches = [f'2026101{l // 100}-{l % 100:02d}0000' for l in range(int(LA.max()) + 1)]
+    forms = ['0003EAE3', '00012EB7', 'FE012ABC', '0001397D', 'FF000801', '00099999']
+    names = ['Feather', 'Bread', 'Potion', 'Sword', 'Apple', 'Elixir']
+    UTIL = np.exp(s + rng.normal(0, 1.0, s.shape))           # an "old engine": noisy, page-blind
+    REC = np.zeros((n, 0))
+    rec_names = []
+    if rec:
+        REC = np.where(rng.random((n, 2)) < 0.3, rng.uniform(0.2, 1.0, (n, 2)), 0.0)
+        rec_names = ['recent_kind_food@5s', 'recent_kind_food@30s']
+    meta = [{'launch': launches[LA[d]], 'out': OUT[d], 'name': names[Y[d]] if Y[d] >= 0 else None, 'kind': '',
+             'ctxkey': (launches[LA[d]], d), 'build': '0.23.50 (abc)', 'case': '', 'need_ep': None} for d in range(n)]
+    return dict(CapMat=np.vstack([SYN_CAPS, np.zeros((1, J))]), xcol=np.zeros(0, dtype=int),
+                CAPID=np.tile(np.arange(R, dtype=np.int32), (n, 1)), X=np.zeros((n, R, 0)), COV=np.zeros((n, R)),
+                MASK=np.ones((n, R), dtype=bool), INHA=INHA, ITEM=np.tile(np.arange(R, dtype=np.int32), (n, 1)),
+                SLOT=np.full((n, R), -1, dtype=np.int32), UTIL=UTIL, V2=np.full((n, R, 4), np.nan),
+                CLS=np.full((n, R), -1, dtype=np.int32), Y=Y, N=N, IN=IN, OUT=OUT, LA=LA, SEG=np.zeros(n, dtype=np.int32),
+                REC=REC, v2ok=np.zeros(n, dtype=bool), launches=launches, items={f: i for i, f in enumerate(forms)},
+                classes={}, meta=meta, K=K, J=J, needs=list(SYN_NEEDS), cols=list(SYN_COLS), R=R, segments=['all'],
+                recency_names=rec_names)
+
+
+class OnlineSchedule(unittest.TestCase):
+    def test_train_is_exactly_the_past(self):
+        S = synth_S(400, per_launch=37)
+        seen = []
+        for tr, te in fitlib.online_chunks(S, every=5, min_train=100):
+            self.assertTrue(len(te) > 0)
+            self.assertEqual(tr.tolist(), list(range(te[0])))            # every earlier decision, nothing else
+            self.assertEqual(te.tolist(), list(range(te[0], te[-1] + 1)))  # consecutive
+            self.assertEqual(len(set(S['LA'][te].tolist())), 1)            # never across a launch
+            self.assertLessEqual((S['Y'][te] >= 0).sum(), 5)
+            seen += te.tolist()
+        self.assertEqual(len(seen), len(set(seen)))                         # each tested once
+        first = seen[0]
+        self.assertEqual(S['LA'][first], 3)        # 3 launches x 37 = 111 picks >= 100 precede launch 3
+        self.assertEqual(seen, list(range(first, 400)))
+
+    def test_chunks_count_picks_and_end_at_a_launch(self):
+        S = synth_S(300, per_launch=50, nothing=0.4, seed=2)
+        for tr, te in fitlib.online_chunks(S, every=4, min_train=20):
+            npk = (S['Y'][te] >= 0).sum()
+            last_of_launch = te[-1] == len(S['LA']) - 1 or S['LA'][te[-1] + 1] != S['LA'][te[-1]]
+            self.assertTrue(npk == 4 or last_of_launch)
+            if npk == 4:
+                self.assertGreaterEqual(S['Y'][te[-1]], 0)                  # a chunk ends at its 4th pick
+
+    def test_never_fits_on_no_picks_and_rejects_disorder(self):
+        S = synth_S(100, per_launch=20)
+        chunks = list(fitlib.online_chunks(S, every=5, min_train=0))
+        self.assertEqual(S['LA'][chunks[0][1][0]], 1)                      # launch 0 has no past
+        S['LA'] = S['LA'][::-1].copy()
+        with self.assertRaises(ValueError):
+            list(fitlib.online_chunks(S))
+
+    def test_no_future_leak(self):
+        """Online results before the last launch do not change when the last launch's choices do."""
+        S = synth_S(260, per_launch=40, seed=3)
+        spec = {'outside': False}
+        a, fits = fitlib.online_results(S, SYN_OBV, spec, every=10, min_train=60, maxiter=60)
+        S2 = dict(S)
+        last = S['LA'] == S['LA'].max()
+        S2['Y'] = S['Y'].copy()
+        S2['Y'][last] = (S['Y'][last] + 1) % S['R']
+        b, _ = fitlib.online_results(S2, SYN_OBV, spec, every=10, min_train=60, maxiter=60)
+        self.assertGreater(fits, 5)
+        for i in np.where(~last)[0]:
+            self.assertEqual(a[i] is None, b[i] is None)
+            if a[i] is not None:
+                self.assertEqual(a[i]['full_rank'], b[i]['full_rank'])
+                self.assertAlmostEqual(a[i]['logp'], b[i]['logp'], places=9)
+        self.assertTrue(all(a[i] is None for i in np.where(S['LA'] == 0)[0]))
+        astar_a = fitlib.astar_online(S, 10, 60)
+        astar_b = fitlib.astar_online(S2, 10, 60)
+        for i in np.where(~last)[0]:
+            if astar_a[i] is not None and 'page_logp' in astar_a[i]:
+                self.assertAlmostEqual(astar_a[i]['page_logp'], astar_b[i]['page_logp'], places=9)
+
+    def test_astar_temperature_is_the_past(self):
+        """A*'s page temperature for a chunk is fitted on the decisions before it only: each tested
+        page_logp is softmax(beta * z) with beta from the chunk's training set, and changing one pick
+        inside a chunk changes neither the earlier chunks nor the other decisions of its own chunk
+        (test_no_future_leak changes only the last launch, so it misses a leak inside a chunk)."""
+        S = synth_S(260, per_launch=40, seed=3)
+        every, mt = 10, 60
+        a = fitlib.astar_online(S, every, mt)
+        _, z = fitlib.astar_scores(S)
+        chunks = list(fitlib.online_chunks(S, every, mt))
+        checked = 0
+        for tr, te in chunks:
+            beta = fitlib.page_temperature(S, z, tr)
+            for i in te:
+                if a[i] is None or 'page_logp' not in a[i]:
+                    continue
+                on = S['MASK'][i] & (S['INHA'][i] == 0)
+                sp = beta * z[i][on]
+                y = np.where(on)[0].tolist().index(int(S['Y'][i]))
+                m = sp.max()
+                self.assertAlmostEqual(a[i]['page_logp'], float(sp[y] - m - np.log(np.exp(sp - m).sum())), places=7)
+                checked += 1
+        self.assertGreater(checked, 20)
+        # one key pick of a middle chunk moved to another on-page row: a pick page_temperature reads
+        tr, te = chunks[len(chunks) // 2]
+        keys = [i for i in te if S['OUT'][i] == 'key']
+        self.assertGreaterEqual(len(keys), 2)
+        d = keys[-1]
+        on = np.where(S['INHA'][d] == 0)[0]
+        new = next(int(r) for r in on if r != S['Y'][d] and abs(z[d, r] - z[d, S['Y'][d]]) > 1e-3)
+        S2 = dict(S)
+        S2['Y'] = S['Y'].copy()
+        S2['Y'][d] = new
+        b = fitlib.astar_online(S2, every, mt)
+        for i in range(d):                        # every earlier decision, those of d's chunk included
+            if a[i] is not None and 'page_logp' in a[i]:
+                self.assertAlmostEqual(a[i]['page_logp'], b[i]['page_logp'], places=9, msg=f'decision {i}')
+        # the change is one a temperature fitted on the chunk itself would see
+        self.assertNotAlmostEqual(fitlib.page_temperature(S, z, np.concatenate([tr, te])),
+                                  fitlib.page_temperature(S2, z, np.concatenate([tr, te])), places=6)
+
+    def test_cv_results_matches_the_old_loop(self):
+        """cv_results is cv.py's former fold loop (fit from init on the other folds)."""
+        S = synth_S(300, per_launch=30, seed=4)
+        FOLD = fitlib.launch_folds(S, 3)[S['LA']]
+        res = fitlib.cv_results(S, SYN_OBV, {'outside': False}, FOLD, maxiter=80)
+        for f in range(3):
+            te, tr = np.where(FOLD == f)[0], np.where(FOLD != f)[0]
+            M = fitlib.Model(fitlib.subset(S, tr), obvious=SYN_OBV, nitems=S['R'], outside=False)
+            p = fitlib.fit(M, fitlib.subset(S, tr), maxiter=80)
+            M2 = fitlib.Model(fitlib.subset(S, te), obvious=SYN_OBV, nitems=S['R'], outside=False)
+            for i, r in zip(te, fitlib.evaluate(M2, fitlib.subset(S, te), p)):
+                self.assertAlmostEqual(res[i]['logp'], r['logp'], places=9)
+
+
+class DataKey(unittest.TestCase):
+    def test_changes_with_what_the_fit_reads(self):
+        S = synth_S(80, rec=True)
+        k = fitlib.data_key(S, SYN_OBV)
+        self.assertEqual(k, fitlib.data_key(dict(S), dict(SYN_OBV)))
+        for name in ('CapMat', 'N', 'IN', 'REC', 'INHA', 'UTIL', 'Y'):
+            S2 = dict(S)
+            S2[name] = S[name].copy()
+            S2[name].flat[1] = 7                           # any change to an array the fit reads
+            self.assertNotEqual(fitlib.data_key(S2, SYN_OBV), k, name)
+        self.assertNotEqual(fitlib.data_key(S, {(0, 0): 1.0}), k)                # the obvious pairs
+        self.assertNotEqual(fitlib.data_key(dict(S, needs=['a', 'b', 'c']), SYN_OBV), k)
+        self.assertEqual(fitlib.data_key(dict(S, V2=S['V2'] + 1), SYN_OBV), k)  # the v2 log is not read
+
+
+class Gate(unittest.TestCase):
+    @staticmethod
+    def ys(menu, pooled):
+        return {'menu hit@8': (0.6, 0.2, menu[0], menu[1], menu[2], 400),
+                'all picks hit@8': (0.7, 0.7, pooled[0], pooled[1], pooled[2], 1800)}
+
+    def test_verdicts(self):
+        self.assertEqual(fitlib.gate(self.ys((0.43, 0.38, 0.5), (-0.011, -0.040, 0.022)))[0], True)  # the rehearsal
+        self.assertEqual(fitlib.gate(self.ys((0.43, 0.0, 0.5), (0.0, -0.01, 0.02)))[0], False)       # lower end 0: not above
+        self.assertEqual(fitlib.gate(self.ys((0.43, 0.01, 0.5), (-0.03, -0.06, 0.0)))[0], True)      # upper end 0: not worse
+        v, why = fitlib.gate(self.ys((0.43, 0.38, 0.5), (-0.02, -0.05, -0.001)))
+        self.assertEqual(v, False)
+        self.assertIn('FAILS', why[1])
+        self.assertEqual(fitlib.gate({'menu hit@8': (0.6, 0.2, 0.4, 0.3, 0.5, 9)})[0], None)
+        self.assertEqual(fitlib.gate({'all picks hit@8': (0.6, 0.7, -0.1, -0.2, -0.05, 9)})[0], False)  # a fail stays a fail
+        self.assertEqual(fitlib.verdict_word(None), 'no verdict')
+
+    def test_honest_specs(self):
+        self.assertEqual(list(honest.select_specs('picks', None)), list(honest.HONEST_DEFAULT))
+        with self.assertRaises(SystemExit):
+            honest.select_specs('picks', ['split'])        # needs --split-at: not in the table
+        self.assertIn('theta + b + u0(n) + recent', honest.select_specs('three', ['recent']))
+
+
+class Curve(unittest.TestCase):
+    def test_logistic_is_the_plugin_curve(self):
+        self.assertAlmostEqual(float(curve.logistic(0.9, 0.95, 40)), 1 / (1 + math.exp(2.0)))
+        self.assertEqual(float(curve.logistic(float('nan'), 0.95, 40)), 0.0)
+        self.assertEqual(curve.ini_line('encumbrance', 0.9033, 41.2), 'encumbrance = logistic 0.9033 41.2')
+
+    def test_with_curve_rereads_logged_inputs_only(self):
+        S = synth_S(50)
+        S['IN'][:5, 0] = np.nan
+        S2 = curve.with_curve(S, 0, 0.8, 20)
+        np.testing.assert_allclose(S2['N'][5:, 0], curve.logistic(S['IN'][5:, 0], 0.8, 20))
+        np.testing.assert_array_equal(S2['N'][:5, 0], S['N'][:5, 0])
+        np.testing.assert_array_equal(S2['N'][:, 1:], S['N'][:, 1:])
+        self.assertFalse(S2['N'] is S['N'])
+
+    def test_pair_only_mask_and_fixed_theta(self):
+        S = synth_S(400, seed=5)
+        Sv, ov = fitlib.presence_grading(S, SYN_OBV, strength=True)
+        m = curve.pair_only_mask(Sv, ov, 0)
+        self.assertEqual(m.shape, (3, 6))
+        self.assertEqual(np.where(~m[0])[0].tolist(), [0, 3])        # carry weight and its ~strength twin
+        self.assertFalse(m[1:].any())
+        M = fitlib.Model(Sv, obvious=ov, nitems=6, outside=False, theta_fixed=m)
+        p = fitlib.fit(M, Sv, maxiter=100)
+        th = M.unpack(p)['theta']
+        np.testing.assert_array_equal(th[m], M.theta0[m])               # held exactly
+        self.assertNotAlmostEqual(th[0, 0], M.theta0[0, 0], places=3)   # the pair moved
+
+    def test_recovers_the_centre(self):
+        S = synth_S(2500, seed=6, c_true=0.82, s_true=30.0, w_carry=3.0)
+        fr = curve.fit_curve(S, SYN_OBV, {'outside': False}, prior={'centre': 0.9, 'centre_sd': 1.0, 'slope_sd_log': 2.0},
+                             rounds=6, maxiter=150, start_grid=(0.7, 0.8, 0.9, 1.0))
+        self.assertAlmostEqual(fr['centre'], 0.82, delta=0.04)
+        self.assertTrue(fr['sd_centre'] > 0)
+        # a tight prior holds the centre (the documented prior, scaled down)
+        fr2 = curve.fit_curve(S, SYN_OBV, {'outside': False}, prior={'centre': 0.95, 'centre_sd': 0.002},
+                              rounds=3, maxiter=150, start_grid=(0.9, 0.95))
+        self.assertAlmostEqual(fr2['centre'], 0.95, delta=0.006)
+        js = curve.curve_json(fr, 'x', False, 3)
+        self.assertEqual(js['ini'], curve.ini_line('encumbrance', fr['centre'], fr['slope']))
+        dn, dp = curve.profile(fr, grid=(0.7, 0.82, 0.95), refit=False)
+        self.assertEqual(int(np.argmin(dn)), 1)
+        self.assertEqual(curve.edge_warnings((0.7, 0.8, 0.9), np.array([0, 1, 2]), np.array([1, 0, 2]))[0][:8], 'WARNING:')
+
+
+def golden_documents():
+    """The two golden examples, from literal pieces (tests/core/fixtures/bootstrap/)."""
+    needs = ['health_deficit', 'encumbrance', 'hunger']
+    cols = ['restore_health', 'utility_carry_weight', 'kind_food', 'summon']
+    source = {'char': '0000000000000001', 'launches': 3, 'first_launch': '20261009-141228',
+              'last_launch': '20261028-171653', 'decisions': 120, 'picks': 100,
+              'builds': ['0.23.41 (abc1234)', '0.23.50 (def5678)'], 'forms': 'Huginn_All.csv', 'tool': 'golden example'}
+    full = bootstrap.make_document(
+        source=source, spec='theta + b + u0(n) + recent', outcomes='three', grading='presence+strength',
+        needs=needs, cols=cols,
+        theta=[[2.5, 0, 0, -0.125], [0, 1.75, 0, 0], [0, 0, 1.5, 0]],
+        theta_precision=[[40.5, 11.1111, 11.1111, 12], [11.1111, 3.25, 11.1111, 11.1111], [11.1111, 11.1111, 20, 11.1111]],
+        theta_strength=[[0.5, 0, 0, 0], [0, -0.25, 0, 0], [0, 0, 0.375, 0]],
+        theta_strength_precision=[[15, 11.1111, 11.1111, 11.1111]] * 3,
+        kappa=3.125, u0={'bias': -1.5, 'need': {'health_deficit': 0.25, 'encumbrance': 0.0, 'hunger': -0.5}},
+        recent={'window_s': 30, 'taus_s': [5, 30], 'features': [
+            {'family': 'summon', 'tau_s': 5, 'theta': [0, 0, 0, -0.75], 'theta_strength': [0, 0, 0, 0.125],
+             'precision': [11.1111, 11.1111, 11.1111, 14], 'u0': 0.0625},
+            {'family': 'summon', 'tau_s': 30, 'theta': [0.25, 0, 0, -0.5], 'theta_strength': [0, 0, 0, 0],
+             'precision': [12, 11.1111, 11.1111, 13], 'u0': 0.0}]},
+        features=[('ln util', 0.875), ('util missing', -2.25)],
+        items=[('Skyrim.esm', '03EAF3', 'Potion of Minor Healing', 0.375, 9.5, 12),
+               ('Update.esm', '000801', 'Feather on Self', -0.0625, 4.25, 1),
+               ('ccBGSSSE001-Fish.esm', '00087E', 'Roasted Carp', 0.125, 4.5, 2)],
+        items_dropped={'dynamic (FF)': 2, 'not in the form map': 1},
+        curves={'encumbrance': ('logistic', 0.9, 40)}, created_utc='2026-10-28 12:00:00')
+    minimal = bootstrap.make_document(
+        source=source, spec='theta + b (doc 9)', outcomes='picks', grading='graded', needs=needs[:2], cols=cols[:2],
+        theta=[[1.0, 0], [0, 1.0]], theta_precision=[[1.5, 11.1111], [11.1111, 1.25]], kappa=2.5,
+        created_utc='2026-10-28 12:00:00')
+    return {'bootstrap_v1_full.json': full, 'bootstrap_v1_minimal.json': minimal}
+
+
+class BootstrapFormat(unittest.TestCase):
+    def test_golden_files(self):
+        """The checked-in examples are what the writer produces, and they validate. To refresh them
+        after a deliberate format change: python tools/fit/test_fit.py --write-golden."""
+        for name, doc in golden_documents().items():
+            self.assertEqual(bootstrap.validate(doc), [], name)
+            text = (GOLDEN_DIR / name).read_text(encoding='utf-8')
+            self.assertEqual(bootstrap.dumps(doc), text, name)
+            self.assertEqual(json.loads(text), doc)
+            self.assertEqual(bootstrap.validate(json.loads(text)), [])
+
+    def test_validate_rejects(self):
+        full = golden_documents()['bootstrap_v1_full.json']
+
+        def broken(fn):
+            d = json.loads(json.dumps(full))
+            fn(d)
+            return bootstrap.validate(d)
+
+        self.assertTrue(broken(lambda d: d.update(version=2)))
+        self.assertTrue(broken(lambda d: d.update(format='other')))
+        self.assertTrue(broken(lambda d: d['theta'][1].pop()))
+        self.assertTrue(broken(lambda d: d.update(theta_strength=None)))          # required by presence+strength
+        self.assertTrue(broken(lambda d: d.update(u0=None)))                      # required by three
+        self.assertTrue(broken(lambda d: d['items'][0].update(local='3EAF3')))
+        self.assertTrue(broken(lambda d: d['items'][0].update(local='03eaf3')))
+        self.assertTrue(broken(lambda d: d['items'].append(dict(next(i for i in d['items'] if i['plugin'] == 'Skyrim.esm'),
+                                                                plugin='SKYRIM.ESM'))))       # plugin names ignore case
+        self.assertTrue(broken(lambda d: d['recent']['features'][0].update(family='nope')))
+        self.assertTrue(broken(lambda d: d['recent']['features'][0].pop('u0')))
+        self.assertTrue(broken(lambda d: d['features'].append({'name': 'ln ctx', 'w': 1})))
+        self.assertTrue(broken(lambda d: d['curves'].update(encumbrance=['logistic', 0.9, 0])))
+        self.assertTrue(broken(lambda d: d['needs'].append('hunger')))
+        self.assertTrue(broken(lambda d: d.update(theta_bias=[0, 0, 0, 0])))      # no bias with presence+strength
+        # a precision is above 0 (sigma^2 = 1 / precision)
+        self.assertTrue(broken(lambda d: d['theta_precision'][0].__setitem__(1, 0)))
+        self.assertTrue(broken(lambda d: d['theta_strength_precision'][2].__setitem__(0, -1.0)))
+        self.assertTrue(broken(lambda d: d['recent']['features'][1]['precision'].__setitem__(3, 0.0)))
+        self.assertTrue(broken(lambda d: d['items'][1].update(precision=0)))
+        self.assertEqual(broken(lambda d: d.update(future_field={'x': 1})), [])  # unknown fields are allowed
+        minimal = golden_documents()['bootstrap_v1_minimal.json']
+        self.assertTrue(bootstrap.validate(dict(minimal, theta_strength=[[0, 0], [0, 0]])))
+        with self.assertRaises(ValueError):
+            bootstrap.dumps(dict(minimal, kappa=float('nan')))
+
+    def test_numbers(self):
+        self.assertEqual(bootstrap.num(-0.0), 0.0)
+        self.assertEqual(bootstrap.num(1.23456789), 1.23457)
+        self.assertEqual(bootstrap.num(np.float64(2.5)), 2.5)
+
+    def test_item_key(self):
+        forms = {0x0003EAE3: ('Skyrim.esm', 'Potion', 'Potion'), 0xFE012ABC: ('Light.esp', 'L', 'Spell'),
+                 0x2D001234: ('Mod.esp', 'M', 'Armor')}
+        self.assertEqual(bootstrap.item_key('0003EAE3', forms), (('Skyrim.esm', '03EAE3'), None))
+        self.assertEqual(bootstrap.item_key('FE012ABC', forms), (('Light.esp', '000ABC'), None))   # light: 12 bits
+        self.assertEqual(bootstrap.item_key(0x2D001234, forms), (('Mod.esp', '001234'), None))
+        self.assertEqual(bootstrap.item_key('FF000801', forms), (None, 'dynamic (FF)'))
+        self.assertEqual(bootstrap.item_key('00012345', forms), (None, 'not in the form map'))
+
+    def test_item_key_names_the_index_owner(self):
+        """An injected record (the real dump's FE97B053: defined by 'BOOB - Requiem.esp' at BOOB.esp's
+        index FE97B; the patch owns FE97C) is keyed by the index owner, so LookupForm(local, plugin)
+        rebuilds its FormID; an index the dump cannot attribute is not keyed."""
+        forms = {0xFE97B001: ('BOOB.esp', 'A', 'Spell'), 0xFE97B002: ('BOOB.esp', 'B', 'Spell'),
+                 0xFE97B053: ('BOOB - Requiem.esp', 'Drunkness Monitor', 'Spell'),
+                 0xFE97C800: ('BOOB - Requiem.esp', 'C', 'Spell'),
+                 0x05000801: ('Master.esm', 'M', 'Potion'), 0x06000802: ('Patch.esp', 'P', 'Potion'),
+                 0x05000900: ('patch.ESP', 'Injected', 'Potion'),         # plugin names compare without case
+                 0x07000001: ('One.esp', 'X', 'Armor'), 0x07000002: ('Two.esp', 'Y', 'Armor')}
+        own = bootstrap.index_owners(forms)
+        self.assertEqual(own[0xFE97B], 'BOOB.esp')
+        self.assertEqual(own[0xFE97C], 'BOOB - Requiem.esp')
+        self.assertEqual(own[0x05], 'Master.esm')
+        self.assertEqual(own[0x06], 'Patch.esp')
+        self.assertIsNone(own[0x07])                     # two plugins seen only there: which owns it is unknown
+        self.assertEqual(bootstrap.item_key(0xFE97B053, forms, own), (('BOOB.esp', '000053'), None))
+        self.assertEqual(bootstrap.item_key(0xFE97C800, forms), (('BOOB - Requiem.esp', '000800'), None))
+        self.assertEqual(bootstrap.item_key(0x05000900, forms, own), (('Master.esm', '000900'), None))
+        self.assertEqual(bootstrap.item_key(0x07000001, forms, own), (None, 'index owner unknown'))
+
+    def test_read_forms(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / 'Huginn_All.csv'
+            p.write_text('kind,formID,plugin,winningPlugin,name,playable\n'
+                         'Potion,0003EAE3,"Skyrim.esm","Requiem.esp","Potion of X",1\n'
+                         'Potion,0003EAE3,"Skyrim.esm","Requiem.esp","Potion of X",1\n'
+                         'Spell,FE012ABC,"Light, Mod.esp","Light, Mod.esp","Spell, Y",1\n', encoding='utf-8')
+            f = bootstrap.read_forms(p)
+        self.assertEqual(f, {0x3EAE3: ('Skyrim.esm', 'Potion of X', 'Potion'), 0xFE012ABC: ('Light, Mod.esp', 'Spell, Y', 'Spell')})
+
+
+# FE012ABC is an injected record (as the real dump's FE97B053): defined by 'Light - Patch.esp' inside
+# Light.esp's index FE012 ('Light - Patch.esp' owns FE013), so the file keys it by Light.esp, the
+# index owner (bootstrap.index_owners), and doc_scores resolves that key back to FE012ABC.
+SYN_FORMS = {0x0003EAE3: ('Skyrim.esm', 'Feather', 'Spell'), 0x00012EB7: ('Skyrim.esm', 'Bread', 'Food'),
+             0xFE012ABC: ('Light - Patch.esp', 'Potion', 'Potion'), 0x0001397D: ('Skyrim.esm', 'Sword', 'Weapon'),
+             0x00099999: ('Skyrim.esm', 'Not the Elixir', 'Potion'),
+             0xFE012001: ('Light.esp', 'Light item', 'Armor'), 0xFE013800: ('Light - Patch.esp', 'Patch item', 'Armor')}
+
+
+def with_cross_and_slots(S, seed=11):
+    """S with two runtime cross-features (they name kind_food and restore_health, as an
+    xcol entry names an effect column) on some rows, and page slots 0-7 on the rows held on
+    the page (INHA 0), so the doc's x_j(i) and slot N terms are exercised."""
+    rng = np.random.default_rng(seed)
+    S = dict(S)
+    Dn, R = S['CAPID'].shape
+    S['xcol'] = np.array([1, 2])
+    S['X'] = np.where(rng.random((Dn, R, 2)) < 0.4, rng.uniform(0.1, 1.0, (Dn, R, 2)), 0.0)
+    slot = np.full((Dn, R), -1, dtype=np.int32)
+    for d in range(Dn):
+        on = np.where(S['INHA'][d] == 0)[0]
+        slot[d, on] = rng.permutation(8)[:len(on)]
+    S['SLOT'] = slot
+    return S
+
+
+def doc_scores(doc, S, forms):
+    """An independent reader of a bootstrap document, as docs/architecture/9-bootstrap-format.md
+    writes the score: (logit per row, u0 per decision) for every decision of S (the base dataset:
+    S['needs'] and S['cols'] in the build's order; recent_<family> values from S['REC']).
+    Names map by name; an item is found by resolving its (plugin, local) key back through the
+    form map, as LookupForm would."""
+    NI = {n: i for i, n in enumerate(S['needs'])}
+    CI = {c: j for j, c in enumerate(S['cols'])}
+    K, J = len(S['needs']), len(S['cols'])
+    fcol = [CI.get(c) for c in doc['cols']]
+
+    def row(vals):
+        out = np.zeros(J)
+        for b, j in enumerate(fcol):
+            if j is not None:
+                out[j] = vals[b]
+        return out
+
+    TH, THS = np.zeros((K, J)), np.zeros((K, J))
+    for a, n in enumerate(doc['needs']):
+        if n in NI:
+            TH[NI[n]] = row(doc['theta'][a])
+            if doc['theta_strength'] is not None:
+                THS[NI[n]] = row(doc['theta_strength'][a])
+    strength = doc['model']['grading'] == 'presence+strength'
+    presence = doc['model']['grading'] != 'graded'
+    rname = {n: i for i, n in enumerate(S['recency_names'])}
+    rec = []
+    for fo in (doc['recent'] or {}).get('features', []):
+        rec.append((rname[f"recent_{fo['family']}@{fo['tau_s']:g}s"], row(fo['theta']),
+                    row(fo['theta_strength']) if strength else np.zeros(J), fo.get('u0', 0.0)))
+    tbias = row(doc['theta_bias']) if doc['theta_bias'] is not None else None
+    loc_of = {}
+    owners = bootstrap.index_owners(forms)
+    for fid in forms:
+        key, _ = bootstrap.item_key(fid, forms, owners)
+        if key:
+            loc_of[(key[0].lower(), key[1])] = f'{fid:08X}'
+    b_of = {loc_of[(it['plugin'].lower(), it['local'])]: it['b'] for it in doc['items']}
+    form_of = {i: f for f, i in S['items'].items()}
+    W = {f['name']: f['w'] for f in doc['features']}
+    three = doc['model']['outcomes'] == 'three'
+    Dn, R = S['CAPID'].shape
+    logit, u0 = np.full((Dn, R), -np.inf), np.full(Dn, -np.inf)
+    for d in range(Dn):
+        n = S['N'][d]
+        r = S['REC'][d]
+        if three:
+            u0[d] = doc['u0']['bias'] + sum(w * n[NI[k]] for k, w in doc['u0']['need'].items() if k in NI) \
+                + sum(ru * r[ri] for ri, _, _, ru in rec)
+        for i in range(R):
+            if not S['MASK'][d, i]:
+                continue
+            cap = S['CapMat'][S['CAPID'][d, i]]
+            x = np.zeros(J)
+            for xi, j in enumerate(S['xcol']):
+                x[j] += S['X'][d, i, xi]
+            g = ((cap > 0).astype(float) if presence else cap) + x
+            st = (cap - 0.5) * (cap > 0)
+            s = n @ TH @ g + (n @ THS @ st if strength else 0.0)
+            for ri, th, ths, _ in rec:
+                s += r[ri] * (th @ g + (ths @ st if strength else 0.0))
+            if tbias is not None:
+                s += tbias @ g
+            s += b_of.get(form_of[int(S['ITEM'][d, i])], 0.0)
+            u = S['UTIL'][d, i]
+            if 'ln util' in W:
+                s += W['ln util'] * (0.0 if np.isnan(u) else math.log(max(u, 1e-6)))
+                s += W['util missing'] * (1.0 if np.isnan(u) else 0.0)
+            sl = int(S['SLOT'][d, i])
+            if 0 <= sl < 8:
+                s += W.get(f'slot {sl}', 0.0)
+            logit[d, i] = s - doc['kappa'] * S['INHA'][d, i]
+    return logit, u0
+
+
+class Export(unittest.TestCase):
+    def doc(self, spec, three=False, rec=False, log_kinds=None, cross=False):
+        S = synth_S(600, seed=7, nothing=0.3 if three else 0.0, rec=rec)
+        if cross:
+            S = with_cross_and_slots(S)
+        Sv, M, p, f, it = export.fit_all(S, SYN_OBV, spec, maxiter=150)
+        _, _, grading = export.check_spec(spec)
+        msgs = []
+        d = export.document(S, Sv, M, p, 'spec', grading, three, SYN_FORMS, {'encumbrance': ('logistic', 0.9, 40)},
+                            {'char': 'x'}, log=msgs.append, log_kinds=log_kinds)
+        return S, Sv, M, p, d, msgs
+
+    def test_theta_b_kappa_round_trip(self):
+        S, Sv, M, p, d, msgs = self.doc({'outside': False})
+        self.assertEqual(bootstrap.validate(d), [])
+        q = M.unpack(p)
+        np.testing.assert_allclose(np.array(d['theta']), q['theta'], rtol=1e-5, atol=1e-6)
+        self.assertAlmostEqual(d['kappa'], q['kappa'], places=4)
+        self.assertIsNone(d['u0'])
+        self.assertIsNone(d['recent'])
+        by = {(it['plugin'], it['local']): it for it in d['items']}
+        self.assertAlmostEqual(by[('Skyrim.esm', '03EAE3')]['b'], q['b'][0], places=5)
+        self.assertAlmostEqual(by[('Light.esp', '000ABC')]['b'], q['b'][2], places=5)
+        # the injected record is written under its index owner, never its defining plugin
+        self.assertEqual(by[('Light.esp', '000ABC')]['name'], 'Potion')
+        self.assertNotIn('light - patch.esp', {it['plugin'].lower() for it in d['items']})
+        self.assertTrue(any('injected' in m and 'FE012ABC (Light - Patch.esp in Light.esp)' in m for m in msgs))
+        self.assertEqual(by[('Skyrim.esm', '03EAE3')]['picks'], int((S['Y'] == 0).sum()))
+        # the dynamic Apple is dropped; the "Elixir" is named otherwise in the map: dropped, warned
+        self.assertEqual(d['items_dropped'], {'dynamic (FF)': 1, 'name differs from the form map': 1})
+        self.assertTrue(any('disagree' in m for m in msgs))
+        self.assertEqual(d['curves'], {'encumbrance': ['logistic', 0.9, 40.0]})
+        self.assertTrue(all(x > 0 for row in d['theta_precision'] for x in row))
+
+    def test_kind_mismatch_is_dropped(self):
+        *_, d, _ = self.doc({'outside': False}, log_kinds={'0001397D': 'Ammo'})
+        self.assertEqual(d['items_dropped'].get('kind differs from the form map'), 1)
+        self.assertNotIn('Sword', [it['name'] for it in d['items']])
+
+    def test_three_outcomes_recent_and_strength(self):
+        S, Sv, M, p, d, _ = self.doc({'_with': ['presence+strength', 'recent']}, three=True, rec=True)
+        self.assertEqual(bootstrap.validate(d), [])
+        self.assertEqual(d['model'], {'spec': 'spec', 'outcomes': 'three', 'grading': 'presence+strength'})
+        q = M.unpack(p)
+        np.testing.assert_allclose(np.array(d['theta_strength']), q['theta'][:3, 3:], rtol=1e-5, atol=1e-6)
+        self.assertEqual([(f['family'], f['tau_s']) for f in d['recent']['features']], [('kind_food', 5.0), ('kind_food', 30.0)])
+        np.testing.assert_allclose(d['recent']['features'][1]['theta'], q['theta'][4, :3], rtol=1e-5, atol=1e-6)
+        self.assertAlmostEqual(d['recent']['features'][0]['u0'], q['uout'][3], places=5)
+        self.assertAlmostEqual(d['u0']['bias'], q['uout'][-1], places=5)
+        self.assertEqual(list(d['u0']['need']), SYN_NEEDS)
+
+    def test_features_and_refusals(self):
+        *_, d, _ = self.doc({'outside': False, 'feat_spec': ['astar']})
+        self.assertEqual([f['name'] for f in d['features']], ['ln util', 'util missing'])
+        for bad in ({'feat_spec': ['ctx']}, {'_with': ['split']}, {'_latest': True},
+                    {'bias_need': True, '_with': ['presence+strength']},
+                    {'theta': False, 'item': True, 'outside': False}):        # cv.py 'b only': no theta to carry
+            with self.assertRaises(SystemExit):
+                export.check_spec(bad)
+
+    def assert_scores_round_trip(self, spec, three=False, rec=False):
+        """The written file, read back as JSON and scored with the format doc's formula by an
+        independent reader, gives the fitted model's logits (and u0) on every decision."""
+        S, Sv, M, p, d, _ = self.doc(spec, three=three, rec=rec, cross=True)
+        self.assertEqual(bootstrap.validate(d), [])
+        doc = json.loads(bootstrap.dumps(d))
+        Fm, _ = fitlib.row_features(Sv, M.feat_spec)
+        _, logit_m, u0_m = M.scores(Sv, p, Fm)
+        logit_r, u0_r = doc_scores(doc, S, SYN_FORMS)
+        # the injected Potion (FE012ABC) is carried and scored with its b (the reader finds it via Light.esp)
+        if M.item:
+            self.assertIn(('Light.esp', '000ABC'), {(it['plugin'], it['local']) for it in doc['items']})
+        # an item the file does not carry reads b = 0 in the reader
+        kept = {(it['plugin'], it['local']) for it in doc['items']}
+        q = M.unpack(p)
+        if M.item:
+            for f, i in S['items'].items():
+                key, _ = bootstrap.item_key(f, SYN_FORMS)
+                if key not in kept:
+                    logit_m = np.where(S['ITEM'] == i, logit_m - q['b'][i], logit_m)
+        fin = np.isfinite(logit_m)
+        np.testing.assert_array_equal(fin, np.isfinite(logit_r))
+        np.testing.assert_allclose(logit_r[fin], logit_m[fin], rtol=0, atol=2e-4 * max(1.0, np.abs(logit_m[fin]).max()))
+        if three:
+            np.testing.assert_allclose(u0_r, u0_m, rtol=0, atol=2e-4 * max(1.0, np.abs(u0_m).max()))
+        return d
+
+    def test_scores_round_trip_graded_recent_features(self):
+        d = self.assert_scores_round_trip({'outside': False, 'feat_spec': ['astar', 'pos'], '_with': ['recent']}, rec=True)
+        self.assertEqual([f['name'] for f in d['features']][:3], ['ln util', 'util missing', 'slot 0'])
+
+    def test_scores_round_trip_presence_strength_three(self):
+        self.assert_scores_round_trip({'_with': ['presence+strength', 'recent']}, three=True, rec=True)
+
+    def test_scores_round_trip_bias_need_three(self):
+        """A bias need's u0 weight is folded into u0.bias (the bias need is a constant 1)."""
+        d = self.assert_scores_round_trip({'bias_need': True, '_with': ['presence']}, three=True)
+        self.assertIsNotNone(d['theta_bias'])
+
+    def test_build_range(self):
+        meta = [{'build': b} for b in ('0.23.44 (bbbbbbb)', '0.23.41 (fff)', '0.23.44 (aaaaaaa)', 'dev', '0.23.44 (bbbbbbb)')]
+        # the same version twice: ordered by when each was logged, not by the hash
+        self.assertEqual(export.build_range(meta), ['dev', '0.23.44 (bbbbbbb)'])
+        self.assertEqual(export.build_range(meta[:3]), ['0.23.41 (fff)', '0.23.44 (aaaaaaa)'])
+
+
+class ExportMain(TempWork):
+    def test_end_to_end_on_a_log(self):
+        text = ''.join(session(f'2026101{i}-100000', CHAR_A, '0.23.50 (abc)', minute=i) for i in range(1, 4))
+        self.quiet(v3load.main, [str(self.write('v3.jsonl', text))])
+        forms = self.write('forms.csv', 'kind,formID,plugin,name\n'
+                                        'Potion,0003EAE3,Skyrim.esm,Potion A\nWeapon,00012EB7,Skyrim.esm,Sword\n'
+                                        'Ammo,0001397D,Skyrim.esm,Bolt\nAmmo,0201397D,Dawnguard.esm,Bolt 2\n'
+                                        'Potion,0003EAE5,Skyrim.esm,Potion B\n'
+                                        'Armor,00099999,Skyrim.esm,Robe\n')
+        cj = self.write('curve.json', json.dumps({'need': 'magicka_deficit', 'kind': 'logistic', 'centre': 0.5, 'slope': 10}))
+        doc, out = self.quiet(export.main, ['--forms', str(forms), '--curve', str(cj), '--maxiter', '30'])
+        self.assertIn('wrote', out)
+        written = json.loads((self.dir / 'bootstrap.json').read_text(encoding='utf-8'))
+        self.assertEqual(bootstrap.validate(written), [])
+        self.assertEqual(written['model']['spec'], 'theta + b + recent_<family>')
+        self.assertEqual(written['source']['char'], CHAR_A)
+        self.assertEqual({(i['plugin'], i['local']) for i in written['items']},
+                         {('Skyrim.esm', '03EAE3'), ('Skyrim.esm', '012EB7'), ('Skyrim.esm', '01397D'),
+                          ('Skyrim.esm', '03EAE5'), ('Skyrim.esm', '099999')})
+        self.assertEqual(written['curves'], {'magicka_deficit': ['logistic', 0.5, 10.0]})
+        self.assertTrue(written['recent']['features'])
+        with self.assertRaises(SystemExit):
+            self.quiet(export.main, ['--forms', str(forms), '--out', '../x.json'])
+
+
+class HonestMain(TempWork):
+    """honest.main on a tiny log: the report, the caches (reused on a second run, refitted when
+    the data or --maxiter changes) and cv.py's pickle (reused only for the same data_key, folds,
+    seed and maxiter)."""
+
+    def log(self, n):
+        text = ''.join(session(f'2026101{i}-100000', CHAR_A, '0.23.50 (abc)', minute=i) for i in range(1, n + 1))
+        self.quiet(v3load.main, [str(self.write('v3.jsonl', text))])
+
+    ARGS = ['picks', '--spec', 'theta + b (doc 9)', '--every', '2', '--min-train', '1', '--folds', '2', '--nboot', '20']
+
+    def test_end_to_end(self):
+        self.log(4)
+        r, out = self.quiet(honest.main, self.ARGS + ['--maxiter', '20'])
+        self.assertIn('theta + b (doc 9): CV fitted, online fitted', out)
+        self.assertIn('=== R6 gate', out)
+        self.assertTrue((self.dir / 'honest_picks.txt').exists() and (self.dir / 'honest_picks.pkl').exists())
+        self.assertEqual(len(list(self.dir.glob('honest_cache_*.pkl'))), 2)
+        self.assertTrue(r['tested'].any())
+        for meth in honest.METHODS:
+            self.assertIn(('theta + b (doc 9)', meth), r['verdicts'])
+        # the same run again: both from the cache, the same verdicts
+        r2, out = self.quiet(honest.main, self.ARGS + ['--maxiter', '20'])
+        self.assertIn('theta + b (doc 9): CV cache, online cache', out)
+        self.assertEqual(r2['verdicts'], r['verdicts'])
+        # another --maxiter: refitted
+        _, out = self.quiet(honest.main, self.ARGS + ['--maxiter', '21'])
+        self.assertIn('CV fitted, online fitted', out)
+        # cv.py's pickle: reused at its maxiter (300), not at another
+        self.quiet(cv.main, ['picks', '--folds', '2', '--spec', 'theta + b (doc 9)', '--nboot', '20'])
+        _, out = self.quiet(honest.main, self.ARGS + ['--maxiter', '300'])
+        self.assertIn('CV cv pickle', out)
+        _, out = self.quiet(honest.main, self.ARGS + ['--maxiter', '20'])
+        self.assertIn('CV cache', out)
+        # a rebuilt v3.pkl (one more launch, other data): the caches and the cv pickle are not reused
+        self.log(5)
+        _, out = self.quiet(honest.main, self.ARGS + ['--maxiter', '300'])
+        self.assertIn('CV fitted, online fitted', out)
+
+    def test_stale_cv_pickle_is_not_reused(self):
+        self.log(3)
+        self.quiet(cv.main, ['picks', '--folds', '2', '--spec', 'theta + b (doc 9)', '--nboot', '20'])
+        with open(self.dir / 'cv_picks.pkl', 'rb') as f:
+            C = pickle.load(f)
+        C['data_key'] = 'something else'                  # as a pickle of other data, or of older fit code
+        with open(self.dir / 'cv_picks.pkl', 'wb') as f:
+            pickle.dump(C, f)
+        _, out = self.quiet(honest.main, self.ARGS + ['--maxiter', '300', '--no-cache'])
+        self.assertIn('CV fitted', out)
+        self.assertEqual(list(self.dir.glob('honest_cache_*.pkl')), [])
+
+    def test_redefined_spec_is_not_reused(self):
+        """cv_<group>.pkl's results are reused by the spec's definition, not its name: a spec
+        changed in cv.py under the same name, or a pickle without the definitions, is refitted."""
+        self.log(3)
+        self.quiet(cv.main, ['picks', '--folds', '2', '--spec', 'theta + b (doc 9)', '--nboot', '20'])
+        with open(self.dir / 'cv_picks.pkl', 'rb') as f:
+            C = pickle.load(f)
+        self.assertEqual(C['specs']['theta + b (doc 9)'], cv.spec_key(cv.PICKS['theta + b (doc 9)']))
+        _, out = self.quiet(honest.main, self.ARGS + ['--maxiter', '300', '--no-cache'])
+        self.assertIn('CV cv pickle', out)
+        for defs in ({'theta + b (doc 9)': cv.spec_key({'outside': False, 'feat_spec': ['pos']})}, None):
+            C2 = dict(C)
+            if defs is None:
+                del C2['specs']                           # written before the definitions were stored
+            else:
+                C2['specs'] = defs                        # the spec was something else when cv.py ran
+            with open(self.dir / 'cv_picks.pkl', 'wb') as f:
+                pickle.dump(C2, f)
+            _, out = self.quiet(honest.main, self.ARGS + ['--maxiter', '300', '--no-cache'])
+            self.assertIn('CV fitted', out)
+
+
+class CurveMain(TempWork):
+    def test_end_to_end_then_export(self):
+        text = ''.join(session(f'2026101{i}-100000', CHAR_A, '0.23.50 (abc)', minute=i) for i in range(1, 4))
+        self.quiet(v3load.main, [str(self.write('v3.jsonl', text))])
+        fr, out = self.quiet(curve.main, ['--need', 'magicka_deficit', '--col', 'restore_magicka', '--spec',
+                                          'theta + b (doc 9)', '--rounds', '1', '--quick-profile'])
+        self.assertIn('[Needs] line: magicka_deficit = logistic', out)
+        self.assertIn('profile over the centre', out)
+        js = json.loads((self.dir / 'curve_magicka_deficit.json').read_text(encoding='utf-8'))
+        self.assertEqual((js['need'], js['kind']), ('magicka_deficit', 'logistic'))
+        self.assertAlmostEqual(js['centre'], fr['centre'], places=6)
+        self.assertTrue((self.dir / 'curve_magicka_deficit.txt').exists())
+        forms = self.write('forms.csv', 'kind,formID,plugin,name\nPotion,0003EAE3,Skyrim.esm,Potion A\n')
+        doc, _ = self.quiet(export.main, ['--forms', str(forms), '--curve', str(self.dir / 'curve_magicka_deficit.json'),
+                                          '--spec', 'theta + b (doc 9)', '--maxiter', '20'])
+        self.assertEqual(doc['curves']['magicka_deficit'][0], 'logistic')
+        self.assertAlmostEqual(doc['curves']['magicka_deficit'][1], js['centre'], places=4)
+        with self.assertRaises(SystemExit):
+            self.quiet(curve.main, ['--need', 'no_such_need', '--rounds', '1'])
+
+
+def write_golden():
+    GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
+    for name, doc in golden_documents().items():
+        assert bootstrap.validate(doc) == [], name
+        (GOLDEN_DIR / name).write_text(bootstrap.dumps(doc), encoding='utf-8', newline='\n')
+        print('wrote', GOLDEN_DIR / name)
+
+
 if __name__ == '__main__':
+    if '--write-golden' in sys.argv:
+        write_golden()
+        sys.exit(0)
     result = unittest.main(exit=False, verbosity=2).result
     sys.exit(0 if result.wasSuccessful() else 1)

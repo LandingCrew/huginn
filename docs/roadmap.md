@@ -615,6 +615,17 @@ Map Phase 4, in `tools/fit` (the scripts and their flags: [tools/fit/README.md](
   each with a launch-bootstrap interval on model − A*).
 - **Open for R8** (noted, not decided): the best rehearsal variant leans on the
   old engine's utility as an input -- the hand-tuned layer R8 and R11 retire.
+- **Tools for the real run and R8 (0.23.52,
+  [tools/fit/README.md](../tools/fit/README.md)).** `honest.py`: the
+  rehearsal's verifier found grouped K-fold flatters the model (it trains on
+  launches after the held-out one), so the yardstick is now also read on a
+  train-on-past online replay (refit every 5 picks, warm start), beside the CV
+  on the same decisions, with the gate verdict for each; the online verdict is
+  the honest one. `curve.py`: the encumbrance curve fit (below). `export.py`:
+  the bootstrap file R8 reads, format version 1
+  ([architecture/9-bootstrap-format.md](architecture/9-bootstrap-format.md);
+  golden examples in `tests/core/fixtures/bootstrap/`), with b keyed by plugin
+  + local FormID.
 - [ ] Conditional logit with the three outcomes (key, menu at cost κ, nothing),
       u0 per need, sparse θ, small b, Plackett–Luce co-picks; split by launch.
       **Data (0.23.51):** logs before 0.23.51 have no lap records and read the
@@ -635,7 +646,11 @@ Map Phase 4, in `tools/fit` (the scripts and their flags: [tools/fit/README.md](
       Decided 2026-10-10: the grading switches, and `recent_*` reaches R8,
       only on held-out lift; the encumbrance curve is fitted from the
       player's carry-weight picks, starting from a documented prior on its
-      centre near 0.9 (the user's "nearing" answer).
+      centre near 0.9 (the user's "nearing" answer). *The fit is
+      `tools/fit/curve.py` (0.23.52): prior c ~ N(0.9, 0.05²), ln slope ~
+      N(ln 40, 0.5²); only the obvious pair (and its strength twin) reads the
+      curve -- with every pair of the need free, the need's dense weights
+      fitted the load itself and pulled the centre to the grid's floor.*
 - [ ] **`bane_<family>` columns, after R6's first fit** (the user,
       2026-10-10). Rows that fire only on a target family (Requiem's triple
       shock damage to constructs 8719DC31 on 776 weapons, "deals 20 magic
