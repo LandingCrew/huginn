@@ -34,7 +34,7 @@ extern std::unique_ptr<Huginn::State::StateEvaluator> g_stateEvaluator;
 extern std::unique_ptr<Huginn::Spell::SpellRegistry> g_spellRegistry;
 extern std::unique_ptr<Huginn::Learning::FeatureBanditLearner> g_featureBanditLearner;
 extern std::unique_ptr<Huginn::Learning::UsageMemory> g_usageMemory;
-// R8.2: the new learner, in shadow (learning/ChoiceLearner.h); null until kDataLoaded.
+// R8.2, live from R8.3: the choice learner the pipeline ranks with (learning/ChoiceLearner.h); null until the first game load.
 extern std::unique_ptr<Huginn::Learning::ChoiceLearner> g_choiceLearner;
 extern std::unique_ptr<Huginn::Scoring::UtilityScorer> g_utilityScorer;
 extern std::unique_ptr<Huginn::Item::ItemRegistry> g_itemRegistry;

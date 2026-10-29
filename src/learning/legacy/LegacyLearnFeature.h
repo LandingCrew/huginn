@@ -20,23 +20,27 @@
 //   fColdStartUCBBoost     the cold-start rescue below iTopNCandidates rows
 // so FeatureBanditLearner, UsageMemory, PriorCalculator, CorrelationBooster,
 // PotionDiscriminator::GetMultiplier, lambda, the context weights and the
-// cold start stay live, as inputs to this feature only once PR 3 ranks by the
-// new score. The floor loop and the cold-start rescue moved here from
+// cold start stay live, as inputs to this feature only (R8.3 ranks by the new
+// score). The floor loop and the cold-start rescue moved here from
 // UtilityScorer::ScoreCandidates UNCHANGED IN ARITHMETIC: the same tests in the
-// same order on the same values; UtilityScorer calls FloorPass with its own
-// ScoreCandidateInternal and keeps ranking (R8.2: the new model is in shadow).
+// same order on the same values; UtilityScorer::LegacyPass calls FloorPass
+// with its own ScoreCandidateInternal.
 //
 // The switch: [Scoring] bLegacyLearnFeature (default true, because the
 // bootstrap's weight w = 1.36 was fitted with it). Off, the feature is 0 and
 // util missing 1 on every row, so the model is plain theta + b + recent; that
 // variant fails R6's gate, so the switch is a fallback, not a supported mode.
-// R8.2 reads the key and logs it; the shadow scores with the feature on. PR 3
-// makes it the live input behind the switch (Feature() below).
+// R8.2 read the key and logged it. R8.3 (0.24.0) makes it a LIVE SCORE INPUT:
+// the pipeline ranks every candidate on the choice score, which reads this
+// feature (w = 1.36) on the rows the floors keep. ContextRuleEngine still runs
+// every pipeline pass, but only to decide which rows the feature is computed
+// on; none of this module's output ranks anything by itself.
 //
 // Retiring this code needs a refit on 0.23.53+ logs (the v3 rows log the old
 // learner on every row) where a variant without the old scorer passes the gate.
 // =============================================================================
 
+#include "core/ChoiceLive.h"
 #include "core/OldScore.h"
 #include "Profiling.h"
 
@@ -64,6 +68,7 @@ namespace Huginn::Scoring::Legacy
         Core::DecisionLog::Floor floor = Core::DecisionLog::Floor::ctx;
         float lnLearnMult = 0.0f;   // pass / cold rows; 0 otherwise
         bool utilMissing = true;    // !(pass || cold)
+        int scoredIndex = -1;       // R8.3: its row in FloorPass's `scored` (pass / cold), else -1
         [[nodiscard]] bool Scored() const noexcept
         {
             return floor == Core::DecisionLog::Floor::pass || floor == Core::DecisionLog::Floor::cold;
@@ -86,8 +91,10 @@ namespace Huginn::Scoring::Legacy
     };
     [[nodiscard]] inline Value Feature(const Row& r, bool enabled) noexcept
     {
-        if (!enabled) return Value{ 0.0, 1.0 };
-        return Value{ r.Scored() ? static_cast<double>(r.lnLearnMult) : 0.0, r.utilMissing ? 1.0 : 0.0 };
+        // The one rule (core/ChoiceLive.h), shared with the replay test. A
+        // kept row has utilMissing false by construction (FloorPass's keep).
+        const auto v = Core::Choice::LegacyFeature(enabled, r.Scored(), static_cast<double>(r.lnLearnMult));
+        return Value{ v.lnLearnMult, v.utilMissing };
     }
 
     struct PassResult
@@ -125,6 +132,7 @@ namespace Huginn::Scoring::Legacy
             r.floor = f;
             r.lnLearnMult = LnLearnMult(s.breakdown.lambda, s.breakdown.learningScore);
             r.utilMissing = false;
+            r.scoredIndex = static_cast<int>(scored.size());   // pushed right after keep()
         };
 
         // Score all candidates
@@ -240,7 +248,13 @@ namespace Huginn::Scoring::Legacy
         return res;
     }
 
-    /// [Scoring] bLegacyLearnFeature (R8.2: read and logged; PR 3 reads it live).
+    /// [Scoring] bLegacyLearnFeature (R8.3: live and hot-reloaded). On, the
+    /// pipeline runs the legacy pass (the context rules, the prior, the
+    /// correlations, the potion multiplier, the floors) and the feature reads
+    /// it; off, none of that runs and the feature is 0 / 1 on every row. The
+    /// old learner and UsageMemory keep training either way, so switching back
+    /// on is not stale.
     [[nodiscard]] bool Enabled() noexcept;
-    void SetEnabled(bool on) noexcept;
+    /// Returns the previous value; a change logs one line.
+    bool SetEnabled(bool on) noexcept;
 }

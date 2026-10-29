@@ -61,31 +61,36 @@ namespace Huginn::Scoring
         UtilityScorer(Learning::FeatureBanditLearner& featureLearner, Learning::UsageMemory& usageMemory, const ScorerConfig& config = DefaultScorerConfig);
         ~UtilityScorer() = default;
 
-        // Main scoring method: Score all candidates and return ranked list
-        // Stage 1f: Added WorldState parameter for ContextRuleEngine
-        // @param displayPage The page THIS tick allocates, from the pipeline
-        //        snapshot (PipelineContext::displayPageIndex / displaySlotCount
-        //        / displayWildcardSlots). Wildcard eligibility is page-relative,
-        //        so it must come from the tick's snapshot rather than a live
-        //        SlotAllocator read — otherwise a page switch landing mid-tick
-        //        rolls wildcards against the new page while the pipeline
-        //        allocates the snapshotted one (critique #10).
+        // R8.3: the LEGACY PASS only -- what the old engine computes, as the
+        // D2 feature's input (learning/legacy/LegacyLearnFeature.h): the
+        // context rules once, the floor loop and the cold-start rescue, and
+        // the rows the floors keep (utility, breakdown; unsorted, no
+        // wildcards). Nothing ranks on it: PipelineCoordinator ranks every
+        // candidate on the choice score and calls RankAndApplyWildcards.
         // @param combatOnsetAgo R8.1: seconds since the current fight began,
         //        kNever out of combat (core/CombatOnset.h), for the
         //        PotionDiscriminator: the combat_onset clock.
-        // @param outWeights Optional: receives the context weight map this pass
-        //        scored against, so callers can explain the ranking without
-        //        re-deriving context (see DominantContextReason, critique #10).
-        [[nodiscard]] ScoredCandidateList ScoreCandidates(
+        // @param outWeights Optional: the context weight map this pass
+        //        scored against (the v3 log's old parts read it).
+        // @param outLegacy Optional: one Legacy::Row per candidate
+        //        (index-aligned), with the index of its row in the result.
+        [[nodiscard]] ScoredCandidateList LegacyPass(
             const std::vector<Candidate::CandidateVariant>& candidates,
             const State::GameState& state,
             const State::PlayerActorState& player,
             const State::TargetCollection& targets,
             const State::WorldState& world,
             float combatOnsetAgo,
-            const WildcardPage& displayPage,
             Context::ContextWeightMap* outWeights = nullptr,
             std::vector<Legacy::Row>* outLegacy = nullptr);
+
+        // R8.3: the whole list in rank order on SlotScore()'s score (stable;
+        // R7 -- the slot fill reads past the top N), then the wildcards.
+        // @param displayPage The page THIS tick allocates, from the pipeline
+        //        snapshot (PipelineContext::displayPageIndex / displaySlotCount
+        //        / displayWildcardSlots): wildcard eligibility is page-relative,
+        //        so it comes from the tick's snapshot (critique #10).
+        void RankAndApplyWildcards(ScoredCandidateList& scored, const WildcardPage& displayPage);
 
         // Configuration access
         [[nodiscard]] const ScorerConfig& GetConfig() const noexcept { return m_config; }
@@ -126,8 +131,9 @@ namespace Huginn::Scoring
         // Recommendation logging (release-available; see DebugSettings::recLogVerbosity).
         // detail: append learn's inputs (Q/P/UCB/α) to each line.
         // force: bypass the membership-change dedup (on-demand `hg recs` dumps).
+        // fallback (R8.3): the list ranks on the old utility (no bootstrap).
         void LogTopCandidates(const ScoredCandidateList& ranked, size_t count = 5,
-            bool detail = false, bool force = false) const;
+            bool detail = false, bool force = false, bool fallback = false) const;
 
         /// 0.23.53, LOGGING ONLY (selection log v3): what ScoreCandidates
         /// computes for one candidate, with no floor applied -- the same

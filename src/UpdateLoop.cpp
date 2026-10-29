@@ -536,19 +536,18 @@ static void RunPipelineIfNeeded(float deltaMs, RE::PlayerCharacter* player,
 
     bool pageChanged = Slot::SlotAllocator::GetSingleton().PeekPageChanged();
 
-    // Two ways the pipeline must run with no sensor delta at all:
-    //
-    //   * The elemental window decays on wall-clock time. Live query, because on
-    //     the tick it OPENS the coordinator has no latch for it yet.
-    //   * NeedsForcedRun() — state left by the last completed run that the
-    //     GameState hash cannot see: the elemental falling edge, a fall, a
-    //     pending reason downgrade (#62). CheckHashSkip consults the same list,
-    //     but it never gets the chance if this gate returns first, and a static
-    //     scene is precisely where a held label needs ticks to expire on.
+    // The pipeline must also run with no sensor delta at all when
+    // NeedsForcedRun() says so: state the GameState hash cannot see -- the
+    // need signature moved a 0.05 step since the last run (R8.3: a damage sum
+    // decaying, a timer, a continuous need; it replaced the elemental window
+    // here), a fall, a pending reason downgrade (#62), a learner update.
+    // CheckHashSkip consults the same list, but it never gets the chance if
+    // this gate returns first, and a static scene is precisely where a held
+    // label needs ticks to expire on.
     //
     // Anything that must survive a quiet scene belongs in NeedsForcedRun(), not
-    // as a fourth term here.
-    if (!stateChanged && !pageChanged && !stateManager.IsElementalWindowActive() &&
+    // as another term here.
+    if (!stateChanged && !pageChanged &&
         !Pipeline::PipelineCoordinator::GetSingleton().NeedsForcedRun()) {
         Learning::PipelineStateCache::GetSingleton().RefreshTimestamp();
         return;

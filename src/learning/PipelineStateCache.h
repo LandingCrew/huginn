@@ -101,10 +101,11 @@ namespace Huginn::Learning
             /// the floors) and util missing.
             float lnLearnMult = std::numeric_limits<float>::quiet_NaN();
             int8_t utilMissing = -1;
-            /// 0.23.56 (R8.2): the new model in shadow (PipelineCoordinator::
-            /// ScoreShadow): mu, its sd, the logit (mu - kappa off the
+            /// 0.23.56 (R8.2): the choice model (R8.3: the ranking's; mu from
+            /// PipelineCoordinator::RankOnChoice, the page's part added by
+            /// LogChoiceRows): mu, its sd, the logit (mu - kappa off the
             /// allocated page) and the explanation (need, column; -1 learned,
-            /// -2 none). Logged only: the old engine still ranks.
+            /// -2 none).
             float shadowMu = std::numeric_limits<float>::quiet_NaN();
             float shadowSd = std::numeric_limits<float>::quiet_NaN();
             float shadowLogit = std::numeric_limits<float>::quiet_NaN();

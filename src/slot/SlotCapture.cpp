@@ -281,17 +281,17 @@ namespace Huginn::Slot::Capture
             for (auto& c : list) {
                 switch (mode) {
                 case 0: break;                                                          // as scored
-                case 1: c.utility = 0.05f + 2.95f * unit(rng); break;                   // anything
-                case 2: c.utility = kRound[static_cast<size_t>(d100(rng)) % 10]; break;  // ties, 2x, 1.5x
-                case 3: c.utility *= 0.7f + 0.7f * unit(rng); break;                    // nudges around the hold
+                case 1: c.RankOnUtility(0.05f + 2.95f * unit(rng)); break;                   // anything
+                case 2: c.RankOnUtility(kRound[static_cast<size_t>(d100(rng)) % 10]); break;  // ties, 2x, 1.5x
+                case 3: c.RankOnUtility(c.utility * (0.7f + 0.7f * unit(rng))); break;                    // nudges around the hold
                 case 4: {                                                               // zeros and dust
                     const int r = d100(rng);
-                    if (r < 20) c.utility = 0.0f;
-                    else if (r < 30) c.utility = 1e-30f;
+                    if (r < 20) c.RankOnUtility(0.0f);
+                    else if (r < 30) c.RankOnUtility(1e-30f);
                     break;
                 }
-                case 5: if (d100(rng) < 50) c.utility *= 0.5f; break;                   // halves: the cap's 0.5
-                default: if (d100(rng) < 40) c.utility *= 1.5f; break;                  // the hold's 1.5
+                case 5: if (d100(rng) < 50) c.RankOnUtility(c.utility * 0.5f); break;                   // halves: the cap's 0.5
+                default: if (d100(rng) < 40) c.RankOnUtility(c.utility * 1.5f); break;                  // the hold's 1.5
                 }
             }
 

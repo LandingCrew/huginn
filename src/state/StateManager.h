@@ -116,15 +116,11 @@ namespace Huginn::State
          return m_ammoCountChanged.exchange(false, std::memory_order_acq_rel);
       }
 
-      // True while instant-hit fire/frost/shock damage is inside the elemental
-      // enrichment window. The outer pipeline-skip gate must consult this: the
-      // enrichment flags (isOnFire/isFrozen/isShocked) decay with wall-clock time
-      // without any state delta, so an unchanged-state tick can still require a
-      // pipeline run. Mirrors the inner-gate bypass in CheckHashSkip.
-      [[nodiscard]] bool IsElementalWindowActive() const noexcept
-      {
-         return m_elementalWindowActive.load(std::memory_order_relaxed);
-      }
+      // R8.3: IsElementalWindowActive is gone. It only served the outer skip
+      // gate; the need signature (fire/frost/shock_damage_rate decay with
+      // time, NeedEvaluator) now opens that gate. The enrichment itself
+      // (PipelineCoordinator::EnrichElementalDamage) stays: the legacy
+      // context rules read isOnFire and the like.
 
       // =============================================================================
       // COMBAT STATE
@@ -492,10 +488,6 @@ namespace Huginn::State
       // Used by UpdateLoop to skip expensive pipeline when state is stable
       std::atomic<bool> m_lastUpdateChanged{true};  // Default true to run pipeline on first update
       std::atomic<bool> m_ammoCountChanged{false};  // See ConsumeAmmoCountChanged
-
-      // Elemental enrichment window flag (set in PollHealthTracking, read by the
-      // outer skip gate in UpdateLoop via IsElementalWindowActive)
-      std::atomic<bool> m_elementalWindowActive{false};
 
       // Published combat flag (set in PollPlayerPosition)
       std::atomic<bool> m_isInCombat{false};

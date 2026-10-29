@@ -2,6 +2,7 @@
 
 #include "candidate/CandidateTypes.h"
 #include "core/SlotScoreMath.h"
+#include <array>
 #include <cmath>
 #include <format>
 #include <vector>
@@ -69,10 +70,44 @@ namespace Huginn::Scoring
     struct ScoredCandidate
     {
         Candidate::CandidateVariant candidate;  // The actual candidate (spell/item/weapon/etc)
-        float utility = 0.0f;                   // Final computed utility score
-        ScoreBreakdown breakdown;               // Score component breakdown
+        // The old engine's utility (R8.3: NOT the ranking). Set on the rows the
+        // old floors kept (legacyScored), 0 on the others; the v2 selection
+        // log, [Recs] and the reach lines print it. Nothing orders on it.
+        float utility = 0.0f;
+        ScoreBreakdown breakdown;               // the old utility's parts (legacy rows only)
         bool isWildcard = false;                // True if this is a wildcard exploration pick
         bool isColdStartBoosted = false;        // True if scored via cold-start UCB boost
+        // R8.3: the old floors kept this row (pass or cold start), so the D2
+        // legacy feature (ln learn mult) applies to it. False with
+        // [Scoring] bLegacyLearnFeature off.
+        bool legacyScored = false;
+
+        // R8.3: what the slot code ranks on (SlotScore()): the choice score mu
+        // (core/ChoiceScore.h, core/ChoiceLive.h), any sign; or, when the
+        // bootstrap is missing or invalid, the fallback ln(utility)
+        // (RankOnUtility). -inf until scored.
+        Core::SlotScore score = Core::kUnrankedScore;
+
+        // R8.3: the choice score's parts, for [Recs], `hg recs`, the
+        // explanation label and the reason hold. Unset (need -1) in the
+        // fallback ranking.
+        struct ChoiceParts
+        {
+            double var = 0.0;          // sigma^2 under the diagonal approximation
+            double needMu = 0.0;       // the need terms' part of mu
+            double b = 0.0;            // b as read now (the battery applied)
+            double lnLearnMult = 0.0;  // the D2 feature as the score read it
+            double utilMissing = 1.0;
+            double covered = 0.0;      // covered(i) after the upgrade gate
+            struct Term { int16_t need = -1; int16_t col = -1; double value = 0.0; };
+            std::array<Term, 3> top{};  // the three largest theta n a terms; top[0] is the explanation
+            double explainedNeed = 0.0; // n_k of the explanation's need (the label's threshold)
+        };
+        ChoiceParts choice;
+        // The explanation's need as a context reason (display/NeedReason.h),
+        // None when it maps to none, its need is below the label threshold,
+        // or the row is "learned". Feeds the reason hold and the label.
+        Context::ContextReason explainedReason = Context::ContextReason::None;
         // Not ranked: added to the list only so a Remembrance hold can show it
         // (PipelineCoordinator::ScoreCandidates). Nothing but that hold may
         // place it -- the fill and the slot hold skip it.
@@ -99,11 +134,18 @@ namespace Huginn::Scoring
         }
 
         /// What the slot code ranks on (src/core/SlotScoreMath.h): a score of
-        /// any sign. THE BRIDGE until the new scorer (R8): ln(utility). A row
-        /// that was never ranked (isRememberedOnly) is -inf, below every real
-        /// score, instead of the 0 utility it carries for display.
+        /// any sign. R8.3: the choice score mu (`score`); the bridge ln(utility)
+        /// only in the fallback ranking (no bootstrap). A row that was never
+        /// ranked (isRememberedOnly) is -inf, below every real score.
         [[nodiscard]] Core::SlotScore SlotScore() const noexcept {
-            return isRememberedOnly ? Core::kUnrankedScore : Core::BridgeScore(utility);
+            return isRememberedOnly ? Core::kUnrankedScore : score;
+        }
+
+        /// The fallback ranking (and the harness tests): rank on the old
+        /// utility through the bridge, ln(u).
+        void RankOnUtility(float u) noexcept {
+            utility = u;
+            score = Core::BridgeScore(u);
         }
 
         [[nodiscard]] float GetContextWeight() const noexcept {
@@ -154,30 +196,23 @@ namespace Huginn::Scoring
             return weapon ? weapon->damage * weapon->speed : 0.0f;
         }
 
-        // Sort by utility descending (higher utility = better), then by DPS.
+        // Sort by the score descending (R8.3: mu; higher = better), then by
+        // DPS (core/SlotScoreMath.h RanksBefore), and on a tie of both the
+        // caller's std::stable_sort keeps the generation order.
         //
-        // The tie-break exists because two instances of ONE base form score
-        // IDENTICALLY. The learner is keyed on FormID so they share a weight
-        // vector, the context weight is a property of the form, and
-        // CalculateWeaponPrior does not look at damage at all -- so a tempered
-        // Iron Dagger and a plain one come out equal to the last bit and the
-        // sort order alone decided which one the player was offered. Observed
-        // 2026-09-19: u=0.768 for both, with the plain one shown at 19:56 and
-        // the tempered one at 20:13.
+        // The DPS tie-break exists because two instances of ONE base form score
+        // IDENTICALLY: b, cap(i) and the legacy feature are properties of the
+        // form, so a tempered Iron Dagger and a plain one come out equal to
+        // the last bit and the sort order alone decided which one the player
+        // was offered (observed under the old scorer 2026-09-19: u=0.768 for
+        // both, the plain one shown at 19:56 and the tempered one at 20:13).
         //
-        // Exact float equality, deliberately, not an epsilon. An epsilon
-        // comparison is not transitive (a~b, b~c, a<c), which is undefined
-        // behaviour in std::sort. Exact is also all that is needed: the two
-        // instances reach this point through identical arithmetic on identical
-        // inputs, so they are bitwise equal.
-        //
-        // No durability in this game, so the better copy of a weapon is always
-        // the one to want; there is no reason to ration it.
+        // Exact equality, deliberately, not an epsilon: an epsilon comparison
+        // is not transitive (a~b, b~c, a<c), which is undefined behaviour in
+        // std::sort. No durability in this game, so the better copy of a
+        // weapon is always the one to want.
         bool operator<(const ScoredCandidate& other) const noexcept {
-            if (utility != other.utility) {
-                return utility > other.utility;
-            }
-            return TieBreakDps() > other.TieBreakDps();
+            return Core::RanksBefore(score, TieBreakDps(), other.score, other.TieBreakDps());
         }
 
         bool operator==(const ScoredCandidate& other) const noexcept {

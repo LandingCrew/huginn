@@ -15,6 +15,13 @@
 // file's curves, and scores every row with core/ChoiceScore.h. theta_covered
 // is 0 (the bootstrap has no covered weight; the fit did not read covered).
 //
+// R8.3: THROUGH THE LIVE PATH. Each decision's rows go through the code the
+// pipeline ranks with: the D2 feature under the switch (Choice::LegacyFeature,
+// on; a row's ln learn mult only where util missing is 0), the ranking pass
+// (Choice::ScoreForRanking, no positions, no kappa), then what the allocation
+// adds (Choice::AfterAllocation: kappa off the page). mu is the ranked score,
+// the logit the logged one; both must match fitlib to 1e-5.
+//
 // The mage's real log (not checked in) runs through the same code:
 //   HUGINN_REPLAY_FIXTURE=<work>/replay_scores.jsonl  the fixture to read
 //   HUGINN_REPLAY_OUT=<work>/replay_cpp.jsonl          C++ mu and logit per row
@@ -22,6 +29,7 @@
 // hit@8, page hit@1 and the NLL.
 
 #include "core/Bootstrap.h"
+#include "core/ChoiceLive.h"
 #include "core/ChoiceScore.h"
 #include "core/MiniJson.h"
 
@@ -248,29 +256,44 @@ TEST_CASE("choice replay: the C++ score reproduces fitlib's per-row logits under
         const std::array<double, C::K> n = Bootstrap::CurveNeeds(mapped.curves, value, input);
         const C::Tick tick = C::MakeTick(model, n, r);
         std::string muText, logitText;
-        for (const auto& row : v.Find("rows")->Items()) {
+        const auto& rowItems = v.Find("rows")->Items();
+        std::vector<C::Attr> attrs;
+        std::vector<C::RowExtra> extras;
+        std::vector<bool> off;
+        attrs.reserve(rowItems.size());
+        extras.reserve(rowItems.size());
+        for (const auto& row : rowItems) {
             const auto& f = row.Items();
-            const C::Attr at = C::MakeAttr(model.grading, Pairs(f[0], colMap), Pairs(f[1], colMap));
-            C::RowExtra x;
-            x.offPage = f[2].AsNumber() != 0.0;
+            attrs.push_back(C::MakeAttr(model.grading, Pairs(f[0], colMap), Pairs(f[1], colMap)));
+            C::RowExtra x;   // the ranking pass: offPage false, no slot features
             const std::uint32_t form = static_cast<std::uint32_t>(std::stoul(f[3].AsString(), nullptr, 16));
             if (const auto it = b.find(form); it != b.end()) {
                 x.bMu = it->second;
                 ++withB;
             }
-            x.feat[static_cast<std::size_t>(C::Feature::ln_learn_mult)] = f[4].AsNumber();
-            x.feat[static_cast<std::size_t>(C::Feature::util_missing)] = f[5].AsNumber();
+            // the live switch, on: a row the old floors kept (util missing 0)
+            // reads its ln learn mult; the others read 0 and 1
+            const bool scored = f[5].AsNumber() == 0.0;
+            C::SetLegacy(x.feat, C::LegacyFeature(true, scored, f[4].AsNumber()));
             withLm += f[4].AsNumber() != 0.0 ? 1 : 0;
-            offPage += x.offPage ? 1 : 0;
-            const auto s = C::Score(model, tick, at, x, false);
-            maxMu = std::max(maxMu, std::abs(s.mu - f[6].AsNumber()));
-            maxLogit = std::max(maxLogit, std::abs(s.logit - f[7].AsNumber()));
+            extras.push_back(x);
+            off.push_back(f[2].AsNumber() != 0.0);
+        }
+        std::vector<C::LiveScore> live;
+        C::ScoreForRanking(model, tick, attrs, extras, std::vector<C::GateRow>(attrs.size()), SIZE_MAX, 1.0,
+                           attrs.size(), live);
+        for (std::size_t i = 0; i < rowItems.size(); ++i) {
+            const auto& f = rowItems[i].Items();
+            const auto logged = C::AfterAllocation(model, live[i].s.mu, off[i], -1);
+            offPage += off[i] ? 1 : 0;
+            maxMu = std::max(maxMu, std::abs(logged.mu - f[6].AsNumber()));
+            maxLogit = std::max(maxLogit, std::abs(logged.logit - f[7].AsNumber()));
             ++rows;
             if (out) {
                 char buf[64];
-                std::snprintf(buf, sizeof(buf), "%s%.12g", muText.empty() ? "" : ",", s.mu);
+                std::snprintf(buf, sizeof(buf), "%s%.12g", muText.empty() ? "" : ",", logged.mu);
                 muText += buf;
-                std::snprintf(buf, sizeof(buf), "%s%.12g", logitText.empty() ? "" : ",", s.logit);
+                std::snprintf(buf, sizeof(buf), "%s%.12g", logitText.empty() ? "" : ",", logged.logit);
                 logitText += buf;
             }
         }

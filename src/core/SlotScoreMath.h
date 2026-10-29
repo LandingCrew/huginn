@@ -110,6 +110,21 @@ namespace Huginn::Core
         return a > b + kScoreTieEpsilon;
     }
 
+    /// The ranking's order (ScoredCandidate::operator<, R8.3: on the choice
+    /// score mu): a higher score first; on an exact tie, a higher tie-break
+    /// (a weapon's DPS, 0 for anything else); on a tie of both, neither
+    /// (std::stable_sort then keeps the generation order). Exact comparisons,
+    /// not an epsilon: an epsilon is not transitive, and std::sort on an
+    /// intransitive comparator is undefined. A NaN score reads as -inf, so the
+    /// order stays strict weak whatever reaches it; any sign is fine.
+    [[nodiscard]] inline bool RanksBefore(SlotScore a, float tieA, SlotScore b, float tieB) noexcept
+    {
+        if (!(a == a)) a = kUnrankedScore;
+        if (!(b == b)) b = kUnrankedScore;
+        if (a != b) return a > b;
+        return tieA > tieB;
+    }
+
     /// ln m for the slot hold's margin m = 1 + margin. The float sum is the
     /// one the old code multiplied by, so the bridge keeps its rounding.
     /// Outside the INI's range (SlotSettings clamps it to [0, 10] and reads a

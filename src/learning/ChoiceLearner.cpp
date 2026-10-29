@@ -1,5 +1,6 @@
 #include "ChoiceLearner.h"
 
+#include "core/ChoiceLive.h"
 #include "core/Coverage.h"
 #include "core/Sha256.h"
 
@@ -132,7 +133,8 @@ namespace Huginn::Learning
         {
             std::ifstream in(path, std::ios::binary);
             if (!in) {
-                logger::error("[Choice] {} not found: the new model (R8.2, shadow) is off"sv, path.string());
+                logger::error("[Choice] {} not found: the choice model is off and the pipeline ranks on the old "
+                              "utility (FALLBACK; `hg status` says so)"sv, path.string());
                 m_ready.store(false, std::memory_order_release);
                 return false;
             }
@@ -146,7 +148,8 @@ namespace Huginn::Learning
             std::string why;
             for (std::size_t i = 0; i < read.errors.size() && i < 3; ++i) why += (i ? "; " : "") + read.errors[i];
             if (read.errors.size() > 3) why += std::format("; ... ({} problems)", read.errors.size());
-            logger::error("[Choice] {} is not a valid bootstrap (format version 1): {} -- the new model (R8.2, shadow) is off"sv,
+            logger::error("[Choice] {} is not a valid bootstrap (format version 1): {} -- the choice model is off and "
+                          "the pipeline ranks on the old utility (FALLBACK; `hg status` says so)"sv,
                 path.string(), why);
             m_ready.store(false, std::memory_order_release);
             return false;
@@ -215,6 +218,12 @@ namespace Huginn::Learning
                                                                     : "when the save is that character",
             Core::Bootstrap::BiasModeName(settings.biasMode), d.sourceChar.empty() ? "several" : d.sourceChar,
             unsupplied.empty() ? "" : std::format("; WARNING: weighs {} which a row does not supply (read 0)", unsupplied));
+        if (C::WeighsSlots(m_bootModel)) {
+            // core/ChoiceLive.h: a position is the allocation's output, so the
+            // ranking cannot read it; only the logged mu and logit do.
+            logger::warn("[Choice] The bootstrap weighs the slot N features: the ranking ignores them (a row's key "
+                         "is the allocation's result); only the logged mu and logit read them"sv);
+        }
         m_ready.store(true, std::memory_order_release);
         return true;
     }
@@ -305,7 +314,7 @@ namespace Huginn::Learning
     // =========================================================================
     // RESET
     // =========================================================================
-    void ChoiceLearner::ResetToBootstrap(std::uint64_t characterID)
+    void ChoiceLearner::ResetToBootstrap(std::uint64_t characterID, bool seedB)
     {
         if (!Ready()) return;
         std::size_t seeded = 0;
@@ -319,7 +328,7 @@ namespace Huginn::Learning
             m_b.clear();
             mode = m_settings.biasMode;
             fileChar = m_doc ? m_doc->sourceChar : std::string{};
-            fromFile = m_doc && Core::Bootstrap::UseFileBias(mode, characterID, m_doc->SourceCharId());
+            fromFile = seedB && m_doc && Core::Bootstrap::UseFileBias(mode, characterID, m_doc->SourceCharId());
             const double now = m_playSeconds.load(std::memory_order_relaxed);
             if (fromFile) {
                 for (const auto& it : m_bootItems) {
@@ -338,12 +347,23 @@ namespace Huginn::Learning
             BuildKeys();
             m_stats.picksLearned = m_stats.picksSkipped = m_stats.onsets = m_stats.onsetsCounted = 0;
             m_stats.forgotten = 0;
-            Touch();
+            m_stats.bEntries = m_b.size();
+            Moved();
         }
         logger::info("[Choice] Reset to the bootstrap for character {:016X}: theta and kappa from the file, b {} "
                      "(sBootstrapBias = {}, file character {})"sv,
-            characterID, fromFile ? std::format("from the file ({} items)", seeded) : std::string("at its prior N(0, 0.25)"),
+            characterID,
+            fromFile ? std::format("from the file ({} items)", seeded)
+                     : std::string(seedB ? "at its prior N(0, 0.25)" : "cleared (a reset)"),
             Core::Bootstrap::BiasModeName(mode), fileChar.empty() ? "several" : fileChar);
+    }
+
+    void ChoiceLearner::ClearTransient()
+    {
+        std::unique_lock lock(m_mutex);
+        m_recent.Reset();
+        m_onsetCounter.Reset();
+        m_taken.clear();
     }
 
     std::shared_ptr<const ChoiceLearner::Snapshot> ChoiceLearner::GetSnapshot()
@@ -537,7 +557,7 @@ namespace Huginn::Learning
         ++m_stats.picksLearned;
         m_stats.lastLogp = res.logpChosen;
         m_stats.bEntries = m_b.size();
-        Touch();
+        Moved();
         logger::debug("[Choice] learned {:08X} '{}' ({}): {} rows ({} off the page), P(chosen) {:.3f}, {} weights and {} b moved"sv,
             d.form, d.name, DL::OutcomeName(d.outcome), members.size(), offPage, std::exp(res.logpChosen),
             res.weightsMoved, res.b.size());
@@ -604,7 +624,7 @@ namespace Huginn::Learning
             if (forgotten) {
                 m_stats.forgotten += forgotten;
                 m_stats.bEntries = m_b.size();
-                Touch();
+                Moved();
             }
         }
         if (forgotten) logger::info("[Choice] {} b entr{} past their useful life of play forgotten"sv, forgotten, forgotten == 1 ? "y" : "ies");
@@ -612,17 +632,39 @@ namespace Huginn::Learning
     }
 
     // =========================================================================
-    // EXPORT / IMPORT (the cosave of PR 3)
+    // EXPORT / IMPORT (the cosave: persist/ChoiceSerializer.cpp)
     // =========================================================================
-    std::vector<ChoiceLearner::Entry> ChoiceLearner::ExportEntries() const
+    bool ChoiceLearner::MovedLocked(std::size_t slot) const
+    {
+        const auto* a = SlotWeight(m_model, slot);
+        if (!a) return false;
+        // covered (the last slot, BuildKeys) starts at fCoveredPrior with
+        // precision 1, not at the file's value
+        C::Weight boot{ m_settings.coveredPrior, 1.0 };
+        if (slot + 1 != m_keys.size()) {
+            const auto* b = SlotWeight(m_bootModel, slot);
+            if (!b) return true;
+            boot = *b;
+        }
+        return a->mu != boot.mu || a->var != boot.var;
+    }
+
+    std::vector<ChoiceLearner::Entry> ChoiceLearner::ExportEntries(bool movedOnly) const
     {
         std::shared_lock lock(m_mutex);
         std::vector<Entry> out;
-        out.reserve(m_keys.size());
+        out.reserve(movedOnly ? 256 : m_keys.size());
         for (std::size_t s = 0; s < m_keys.size(); ++s) {
+            if (movedOnly && !MovedLocked(s)) continue;
             if (const auto* w = SlotWeight(m_model, s)) out.push_back(Entry{ m_keys[s], w->mu, w->var });
         }
         return out;
+    }
+
+    std::vector<std::uint64_t> ChoiceLearner::Keys() const
+    {
+        std::shared_lock lock(m_mutex);
+        return m_keys;
     }
 
     std::size_t ChoiceLearner::ImportEntries(const std::vector<Entry>& entries)
@@ -637,7 +679,7 @@ namespace Huginn::Learning
                 ++applied;
             }
         }
-        Touch();
+        Moved();
         return applied;
     }
 
@@ -649,7 +691,7 @@ namespace Huginn::Learning
         out.reserve(m_b.size());
         for (const auto& [form, b] : m_b) {
             const double minutes = std::floor(std::max(0.0, now - b.chosenAt) / 60.0);
-            out.push_back(BEntry{ form, b.mu, b.var, b.n, static_cast<std::uint32_t>(std::min(minutes, 4.0e9)) });
+            out.push_back(BEntry{ form, b.mu, b.var, b.n, static_cast<std::uint32_t>(std::min(minutes, 4.0e9)), b.favorite });
         }
         return out;
     }
@@ -666,10 +708,42 @@ namespace Huginn::Learning
             b.var = e.var;
             b.n = e.n;
             b.chosenAt = now - 60.0 * e.minutesSinceChosen;
+            b.favorite = e.favorite;
             m_b[e.form] = b;
         }
         m_stats.bEntries = m_b.size();
-        Touch();
+        Moved();
+    }
+
+    std::pair<std::size_t, std::size_t> ChoiceLearner::ReplaceDynamicB(const std::vector<BEntry>& saved)
+    {
+        auto dynamic = [](std::uint32_t form) { return (form >> 24) == 0xFF; };
+        std::unique_lock lock(m_mutex);
+        const double now = m_playSeconds.load(std::memory_order_relaxed);
+        std::size_t removed = 0, added = 0;
+        for (auto it = m_b.begin(); it != m_b.end();) {
+            if (dynamic(it->first)) {
+                it = m_b.erase(it);
+                ++removed;
+            }
+            else {
+                ++it;
+            }
+        }
+        for (const auto& e : saved) {
+            if (!dynamic(e.form) || !(e.var > 0.0) || !std::isfinite(e.mu)) continue;
+            C::BBelief b;
+            b.mu = e.mu;
+            b.var = e.var;
+            b.n = e.n;
+            b.chosenAt = now - 60.0 * e.minutesSinceChosen;
+            b.favorite = e.favorite;
+            m_b[e.form] = b;
+            ++added;
+        }
+        m_stats.bEntries = m_b.size();
+        if (removed || added) Moved();
+        return { removed, added };
     }
 
     ChoiceLearner::Stats ChoiceLearner::GetStats() const
@@ -678,6 +752,14 @@ namespace Huginn::Learning
         Stats s = m_stats;
         s.ready = Ready();
         s.bEntries = m_b.size();
+        s.thetaEntries = m_keys.size();
+        // Moved from the bootstrap: the same slot in both models, compared
+        // exactly (an imported entry equal to the file's counts as not moved).
+        // What THTA writes (ExportEntries(true)).
+        s.thetaMoved = 0;
+        for (std::size_t slot = 0; slot < m_keys.size(); ++slot) {
+            if (MovedLocked(slot)) ++s.thetaMoved;
+        }
         return s;
     }
 

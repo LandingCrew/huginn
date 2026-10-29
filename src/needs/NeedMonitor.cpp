@@ -22,6 +22,7 @@ namespace Huginn::Needs
          }
          m_latest = live;
       }
+      m_sigHash.store(Core::Needs::SignatureHash(sig), std::memory_order_release);
       if (log) {
          logger::debug("[Needs] {}"sv, NeedsLine(live.vector));
          Capture::Record(live.snapshot, "monitor");

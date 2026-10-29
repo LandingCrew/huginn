@@ -24,6 +24,7 @@
 #include "learning/PipelineStateCache.h"
 #include "learning/ChoiceLearner.h"
 #include "learning/ChoiceShadow.h"
+#include "core/ChoiceLive.h"
 #include "core/Coverage.h"
 #include "effect/CrossFeatures.h"
 #include "effect/EffectCatalog.h"
@@ -32,6 +33,7 @@
 #include "ui/DebugSettings.h"
 #include "display/IDisplayBackend.h"
 #include "display/ExplanationLabel.h"  // ReasonLabel for the [Context] transition log
+#include "display/NeedReason.h"        // an explanation's need as a context reason (R8.3)
 #include "display/WheelerBackend.h"
 #include "display/IntuitionBackend.h"
 #include "display/WheelUidFilter.h"   // uid-less weapons off a wheel page
@@ -137,9 +139,11 @@ bool PipelineCoordinator::RunPipeline(
     // potion is the ordinary case — and counting those inflates the soak
     // override rate with ticks where the player was shown nothing.
     const auto* topOverride = m_ctx.overrides.GetTopOverride();
+    const bool wildcardShown = std::ranges::any_of(m_ctx.assignments,
+        [](const Slot::SlotAssignment& a) { return a.IsWildcard(); });
     Telemetry::SoakMetrics::GetSingleton().RecordPipelineRun(
         m_ctx.scoredCandidates.size(), displayedCount,
-        topOverride != nullptr && topOverride->candidate.has_value());
+        topOverride != nullptr && topOverride->candidate.has_value(), wildcardShown);
 
     return true;
 }
@@ -173,15 +177,14 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
         });
     ctx.stateHash = ctx.currentState.GetHash();
 
-    // Check if elemental damage requires pipeline run despite unchanged hash
-    constexpr float kElementalWindow = State::VitalTracking::ELEMENTAL_DAMAGE_ENRICHMENT_WINDOW;
-    ctx.elementalDamageActive =
-        ctx.healthTracking.timeSinceLastFire < kElementalWindow ||
-        ctx.healthTracking.timeSinceLastFrost < kElementalWindow ||
-        ctx.healthTracking.timeSinceLastShock < kElementalWindow;
+    // R8.3: the need signature of this tick (NeedMonitor ran just before the
+    // gates). It replaced the elemental window and the ambient signature as
+    // skip-gate terms: fire/frost/shock damage rates decay with time, and
+    // darkness, hunger and cold are needs.
+    ctx.needSignature = Needs::NeedMonitor::GetSingleton().LatestSignatureHash();
 
-    // Falling has the same problem as the elemental window: it is not in the
-    // GameState hash, so a fall that changes nothing else is invisible to the
+    // Falling is not in the GameState hash either, so a fall that changes
+    // nothing else is invisible to the
     // skip check. That was masked while isFalling came from IsInMidair(), since
     // jumps mostly happen mid-combat where the hash is moving anyway. Restricted
     // to real falls (#60), the context is usually a solitary event — stepping
@@ -221,15 +224,8 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
 
     // The third instance of this shape — a pending reason downgrade (#62) — has
     // no ctx field: unlike these two it has no "current" reading to take here,
-    // because ReasonHold only advances in ScoreCandidates, below the skip check.
+    // because ReasonHold only advances after the allocation (R8.3: UpdateContextReason), below the skip check.
     // Both gates read the latch straight off the member via NeedsForcedRun().
-
-    // Darkness and survival needs, compared with the last run in
-    // CheckHashSkip. See PipelineContext::ambientSignature.
-    ctx.ambientSignature = static_cast<uint8_t>(
-        (Context::DarknessApplies(ctx.playerState, ctx.worldState) ? 1 : 0) |
-        (Context::HungerTier(ctx.playerState) << 1) |
-        (Context::ColdTier(ctx.playerState) << 3));
 
     ctx.currentMagicka = ctx.actorValue->GetActorValue(RE::ActorValue::kMagicka);
 
@@ -257,26 +253,25 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
 
 bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
 {
-    // Rising edge: state gathered THIS tick that the hash cannot see — the
-    // elemental enrichment flags (isOnFire etc.) and a fall in progress. The
-    // falling edges live in NeedsForcedRun(), which grants the one further run
-    // each needs to clear itself: the close of an elemental window and a landing
-    // both change no hashed bucket, so stale fire/slow-fall scoring would
-    // otherwise persist. A pending reason downgrade is latch-only and rides
-    // along there too — see NeedsForcedRun.
+    // Rising edge: state gathered THIS tick that the hash cannot see -- a fall
+    // in progress, being underwater, standing at a bench. The falling edges
+    // live in NeedsForcedRun(), which grants the one further run each needs to
+    // clear itself. A pending reason downgrade is latch-only and rides along
+    // there too -- see NeedsForcedRun.
     //
-    // All bounded: a fall is over in about a second, the elemental window is
-    // fixed-length, and a hold expires within REASON_HOLD_MS / UPDATE_INTERVAL_MS
-    // runs (~15) and self-clears the moment the downgrade lands.
-    const bool unhashedStateActive = ctx.elementalDamageActive || ctx.fallingActive ||
-                                     ctx.underwaterActive || ctx.workstationActive;
+    // All bounded: a fall is over in about a second, and a hold expires within
+    // REASON_HOLD_MS / UPDATE_INTERVAL_MS runs (~15) and self-clears the moment
+    // the downgrade lands.
+    const bool unhashedStateActive = ctx.fallingActive || ctx.underwaterActive || ctx.workstationActive;
 
-    // One run on each change, either way: into the dark and out of it, a
-    // hunger or cold stage crossed, a warming effect starting or ending.
-    // R8.1: and a buff entering (or leaving) its refresh window, so the
-    // active-buff filter lets its item through without waiting for something
-    // hashed to move.
-    const bool ambientChanged = ctx.ambientSignature != m_lastAmbientSignature ||
+    // One run on each change, either way. R8.3: the need signature -- any
+    // need moving a 0.05 step (core/NeedEvaluator.h), which is the point now
+    // that the score reads the needs; it replaced the ambient signature
+    // (darkness, hunger, cold) and the elemental window (the damage-rate
+    // needs decay with time, so their close moves it too). An override
+    // threshold crossed. R8.1: a buff entering (or leaving) its refresh
+    // window, so the active-buff filter lets its item through.
+    const bool ambientChanged = ctx.needSignature != m_lastNeedSignature.load(std::memory_order_relaxed) ||
                                 ctx.overrideSignature != m_lastOverrideSignature ||
                                 ctx.refreshDue != m_lastRefreshDue;
 
@@ -287,10 +282,9 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
         return true;  // Skip
     }
     m_lastPipelineHash = ctx.stateHash;
-    m_wasElementalDamageActive = ctx.elementalDamageActive;
     m_wasFalling = ctx.fallingActive;
     m_wasUnderwater = ctx.underwaterActive;
-    m_lastAmbientSignature = ctx.ambientSignature;
+    m_lastNeedSignature.store(ctx.needSignature, std::memory_order_relaxed);
     m_lastOverrideSignature = ctx.overrideSignature;
     m_lastRefreshDue = ctx.refreshDue;
 
@@ -302,13 +296,24 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
     if (g_featureBanditLearner) {
         g_featureBanditLearner->ClearWeightsChanged();
     }
+    // R8.3: and the choice learner's (theta or b moved: the ranking did).
+    if (g_choiceLearner) {
+        g_choiceLearner->ClearWeightsChanged();
+    }
 
     return false;  // Don't skip
 }
 
 bool PipelineCoordinator::LearnerWeightsChanged() noexcept
 {
-    return g_featureBanditLearner && g_featureBanditLearner->WeightsChanged();
+    return (g_featureBanditLearner && g_featureBanditLearner->WeightsChanged()) ||
+           (g_choiceLearner && g_choiceLearner->WeightsChanged());
+}
+
+bool PipelineCoordinator::NeedSignatureMoved() const noexcept
+{
+    return Needs::NeedMonitor::GetSingleton().LatestSignatureHash() !=
+           m_lastNeedSignature.load(std::memory_order_relaxed);
 }
 
 // -----------------------------------------------------------------------------
@@ -368,8 +373,75 @@ void PipelineCoordinator::EnrichElementalDamage(PipelineContext& ctx)
 }
 
 // -----------------------------------------------------------------------------
-// ScoreCandidates — Generate and score all candidates
+// ScoreCandidates — Generate, then rank every candidate on the choice score
 // -----------------------------------------------------------------------------
+// R8.3 (0.24.0): THE CUTOVER. Every candidate that passes the filters is
+// ranked on mu (core/ChoiceScore.h through core/ChoiceLive.h): theta^T n over
+// its cap(i), b, recent_<family>, covered(i), and the D2 legacy feature
+// (ln learn mult, w = 1.36 in the R6 bootstrap) on the rows the old floors
+// keep. The old floors no longer drop rows from the ranking; they only decide
+// where that feature applies. The legacy pass (UtilityScorer::LegacyPass:
+// ContextRuleEngine, the old learner, prior, correlations, potion multiplier,
+// the floors) runs only for it, behind [Scoring] bLegacyLearnFeature.
+//
+// Without a usable bootstrap the pipeline ranks on the old utility instead
+// (ln u, the R7 bridge) over the rows the floors keep: the FALLBACK, so the
+// game stays playable; `hg status` and an error line say so. It has no
+// favourites rank scaling and no potion tier preference any more.
+
+namespace
+{
+    /// The stack facts the effect catalog's runtime cross-features read
+    /// (count, charge), as the selection log v3 reads them off a candidate.
+    struct StackFacts
+    {
+        int32_t count = 0;
+        bool enchanted = false;
+        float chargeFraction = 0.0f;
+    };
+
+    StackFacts StackOf(const Candidate::CandidateVariant& c)
+    {
+        StackFacts s;
+        std::visit([&s](const auto& cand) {
+            using T = std::decay_t<decltype(cand)>;
+            if constexpr (std::is_same_v<T, Candidate::ItemCandidate> || std::is_same_v<T, Candidate::AmmoCandidate> ||
+                          std::is_same_v<T, Candidate::ScrollCandidate> || std::is_same_v<T, Candidate::TorchCandidate>) {
+                s.count = cand.count;
+            }
+            else if constexpr (std::is_same_v<T, Candidate::WeaponCandidate>) {
+                s.enchanted = cand.hasEnchantment;
+                s.chargeFraction = cand.currentCharge;   // already current / max (WeaponRegistry)
+            }
+        }, c);
+        return s;
+    }
+
+    /// cap(i)'s attributes and the runtime cross-features of one catalog
+    /// entry for a stack (as the selection log v3 and R8.2's shadow read
+    /// them).
+    Core::Choice::Attr AttrOf(const Core::Choice::Model& model, const Effect::CatalogEntry& entry,
+        const State::PlayerActorState& player, const StackFacts& sf)
+    {
+        namespace DL = Core::DecisionLog;
+        Effect::StackInfo stack;
+        stack.count = sf.count;
+        if (sf.enchanted) {
+            stack.charge = sf.chargeFraction;
+            stack.maxCharge = 1.0f;
+        }
+        const auto f = Effect::ComputeRuntimeFeatures(entry, player, stack);
+        std::array<float, DL::kCrossCount> cross{};
+        cross[static_cast<size_t>(DL::Cross::overshoot_health)] = f.overshootHealth;
+        cross[static_cast<size_t>(DL::Cross::overshoot_magicka)] = f.overshootMagicka;
+        cross[static_cast<size_t>(DL::Cross::overshoot_stamina)] = f.overshootStamina;
+        cross[static_cast<size_t>(DL::Cross::weapon_charge)] = f.weaponCharge;
+        cross[static_cast<size_t>(DL::Cross::stack_count)] = f.stackCount;
+        cross[static_cast<size_t>(DL::Cross::ammo_matches_launcher)] = f.ammoMatchesLauncher;
+        cross[static_cast<size_t>(DL::Cross::school_fortified)] = f.schoolFortified;
+        return Core::Choice::MakeAttr(model.grading, &entry.cap, cross);
+    }
+}
 
 void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
 {
@@ -392,28 +464,90 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     // Read once for the tick: the wildcard roll below and AllocateAndLock
     // must agree on it.
     ctx.hideUidlessGear = Display::HidesUidlessGear(ctx.displayPageIndex);
+
+    // Which model ranks, and whether the legacy pass runs. Logged on change.
+    ctx.choiceLive = g_choiceLearner && g_choiceLearner->Ready();
+    const bool legacyOn = Scoring::Legacy::Enabled();
+    ctx.legacyRan = legacyOn || !ctx.choiceLive;   // the fallback needs the utility
+    {
+        // NOTE: Single-threaded (pipeline runs on the update thread only)
+        static int s_lastMode = -1;
+        const int mode = (ctx.choiceLive ? 1 : 0) | (ctx.legacyRan ? 2 : 0);
+        if (mode != s_lastMode) {
+            if (!ctx.choiceLive) {
+                logger::error("[Pipeline] Ranking on the OLD UTILITY (fallback): the bootstrap is missing or invalid "
+                              "(see the [Choice] line at load)"sv);
+            }
+            else {
+                logger::info("[Pipeline] Ranking on the choice score{}"sv,
+                    ctx.legacyRan ? " with the D2 legacy feature (bLegacyLearnFeature on)"
+                                  : " WITHOUT the legacy feature (bLegacyLearnFeature off: plain theta + b + recent)");
+            }
+            s_lastMode = mode;
+        }
+    }
+
+    // The legacy pass: the old floors per candidate (the D2 feature) and the
+    // rows they keep with their utility. Off: none of it runs (no context
+    // rules, prior, correlation or potion work).
+    Scoring::ScoredCandidateList legacyList;
+    if (ctx.legacyRan) {
+        legacyList = g_utilityScorer->LegacyPass(candidates, ctx.currentState, ctx.playerState, ctx.targets,
+            ctx.worldState, ctx.combatOnsetAgo, &contextWeights, &ctx.legacyRows);
+    }
+    else {
+        ctx.legacyRows.assign(candidates.size(), Scoring::Legacy::Row{});
+    }
+
+    // Each candidate reads its own legacy row, or, when the floors kept
+    // another candidate of its dedup key (type, uid, form) and not it, that
+    // one's (R8.2's CaptureEligible rule, so the score and the v3 row agree).
+    ctx.legacyOf.resize(candidates.size());
+    {
+        std::unordered_map<uint64_t, size_t> keptByKey;
+        for (size_t i = 0; i < candidates.size() && i < ctx.legacyRows.size(); ++i) {
+            if (ctx.legacyRows[i].Scored()) keptByKey.try_emplace(Candidate::GetBase(candidates[i]).GetDeduplicationKey(), i);
+        }
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            ctx.legacyOf[i] = i;
+            if (i < ctx.legacyRows.size() && !ctx.legacyRows[i].Scored()) {
+                const auto k = keptByKey.find(Candidate::GetBase(candidates[i]).GetDeduplicationKey());
+                if (k != keptByKey.end()) ctx.legacyOf[i] = k->second;
+            }
+        }
+    }
+
+    if (ctx.choiceLive) {
+        ctx.scoredCandidates = RankOnChoice(ctx, candidates, legacyList);
+    }
+    else {
+        // FALLBACK: the old ranking, ln utility over the rows the floors kept.
+        for (auto& sc : legacyList) {
+            sc.legacyScored = true;
+            sc.RankOnUtility(sc.utility);
+        }
+        ctx.scoredCandidates = std::move(legacyList);
+    }
+
     // The display page comes from ResolveDisplayPage, which ran earlier this
-    // tick — so wildcards key and size against the same page AllocateAndLock
+    // tick -- so wildcards key and size against the same page AllocateAndLock
     // will fill. In combat (the lock's notion of it) no wildcard is placed.
-    ctx.scoredCandidates = g_utilityScorer->ScoreCandidates(
-        candidates, ctx.currentState, ctx.playerState, ctx.targets, ctx.worldState, ctx.combatOnsetAgo,
+    g_utilityScorer->RankAndApplyWildcards(ctx.scoredCandidates,
         Scoring::WildcardPage{
             .index = ctx.displayPageIndex,
             .slotCount = ctx.displaySlotCount,
             .wildcardSlots = ctx.displayWildcardSlots,
             .inCombat = Slot::SlotLocker::GetSingleton().IsInCombat(),
             .hideUidlessGear = ctx.hideUidlessGear,
-        },
-        &contextWeights,
-        &ctx.legacyRows);   // R8.2: the old floors per candidate (the D2 feature)
+        });
 
     // A Remembrance hold shows what the player took off whether or not the
-    // ranking kept it: context weight or minimum utility can drop a sword the
-    // moment a spell goes in its hand, which is exactly when the hold wants
-    // it. Added unranked, at the end, flagged so only the hold may place it.
-    // An unaffordable held spell is added the same way, from the aside list,
-    // and (R8.1) a held item a hard gate dropped: a torch in daylight, a ring
-    // away from the forge, which until 0.23.55 reached here as candidates.
+    // ranking kept it. Since R8.3 every candidate is ranked, so this adds
+    // only a held item the filters dropped (an unaffordable spell, from the
+    // aside list; R8.1: a held item a hard gate dropped: a torch in daylight,
+    // a ring away from the forge) -- and, in the fallback, one under the old
+    // floors. Added unranked, at the end, flagged so only the hold may place
+    // it.
     for (const RE::FormID id : heldIDs) {
         const bool ranked = std::ranges::any_of(ctx.scoredCandidates,
             [id](const Scoring::ScoredCandidate& sc) { return sc.GetFormID() == id; });
@@ -423,9 +557,9 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
         auto addHeld = [&](const std::vector<Candidate::CandidateVariant>& pool) {
             for (const auto& c : pool) {
                 if (Candidate::GetFormID(c) == id) {
-                    // No utility (0, display only): the flag makes its slot
-                    // score -inf (ScoredCandidate::SlotScore), below any
-                    // ranked row's whatever its sign.
+                    // No score: the flag makes its slot score -inf
+                    // (ScoredCandidate::SlotScore), below any ranked row's
+                    // whatever its sign.
                     Scoring::ScoredCandidate sc;
                     sc.candidate = c;
                     sc.isRememberedOnly = true;
@@ -442,85 +576,160 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
 
     CaptureEligible(ctx, candidates, contextWeights);
 
-    // Name the dominant reason once per tick, off the weights the ranking just
-    // used — the display explanation can't disagree with the scoring (#10).
-    // The two world facts below have no scoring weight to read them off.
-    const auto rawReason = g_utilityScorer->DominantContextReason(
-        contextWeights,
-        Context::ContextReasonSignals{
-            .allyInjured = ctx.targets.HasInjuredFollower(),
-            .lookingAtOre = ctx.worldState.isLookingAtOreVein,
-        });
+    // R8.3: no DominantReason here any more. The reason label is derived
+    // from the explanations of what the page shows, after the allocation
+    // (DeriveDisplayLabels).
+}
 
-    // Damp the LABEL only (#62). Scoring above already used the instantaneous
-    // weights; a reason true for one tick still repainted all eight subtexts and
-    // reverted before it could be read. The hold releases a reason slowly and
-    // adopts a more urgent one instantly — see ReasonHold for the policy.
-    // ctx.now, not a fresh clock read: RunPipeline already captured a canonical
-    // timestamp for this tick, and the hold is argued against SlotLocker's
-    // duration, so both must be measured off the same clock reading.
-    const double nowMs = std::chrono::duration<double, std::milli>(
-        ctx.now.time_since_epoch()).count();
+// -----------------------------------------------------------------------------
+// RankOnChoice — R8.3: one row per candidate, ranked on mu
+// -----------------------------------------------------------------------------
+// The tick (v, W) once from the learner's snapshot and the need vector the
+// model reads (the live curve outputs, the bootstrap's curves re-read); per
+// candidate cap(i) and the runtime cross-features, covered(i) with doc 11's
+// greedy upgrade gate at the summon limit, b with its battery, and the D2
+// feature under the switch; then core/ChoiceLive.h's ranking pass. No
+// position features and no kappa here (core/ChoiceLive.h): the page is the
+// allocation's output. A candidate with no catalog entry (the catalog is
+// built at the main menu; a form it does not describe) has no need terms:
+// it ranks on b and the legacy feature alone.
 
-    // REASON_HOLD_MS is justified by sitting below the slot content lock — the
-    // label must not outlive the contents it explains — but that lock is
-    // fLockDurationMs, an INI value the player can lower or set to 0 to disable
-    // locking entirely. Clamp instead of asserting the default: with locking
-    // off, contents can swap every tick and the honest hold is zero, which
-    // degrades to the pre-#62 behaviour (a label that follows the raw reason
-    // exactly) rather than to a label describing a wheel that already moved on.
-    const float lockMs = Slot::SlotLocker::GetSingleton().GetConfig().lockDurationMs;
-    const float holdMs = std::min(Config::REASON_HOLD_MS, std::max(lockMs, 0.0f));
+Scoring::ScoredCandidateList PipelineCoordinator::RankOnChoice(PipelineContext& ctx,
+    const std::vector<Candidate::CandidateVariant>& candidates,
+    const Scoring::ScoredCandidateList& legacyList)
+{
+    Huginn_ZONE_NAMED("Pipeline::RankOnChoice");
+    namespace C = Core::Choice;
+    const auto t0 = std::chrono::steady_clock::now();
 
-    ctx.contextReason = m_reasonHold.Update(rawReason, nowMs, holdMs);
-
-    // The reason drives a display string only, so nothing else in the log
-    // reveals it — log the transition (not the tick) so a session can be
-    // verified from the log instead of by watching the wheel. Same cadence as
-    // the [Pipeline] state transition line: only fires on a threshold cross.
-    //
-    // The vitals ride along because they are the ASSERTABLE part: the
-    // continuous rules invert their curve at fixed percentages (crit 15%, low
-    // 30% HP/MP/SP, charge 25%), so a reader can take this line alone and
-    // confirm the reported reason matches the numbers that produced it.
-    //
-    // Level is debug, not info: this is a behavior diagnostic, and behavior
-    // soak runs are Debug builds (perf runs are Release+Tracy, where these
-    // lines would only be noise). Meant to be read by an LLM or a log tool.
-    //
-    // Deduped on BOTH halves, and the raw one is printed whenever the hold is
-    // masking it. The displayed label alone is no longer a record of what the
-    // ranking saw (that is the whole point of the hold), so deduping on it would
-    // make a masked reason unrecoverable from any line in the log — and this
-    // line is the only place either value is ever written down.
-    //
-    // NOTE: Single-threaded (pipeline runs on the update thread only).
-    const LoggedReason nowLogged{ .raw = rawReason, .shown = ctx.contextReason };
-    if (!m_lastLoggedReason || *m_lastLoggedReason != nowLogged) {
-        const auto labelOr = [](Context::ContextReason r) {
-            const auto label = Display::ReasonLabel(r);
-            return label.empty() ? "(none)"sv : label;
-        };
-        const auto& vitals = ctx.playerState.vitals;
-        // Only when they disagree: in the common case the hold is transparent
-        // and a permanent "raw:" column would just double every line.
-        const auto rawNote = rawReason == ctx.contextReason
-            ? std::string{}
-            : fmt::format(" (raw {})", labelOr(rawReason));
-        // One decimal, not zero: the thresholds these lines exist to verify sit
-        // ON integer percentages (15 / 25 / 30). At {:.0f} a true 15.4% prints
-        // as "15%", so the one reading that decides whether the boundary held is
-        // exactly the reading the format destroys.
-        logger::debug("[Context] Reason: {} → {}{} | hp={:.1f}% mp={:.1f}% sp={:.1f}% charge={}"sv,
-            m_lastLoggedReason ? labelOr(m_lastLoggedReason->shown) : "(none)"sv,
-            labelOr(ctx.contextReason),
-            rawNote,
-            vitals.health * 100.0f, vitals.magicka * 100.0f, vitals.stamina * 100.0f,
-            ctx.playerState.hasEnchantedWeapon
-                ? fmt::format("{:.1f}%", ctx.playerState.weaponChargePercent * 100.0f)
-                : "n/a");
-        m_lastLoggedReason = nowLogged;
+    auto snap = g_choiceLearner->GetSnapshot();
+    const auto& model = snap->model;
+    std::array<double, C::K> n{};
+    if (const auto live = Needs::NeedMonitor::GetSingleton().Latest()) {
+        n = snap->Needs(live->vector.value, live->vector.input);
     }
+    const double nowSec = std::chrono::duration<double>(ctx.now.time_since_epoch()).count();
+    const uint32_t gen = g_loadGeneration.load(std::memory_order_relaxed);
+    const auto recent = g_choiceLearner->RecentValues(*snap, nowSec, gen);
+    auto run = std::make_shared<Learning::ShadowRun>();
+    run->snap = snap;
+    run->tick = C::MakeTick(model, n, recent);
+    run->playNow = g_choiceLearner->GetPlaySeconds();
+    const auto& tick = run->tick;
+
+    auto& catalog = Effect::EffectCatalog::GetSingleton();
+    auto& sm = State::StateManager::GetSingleton();
+    const auto coverage = sm.GetCoverage();
+    const float refreshPriorSec = sm.GetRefreshPriorSec();
+    const bool legacyOn = ctx.legacyRan;   // == bLegacyLearnFeature here (the model is live)
+
+    const size_t rows = candidates.size();
+    std::vector<C::Attr> attrs(rows);
+    std::vector<C::RowExtra> extras(rows);
+    std::vector<C::GateRow> gateRows(rows);
+    const bool atLimit = coverage.valid &&
+                         Core::Coverage::SummonLimitReached(coverage.active.summons, coverage.active.summonLimit);
+    const uint32_t outSource = atLimit ? Core::Coverage::OldestSource(coverage.commanded) : 0;
+    double leftOut = 1.0;
+    size_t outIdx = SIZE_MAX;
+
+    Scoring::ScoredCandidateList out;
+    out.reserve(rows + 8);
+    for (size_t i = 0; i < rows; ++i) {
+        const auto& c = candidates[i];
+        const RE::FormID form = Candidate::GetFormID(c);
+        Scoring::ScoredCandidate sc;
+        sc.candidate = c;
+        // The legacy pass's utility and parts on a row the floors kept.
+        const size_t li = i < ctx.legacyOf.size() ? ctx.legacyOf[i] : i;
+        const Scoring::Legacy::Row lg = li < ctx.legacyRows.size() ? ctx.legacyRows[li] : Scoring::Legacy::Row{};
+        if (lg.Scored() && lg.scoredIndex >= 0 && static_cast<size_t>(lg.scoredIndex) < legacyList.size()) {
+            const auto& L = legacyList[static_cast<size_t>(lg.scoredIndex)];
+            sc.utility = L.utility;
+            sc.breakdown = L.breakdown;
+            sc.isColdStartBoosted = L.isColdStartBoosted;
+            sc.legacyScored = true;
+        }
+
+        auto& x = extras[i];
+        if (const auto* entry = catalog.FindOrMapId(form)) {
+            attrs[i] = AttrOf(model, *entry, ctx.playerState, StackOf(c));
+            if (coverage.valid) {
+                const auto parts = Core::Coverage::CoveredParts(entry->cap, coverage.active, refreshPriorSec);
+                x.covered = std::max(parts.other, parts.summonValue);
+                if (parts.summon && parts.atLimit) {
+                    leftOut = parts.summonLeft;
+                    if (form == outSource) {
+                        if (outIdx == SIZE_MAX) outIdx = i;   // a refresh: the count stands
+                    }
+                    else {
+                        gateRows[i] = C::GateRow{ true, parts.other };
+                    }
+                }
+            }
+        }
+        C::SetLegacy(x.feat, C::LegacyFeature(legacyOn, lg.Scored(), static_cast<double>(lg.lnLearnMult)));
+        if (sc.legacyScored && std::isfinite(sc.utility)) {
+            x.feat[static_cast<size_t>(C::Feature::ln_util)] = std::log(std::max(static_cast<double>(sc.utility), 1e-6));
+        }
+        x.feat[static_cast<size_t>(C::Feature::eligible)] = 1.0;
+        const auto b = snap->B(form, Candidate::IsFavorited(c), run->playNow);
+        x.bMu = b.mu;
+        x.bVar = b.var;
+        x.offPage = false;
+        out.push_back(std::move(sc));
+    }
+    // a_out's source is usually not a row at the limit (the summon_limit
+    // filter drops summon spells there, but in the refresh window): its s-hat
+    // is then read off its catalog entry -- what the model would score that
+    // summon with nothing up (doc 11 decision 2) -- as an extra entry the gate
+    // compares against but nothing ranks.
+    if (atLimit && outIdx == SIZE_MAX && outSource != 0) {
+        if (const auto* entry = catalog.FindOrMapId(outSource)) {
+            attrs.push_back(C::MakeAttr(model.grading, &entry->cap, std::array<float, Core::DecisionLog::kCrossCount>{}));
+            C::RowExtra x;
+            const auto b = snap->B(outSource, false, run->playNow);
+            x.bMu = b.mu;
+            x.bVar = b.var;
+            x.feat[static_cast<size_t>(C::Feature::util_missing)] = 1.0;   // not scored by the old floors
+            extras.push_back(x);
+            gateRows.push_back(C::GateRow{});
+            outIdx = attrs.size() - 1;
+        }
+    }
+
+    std::vector<C::LiveScore> scores;
+    C::ScoreForRanking(model, tick, attrs, extras, gateRows, atLimit ? outIdx : SIZE_MAX, leftOut, rows, scores);
+
+    for (size_t i = 0; i < rows; ++i) {
+        auto& sc = out[i];
+        const auto& ls = scores[i];
+        sc.score = ls.s.mu;
+        auto& p = sc.choice;
+        p.var = ls.s.var;
+        p.needMu = ls.needMu;
+        p.b = extras[i].bMu;
+        p.lnLearnMult = extras[i].feat[static_cast<size_t>(C::Feature::ln_learn_mult)];
+        p.utilMissing = extras[i].feat[static_cast<size_t>(C::Feature::util_missing)];
+        p.covered = extras[i].covered;
+        for (size_t t = 0; t < p.top.size(); ++t) {
+            p.top[t] = Scoring::ScoredCandidate::ChoiceParts::Term{ ls.top[t].need, ls.top[t].col, ls.top[t].value };
+        }
+        const int16_t k = ls.top[0].need;
+        p.explainedNeed = k >= 0 ? n[static_cast<size_t>(k)] : 0.0;
+        sc.explainedReason = Display::ExplainedReason(k, p.explainedNeed);
+    }
+
+    attrs.resize(rows);   // the gate's comparison entry is not a row
+    ctx.choiceAttrs = std::move(attrs);
+    ctx.choiceScores = std::move(scores);
+    ctx.choiceRun = run;
+    ctx.oldScore.shadow = std::move(run);   // the v3 log scores held rows with the same tick
+
+    [[maybe_unused]] const double us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+    Huginn_PLOT("Choice us per run", static_cast<int64_t>(us));
+    Huginn_PLOT("Choice rows per run", static_cast<int64_t>(rows));
+    return out;
 }
 
 // -----------------------------------------------------------------------------
@@ -548,35 +757,52 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
 // (favorite_suppressed), never an eligible row, so Floor::suppressed stays in
 // the format for older files and is not written.
 // Logging only: nothing here changes what was scored.
+//
+// R8.3: every candidate is ranked now, so "scored" in this log keeps its old
+// meaning -- the OLD floors kept the row (ScoredCandidate::legacyScored) --
+// and `util` is that row's legacy utility (NaN on the others), not anything
+// the ranking read. The choice score's mu, sd and explanation come from the
+// ranking pass (ctx.choiceScores, index-aligned); LogChoiceRows adds the
+// page's part after the allocation. With [Scoring] bLegacyLearnFeature off
+// the legacy pass did not run: no old parts are captured (run.valid false,
+// as the v3 reader already handles), lm 0 and um 1 on every row.
 
 void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
     const std::vector<Candidate::CandidateVariant>& candidates,
     const Context::ContextWeightMap& weights)
 {
     Huginn_ZONE_NAMED("Pipeline::CaptureEligible");
-    // First scored row per dedup key (type, uniqueID, formID) wins, as the
-    // cache's FormID index does.
+    // First legacy-scored row per dedup key (type, uniqueID, formID) wins, as
+    // the cache's FormID index does; and every ranked row, for the wildcard
+    // propensity.
     std::unordered_map<uint64_t, const Scoring::ScoredCandidate*> scoredByKey;
+    std::unordered_map<uint64_t, const Scoring::ScoredCandidate*> rankedByKey;
     scoredByKey.reserve(ctx.scoredCandidates.size());
+    rankedByKey.reserve(ctx.scoredCandidates.size());
     for (const auto& sc : ctx.scoredCandidates) {
         if (sc.isRememberedOnly) continue;   // added for the hold only: not scored
-        scoredByKey.try_emplace(Candidate::GetBase(sc.candidate).GetDeduplicationKey(), &sc);
+        const auto key = Candidate::GetBase(sc.candidate).GetDeduplicationKey();
+        rankedByKey.try_emplace(key, &sc);
+        if (sc.legacyScored) scoredByKey.try_emplace(key, &sc);
     }
 
     const auto& wildcards = g_utilityScorer->GetWildcardManager();
 
-    // 0.23.53: the old engine's view of the run (see above).
+    // 0.23.53: the old engine's view of the run (see above). R8.3: only when
+    // the legacy pass ran.
     namespace DL = Core::DecisionLog;
     const auto& cfg = g_utilityScorer->GetConfig();
     auto& old = ctx.oldScore;
     old.dropped.clear();
     old.stateHash = ctx.currentState.GetHash();
+    old.run = {};
+    const bool withOld = ctx.legacyRan;
     const auto phi = Learning::StateFeatures::FromState(ctx.playerState, ctx.targets).ToArray();
     std::optional<Learning::FeatureBanditLearner::LockedReader> learner;
-    if (g_featureBanditLearner) learner.emplace(g_featureBanditLearner->AcquireReader());
+    if (withOld && g_featureBanditLearner) learner.emplace(g_featureBanditLearner->AcquireReader());
     std::optional<Learning::UsageMemory::SnapshotReader> usage;
-    if (g_usageMemory) usage.emplace(g_usageMemory->AcquireReader(ctx.currentState));
-    {
+    if (withOld && g_usageMemory) usage.emplace(g_usageMemory->AcquireReader(ctx.currentState));
+    if (withOld) {
         auto& run = old.run;
         run = {};
         run.valid = true;
@@ -594,7 +820,7 @@ void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
         run.favMin = cfg.favoritesBoostMin;
         run.favMax = cfg.favoritesBoostMax;
         run.scored = static_cast<int>(std::ranges::count_if(ctx.scoredCandidates,
-            [](const Scoring::ScoredCandidate& sc) { return !sc.isRememberedOnly; }));
+            [](const Scoring::ScoredCandidate& sc) { return sc.legacyScored && !sc.isRememberedOnly; }));
         run.totalTrains = learner ? learner->TotalTrains() : 0.0f;
         run.phi.assign(phi.begin(), phi.end());
     }
@@ -639,17 +865,15 @@ void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
     // R8.2: the D2 feature off the same pass (index-aligned with candidates),
     // and a check that the moved floor loop reports the floors this capture
     // derives on its own (they are the same tests; a mismatch is a bug).
-    const bool haveLegacy = ctx.legacyRows.size() == candidates.size();
+    const bool haveLegacy = ctx.legacyRan && ctx.legacyRows.size() == candidates.size() &&
+                            ctx.legacyOf.size() == candidates.size();
     // Two candidates with one dedup key (type, uid, form) read the same scored
     // row here (scoredByKey), but the floor pass's cold start scores only the
     // first (alreadyScored by form): the second reads the legacy row of the
-    // candidate that was kept, so its floor, lm and um agree with its utility.
-    std::unordered_map<uint64_t, size_t> keptByKey;
-    if (haveLegacy) {
-        for (size_t i = 0; i < candidates.size(); ++i) {
-            if (ctx.legacyRows[i].Scored()) keptByKey.try_emplace(Candidate::GetBase(candidates[i]).GetDeduplicationKey(), i);
-        }
-    }
+    // candidate that was kept (ctx.legacyOf, R8.3: worked out once in
+    // ScoreCandidates, so the ranking reads the same row), and its floor, lm
+    // and um agree with its utility.
+    const bool haveChoice = ctx.choiceLive && ctx.choiceScores.size() == candidates.size();
     size_t floorMismatch = 0;
     size_t candIndex = 0;
     for (const auto& c : candidates) {
@@ -674,20 +898,35 @@ void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
         if (const auto it = scoredByKey.find(base.GetDeduplicationKey()); it != scoredByKey.end()) {
             scored = it->second;
             row.utility = it->second->utility;
-            if (it->second->isWildcard) {
-                row.wildcardPropensity = wildcards.GetWildcardPropensity(ctx.displayPageIndex, base.formID);
-            }
         }
-        row.old = explain(c, true, scored);
+        if (const auto it = rankedByKey.find(base.GetDeduplicationKey());
+            it != rankedByKey.end() && it->second->isWildcard) {
+            row.wildcardPropensity = wildcards.GetWildcardPropensity(ctx.displayPageIndex, base.formID);
+        }
+        if (withOld) {
+            row.old = explain(c, true, scored);
+        }
+        else {
+            row.old.favorite = Candidate::IsFavorited(c);   // the v3 Favorite flag reads it
+        }
         if (haveLegacy) {
-            size_t li = ci;
-            if (scored && !ctx.legacyRows[ci].Scored()) {
-                if (const auto k = keptByKey.find(base.GetDeduplicationKey()); k != keptByKey.end()) li = k->second;
-            }
-            const auto& lg = ctx.legacyRows[li];
+            const auto& lg = ctx.legacyRows[ctx.legacyOf[ci]];
             row.lnLearnMult = lg.Scored() ? lg.lnLearnMult : 0.0f;
             row.utilMissing = lg.utilMissing ? 1 : 0;
             if (static_cast<uint8_t>(lg.floor) != row.old.floor) ++floorMismatch;
+        }
+        else {
+            row.lnLearnMult = 0.0f;   // the switch is off: what the score read
+            row.utilMissing = 1;
+        }
+        if (haveChoice) {
+            // the ranking's mu; LogChoiceRows adds the page's part
+            const auto& ls = ctx.choiceScores[ci];
+            row.shadowMu = static_cast<float>(ls.s.mu);
+            row.shadowSd = static_cast<float>(ls.s.Sd());
+            row.shadowLogit = static_cast<float>(ls.s.mu);
+            row.exNeed = ls.s.Learned() ? DL::kExLearned : ls.s.exNeed;
+            row.exCol = ls.s.Learned() ? static_cast<int16_t>(-1) : ls.s.exCol;
         }
         ctx.eligible.push_back(row);
     }
@@ -703,7 +942,7 @@ void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
 
     // 0.23.53: the candidates the filters dropped (one row per item; a
     // duplicate is the eligible row's own item and is skipped).
-    if (!ctx.filtered.empty()) {
+    if (withOld && !ctx.filtered.empty()) {
         Huginn_ZONE_NAMED("Pipeline::CaptureEligible::Dropped");
         const auto stackKey = [](RE::FormID form, uint16_t uid) { return (static_cast<uint64_t>(uid) << 32) | form; };
         std::unordered_set<uint64_t> wanted;
@@ -918,44 +1157,23 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
 }
 
 // -----------------------------------------------------------------------------
-// ScoreShadow — R8.2: the new model (core/ChoiceScore.h) beside the old ranking
+// LogChoiceRows — R8.3: the page's part of each logged score (was ScoreShadow)
 // -----------------------------------------------------------------------------
-// After the old scoring and the allocation: for every eligible row, cap(i) and
-// the runtime cross-features (as the selection log v3 reads them), covered(i)
-// with doc 11's greedy upgrade gate at the summon limit, the D2 legacy feature
-// off the pass that ranked, b with its battery, and the off-page flag from the
-// page just allocated. mu, sd, the logit and the explanation go onto the row
-// (the v3 log writes them); the run's tick is cached for the held rows a
-// context adds. The ranking is not touched. Also the opportunity counter: a
-// need's onset with an answering item on this page grows its variances.
-// Cost: Tracy zone Pipeline::ScoreShadow (budget 1 ms at ~500 rows).
+// The ranking ran in ScoreCandidates (RankOnChoice); CaptureEligible copied
+// its mu, sd and explanation onto the eligible rows. After the allocation the
+// page adds, for the v3 log, what a pick's choice set reads (the learner's
+// view, fitlib.build's): the slot feature of the key a row landed on, and
+// kappa off the page (core/ChoiceLive.h AfterAllocation). With the R6
+// bootstrap (no slot weights) the logged mu is the ranked mu. Also the
+// opportunity counter: a need's onset with an answering item on this page
+// grows its variances.
 
-void PipelineCoordinator::ScoreShadow(PipelineContext& ctx)
+void PipelineCoordinator::LogChoiceRows(PipelineContext& ctx)
 {
-    if (!g_choiceLearner || !g_choiceLearner->Ready()) return;
-    Huginn_ZONE_NAMED("Pipeline::ScoreShadow");
+    if (!ctx.choiceLive || !ctx.choiceRun || !g_choiceLearner) return;
+    Huginn_ZONE_NAMED("Pipeline::LogChoiceRows");
     namespace C = Core::Choice;
-    namespace DL = Core::DecisionLog;
-    const auto t0 = std::chrono::steady_clock::now();
-
-    const auto live = Needs::NeedMonitor::GetSingleton().Latest();
-    if (!live) return;
-    auto snap = g_choiceLearner->GetSnapshot();
-    const auto& model = snap->model;
-    const auto n = snap->Needs(live->vector.value, live->vector.input);
-    const double nowSec = std::chrono::duration<double>(ctx.now.time_since_epoch()).count();
-    const uint32_t gen = g_loadGeneration.load(std::memory_order_relaxed);
-    const auto recent = g_choiceLearner->RecentValues(*snap, nowSec, gen);
-    auto run = std::make_shared<Learning::ShadowRun>();
-    run->snap = snap;
-    run->tick = C::MakeTick(model, n, recent);
-    run->playNow = g_choiceLearner->GetPlaySeconds();
-    const auto& tick = run->tick;
-
-    auto& catalog = Effect::EffectCatalog::GetSingleton();
-    auto& sm = State::StateManager::GetSingleton();
-    const auto coverage = sm.GetCoverage();
-    const float refreshPriorSec = sm.GetRefreshPriorSec();
+    const auto& model = ctx.choiceRun->snap->model;
 
     // The page just allocated: a row is on it when an assignment shows its
     // form with its unique ID, or either side has none.
@@ -967,107 +1185,21 @@ void PipelineCoordinator::ScoreShadow(PipelineContext& ctx)
         return -1;
     };
 
-    const size_t rows = ctx.eligible.size();
-    std::vector<C::Attr> attrs(rows);
-    std::vector<C::RowExtra> extras(rows);
-    std::vector<C::GateRow> gates(rows);
+    const bool aligned = ctx.choiceScores.size() == ctx.eligible.size() &&
+                         ctx.choiceAttrs.size() == ctx.eligible.size();
     std::vector<C::Attr> page;
-    const bool atLimit = coverage.valid &&
-                         Core::Coverage::SummonLimitReached(coverage.active.summons, coverage.active.summonLimit);
-    const uint32_t outSource = atLimit ? Core::Coverage::OldestSource(coverage.commanded) : 0;
-    double leftOut = 1.0;
-    size_t outIdx = SIZE_MAX;
-    for (size_t i = 0; i < rows; ++i) {
-        const auto& e = ctx.eligible[i];
-        const auto* entry = catalog.FindOrMapId(e.formID);
-        auto& x = extras[i];
-        if (entry) {
-            Effect::StackInfo stack;
-            stack.count = e.count;
-            if (e.enchanted) {
-                stack.charge = e.chargeFraction;
-                stack.maxCharge = 1.0f;
-            }
-            const auto f = Effect::ComputeRuntimeFeatures(*entry, ctx.playerState, stack);
-            std::array<float, DL::kCrossCount> cross{};
-            cross[static_cast<size_t>(DL::Cross::overshoot_health)] = f.overshootHealth;
-            cross[static_cast<size_t>(DL::Cross::overshoot_magicka)] = f.overshootMagicka;
-            cross[static_cast<size_t>(DL::Cross::overshoot_stamina)] = f.overshootStamina;
-            cross[static_cast<size_t>(DL::Cross::weapon_charge)] = f.weaponCharge;
-            cross[static_cast<size_t>(DL::Cross::stack_count)] = f.stackCount;
-            cross[static_cast<size_t>(DL::Cross::ammo_matches_launcher)] = f.ammoMatchesLauncher;
-            cross[static_cast<size_t>(DL::Cross::school_fortified)] = f.schoolFortified;
-            attrs[i] = C::MakeAttr(model.grading, &entry->cap, cross);
-            if (coverage.valid) {
-                const auto parts = Core::Coverage::CoveredParts(entry->cap, coverage.active, refreshPriorSec);
-                x.covered = std::max(parts.other, parts.summonValue);
-                if (parts.summon && parts.atLimit) {
-                    leftOut = parts.summonLeft;
-                    if (e.formID == outSource) {
-                        if (outIdx == SIZE_MAX) outIdx = i;   // a refresh: the count stands
-                    }
-                    else {
-                        gates[i] = C::GateRow{ true, parts.other };
-                    }
-                }
-            }
-        }
-        const auto lf = Scoring::Legacy::Feature(
-            Scoring::Legacy::Row{ e.utilMissing == 0 ? DL::Floor::pass : DL::Floor::ctx,
-                                  std::isfinite(e.lnLearnMult) ? e.lnLearnMult : 0.0f, e.utilMissing != 0 },
-            true);   // R8.2: [Scoring] bLegacyLearnFeature is logged only; PR 3 passes it here
-        x.feat[static_cast<size_t>(C::Feature::ln_learn_mult)] = lf.lnLearnMult;
-        x.feat[static_cast<size_t>(C::Feature::util_missing)] = lf.utilMissing;
-        if (std::isfinite(e.utility)) {
-            x.feat[static_cast<size_t>(C::Feature::ln_util)] = std::log(std::max(static_cast<double>(e.utility), 1e-6));
-        }
-        x.feat[static_cast<size_t>(C::Feature::eligible)] = 1.0;
-        const int slot = onPage(e.formID, e.uniqueID);
-        x.offPage = slot < 0;
-        if (slot >= 0 && slot < 8) x.feat[static_cast<size_t>(C::Feature::slot0) + static_cast<size_t>(slot)] = 1.0;
-        const auto b = snap->B(e.formID, e.old.favorite, run->playNow);
-        x.bMu = b.mu;
-        x.bVar = b.var;
-        if (slot >= 0) page.push_back(attrs[i]);
-    }
-    // a_out's source is usually not a row at the limit (the summon_limit
-    // filter drops summon spells there, but in the refresh window): its s-hat
-    // is then read off its catalog entry -- what the model would score that
-    // summon with nothing up (doc 11 decision 2) -- as an extra entry the gate
-    // compares against but nothing scores.
-    if (atLimit && outIdx == SIZE_MAX && outSource != 0) {
-        if (const auto* entry = catalog.FindOrMapId(outSource)) {
-            attrs.push_back(C::MakeAttr(model.grading, &entry->cap, std::array<float, DL::kCrossCount>{}));
-            C::RowExtra x;
-            const auto b = snap->B(outSource, false, run->playNow);
-            x.bMu = b.mu;
-            x.bVar = b.var;
-            x.feat[static_cast<size_t>(C::Feature::util_missing)] = 1.0;   // not scored by the old floors
-            extras.push_back(x);
-            gates.push_back(C::GateRow{});
-            outIdx = attrs.size() - 1;
-        }
-    }
-    if (atLimit && outIdx != SIZE_MAX) {
-        C::ApplyUpgradeGate(model, tick, attrs, extras, gates, outIdx, leftOut);
-    }
-    for (size_t i = 0; i < rows; ++i) {
-        const auto s = C::Score(model, tick, attrs[i], extras[i]);
+    for (size_t i = 0; i < ctx.eligible.size() && aligned; ++i) {
         auto& e = ctx.eligible[i];
-        e.shadowMu = static_cast<float>(s.mu);
-        e.shadowSd = static_cast<float>(s.Sd());
-        e.shadowLogit = static_cast<float>(s.logit);
-        e.exNeed = s.Learned() ? DL::kExLearned : s.exNeed;
-        e.exCol = s.Learned() ? static_cast<int16_t>(-1) : s.exCol;
+        const int slot = onPage(e.formID, e.uniqueID);
+        const bool offPage = slot < 0;
+        const auto logged = C::AfterAllocation(model, ctx.choiceScores[i].s.mu, offPage, slot);
+        e.shadowMu = static_cast<float>(logged.mu);
+        e.shadowLogit = static_cast<float>(logged.logit);
+        if (!offPage) page.push_back(ctx.choiceAttrs[i]);
     }
-    ctx.oldScore.shadow = std::move(run);
 
     // The opportunity counter (onsets, not seconds), beside the cache update.
-    g_choiceLearner->OnPipelineRun(n, page);
-
-    [[maybe_unused]] const double us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
-    Huginn_PLOT("Shadow us per run", static_cast<int64_t>(us));
-    Huginn_PLOT("Shadow rows per run", static_cast<int64_t>(rows));
+    g_choiceLearner->OnPipelineRun(ctx.choiceRun->tick.n, page);
 }
 
 // -----------------------------------------------------------------------------
@@ -1077,9 +1209,10 @@ void PipelineCoordinator::ScoreShadow(PipelineContext& ctx)
 void PipelineCoordinator::UpdateCaches(PipelineContext& ctx)
 {
     Huginn_ZONE_NAMED("Pipeline::UpdateCaches");
-    // R8.2: the new model in shadow, on the run's eligible rows, before they
-    // move into the cache (and the opportunity counter beside the cache).
-    ScoreShadow(ctx);
+    // R8.3: the page's part of the logged choice scores, on the run's
+    // eligible rows before they move into the cache (and the opportunity
+    // counter beside the cache).
+    LogChoiceRows(ctx);
     // Cache pipeline state for external equip attribution.
     // sortedPrefix = topNCandidates: ranks are reported for that prefix only.
     // The whole list is in score order since R7 (UtilityScorer sorts it all),
@@ -1219,7 +1352,7 @@ void PipelineCoordinator::LogRecommendations(PipelineContext& ctx)
 {
     if (size_t dumpN = m_recDumpRequest.exchange(0, std::memory_order_relaxed); dumpN > 0) {
         g_utilityScorer->LogTopCandidates(ctx.scoredCandidates, dumpN,
-            /*detail=*/true, /*force=*/true);
+            /*detail=*/true, /*force=*/true, /*fallback=*/!ctx.choiceLive);
 
         // Label with the tick's snapshot page, not a live re-read, so the dump
         // matches the assignments it prints.
@@ -1230,7 +1363,8 @@ void PipelineCoordinator::LogRecommendations(PipelineContext& ctx)
             // An override carries no utility, only the +inf "pinned" score.
             logger::info("[Recs]   slot {}: {} ({:08X}) {}{}"sv,
                 a.slotIndex, a.name, a.formID,
-                a.IsOverride() ? std::string("override") : fmt::format("u={:.3f} s={:+.3f}", a.utility, a.score),
+                a.IsOverride() ? std::string("override")
+                               : fmt::format("{}={:+.3f} u={:.3f}", ctx.choiceLive ? "mu" : "s", a.score, a.utility),
                 a.subtextLabel.empty() ? "" : fmt::format(" [{}]", a.subtextLabel));
         }
         return;  // The dump covers this tick; skip the periodic log
@@ -1242,8 +1376,73 @@ void PipelineCoordinator::LogRecommendations(PipelineContext& ctx)
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(ctx.now - m_lastRecLog);
     if (elapsed.count() >= 5000) {
         g_utilityScorer->LogTopCandidates(ctx.scoredCandidates, 5,
-            /*detail=*/verbosity >= 2, /*force=*/false);
+            /*detail=*/verbosity >= 2, /*force=*/false, /*fallback=*/!ctx.choiceLive);
         m_lastRecLog = ctx.now;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// UpdateContextReason — R8.3: the tick's reason, from the page's explanations
+// -----------------------------------------------------------------------------
+// In place of ContextRuleEngine::DominantReason (the old weights' reason):
+// each ranked row carries its explanation, the largest theta[k][j] n_k a_j
+// term of its score, mapped to a context reason when its need k is one
+// (display/NeedReason.h) and on (n_k >= 0.5). The tick's raw reason is the
+// most urgent of those among the items the allocated page shows (the
+// ContextReason order is the display priority, as before), so the label can
+// only name a reason the page answers. Then the hold (#62) damps it, and the
+// [Context] line logs the transition. The fallback ranking (no bootstrap) has
+// no explanations: no situational reason.
+
+void PipelineCoordinator::UpdateContextReason(PipelineContext& ctx)
+{
+    Context::ContextReason rawReason = Context::ContextReason::None;
+    for (const auto& a : ctx.assignments) {
+        if (a.IsEmpty() || a.IsOverride() || a.IsRemembered() || !a.candidate) continue;
+        const auto r = a.candidate->explainedReason;
+        if (r == Context::ContextReason::None) continue;
+        if (rawReason == Context::ContextReason::None || r < rawReason) rawReason = r;
+    }
+
+    // Damp the LABEL only (#62): a reason true for one tick would repaint all
+    // eight subtexts and revert before it could be read. The hold releases a
+    // reason slowly and adopts a more urgent one instantly (ReasonHold).
+    // ctx.now, not a fresh clock read: the hold is argued against SlotLocker's
+    // duration, so both must be measured off the same clock reading.
+    const double nowMs = std::chrono::duration<double, std::milli>(ctx.now.time_since_epoch()).count();
+
+    // REASON_HOLD_MS sits below the slot content lock -- the label must not
+    // outlive the contents it explains -- but that lock is fLockDurationMs, an
+    // INI value the player can lower or set to 0. Clamp instead of asserting
+    // the default: with locking off the honest hold is zero.
+    const float lockMs = Slot::SlotLocker::GetSingleton().GetConfig().lockDurationMs;
+    const float holdMs = std::min(Config::REASON_HOLD_MS, std::max(lockMs, 0.0f));
+    ctx.contextReason = m_reasonHold.Update(rawReason, nowMs, holdMs);
+
+    // The reason drives a display string only, so log the transition (not the
+    // tick), deduped on BOTH halves: the raw one is the only record of what
+    // the page's explanations said while a hold masks it. Debug level: a
+    // behaviour diagnostic for Debug soak runs.
+    // NOTE: Single-threaded (pipeline runs on the update thread only).
+    const LoggedReason nowLogged{ .raw = rawReason, .shown = ctx.contextReason };
+    if (!m_lastLoggedReason || *m_lastLoggedReason != nowLogged) {
+        const auto labelOr = [](Context::ContextReason r) {
+            const auto label = Display::ReasonLabel(r);
+            return label.empty() ? "(none)"sv : label;
+        };
+        const auto& vitals = ctx.playerState.vitals;
+        const auto rawNote = rawReason == ctx.contextReason
+            ? std::string{}
+            : fmt::format(" (raw {})", labelOr(rawReason));
+        logger::debug("[Context] Reason: {} → {}{} | hp={:.1f}% mp={:.1f}% sp={:.1f}% charge={}"sv,
+            m_lastLoggedReason ? labelOr(m_lastLoggedReason->shown) : "(none)"sv,
+            labelOr(ctx.contextReason),
+            rawNote,
+            vitals.health * 100.0f, vitals.magicka * 100.0f, vitals.stamina * 100.0f,
+            ctx.playerState.hasEnchantedWeapon
+                ? fmt::format("{:.1f}%", ctx.playerState.weaponChargePercent * 100.0f)
+                : "n/a");
+        m_lastLoggedReason = nowLogged;
     }
 }
 
@@ -1265,6 +1464,8 @@ void PipelineCoordinator::LogRecommendations(PipelineContext& ctx)
 
 void PipelineCoordinator::DeriveDisplayLabels(PipelineContext& ctx)
 {
+    UpdateContextReason(ctx);
+
     // Filling subtextLabel is NOT diagnostics: it is what `hg recs` prints, so
     // it happens every tick at every log level. Only the summary line below is
     // debug-gated.

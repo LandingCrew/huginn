@@ -3,6 +3,8 @@
 
 #include "Globals.h"
 #include "learning/FeatureBanditLearner.h"
+#include "learning/ChoiceLearner.h"
+#include "learning/legacy/LegacyLearnFeature.h"
 #include "learning/StateFeatures.h"
 #include "learning/PipelineStateCache.h"
 #include "state/StateManager.h"
@@ -109,7 +111,8 @@ namespace Huginn::Console
          return;
       }
 
-      auto msg = std::format("Learning data cleared ({} learner items)", *learnerItems);
+      auto msg = std::format("Learning data cleared ({} learner items; theta back to the bootstrap, b cleared)",
+         *learnerItems);
       Print(msg.c_str());
       logger::info("[Console] {}"sv, msg);
    }
@@ -177,6 +180,10 @@ namespace Huginn::Console
             learnerItems = g_featureBanditLearner->GetItemCount();
             g_featureBanditLearner->Clear();
          }
+         // R8.3: theta back to the bootstrap, b cleared (as `hg reset weights`).
+         if (g_choiceLearner) {
+            g_choiceLearner->ResetToBootstrap(g_activeCharacterID.load(std::memory_order_relaxed), /*seedB=*/false);
+         }
 
          // 2. Rebuild all registries (console does full rebuild; init path reconciles)
          RebuildRegistries();
@@ -235,7 +242,7 @@ namespace Huginn::Console
       Huginn_ZONE_NAMED("hg needs");
       const auto live = Needs::ReadLiveNeeds();
       const auto lines = Needs::FormatNeeds(live.vector);
-      Print(std::format("Huginn needs ({} of {} non-zero; logged only, no score reads them):",
+      Print(std::format("Huginn needs ({} of {} non-zero; the choice score reads them):",
          lines.size(), Core::Needs::kNeedCount).c_str());
       logger::info("[Console] hg needs: {} non-zero"sv, lines.size());
       for (const auto& line : lines) {
@@ -329,6 +336,24 @@ namespace Huginn::Console
 
    static void Cmd_Status(std::string_view /*arg*/)
    {
+      // R8.3: what ranks, and the choice learner's counts (the smoke test
+      // compares these across a save and a reload).
+      {
+         std::string line;
+         if (g_choiceLearner && g_choiceLearner->Ready()) {
+            const auto st = g_choiceLearner->GetStats();
+            const auto [utc, sha] = g_choiceLearner->FileIdentity();
+            line = std::format("Ranking: choice score (bootstrap {} {}); theta {} entries, {} moved from the bootstrap; "
+                               "b {} items; {} picks learned; legacy feature {}",
+               utc.empty() ? "?" : utc, sha.substr(0, 12), st.thetaEntries, st.thetaMoved, st.bEntries,
+               st.picksLearned, Scoring::Legacy::Enabled() ? "on" : "OFF (fallback, not a supported mode)");
+         } else {
+            line = "Ranking: OLD UTILITY (FALLBACK) -- Huginn_Bootstrap.json missing or invalid, see the log";
+         }
+         Print(line.c_str());
+         logger::info("[Console] hg status: {}"sv, line);
+      }
+
       // Feature contextual bandit
       if (g_featureBanditLearner) {
       auto msg = std::format("Learner: {} items, {} total trains, {} forgotten, {:.1f}h of play",

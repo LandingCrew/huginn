@@ -27,19 +27,20 @@ CMakeLists.txt uses `GLOB_RECURSE` — new source files are picked up at configu
 ```
 Game (SKSE) → StateManager (11 polls) → 6 State Types → StateEvaluator → GameState
                                       ↓
-                           Candidates → Utility Scorer → Slot Allocator → Widget/Wheeler
+                           Candidates → Choice score (needs) → Slot Allocator → Widget/Wheeler
 ```
 
-**Scoring formula:**
+**Scoring formula** (R8.3, 0.24.0: the cutover; doc 9, [docs/architecture/9-implementation-map.md](docs/architecture/9-implementation-map.md) Phase 6):
 ```
-utility(item) = contextWeight × (1 + λ(confidence) × learningScore)
+score(item) = μ = Σ_j v_j · a_j(item) + b(item) + θ_covered · covered(item) + w · ln learn mult(item) + w' · util missing(item)
+              v_j = Σ_k n_k θ[k][j] + Σ_f recent_f θ_f[j]      (n = the need vector, a = cap(i) + cross-features)
 ```
+Every candidate that passes the filters is ranked on μ (`ScoredCandidate::score`, `SlotScore()`), seeded from `Huginn_Bootstrap.json` (R6's D2) and learned by `ChoiceLearner`. The last two terms are **D2's legacy feature**: the old engine's `ln(1 + λ(α)·learningScore)` on the rows the old floors keep, behind `[Scoring] bLegacyLearnFeature` (`src/learning/legacy/LegacyLearnFeature`). Without a usable bootstrap the pipeline falls back to ranking on the old `utility = contextWeight × (1 + λ(confidence) × learningScore)` (ln u), and `hg status` says so.
 
 **Key architectural separation:**
-- `ContextRuleEngine` — "What matters RIGHT NOW?" (game state → relevance weights)
-- `PriorCalculator` — "Which item is intrinsically better?" (item properties → quality)
-- `FeatureBanditLearner` — "What does THIS PLAYER prefer?" (contextual bandit over 18-float feature vectors, see [docs/architecture/4-contextual-bandits.md](docs/architecture/4-contextual-bandits.md))
-- `UtilityScorer` — Combines all three into final utility
+- `ChoiceLearner` — θ (needs × effect columns), b per item, recent; the score (`core/ChoiceScore.h`, `core/ChoiceLive.h`) and its update (`core/ChoiceUpdate.h`)
+- `ContextRuleEngine`, `PriorCalculator`, `FeatureBanditLearner` (contextual bandit over 18-float feature vectors, see [docs/architecture/4-contextual-bandits.md](docs/architecture/4-contextual-bandits.md)) — the old engine, kept ONLY as inputs to D2's legacy feature (which rows it applies to, and its value)
+- `UtilityScorer` — R8.3: the legacy pass (`LegacyPass`) and the sort + wildcards (`RankAndApplyWildcards`); nothing ranks on utility
 
 See [docs/README.md](docs/README.md) for full system design.
 
@@ -49,7 +50,7 @@ See [docs/README.md](docs/README.md) for full system design.
 |-----------|---------|
 | `src/state/` | StateManager + 11 poll methods, 6 state types |
 | `src/candidate/` | Candidate generation and filtering |
-| `src/learning/` | FeatureBanditLearner, PriorCalculator, UtilityScorer; ChoiceLearner, ChoiceShadow (the new model in shadow, R8.2); `legacy/LegacyLearnFeature` (the part of the old score R8 keeps: R6's D2) |
+| `src/learning/` | ChoiceLearner (the ranking's model, R8.2; live from R8.3), ChoiceShadow (the run's tick, for the v3 log's held rows); FeatureBanditLearner, PriorCalculator, UtilityScorer (the legacy pass); `legacy/LegacyLearnFeature` (the part of the old score R8 keeps: R6's D2, a live score input from R8.3) |
 | `src/spell/`, `src/learning/item/`, `src/weapon/`, `src/scroll/` | Registries and classifiers |
 | `src/slot/` | Slot allocation, locking, classification |
 | `src/context/` | ContextRuleEngine (context weight computation) |
@@ -58,22 +59,22 @@ See [docs/README.md](docs/README.md) for full system design.
 | `src/wheeler/` | Wheeler mod integration (v1/v2 API) |
 | `src/console/` | In-game console commands (`hg`) |
 | `src/override/` | Override system (urgent potion surfacing) |
-| `src/persist/` | Learner weight serialization (cosave) |
+| `src/persist/` | Cosave: HCID (character, clock), BNDW (the old learner; STAYS while D2 reads it), THTA / BIAS (the choice learner's θ by stable key and b per item, R8.3: `ChoiceSerializer`, codec in `core/ChoiceCosave`) |
 | `src/settings/` | SettingsReloader (dMenu hot-reload) |
 | `src/effect/` | Effect extractor (R2): EffectReader (forms -> records), EffectCatalog (cap(i) per item, built when the main menu first opens; not read for scoring yet), `hg dump all` |
-| `src/core/` | Pure, host-tested code (`huginn_core_tests`): the effect mapper (EffectColumns, EffectRecords, EffectRules, EffectConditions, EffectMapper, CrossFeatures), MiniRegex, SlicedWalk (the catalog's sliced read), ActorTypeClassifier, TargetType, TargetFamilies, RingBuffer, SignatureDedup, the slot math (SlotAllocCore, SlotClassCapMath, SlotScoreMath, SlotSnapshotIO); the old engine's score parts as the v3 log records them (OldScore, 0.23.53); the need vector and its sensors (NeedEvaluator, NeedIds, NeedSnapshot, NeedSnapshotIO, NeedSensorMath, ResponseCurve, DropAhead, EdgeApproach (time_to_edge and edge_approach from the drop probes, 0.23.50), WaterSelfCheck, FallTracker, BenchKind, WeaponLoadout, R3); the selection log v3 format (DecisionLog) and need episodes and their 60 s laps (NeedEpisodes, R4); covered(i) and the summon limit (Coverage) and the candidate filters' reasons (FilterReason), logged in v3 rows from 0.23.46; the hard gates (HardGates: the old context zeros as filters), the active-buff refresh pass (RefreshPass) and the one combat clock (CombatOnset), R8.1; the new model in shadow, R8.2: MiniJson, the bootstrap reader (Bootstrap, ObviousPairs, Sha256), the score and its update (ChoiceScore, ChoiceUpdate: explanation, recent tracker, upgrade gate, Plackett-Luce, onsets) and the battery (Battery, shared with FeatureBanditLearner) |
+| `src/core/` | Pure, host-tested code (`huginn_core_tests`): the effect mapper (EffectColumns, EffectRecords, EffectRules, EffectConditions, EffectMapper, CrossFeatures), MiniRegex, SlicedWalk (the catalog's sliced read), ActorTypeClassifier, TargetType, TargetFamilies, RingBuffer, SignatureDedup, the slot math (SlotAllocCore, SlotClassCapMath, SlotScoreMath, SlotSnapshotIO); the old engine's score parts as the v3 log records them (OldScore, 0.23.53); the need vector and its sensors (NeedEvaluator, NeedIds, NeedSnapshot, NeedSnapshotIO, NeedSensorMath, ResponseCurve, DropAhead, EdgeApproach (time_to_edge and edge_approach from the drop probes, 0.23.50), WaterSelfCheck, FallTracker, BenchKind, WeaponLoadout, R3); the selection log v3 format (DecisionLog) and need episodes and their 60 s laps (NeedEpisodes, R4); covered(i) and the summon limit (Coverage) and the candidate filters' reasons (FilterReason), logged in v3 rows from 0.23.46; the hard gates (HardGates: the old context zeros as filters), the active-buff refresh pass (RefreshPass) and the one combat clock (CombatOnset), R8.1; the new model, R8.2: MiniJson, the bootstrap reader (Bootstrap, ObviousPairs, Sha256), the score and its update (ChoiceScore, ChoiceUpdate: explanation, recent tracker, upgrade gate, Plackett-Luce, onsets) and the battery (Battery, shared with FeatureBanditLearner); the cutover, R8.3: the ranking pass (ChoiceLive: the legacy switch, top terms, what the allocation adds), the THTA / BIAS codec (ChoiceCosave), the rank order (SlotScoreMath RanksBefore) and the need signature hash (NeedEvaluator SignatureHash, the skip gate's key) |
 
 ## Configuration
 
 **Compile-time constants** — `src/Config.h` (learning rate, rewards, intervals, target limits)
 
 **INI settings** — `Data/SKSE/Plugins/Huginn.ini`:
-- `[Scoring]` — Utility scoring params (loaded by `ScorerSettings`); `fRefreshPriorSec` is the active-buff filters' refresh window (R8.1)
+- `[Scoring]` — the old scoring params (loaded by `ScorerSettings`; R8.3: inputs of the legacy feature only); `bLegacyLearnFeature` (R8.3: D2's feature live, hot-reloadable; off is a fallback); `fCoveredPrior`; `fRefreshPriorSec` is the active-buff filters' refresh window (R8.1)
 - `[ContextWeights]` — context weight multipliers (loaded by `ContextWeightSettings`)
 - `[Widget]` — Scaleform HUD position, alpha, scale, display mode
 - `[Wheeler]` — Wheeler integration settings
 - `[Candidates]` — Uncastable spell policy
-- `[Needs]` — one response curve per need (`<need> = <kind> <p1> <p2>`; defaults from `docs/architecture/9-data/needs.csv`, generated by `tools/needs/make_need_ids.py`). The need vector is logged only (R3); no score reads it yet
+- `[Needs]` — one response curve per need (`<need> = <kind> <p1> <p2>`; defaults from `docs/architecture/9-data/needs.csv`, generated by `tools/needs/make_need_ids.py`). R8.3: the choice score reads the need vector, its 0.05-step signature joins the skip gate, and a curve the bootstrap carries (encumbrance) overrides the line
 - `[Pages]`, `[PageN]`, `[PageN.SlotM]` — Multi-page slot layout
 
 **R8 bootstrap** — `configs/Huginn_Bootstrap.json`: R6's fit (θ, κ, `recent_<family>`, b, the encumbrance curve, and the `ln learn mult` and `util missing` weights, which need FeatureBanditLearner, PriorCalculator, UsageMemory and the old floors running live; format: `docs/architecture/9-bootstrap-format.md`). Not installed and not read yet; R8 ships it to `Data/SKSE/Plugins/` with its reader.
@@ -85,10 +86,10 @@ Registered as `Huginn` with short alias `hg` (in-game `~` console):
 | Command | Description |
 |---------|-------------|
 | `hg refresh` | Force immediate recommendation update |
-| `hg recs [N]` | Dump top-N recommendation breakdown to log (default 10) |
-| `hg needs` | Print the live need vector: non-zero needs, value, curve input (R3; logged only) |
+| `hg recs [N]` | Dump top-N recommendation breakdown to log (default 10): μ, sd, the top three θ·n·cap terms, b, the legacy feature, the old utility for comparison |
+| `hg needs` | Print the live need vector: non-zero needs, value, curve input, where each curve came from (default / [Needs] / bootstrap) |
 | `hg reload` | Hot-reload all settings from INI |
-| `hg status` | Show system status |
+| `hg status` | Show system status; R8.3: what ranks (the choice score, or the FALLBACK), θ entries and how many moved from the bootstrap, b count, picks learned, the legacy switch |
 | `hg unlock` | Clear all slot locks |
 | `hg rebuild` | Force rebuild all registries |
 | `hg weights <FormID>` | Show learner weight vector (hex FormID) |
@@ -96,16 +97,16 @@ Registered as `Huginn` with short alias `hg` (in-game `~` console):
 | `hg actors` | List the actors the target poll tracks right now: name, race, type, hostile, dead, summon and its commander, distance band; the scoring target marked (to the console and the log) |
 | `hg hands` | Where each hand's weapon model hangs in both bipeds (culled, detached, missing) and the swap that put it there; for an equipped weapon that does not show (to the console and the log) |
 | `hg page <N>` | Switch to page N |
-| `hg reset weights` | Clear learned item weights |
-| `hg reset all` | Full system reset |
+| `hg reset weights` | Clear learned item weights (the old learner; R8.3: θ back to the bootstrap, b cleared) |
+| `hg reset all` | Full system reset (R8.3: including θ to the bootstrap and b cleared) |
 
 ## Update Loop
 
 `UpdateHandler` triggers at ~100ms intervals:
 1. Poll context sensors (read game state)
-2. Pipeline skip check (sensor dirty flag + discretized hash comparison)
+2. Pipeline skip check (sensor dirty flag + discretized hash comparison + the need signature, R8.3)
 3. Gather candidates (spells, items)
-4. Score by utility
+4. Score: the legacy pass (D2's feature), then every candidate ranked on the choice score μ (R8.3)
 5. Allocate to slots (classification-based, multi-page)
 6. Apply slot locks (temporal stability)
 7. Push to Scaleform widget + ImGui + Wheeler

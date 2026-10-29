@@ -8,6 +8,7 @@
 #include "learning/ScoredCandidate.h"
 #include "learning/PipelineStateCache.h"   // EligibleRow (R4, the selection log v3)
 #include "learning/legacy/LegacyLearnFeature.h"   // Legacy::Row (R8.2, the D2 feature)
+#include "core/ChoiceLive.h"                      // the ranking pass's rows (R8.3)
 #include "candidate/CandidateTypes.h"
 #include "context/ContextReason.h"     // Context::ContextReason (per-tick display reason)
 #include "context/ReasonHold.h"        // Context::ReasonHold (label stability, #62)
@@ -16,6 +17,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -47,14 +50,18 @@ namespace Huginn::Pipeline
         State::PlayerActorState playerState{};
         State::TargetCollection targets{};
         State::WorldState worldState{};
-        // Health tracking only: the elemental-damage enrichment window reads it.
-        // Magicka/stamina tracking used to be snapshotted here for the relevance
-        // tags; nothing consumes them since the display reason moved onto the
-        // context weights (#10), so they are no longer polled per tick.
+        // Health tracking only: the elemental-damage enrichment window reads it
+        // (the legacy context rules' isOnFire and the like; R8.3: no longer a
+        // skip-gate term, the need signature took that over).
         State::HealthTrackingState healthTracking{};
         float currentMagicka = 0.0f;
         uint32_t stateHash = 0;
-        bool elementalDamageActive = false;
+        // R8.3: the need vector's 0.05-step signature (NeedMonitor,
+        // core/NeedEvaluator.h SignatureHash), compared with the last run's
+        // in CheckHashSkip: a step on any need re-scores. It replaced the
+        // ambient signature (darkness, hunger and cold are needs) and the
+        // elemental window (the damage-rate needs decay with time).
+        uint64_t needSignature = 0;
         // Falling is not in the GameState hash either — see the bypass in
         // CheckHashSkip and m_wasFalling below (#60).
         bool fallingActive = false;
@@ -68,21 +75,13 @@ namespace Huginn::Pipeline
         // surface when some unrelated dimension happened to move at the same
         // moment.
         bool workstationActive = false;
-        // Nor are darkness (/code-review #152) or the survival needs: walking
-        // into a quiet cave, or getting hungrier, moves no hashed bucket.
-        // Packed into one signature and edge-triggered, not held like the three
-        // above -- a cave or a cold spell lasts minutes, and one run on each
-        // change is all the weights need. Bit 0 darkness, bits 1-2 the hunger
-        // tier, bits 3-4 the cold tier (Context::DarknessApplies, HungerTier,
-        // ColdTier).
-        uint8_t ambientSignature = 0;
         // Each vital's zone against its override's thresholds
         // (Core::OverrideZone; 2 bits each: health, magicka, stamina). Compared
-        // like ambientSignature: a crossing of an override threshold always
+        // like needSignature: a crossing of an override threshold always
         // gets a run, whatever the buckets or the locks are doing.
         uint8_t overrideSignature = 0;
         // R8.1 (0.23.55): the active-buff blocks due for their refresh
-        // (ActorBuffs::refreshDue). Compared like ambientSignature: a block
+        // (ActorBuffs::refreshDue). Compared like needSignature: a block
         // entering its last fRefreshPriorSec seconds moves no hashed bucket,
         // and the filters only let its item through on a run.
         Core::Refresh::DueBits refreshDue = 0;
@@ -97,12 +96,27 @@ namespace Huginn::Pipeline
         Slot::SlotAssignments rawAssignments;
         Slot::SlotAssignments assignments;
 
-        // Dominant reason for THIS tick, derived by ScoreCandidates from the very
-        // weight map the scorer ranked against, and consumed by the Wheeler
-        // subtext label. One encoding — ContextRuleEngine's curves — for both
-        // scoring and display (#10). The ContextWeightMap itself stays local to
-        // that step (hence only ContextReason.h here); nothing downstream needs it.
+        // The reason label for THIS tick (R8.3): the most urgent context reason
+        // among the explanations (the largest theta n cap term) of the items
+        // the allocated page shows, through the reason hold. Derived in
+        // DeriveDisplayLabels; consumed by the subtext labels, which speak it
+        // only for an item whose own explanation is that reason.
         Context::ContextReason contextReason = Context::ContextReason::None;
+
+        // R8.3: the ranking pass. choiceLive = the bootstrap is read and the
+        // pipeline ranks on mu; else the fallback ranks on the old utility.
+        // legacyRan = the legacy pass ran this run ([Scoring]
+        // bLegacyLearnFeature, or the fallback, which needs the utility).
+        bool choiceLive = false;
+        bool legacyRan = false;
+        // Index-aligned with the candidates (and so with `eligible`): each
+        // row's attributes and its ranking-pass score; legacyOf = the
+        // candidate whose legacy row this one reads (itself, or the kept one
+        // of its dedup key: see CaptureEligible).
+        std::vector<Core::Choice::Attr> choiceAttrs;
+        std::vector<Core::Choice::LiveScore> choiceScores;
+        std::vector<size_t> legacyOf;
+        std::shared_ptr<const Learning::ShadowRun> choiceRun;
 
         // Display page resolved once per tick by ResolveDisplayPage, then used by
         // allocation, caches, and push so the WHOLE tick stays on one page even if
@@ -159,7 +173,7 @@ namespace Huginn::Pipeline
             healthTracking = {};
             currentMagicka = 0.0f;
             stateHash = 0;
-            elementalDamageActive = false;
+            needSignature = 0;
             fallingActive = false;
             underwaterActive = false;
             workstationActive = false;
@@ -185,6 +199,12 @@ namespace Huginn::Pipeline
             oldScore.dropped.clear();
             oldScore.shadow.reset();
             legacyRows.clear();
+            choiceLive = false;
+            legacyRan = false;
+            choiceAttrs.clear();
+            choiceScores.clear();
+            legacyOf.clear();
+            choiceRun.reset();
         }
     };
 
@@ -221,12 +241,12 @@ namespace Huginn::Pipeline
         /// one in RunPipelineIfNeeded (which returns before RunPipeline is ever
         /// called) and CheckHashSkip below.
         ///
-        /// Four latches have needed this so far — the elemental window, falling
-        /// (#60), a pending reason downgrade (#62) and underwater (#61) — and
-        /// the first two were each wired into one gate at a time. A latch wired
-        /// into only the inner gate is silently dead in a static scene, which is
-        /// exactly where the reason hold needed it. Add the fifth here, not at a
-        /// call site.
+        /// Latches that have needed this: falling (#60), a pending reason
+        /// downgrade (#62), underwater (#61), a learner update, and (R8.3) the
+        /// need signature moving a step since the last run -- which replaced
+        /// the elemental window here. A latch wired into only the inner gate is
+        /// silently dead in a static scene, which is exactly where the reason
+        /// hold needed it. Add the next one here, not at a call site.
         ///
         /// Underwater is the cautionary one. It was missing from the hash the
         /// whole time and nobody noticed, because the sensor never fired: #61's
@@ -239,8 +259,8 @@ namespace Huginn::Pipeline
         /// thread only.
         [[nodiscard]] bool NeedsForcedRun() const noexcept
         {
-            return m_wasElementalDamageActive || m_wasFalling || m_wasUnderwater ||
-                   m_reasonHold.IsHolding() || LearnerWeightsChanged();
+            return m_wasFalling || m_wasUnderwater || m_reasonHold.IsHolding() || LearnerWeightsChanged() ||
+                   NeedSignatureMoved();
         }
 
         /// Drop everything that describes the character being unloaded. The held
@@ -265,10 +285,9 @@ namespace Huginn::Pipeline
 
             m_lastPipelineHash = UINT32_MAX;  // Force the first post-load run
             m_lastLoggedState = {};
-            m_wasElementalDamageActive = false;
             m_wasFalling = false;
             m_wasUnderwater = false;
-            m_lastAmbientSignature = 0;
+            m_lastNeedSignature = 0;
             m_lastOverrideSignature = 0xFF;
         }
 
@@ -302,9 +321,19 @@ namespace Huginn::Pipeline
         /// Non-consuming — BOTH skip gates ask, and only the run itself clears
         /// it, in CheckHashSkip's commit path.
         [[nodiscard]] static bool LearnerWeightsChanged() noexcept;
+        /// R8.3: the need signature NeedMonitor holds now differs from the one
+        /// the last committed run scored with (out of line: NeedMonitor.h).
+        [[nodiscard]] bool NeedSignatureMoved() const noexcept;
         void LogStateTransition(PipelineContext& ctx);
         void EnrichElementalDamage(PipelineContext& ctx);
         void ScoreCandidates(PipelineContext& ctx);
+        /// R8.3: the ranking pass -- one ScoredCandidate per candidate, mu as
+        /// its score (core/ChoiceLive.h), the legacy pass's utility and parts
+        /// on the rows the old floors kept. Fills ctx.choiceAttrs /
+        /// choiceScores / choiceRun.
+        Scoring::ScoredCandidateList RankOnChoice(PipelineContext& ctx,
+            const std::vector<Candidate::CandidateVariant>& candidates,
+            const Scoring::ScoredCandidateList& legacyList);
         /// R4: copy every generated candidate into ctx.eligible (reads only).
         /// 0.23.53: with the old engine's score parts of every candidate,
         /// whatever the floors, scored against `weights` (the map the scoring
@@ -316,10 +345,12 @@ namespace Huginn::Pipeline
         /// locking the stale page would leak page-blind locks across the switch.
         bool AllocateAndLock(PipelineContext& ctx);
         void UpdateCaches(PipelineContext& ctx);
-        /// R8.2: the new model in shadow -- mu, sd, the logit and the
-        /// explanation of every eligible row, after the old scoring and the
-        /// allocation (the ranking is untouched); the opportunity counter.
-        void ScoreShadow(PipelineContext& ctx);
+        /// R8.3 (was R8.2's ScoreShadow): after the allocation, what the page
+        /// adds to each eligible row's logged score -- the slot feature of its
+        /// key and kappa off the page (core/ChoiceLive.h AfterAllocation) --
+        /// and the opportunity counter. The ranking itself ran in
+        /// ScoreCandidates.
+        void LogChoiceRows(PipelineContext& ctx);
         void PushDisplay(PipelineContext& ctx);
         void LogRecommendations(PipelineContext& ctx);
         // Ground truth for what the player is actually shown: derives the
@@ -327,6 +358,9 @@ namespace Huginn::Pipeline
         // `hg recs` prints it) and logs the set on change. Wheeler re-derives
         // under its own [Subtexts] toggles rather than inheriting these.
         void DeriveDisplayLabels(PipelineContext& ctx);
+        /// R8.3: the tick's reason from the explanations of what the page
+        /// shows, through the hold (in place of DominantReason).
+        void UpdateContextReason(PipelineContext& ctx);
 
 #ifndef NDEBUG
         void UpdateDebugWidgets(PipelineContext& ctx);
@@ -337,11 +371,6 @@ namespace Huginn::Pipeline
 
         // Member state (converted from static locals in OnUpdate)
         uint32_t m_lastPipelineHash = UINT32_MAX;  // Force first run
-        // Elemental window state at the last non-skipped run: the falling edge
-        // needs one more run to clear the enriched flags (isOnFire etc. are not
-        // part of the GameState hash), or fire-scored recommendations persist
-        // after the window closes.
-        bool m_wasElementalDamageActive = false;
 
         // Same problem, same shape: isFalling is not in the GameState hash,
         // so a fall that changes nothing else is invisible to the skip check
@@ -354,15 +383,18 @@ namespace Huginn::Pipeline
         // down, and neither edge moves a hashed bucket.
         bool m_wasUnderwater = false;
 
-        // ambientSignature at the last run (/code-review #152). Unlike the
-        // latches above this is compared, not OR-ed in: CheckHashSkip runs
-        // once whenever it changes, in either direction.
-        uint8_t m_lastAmbientSignature = 0;
+        // needSignature at the last run (R8.3; it replaced the ambient
+        // signature of /code-review #152). Compared, not OR-ed in: a run
+        // whenever it changes, in either direction. Atomic: NeedsForcedRun
+        // reads it, and both gates run on the update thread, but `hg recs`
+        // and the harness tick on their caller's thread under the same mutex.
+        std::atomic<uint64_t> m_lastNeedSignature{ 0 };
         uint8_t m_lastOverrideSignature = 0xFF;   // never a real signature: first run always counts
         Core::Refresh::DueBits m_lastRefreshDue = 0;   // R8.1: refreshDue at the last run
 
         // Holds the displayed reason so a momentary one stays readable.
-        // Label-only: ScoreCandidates above it always sees the raw weights.
+        // Label-only (R8.3: fed by the page's explanations, UpdateContextReason);
+        // the ranking never reads it.
         Context::ReasonHold m_reasonHold;
 
         // What the last [Context] line reported. Both halves, because the hold

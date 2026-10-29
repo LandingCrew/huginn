@@ -1,6 +1,7 @@
 #pragma once
 
 #include "learning/FeatureBanditLearner.h"
+#include "persist/ChoiceSerializer.h"   // LoadDecision (R8.3)
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -12,6 +13,9 @@ namespace Huginn::Persist
    // SKSE Cosave Serialization — FeatureBanditLearner weights
    // =========================================================================
    // Persists FeatureBanditLearner weights alongside Skyrim saves via BNDW records.
+   // R8.3: the same callbacks carry the choice learner's THTA and BIAS
+   // (persist/ChoiceSerializer.h). BNDW STAYS: R6's D2 reads the old learner's
+   // per-item state; THTA/BIAS replace it only once D2 is retired.
    // =========================================================================
 
    // Record type (packed 4CC — SKSE interprets as little-endian uint32_t)
@@ -100,6 +104,8 @@ namespace Huginn::Persist
    //   - Anything else -- a different character, the first load since launch,
    //     or a later save of the same character (its clock is ahead): the
    //     save's learner, as before.
-   void ResolveLoadedLearner(Learning::FeatureBanditLearner& learner, bool isNewGame,
+   // Returns which of these it was (R8.3): ResolveLoadedChoice applies the
+   // same decision to the choice learner, so the two never disagree.
+   LoadDecision ResolveLoadedLearner(Learning::FeatureBanditLearner& learner, bool isNewGame,
       bool loadSucceeded = true);
 }

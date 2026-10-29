@@ -1,7 +1,7 @@
 #pragma once
 
 // =============================================================================
-// CHOICE LEARNER (R8.2) -- doc 9's learner, seeded from the R6 bootstrap; SHADOW
+// CHOICE LEARNER (R8.2, live from R8.3) -- doc 9's learner, seeded from the R6 bootstrap
 // =============================================================================
 // The new model (core/ChoiceScore.h) and its online update
 // (core/ChoiceUpdate.h), held for the plugin: the bootstrap file
@@ -10,10 +10,14 @@
 // Plackett-Luce memory of which items each context already gave up, and the
 // opportunity counter.
 //
-// SHADOW in R8.2: the old engine still ranks. PipelineCoordinator scores every
-// held or eligible row with a snapshot of this learner and logs mu, sd and the
-// explanation in the v3 rows; picks update it. Nothing it computes reaches a
-// slot. No cosave yet: every load (and `hg reset`) resets it to the bootstrap.
+// R8.3 (0.24.0): LIVE. PipelineCoordinator ranks every candidate on mu
+// computed from a snapshot of this learner (core/ChoiceLive.h) and logs mu, sd
+// and the explanation in the v3 rows; picks update it. The cosave carries it
+// (THTA, BIAS: persist/ChoiceSerializer.h) beside the old learner's BNDW:
+// a load restores the save's theta per key over the bootstrap and its b; a
+// save without them (older, new game) starts from the bootstrap with b under
+// sBootstrapBias. `hg reset weights` / `hg reset all` / the dMenu reset return
+// theta to the bootstrap and clear b.
 //
 // State.
 //   theta, strength, the recent rows and theta_covered: one {mu, sigma^2}
@@ -22,7 +26,7 @@
 //   never a position (the lesson of StateFeatures.h:63-67, where a positional
 //   cosave key broke once). The entries sit in a dense array in the build's
 //   index order for the scorer's speed; ExportEntries / ImportEntries (the
-//   cosave of PR 3) go by key only.
+//   cosave's THTA, R8.3) go by key only.
 //   b per item: {mu, sigma^2, n, play seconds at the last pick}, prior N(0, 0.25),
 //   seeded from the file's items under [Learning] sBootstrapBias.
 //   kappa and the feature weights: the file's, fixed (format v1 gives them no
@@ -64,7 +68,7 @@ namespace Huginn::Learning
         double thetaProcessNoise = 1.0e-4;   // [Learning] fThetaProcessNoise (per onset, variance units)
         double coveredPrior = -1.0;          // [Scoring] fCoveredPrior (precision 1)
         double favoriteLifeMult = 2.0;       // [Favorites] fFavoriteLifeMult (Boost mode)
-        bool legacyLearnFeature = true;      // [Scoring] bLegacyLearnFeature (R8.2: logged only)
+        bool legacyLearnFeature = true;      // [Scoring] bLegacyLearnFeature (R8.3: live, hot-reloaded)
 
         static ChoiceSettings FromIni(const CSimpleIniA& ini);
     };
@@ -97,6 +101,8 @@ namespace Huginn::Learning
         struct Stats
         {
             bool ready = false;
+            std::size_t thetaEntries = 0;     // keyed weights (theta, strength, recent, covered)
+            std::size_t thetaMoved = 0;       // ... whose {mu, var} differ from the bootstrap's
             std::size_t picksLearned = 0;
             std::size_t picksSkipped = 0;     // repeats, unusable picks
             std::size_t onsets = 0;           // need onsets seen
@@ -119,11 +125,26 @@ namespace Huginn::Learning
         void SetMemoryLife(const Core::Battery::MemoryLife& life);
         void SetFavoritesBoost(bool boost);
 
-        /// Back to the bootstrap: theta etc. from the file, b from the file's
-        /// items when sBootstrapBias allows it for `characterID` (the save's
-        /// HCID), the timeline, the Plackett-Luce memory and the onset counter
-        /// cleared. Every load and `hg reset` (no cosave in R8.2).
-        void ResetToBootstrap(std::uint64_t characterID);
+        /// Back to the bootstrap: theta etc. from the file; b from the file's
+        /// items when `seedB` and sBootstrapBias allows it for `characterID`
+        /// (the save's HCID), else empty; the timeline, the Plackett-Luce
+        /// memory and the onset counter cleared. A load without THTA (seedB),
+        /// `hg reset weights` / `hg reset all` / the dMenu reset (no seed: b
+        /// cleared).
+        void ResetToBootstrap(std::uint64_t characterID, bool seedB = true);
+
+        /// A load that keeps the in-memory learning (a reload of the same
+        /// character): the timeline, the Plackett-Luce memory and the onset
+        /// counter belong to the session left behind.
+        void ClearTransient();
+
+        /// The latch PipelineCoordinator's skip gates read (with the old
+        /// learner's): a pick moved theta or b, an import or a reset replaced
+        /// them, or b entries were forgotten -- the ranking moved although no
+        /// sensor did. Cleared at the gate's commit. The opportunity counter
+        /// grows variances only (mu, and so the ranking, unchanged): no latch.
+        [[nodiscard]] bool WeightsChanged() const noexcept { return m_weightsChanged.load(std::memory_order_acquire); }
+        void ClearWeightsChanged() noexcept { m_weightsChanged.store(false, std::memory_order_release); }
 
         [[nodiscard]] std::shared_ptr<const Snapshot> GetSnapshot();
 
@@ -144,7 +165,7 @@ namespace Huginn::Learning
         /// At most once a minute of play: delete the b entries past their life.
         std::size_t MaybeForgetFaded();
 
-        // ---- what PR 3 reads ------------------------------------------------
+        // ---- the cosave (persist/ChoiceSerializer.h, THTA / BIAS) ------------
         struct Entry
         {
             std::uint64_t key = 0;
@@ -158,12 +179,25 @@ namespace Huginn::Learning
             double var = 0.0;
             float n = 0.0f;
             std::uint32_t minutesSinceChosen = 0;
+            bool favorite = false;
         };
-        [[nodiscard]] std::vector<Entry> ExportEntries() const;
+        /// Every keyed weight, or (movedOnly, what THTA writes) only those
+        /// whose {mu, var} differ from the bootstrap's: the load's merge gives
+        /// a key the save lacks the file's value, so the result is the same
+        /// and a save carries hundreds of entries, not ~36k (0.87 MB).
+        [[nodiscard]] std::vector<Entry> ExportEntries(bool movedOnly = false) const;
+        /// Every key the build holds, in slot order (the load's merge).
+        [[nodiscard]] std::vector<std::uint64_t> Keys() const;
         /// Applies every entry whose key the build knows; returns how many.
         std::size_t ImportEntries(const std::vector<Entry>& entries);
         [[nodiscard]] std::vector<BEntry> ExportB() const;
+        /// Replaces b with these entries.
         void ImportB(const std::vector<BEntry>& entries);
+        /// A reload of the same character keeps the in-memory b except for
+        /// dynamic forms (0xFF......), which the engine can reuse: those come
+        /// from the save (as BNDW's ReplaceDynamicEntries). Returns {removed,
+        /// added}.
+        std::pair<std::size_t, std::size_t> ReplaceDynamicB(const std::vector<BEntry>& saved);
 
         [[nodiscard]] Stats GetStats() const;
         /// The file's created_utc and SHA-256 (the v3 head's "bootstrap").
@@ -172,7 +206,15 @@ namespace Huginn::Learning
 
     private:
         void BuildKeys();
+        /// Slot `slot`'s weight differs from the bootstrap's (lock held).
+        [[nodiscard]] bool MovedLocked(std::size_t slot) const;
         void Touch() noexcept { ++m_version; }
+        /// A change to mu (theta or b): Touch and raise the latch.
+        void Moved() noexcept
+        {
+            ++m_version;
+            m_weightsChanged.store(true, std::memory_order_release);
+        }
 
         mutable std::shared_mutex m_mutex;
         std::atomic<bool> m_ready{ false };
@@ -200,6 +242,7 @@ namespace Huginn::Learning
         Stats m_stats;
 
         std::uint64_t m_version = 1;
+        std::atomic<bool> m_weightsChanged{ false };
         std::shared_ptr<const Snapshot> m_snapshot;
         std::atomic<double> m_playSeconds{ 0.0 };
         std::atomic<double> m_lastForgetSweep{ 0.0 };
