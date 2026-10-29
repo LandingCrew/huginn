@@ -50,8 +50,14 @@
 //           The grid: a monotonic ACTIVE clock adds the time between two
 //           ticks, capped at lapMaxStepSec (1 s). The caller ticks only while
 //           the game runs unpaused with the player alive, so a pause, a
-//           death, a load door or a stall adds at most a second: a lap stands
-//           for time in which the player could have pressed something. Every
+//           death, a load door or a stall adds at most a second. On a tick
+//           the clock also HOLDS (adds nothing; LapHoldFor) while the player
+//           cannot or does not press: no input (a key, a button, the mouse, a
+//           stick) for lapIdleSec (30 s) or more, the movement controls
+//           disabled (a carriage ride, a cutscene), or a dialogue menu open
+//           (it does not pause the game). So a lap stands for time in which
+//           the player could have pressed something; an AFK spell with the
+//           game unpaused adds at most lapIdleSec. Every
 //           lapSec of active time is a grid point. At a grid point every open
 //           episode whose current stretch began at or before the PREVIOUS
 //           grid point laps: its stretch closes (endSec = now) and a new one
@@ -111,7 +117,48 @@ namespace Huginn::Core::Needs
         /// active clock.
         double lapSec = 60.0;
         double lapMaxStepSec = 1.0;
+        /// The active clock holds once the player's latest input is this many
+        /// seconds old (0 = never holds for idleness). See LapHoldFor.
+        double lapIdleSec = 30.0;
     };
+
+    /// What the caller knows on a tick about whether the player could press
+    /// something (the lap clock's gate, "lap" above).
+    struct LapGate
+    {
+        double idleSec = 0.0;    ///< seconds since the player's latest input (key, button, mouse, stick)
+        bool controls = true;    ///< the movement controls are enabled (off: a carriage, a cutscene)
+        bool dialogue = false;   ///< a dialogue menu is open (it does not pause the game)
+    };
+
+    /// Why the active clock holds on a tick; kNone = it runs.
+    enum class LapHold
+    {
+        kNone,
+        kDialogue,
+        kControls,
+        kIdle,
+    };
+
+    [[nodiscard]] constexpr const char* LapHoldName(LapHold h) noexcept
+    {
+        switch (h) {
+        case LapHold::kDialogue: return "dialogue";
+        case LapHold::kControls: return "controls disabled";
+        case LapHold::kIdle: return "idle";
+        default: return "none";
+        }
+    }
+
+    /// The gate's verdict: the first reason that applies, in the order
+    /// dialogue, controls, idle.
+    [[nodiscard]] constexpr LapHold LapHoldFor(const EpisodeParams& p, const LapGate& g) noexcept
+    {
+        if (g.dialogue) return LapHold::kDialogue;
+        if (!g.controls) return LapHold::kControls;
+        if (p.lapIdleSec > 0.0 && g.idleSec >= p.lapIdleSec) return LapHold::kIdle;
+        return LapHold::kNone;
+    }
 
     template <class Payload>
     class EpisodeTracker
@@ -140,10 +187,13 @@ namespace Huginn::Core::Needs
         /// attaches the onset's payload with SetPayload. The needs whose
         /// episode lapped on this tick are in Laps(): each began a new stretch
         /// that carries a COPY of the previous stretch's payload until the
-        /// caller replaces it (MutablePayload, SetPayload).
-        std::vector<std::size_t> Tick(const NeedArray& v, double nowSec)
+        /// caller replaces it (MutablePayload, SetPayload). `gate` says
+        /// whether the player could press on this tick: when LapHoldFor holds,
+        /// the active clock adds nothing (onsets and expiries go on as usual).
+        std::vector<std::size_t> Tick(const NeedArray& v, double nowSec, const LapGate& gate = {})
         {
-            if (hasLastTick_) {
+            hold_ = LapHoldFor(params_, gate);
+            if (hasLastTick_ && hold_ == LapHold::kNone) {
                 const double step = nowSec - lastTickSec_;
                 if (step > 0.0) active_ += std::min(step, params_.lapMaxStepSec);
             }
@@ -272,6 +322,8 @@ namespace Huginn::Core::Needs
         [[nodiscard]] std::size_t DroppedShort() const noexcept { return dropped_; }
         /// The active clock, seconds (see "lap" above).
         [[nodiscard]] double ActiveSec() const noexcept { return active_; }
+        /// Why the active clock held on the latest Tick (kNone: it ran).
+        [[nodiscard]] LapHold Hold() const noexcept { return hold_; }
 
         /// The player died (0.23.16): drop every open episode and every ended
         /// one still in its grace, as a load does, and say how many. A death
@@ -305,6 +357,7 @@ namespace Huginn::Core::Needs
             nextGrid_ = params_.lapSec;
             hasLastTick_ = false;
             lastTickSec_ = 0.0;
+            hold_ = LapHold::kNone;
         }
 
     private:
@@ -318,5 +371,6 @@ namespace Huginn::Core::Needs
         double nextGrid_ = 0.0;          // set from params_.lapSec
         bool hasLastTick_ = false;
         double lastTickSec_ = 0.0;
+        LapHold hold_ = LapHold::kNone;  // the latest Tick's
     };
 }

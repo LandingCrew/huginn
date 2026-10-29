@@ -16,6 +16,7 @@
 #include "needs/NeedMonitor.h"
 #include "needs/NeedSettings.h"
 #include "state/StateManager.h"
+#include "update/UpdateHandler.h"
 #include "util/ExtraListStability.h"
 #include "util/InventoryUtil.h"
 
@@ -893,6 +894,7 @@ namespace Huginn::Learning::SelectionLogV3
                 head.answerSlackSec = p.answerSlackSec;
                 head.lapSec = p.lapSec;
                 head.lapMaxStepSec = p.lapMaxStepSec;
+                head.lapIdleSec = p.lapIdleSec;
                 head.curves = std::move(curves);
                 m_headCurves = head.curves;
                 const std::string line = m_encoder.BeginSegment(head);
@@ -1147,6 +1149,9 @@ namespace Huginn::Learning::SelectionLogV3
 
         double g_tickFirstHalfUs = 0.0;   // update thread only: Tick's share of this tick
         bool g_wasDead = false;           // update thread only: the death line once per death
+        // Update thread only: the lap clock's latest hold, so the debug log
+        // gets one line per change (core/NeedEpisodes.h LapHoldFor).
+        Core::Needs::LapHold g_lastLapHold = Core::Needs::LapHold::kNone;
 
         void RecordTickCost(Clock::time_point t0)
         {
@@ -1261,15 +1266,34 @@ namespace Huginn::Learning::SelectionLogV3
         // 0.23.51: a lap (core/NeedEpisodes.h) begins a new stretch of every
         // episode that has been open since the previous grid point; they all
         // fall on one tick and share one context, as onsets of one tick do.
-        // A tick with an onset and a lap takes one context ("onset"); the
-        // record's ep.why says which a stretch began with.
+        // A tick with an onset and a lap takes one context, tagged "onset", so
+        // ctx.why alone does not mark every lap context: a record's ep.lap
+        // says how its stretch began (0: at the onset; n: at the episode's
+        // n-th lap), and ep.why how it ended ("end" or "lap").
+        // The lap clock runs only while the player could press something:
+        // it holds after lapIdleSec without input, with the movement controls
+        // disabled, or in a dialogue (LapHoldFor).
         if (live && !paused && !dead) {
+            Core::Needs::LapGate gate;
+            gate.idleSec = Update::UpdateHandler::GetSingleton()->SecondsSinceInput(now);
+            if (const auto* controls = RE::ControlMap::GetSingleton()) gate.controls = controls->IsMovementControlsEnabled();
+            gate.dialogue = ui && ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME);
             std::vector<size_t> onsets;
             std::vector<size_t> laps;
+            Core::Needs::LapHold hold = Core::Needs::LapHold::kNone;
+            double active = 0.0;
             {
                 std::lock_guard lock(g_episodeMutex);
-                onsets = g_episodes.Tick(live->vector.value, nowSec);
+                onsets = g_episodes.Tick(live->vector.value, nowSec, gate);
                 laps = g_episodes.Laps();
+                hold = g_episodes.Hold();
+                active = g_episodes.ActiveSec();
+            }
+            if (hold != g_lastLapHold) {
+                logger::debug("[SelectionV3] lap clock {} ({}; active {:.0f}s)"sv,
+                    hold == Core::Needs::LapHold::kNone ? "runs" : "holds",
+                    Core::Needs::LapHoldName(hold == Core::Needs::LapHold::kNone ? g_lastLapHold : hold), active);
+                g_lastLapHold = hold;
             }
             if (!onsets.empty() || !laps.empty()) {
                 auto ctx = BuildContext(onsets.empty() ? "lap" : "onset", {});
@@ -1314,9 +1338,14 @@ namespace Huginn::Learning::SelectionLogV3
                 unanswered = g_episodes.TakeUnanswered(nowSec);
             }
             size_t laps = 0;
+            // One utc for the whole batch: the stretches one lap tick cut are
+            // judged on one tick, and a reader tells the lap tick by the
+            // records' (launch, gen, utc) (tools/fit fitlib.build laps="once").
+            const std::string batchUtc = unanswered.empty() ? std::string{} : NowUtc();
             for (auto& e : unanswered) {
                 if (!e.payload.ctx) continue;   // an onset whose context was never attached (not expected)
                 Decision d = MakeDecision(Outcome::Nothing, g_loadGeneration.load(std::memory_order_relaxed));
+                d.utc = batchUtc;
                 d.ctx = std::move(e.payload.ctx);
                 d.ctxAgeMs = static_cast<float>((nowSec - d.ctx->tSec) * 1000.0);
                 d.need = static_cast<int>(e.need);

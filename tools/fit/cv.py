@@ -17,8 +17,11 @@ also reported per segment, and the 'split' specs give the needs in --split-needs
 whose sensor changed at 0.23.41, and the target families) one column per segment.
 
 --laps (the three group): the nothing records of lapped stretches, 0.23.51 (fitlib.build: 'once',
-the default, keeps one per lap tick's context; 'all' one per open need; 'none' drops them, the
-data of a build before 0.23.51). The picks group reads no nothing record.
+the default, keeps one per lap tick, fitlib.lap_tick; 'all' one per open need; 'none' drops them,
+the data of a build before 0.23.51). The picks group reads no nothing record. Logs written before
+0.23.51 have no laps and read a quarterstaff as loadout_two_handed: fit the three group with
+--since 0.23.51, or --split-at 0.23.51 (the default --split-needs splits the needs concerned;
+README, 'Reading logs written before 0.23.51').
 
 The yardstick (fitlib.YARDSTICK), for every spec against A* (the old engine's ranking replayed
 from the logged utilities, fitlib.astar_results) on the same choice sets: hit@8 for key/wheel
@@ -94,7 +97,7 @@ def parse(argv=None):
                     help="the needs the 'split' specs split by segment ('all'; default: the 0.23.41 changes)")
     ap.add_argument('--nboot', type=int, default=2000, help='bootstrap draws (default 2000)')
     ap.add_argument('--laps', choices=('once', 'all', 'none'), default='once',
-                    help="lapped-stretch nothing records (0.23.51): one per context (default), all, or none")
+                    help="lapped-stretch nothing records (0.23.51): one per lap tick (default), all, or none")
     a = ap.parse_args(argv)
     for v in [a.since, a.until] + a.split_at:
         if v is not None and version(v) is None:

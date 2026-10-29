@@ -72,7 +72,8 @@ class GoldenFile(unittest.TestCase):
         self.assertEqual(h["kinds"][7], "Armor")
         self.assertEqual(h["episode"], {"onset": 0.5, "expiry": 0.25, "minSec": 1.0, "graceSec": 4.0,
                                         "answerSlackSec": 0.5, "deathDrops": 1,
-                                        "lapSec": 60.0, "lapMaxStepSec": 1.0})   # 0.23.51: the lap grid
+                                        "lapSec": 60.0, "lapMaxStepSec": 1.0,
+                                        "lapIdleSec": 30.0})   # 0.23.51: the lap grid and its idle hold
         self.assertEqual(replay.head_lap_sec(h), 60.0)
         # 0.23.41: the [Needs] curves in force, one per need, index-aligned.
         self.assertEqual(len(h["curves"]), len(h["needs"]))

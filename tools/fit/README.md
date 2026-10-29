@@ -80,16 +80,26 @@ after `cv.py picks`. The rest only need `v3.pkl`.
   (inclusive). `--split-at 0.23.41` cuts them into segments: the yardstick is
   also reported per segment, and the `split` specs (only listed with
   `--split-at`) give the needs in `--split-needs` one column per segment
-  (default: the needs whose sensor changed at 0.23.41 and the target families,
-  `fitlib.BUILD_SPLIT_NEEDS`; `all` splits every need).
+  (default: the needs whose sensor changed at 0.23.41, the target families,
+  and the needs whose data changed at 0.23.51, `fitlib.BUILD_SPLIT_NEEDS`;
+  `all` splits every need).
 - **Laps** (0.23.51, the `three` group): an open need episode writes a
-  `nothing` record for every unanswered 60 s stretch (`ep.why: "lap"`,
+  `nothing` record for every unanswered stretch of 60 active seconds
+  (`ep.why: "lap"`,
   [schema, Laps](../../docs/architecture/9-selection-log-v3.md#laps)), one per
-  need open at the lap tick, all sharing one context. `--laps once` (default)
-  keeps one per context, so a slice weighs once however many needs were on;
-  `all` keeps every one; `none` drops them (the data a build before 0.23.51
-  logged). `fitlib.build(laps=...)`; a decision's `meta` carries `ep_why`.
-  `v3load.py --list` shows how many of the `nothing` records are laps.
+  need open at the lap tick. The stretches one tick cuts do not all share a
+  context: one begun by the previous lap (`ep.lap` > 0) carries that lap's
+  context, an episode's first stretch (`ep.lap` 0) its onset's. They share the
+  tick, which the records' `(launch, gen, utc)` names (`fitlib.lap_tick`; the
+  game writes one utc per batch). `--laps once` (default) keeps one record per
+  lap tick, so a slice weighs once however many needs were on (the lowest-seq
+  one begun by a lap, whose context is the slice's start; else the lowest-seq
+  one); `all` keeps every one; `none` drops them (the data a build before
+  0.23.51 logged). `fitlib.build(laps=...)`; a decision's `meta` carries
+  `ep_why`. `v3load.py --list` shows how many of the `nothing` records are
+  laps. **Logs written before 0.23.51 have no laps and the old
+  `loadout_two_handed`:** read [Reading logs written before
+  0.23.51](#reading-logs-written-before-02351) before a `three` fit over them.
 - **The yardstick**, for every spec against **A\*** (the old engine's ranking
   replayed from the logged utilities) on the same choice sets, with a
   bootstrap-over-launches 95% interval on model − A\*:
@@ -166,3 +176,35 @@ in two folds, deterministic), the A\* temperature and the pooled yardstick.
   zero-magnitude placeholder effects, and `darkness` reads the held light (`core/LightHold.h`:
   5 s darker / 3 s lighter) instead of each tick's reading.
 - So segment by build (the head's `build`) before pooling any of these across 0.23.41.
+
+## Reading logs written before 0.23.51
+
+Every log that existed when 0.23.51 shipped (the R6 rehearsal's and the mage's,
+2026-10-15..28) was written before it, and still carries both defects 0.23.51
+fixed ([schema, Laps](../../docs/architecture/9-selection-log-v3.md#laps);
+`core/WeaponLoadout.h`):
+
+- **No laps.** A persistent need (`hunger`, `thirst`, `diseased`, `cold`,
+  `warmth_deficit`, `fatigue`) wrote no `nothing` record: 0 of the mage's 13,961.
+  In a `three` fit over old data they are on at picks and never at `nothing`,
+  so they read as predicting a pick. `--laps` cannot help: there are no lap
+  records to keep.
+- **The quarterstaff read as two-handed.** `loadout_two_handed` is on whenever
+  the Staff of Wandering Stars is in hand (in 3,991 of the 4,706 old contexts
+  with it on, the equipped weapon row is FECCC01D or FECCF01D), and
+  `loadout_quarterstaff` reads 0 (it did not exist). v3load does not backfill
+  it: the log holds no keywords, the staff's cap reads `weapon_type_warhammer`
+  like any warhammer's, and a light plugin's FormID moves with the load order.
+
+So for the `three` group:
+
+- **`--since 0.23.51`** when there is enough new data: no bias, nothing to undo.
+- **Or `--split-at 0.23.51`** with the `split` specs. `fitlib.BUILD_SPLIT_NEEDS`
+  (the default `--split-needs`) holds these seven needs (`fitlib.LAP_SPLIT_NEEDS`), so
+  each gets one column for the old segment, which absorbs the old data's bias, and
+  one for 0.23.51 and later, which is the one to read. Add `0.23.41` to the cuts
+  (`--split-at 0.23.41 0.23.51`) when the data reaches back before it.
+- Not a plain fit over all the files: most of the bias stays.
+
+The `picks` group reads no `nothing` record; there only `loadout_two_handed` is
+affected, and the same split applies.

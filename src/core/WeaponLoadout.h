@@ -15,11 +15,17 @@
 // (loadout_quarterstaff) and leaves loadout_two_handed off, so the fit can
 // give it its own pairs instead of a greatsword's.
 //
-// The keywords, from the LoreRim effect dump (Huginn_All.csv, 2026-10-28):
+// The keywords, from the LoreRim effect dump (Huginn_All.csv, written
+// 2026-10-10, read 2026-10-28; weapons counted once per formID + plugin):
 // every one of the 967 two-handed weapons that carry any of them carries
-// OCF_WeapTypeQuarterstaff2H (the OCF tag; 5 carry nothing else); 958 also
+// OCF_WeapTypeQuarterstaff2H (the OCF tag; 5 carry nothing else); 957 also
 // carry Requiem's WeapTypeQuarterstaff and 829 Animated Armoury's
-// WeapTypeQtrStaff. All 967 are typed warhammer (kTwoHandAxe). Magic staves
+// WeapTypeQtrStaff. All 967 are typed warhammer (kTwoHandAxe); most also
+// carry the vanilla WeapTypeWarhammer, which says nothing here. One is
+// ambiguous: Vigilant's "Heretic's Staff" (Vigilant.esm 305056E7) carries
+// WeapTypeBattleaxe and OCF_WeapTypeBattleaxe2H next to
+// OCF_WeapTypeQuarterstaff2H, and reads as a quarterstaff (any keyword is
+// enough); a single item, accepted. Magic staves
 // (WeapTypeStaff, OCF_WeapTypeStaff1H, kStaff) are a different thing and
 // carry none of these. The OCF_WeapTypeQuarterstaff1H weapons (7, typed as
 // one-handed swords and maces) stay one-handed: only a two-handed weapon is

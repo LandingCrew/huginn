@@ -239,9 +239,10 @@ namespace Huginn::Core::DecisionLog
         // it (0.23.15) recorded `nothing` for episodes a death cut short.
         bool deathDrops = true;
         /// 0.23.51: the lap grid (core/NeedEpisodes.h "lap"), written as
-        /// "lapSec" and "lapMaxStepSec" when lapSec > 0. A head without them
-        /// (before 0.23.51) judged every episode whole: no lap records.
-        double lapSec = 60.0, lapMaxStepSec = 1.0;
+        /// "lapSec", "lapMaxStepSec" and "lapIdleSec" when lapSec > 0. A head
+        /// without them (before 0.23.51) judged every episode whole: no lap
+        /// records.
+        double lapSec = 60.0, lapMaxStepSec = 1.0, lapIdleSec = 30.0;
         /// The [Needs] curves in force, index-aligned with the head's "needs"
         /// (0.23.41): written as "curves" when not empty, so a fit knows which
         /// curve made each logged value. A change of curves mid-launch (a hot

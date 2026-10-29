@@ -243,6 +243,8 @@ namespace Huginn::Core::DecisionLog
             AppendSeconds(out, head.lapSec);
             out += R"(,"lapMaxStepSec":)";
             AppendSeconds(out, head.lapMaxStepSec);
+            out += R"(,"lapIdleSec":)";
+            AppendSeconds(out, head.lapIdleSec);
         }
         out += '}';
         if (!head.curves.empty()) {

@@ -6,6 +6,8 @@
 #include <doctest/doctest.h>
 
 #include <ostream>
+#include <string_view>
+#include <vector>
 
 using namespace Huginn::Core::Needs;
 
@@ -420,4 +422,76 @@ TEST_CASE("laps: a death drops the lapped stretches in their grace too")
     REQUIRE(t.ClosingCount() == 1);
     CHECK(t.Abandon() == 2);            // the cut stretch and the open one
     CHECK(t.TakeUnanswered(100.0).empty());
+}
+
+TEST_CASE("laps: the gate holds the clock in a dialogue, with the controls off, or idle; in that order")
+{
+    const EpisodeParams p;   // lapIdleSec 30
+    CHECK(LapHoldFor(p, LapGate{}) == LapHold::kNone);
+    CHECK(LapHoldFor(p, LapGate{ 29.9, true, false }) == LapHold::kNone);
+    CHECK(LapHoldFor(p, LapGate{ 30.0, true, false }) == LapHold::kIdle);
+    CHECK(LapHoldFor(p, LapGate{ 1e300, true, false }) == LapHold::kIdle);   // no input yet: +infinity's stand-in
+    CHECK(LapHoldFor(p, LapGate{ 0.0, false, false }) == LapHold::kControls);
+    CHECK(LapHoldFor(p, LapGate{ 0.0, true, true }) == LapHold::kDialogue);
+    CHECK(LapHoldFor(p, LapGate{ 99.0, false, true }) == LapHold::kDialogue);
+    CHECK(LapHoldFor(p, LapGate{ 99.0, false, false }) == LapHold::kControls);
+    EpisodeParams never = p;
+    never.lapIdleSec = 0.0;
+    CHECK(LapHoldFor(never, LapGate{ 1e9, true, false }) == LapHold::kNone);
+    CHECK(std::string_view(LapHoldName(LapHold::kIdle)) == "idle");
+}
+
+TEST_CASE("laps: an AFK spell with the game unpaused adds at most lapIdleSec to the active clock")
+{
+    // The mage's log has 257 silent gaps over 120 s (20 h): no pick, no onset,
+    // no menu. Unpaused and unattended, each would otherwise run the clock.
+    EpisodeTracker<int> t;
+    double lastInput = 0.0;
+    std::vector<double> laps;
+    auto tick = [&](double s) {
+        t.Tick(With(kHunger, 1.0f), s, LapGate{ s - lastInput, true, false });
+        if (!t.Laps().empty()) laps.push_back(s);
+    };
+    for (double s = 0.0; s <= 20.0 + 1e-9; s += 0.1) {   // playing: input every tick
+        lastInput = s;
+        tick(s);
+    }
+    CHECK(t.Hold() == LapHold::kNone);
+    // The player walks away at 20 s and comes back at 3620 s: the clock runs
+    // until the input is 30 s old, then holds for the rest of the hour.
+    for (double s = 20.1; s < 3620.0; s += 0.1) tick(s);
+    CHECK(t.Hold() == LapHold::kIdle);
+    CHECK(t.ActiveSec() == doctest::Approx(50.0).epsilon(0.01));   // 20 + 30
+    CHECK(laps.empty());   // an hour away and not one lap
+    // Back: the clock runs again; the grid point at 60 active seconds is
+    // about 10 s of play later.
+    for (double s = 3620.0; s <= 3640.0 + 1e-9; s += 0.1) {
+        lastInput = s;
+        tick(s);
+    }
+    CHECK(t.Hold() == LapHold::kNone);
+    REQUIRE(laps.size() == 1);
+    CHECK(laps[0] == doctest::Approx(3630.0).epsilon(0.001));
+}
+
+TEST_CASE("laps: a dialogue or disabled controls hold the clock; onsets and expiries go on")
+{
+    EpisodeTracker<int> t;
+    const LapGate talking{ 0.0, true, true };
+    const LapGate carriage{ 0.0, false, false };
+    Run(t, kHunger, 1.0f, 0.0, 40.0);
+    CHECK(t.ActiveSec() == doctest::Approx(40.0));
+    for (double s = 40.5; s <= 200.0 + 1e-9; s += 0.5) {
+        NeedArray v = With(kHunger, 1.0f);
+        v[kH] = s < 100.0 ? 1.0f : 0.0f;   // health_deficit: an episode opens and ends in the dialogue
+        t.Tick(v, s, s < 120.0 ? talking : carriage);
+        CHECK(t.Laps().empty());
+    }
+    CHECK(t.Hold() == LapHold::kControls);
+    CHECK(t.ActiveSec() == doctest::Approx(40.0));
+    CHECK_FALSE(t.IsOpen(kH));
+    CHECK(t.ClosingCount() == 1);   // health_deficit's ended episode, judged as ever
+    const auto laps = Run(t, kHunger, 1.0f, 200.5, 230.0);
+    REQUIRE(laps.size() == 1);
+    CHECK(laps[0] == doctest::Approx(220.0));   // 40 + (220 - 200) active seconds: the clock resumes where it held
 }

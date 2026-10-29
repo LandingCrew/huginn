@@ -109,10 +109,14 @@ def build(D, include_nothing=True, latest_caps=False, v2=None, since=None, until
 
     laps: the nothing records of lapped stretches (0.23.51: ep.why "lap", one record per
     need whose episode was open at a lap tick of the 60 s grid; core/NeedEpisodes.h).
-      'once'  (default) one per context: the laps of one tick share their context, so the
-              k needs open then would otherwise weigh one unanswered 60 s slice k times,
-              while a pick is one record however many needs are on. The record of the
-              lowest seq is kept.
+      'once'  (default) one per LAP TICK (lap_tick: the records' launch, gen and utc; the
+              stretches one tick cut are judged together and share one utc), so the k
+              needs open then do not weigh one unanswered 60 s slice k times, while a pick
+              is one record however many needs are on. The stretches of one tick do not
+              all share a context: a stretch begun by a lap (ep.lap > 0) carries the
+              previous lap's context, an episode's first stretch its onset's. The kept
+              record is the lowest-seq one begun by a lap (its context is the slice's
+              start), else the lowest-seq one.
       'all'   every one, as written.
       'none'  none: the data a build before 0.23.51 would have logged (ended episodes only).
     Ended-episode records (why "end", every record before 0.23.51) are kept as before. A
@@ -167,15 +171,17 @@ def build(D, include_nothing=True, latest_caps=False, v2=None, since=None, until
     if laps not in ('once', 'all', 'none'):
         raise ValueError(f"laps: {laps!r} is not 'once', 'all' or 'none'")
     if laps != 'all':
-        lap_ctx = set()
-        kept = []
-        for d in decs:
-            if ep_why(d) == 'lap':
-                if laps == 'none' or d['ctxkey'] in lap_ctx:
+        rep = {}
+        if laps == 'once':
+            for i, d in enumerate(decs):
+                if ep_why(d) != 'lap':
                     continue
-                lap_ctx.add(d['ctxkey'])
-            kept.append(d)
-        decs = kept
+                k = lap_tick(d)
+                better = (d['ep'].get('lap', 0) > 0, -i)
+                if k not in rep or better > rep[k][0]:
+                    rep[k] = (better, i)
+        keep = {i for _, i in rep.values()}
+        decs = [d for i, d in enumerate(decs) if ep_why(d) != 'lap' or i in keep]
         if not decs:
             raise ValueError('no decisions to fit (only lap records, and laps="none")')
     # Plackett-Luce: picks sharing a context (menu co-picks), in seq order
@@ -280,6 +286,13 @@ def ep_why(d):
     return ep.get('why', 'end')
 
 
+def lap_tick(d):
+    """The lap tick a lapped-stretch nothing record belongs to: (launch, gen, utc). The
+    stretches one tick cut are judged on one tick and written with one utc (0.23.51,
+    SelectionLogV3); two lap ticks are at least 60 active seconds apart."""
+    return (d['launch'], d.get('gen'), d.get('utc'))
+
+
 def pick_time(d):
     """When the decision was made: a pick's utc less its confirmation delay, a nothing's context utc."""
     if d['out'] == 'nothing':
@@ -344,8 +357,14 @@ def subset(S, idx):
 # variants of a (sub)set: each returns a new S and obvious-pair map, S unchanged
 # ---------------------------------------------------------------------------
 # The needs whose sensor changed meaning at 0.23.41 (README, 'Reading logs written by
-# 0.23.41 and later'), plus every target_<family>: split_needs' default.
-BUILD_SPLIT_NEEDS = ('follower_present', 'regen_suppressed', 'darkness', 'enemy_count', 'surrounded', 'boss_fight')
+# 0.23.41 and later'), plus every target_<family>: split_needs' default. Since 0.23.51 also
+# the needs whose data changed then (README, 'Reading logs written before 0.23.51'): the
+# persistent needs that wrote no nothing record before the laps, and loadout_two_handed,
+# which read a quarterstaff as two-handed before. Split at 0.23.51 (--split-at 0.23.51), their
+# old-segment columns take the old data's bias instead of the shared ones.
+LAP_SPLIT_NEEDS = ('hunger', 'thirst', 'diseased', 'cold', 'warmth_deficit', 'fatigue', 'loadout_two_handed')
+BUILD_SPLIT_NEEDS = ('follower_present', 'regen_suppressed', 'darkness', 'enemy_count', 'surrounded',
+                     'boss_fight') + LAP_SPLIT_NEEDS
 
 
 def split_need_names(S, names=None):
