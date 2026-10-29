@@ -207,12 +207,16 @@ anything in a pipeline run.
 
 A Remembrance hold's own item that a gate drops (a torch taken off in daylight, a ring away
 from the forge) is set aside for the hold, as an unaffordable one is: until 0.23.55 those
-items passed the filters, so the hold could always find them.
+items passed the filters, so the hold could always find them. Not while it is on cooldown:
+0.23.54 dropped such an item at the cooldown stage, so the hold could not place it then.
 
 Behaviour against 0.23.54: such items are `filtered_by` their gate in the selection log
 instead of eligible and unscored (floor `ctx`, or `suppressed`); and a spell for others at
 context weight 0 can no longer be raised by the cold-start rescue (`IsHardContextGated`
-covered only apparel and torches).
+covered only apparel and torches). The gates run ahead of the active-buff filters and the
+cooldown stage, so an item that hits a gate as well is logged with the gate's reason where
+0.23.54 logged the active-buff one or `cooldown` (a `TargetsOthers` armour spell while
+armoured, no follower near: `no_follower`).
 
 ### 2.8 The refresh pass (doc 11 decision 4, 0.23.55)
 

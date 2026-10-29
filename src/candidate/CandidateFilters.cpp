@@ -313,27 +313,6 @@ namespace Huginn::Candidate
         return !m_cooldownMgr.IsOnCooldown(base.formID, base.sourceType);
     }
 
-    // NOTE: These standalone shims delegate to the consolidated RunVisitorFilters,
-    // which returns the *first* failing filter (early-exit). If a candidate fails an
-    // earlier filter (e.g. Equipped), the specific check here is never reached and the
-    // shim returns true. This is acceptable: such candidates would be removed by the
-    // earlier filter anyway in the main ApplyAllFilters pipeline.
-    // R8.1: with default gate inputs a hard gate can fire first (see the NOTE).
-    bool CandidateFilters::PassesActiveBuffFilter(
-        const CandidateVariant& candidate, const State::PlayerActorState& player) const
-    {
-        if (!m_config.filterActiveBuffs && !m_config.filterRedundantResists) return true;
-        const auto result = RunVisitorFilters(candidate, player, 999999.0f, Core::Gate::Inputs{});
-        return !result || !Core::Filter::IsActiveBuff(*result);
-    }
-
-    bool CandidateFilters::PassesFullVitalsFilter(
-        const CandidateVariant& candidate, const State::PlayerActorState& player) const
-    {
-        const auto result = RunVisitorFilters(candidate, player, 999999.0f, Core::Gate::Inputs{});
-        return !result || !Core::Filter::IsFullVital(*result);
-    }
-
     // =========================================================================
     // BATCH FILTER APPLICATION
     // =========================================================================
@@ -428,7 +407,16 @@ namespace Huginn::Candidate
                         case R::favorite_suppressed:
                             ++stats.filteredByHardGate;
                             if (isWeapon) ++weaponsFilteredByHardGate;
-                            setAsideForHold();
+                            // Not while on cooldown: 0.23.54 dropped such an
+                            // item at the cooldown stage, so the hold never saw
+                            // it. A torch taken off in daylight within its
+                            // cooldown now reads as in the dark, where the
+                            // same torch drops at the cooldown stage below.
+                            {
+                                const auto& gated = GetBase(c);
+                                if (!activeCooldowns.contains(CooldownManager::MakeKey(gated.formID, gated.sourceType)))
+                                    setAsideForHold();
+                            }
                             break;
                         case R::equipped:
                             ++stats.filteredByEquipped;

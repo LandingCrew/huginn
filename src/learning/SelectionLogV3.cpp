@@ -108,7 +108,7 @@ namespace Huginn::Learning::SelectionLogV3
         }
 
         void Annotate(Row& r, const Core::Coverage::Active* coverage, const std::vector<Core::Filter::Dropped>& filtered,
-                      const std::vector<PipelineStateCache::EligibleRow>& dropped)
+                      const std::vector<PipelineStateCache::EligibleRow>& dropped, float refreshPriorSec)
         {
             if (!(r.flags & Flag::Eligible)) {
                 if (const auto reason = Core::Filter::Find(filtered, r.form, r.uid)) {
@@ -124,9 +124,9 @@ namespace Huginn::Learning::SelectionLogV3
             }
             if (coverage && r.cap) {
                 // R8.1: left(r) centred at [Scoring] fRefreshPriorSec, the
-                // window the active-buff filters' refresh pass uses.
-                const auto c = Core::Coverage::Covered(*r.cap, *coverage,
-                    State::StateManager::GetSingleton().GetRefreshPriorSec());
+                // window the active-buff filters' refresh pass uses -- the
+                // context's snapshot of it (Context::refreshPriorSec).
+                const auto c = Core::Coverage::Covered(*r.cap, *coverage, refreshPriorSec);
                 r.cross[static_cast<size_t>(Cross::covered)] = c.value;
                 r.coveredSec = c.value > 0.0f ? c.remaining : kNone;
             }
@@ -730,7 +730,9 @@ namespace Huginn::Learning::SelectionLogV3
             // the player's summons, their limit and their sources (steps 3-4).
             {
                 const auto coverage = State::StateManager::GetSingleton().GetCoverage();
-                for (auto& r : ctx->rows) Annotate(r, coverage.valid ? &coverage.active : nullptr, filtered, old.dropped);
+                ctx->refreshPriorSec = State::StateManager::GetSingleton().GetRefreshPriorSec();
+                for (auto& r : ctx->rows)
+                    Annotate(r, coverage.valid ? &coverage.active : nullptr, filtered, old.dropped, ctx->refreshPriorSec);
                 ctx->summon.valid = true;
                 ctx->summon.count = player.buffs.summonCount;
                 ctx->summon.limit = player.buffs.summonLimit;
@@ -829,7 +831,10 @@ namespace Huginn::Learning::SelectionLogV3
                     old = g_tick.old;
                 }
                 const auto coverage = State::StateManager::GetSingleton().GetCoverage();
-                Annotate(r, coverage.valid ? &coverage.active : nullptr, filtered, old.dropped);
+                // The context's centre, so the added row and the context's
+                // rows sit under one head.
+                Annotate(r, coverage.valid ? &coverage.active : nullptr, filtered, old.dropped,
+                    d.ctx->refreshPriorSec);
                 d.added.push_back(std::move(r));
                 if (d.ctx->old.valid) {
                     // The state features the context's rows were read against
@@ -982,7 +987,8 @@ namespace Huginn::Learning::SelectionLogV3
                     logger::warn("[SelectionV3] {} ended in a torn record; starting on a new line"sv,
                         path.filename().string());
                 }
-                const size_t headBytes = WriteHead(CurrentCurves());
+                const size_t headBytes =
+                    WriteHead(CurrentCurves(), State::StateManager::GetSingleton().GetRefreshPriorSec());
                 logger::info("[SelectionV3] writing {} ({} bytes before this launch's segment)"sv, path.string(),
                     m_fileBytes - headBytes);
                 return true;
@@ -997,7 +1003,7 @@ namespace Huginn::Learning::SelectionLogV3
 
             /// Start a segment: a head line with the curves in force. Returns
             /// its size in bytes.
-            size_t WriteHead(std::vector<Core::Needs::Curve> curves)
+            size_t WriteHead(std::vector<Core::Needs::Curve> curves, float refreshPriorSec)
             {
                 Head head;
                 head.launch = g_launchStamp;
@@ -1017,7 +1023,7 @@ namespace Huginn::Learning::SelectionLogV3
                 head.lapIdleSec = p.lapIdleSec;
                 head.curves = std::move(curves);
                 m_headCurves = head.curves;
-                head.refreshPriorSec = State::StateManager::GetSingleton().GetRefreshPriorSec();
+                head.refreshPriorSec = refreshPriorSec;
                 m_headRefreshPriorSec = head.refreshPriorSec;
                 const std::string line = m_encoder.BeginSegment(head);
                 m_ctxSeen.clear();
@@ -1072,14 +1078,19 @@ namespace Huginn::Learning::SelectionLogV3
                 // names the curves its values came from. A context taken
                 // before the reload but written after it is the one record
                 // that can carry the old curves' values.
+                // R8.1 (0.23.55): the same for [Scoring] fRefreshPriorSec,
+                // covered(i)'s left(r) centre, which the head records. The
+                // centre is the one the record's rows were computed with (the
+                // context's snapshot), not the live value, so a reload between
+                // capture and write cannot split them.
+                const float centre = d.ctx ? d.ctx->refreshPriorSec
+                                           : State::StateManager::GetSingleton().GetRefreshPriorSec();
                 if (auto curves = CurrentCurves(); curves != m_headCurves) {
-                    WriteHead(std::move(curves));
+                    WriteHead(std::move(curves), centre);
                     logger::info("[SelectionV3] [Needs] curves changed: new segment (head line written)"sv);
                 }
-                // R8.1 (0.23.55): the same for [Scoring] fRefreshPriorSec,
-                // covered(i)'s left(r) centre, which the head records.
-                else if (State::StateManager::GetSingleton().GetRefreshPriorSec() != m_headRefreshPriorSec) {
-                    WriteHead(std::move(curves));
+                else if (centre != m_headRefreshPriorSec) {
+                    WriteHead(std::move(curves), centre);
                     logger::info("[SelectionV3] [Scoring] fRefreshPriorSec changed: new segment (head line written)"sv);
                 }
                 d.seq = ++m_seq;

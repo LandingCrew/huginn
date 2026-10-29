@@ -939,7 +939,16 @@ changed in the same PR, and the shipped INI loses the dead keys.
         dismisses: never while a thrall or an untimed summon is the oldest).
         The gates run before dedup and truncation, so a gated item no longer
         takes a dedup key or a `maxCandidatesAfterFilter` place (the 10.8k
-        logged decisions have no `duplicate` or `truncated` row).
+        logged decisions have no `duplicate` or `truncated` row). They also run
+        before the active-buff filters and the cooldown stage, so an item that
+        hits a gate as well is logged with the gate's reason where 0.23.54
+        logged the active-buff one (`armor`, `invisibility`, ...) or
+        `cooldown`: a `TargetsOthers` armour spell while armoured with no
+        follower near reads `no_follower`, a Suppress favourite caught by an
+        active-buff filter reads `favorite_suppressed`. A shadow fit of
+        `covered(i)` from the `IsActiveBuff` drops loses those rows. A
+        Remembrance hold's gated item on cooldown is not set aside: 0.23.54
+        dropped it at cooldown, so the hold could not place it then either.
       - The combat clock differs from the old timer. The old one advanced by
         the tick's `deltaSeconds` (`UtilityScorer::Update` from
         `UpdateSubsystems`): not at all while the world is unloaded (the tick
@@ -947,7 +956,10 @@ changed in the same PR, and the shipped INI loses the dead keys.
         1 s across any gap between ticks (an alt-tab, a stall). The new one is
         `NeedClock` (`steady_clock`), so load-door, alt-tab and gap time count
         in full: `fCombatStartWindow` (10 s) can run out behind a load door
-        where the old timer was still inside it. And the old state outlived a
+        where the old timer was still inside it. Pausing menus are no
+        difference in kind: the loop ticks on the main thread while one is
+        open, so the old timer ran there too, short only of what the 1 s clamp
+        cut from each gap between ticks. And the old state outlived a
         load: `UtilityScorer::Reset` never reset the discriminator, so a save
         loaded mid-fight into a non-combat save kept `m_inCombat` true, and the
         sustained-combat regen multiplier stayed on until the next combat exit.

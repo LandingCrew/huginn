@@ -116,39 +116,10 @@ namespace Huginn::Candidate
             const CandidateVariant& candidate
         ) const;
 
-        /**
-         * @brief Check if candidate's buff effect is already active.
-         *
-         * Filters redundant recommendations:
-         * - Waterbreathing potion when already has waterbreathing
-         * - Resist Fire when fire resistance >= threshold
-         * - Invisibility when already invisible
-         *
-         * @param candidate The candidate to check
-         * @param player Current player state (for active buffs/resistances)
-         * @return true if buff effect is NOT already active
-         */
-        [[nodiscard]] bool PassesActiveBuffFilter(
-            const CandidateVariant& candidate,
-            const State::PlayerActorState& player
-        ) const;
-
-        /**
-         * @brief Check if restore/healing items are useful.
-         *
-         * Filters pointless recommendations:
-         * - Health potions when health is full
-         * - Magicka potions when magicka is full
-         * - Stamina potions when stamina is full
-         *
-         * @param candidate The candidate to check
-         * @param player Current player state (for vital percentages)
-         * @return true if item would be useful
-         */
-        [[nodiscard]] bool PassesFullVitalsFilter(
-            const CandidateVariant& candidate,
-            const State::PlayerActorState& player
-        ) const;
+        // R8.1: PassesActiveBuffFilter / PassesFullVitalsFilter are gone.
+        // They re-ran the whole visitor and asked for one reason, so once the
+        // hard gates ran ahead of the active-buff filters a gated candidate
+        // read as passing. Nothing called them; ApplyAllFilters is the API.
 
         // =========================================================================
         // BATCH FILTER OPERATIONS
