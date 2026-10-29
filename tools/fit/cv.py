@@ -37,6 +37,8 @@ import numpy as np
 
 from fitlib import *
 
+CV_MAXITER = 300     # L-BFGS iterations per fold fit (stored in cv_<group>.pkl for honest.py)
+
 PICKS = {
     'kappa only': dict(theta=False, item=False, outside=False),
     'position': dict(theta=False, item=False, outside=False, feat_spec=['pos']),
@@ -149,7 +151,7 @@ def main(argv=None):
         SS = S_latest if split_spec(spec)[2] else S
         t0 = time.time()
         # a fold that was not fitted (no picks held out) gets stubs, so the list stays aligned with meta
-        results[name] = cv_results(SS, obv, spec, FOLD, a.split_needs, maxiter=300)
+        results[name] = cv_results(SS, obv, spec, FOLD, a.split_needs, maxiter=CV_MAXITER)
         timing[name] = time.time() - t0
         P(f'[{timing[name]:.0f}s] {name}')
 
@@ -188,7 +190,7 @@ def main(argv=None):
     with open(work(f'cv_{a.group}.pkl'), 'wb') as f:
         pickle.dump({'results': results, 'meta': S['meta'], 'launches': launches, 'fold_of': fold_of,
                      'segments': S['segments'], 'SEG': S['SEG'], 'yardstick': ys, 'astar_beta': betas,
-                     'timing': timing, 'args': vars(a)}, f)
+                     'timing': timing, 'args': vars(a), 'maxiter': CV_MAXITER, 'data_key': data_key(S, obv)}, f)
     P(f'[{time.time() - t_start:.0f}s] wrote {work(f"cv_{a.group}.pkl")}')
     out.close()
 

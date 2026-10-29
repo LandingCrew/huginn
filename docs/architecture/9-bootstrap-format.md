@@ -59,7 +59,7 @@ file is about 650 KiB.
 | `u0` | object or null | the outside option, only and always with `outcomes` `"three"`: `bias` (number) and `need` ({need name: weight}) |
 | `recent` | object or null | the `recent_<family>` features (below): `window_s`, `taus_s` (number[]), `features` |
 | `features` | object[] | extra row features, `{name, w}`; names from the fixed list below |
-| `items` | object[] | the per-item b: `{plugin, local, name, b, precision, picks}` (below) |
+| `items` | object[] | the per-item b: `{plugin, local, name, b, precision, picks}`, keyed by the plugin that owns the FormID's load-order index (below) |
 | `items_dropped` | object | {reason: count} of the fitted items not written (below); informational |
 | `curves` | object | {need name: `["logistic", centre, slope]`}: response curves fitted by `tools/fit/curve.py` |
 
@@ -103,11 +103,24 @@ with `graded` or `presence`.
 ### `recent`
 
 `r_f(d)` for each entry f of `recent.features` (`family` names an effect
-column, `tau_s` one of `taus_s`): take the last pick before d in the same
-launch and load generation (a pick with a context, not of a transient spell);
-if it was at most `window_s` seconds before d and its item's cap has
-`cap_family > 0`, then `r_f(d) = exp(-age / tau_s)`, else 0
-(`fitlib.recent_families`; doc 11 step 2). Each entry carries its own row:
+column, `tau_s` one of `taus_s`; `fitlib.recent_families`, doc 11 step 2):
+
+- **Times.** A pick's time is the moment it was decided: its `utc` less its
+  `confirmMs` (the confirmation delay; 0 when absent), `fitlib.pick_time`. The
+  decision d is timed the same way (a `nothing` record by its context's
+  `utc`).
+- **The previous pick.** The latest pick strictly before d's time in the same
+  launch and load generation (`gen`), d itself excluded. Only usable picks
+  count: an outcome other than `nothing`, with a context, with a chosen row
+  (the log's `row` names one; a chosen item without a cap still counts, and
+  then gives 0), not of a transient spell (LoreRim's Arcane
+  Anchor), and not from the SimonRim test list (`list` `simonrim-essentails`).
+  A live reader that filters otherwise computes other values than the ones
+  each entry's `theta` was fitted on.
+- **The value.** With `age` = d's time less that pick's time: if `age <=
+  window_s` and the picked item's cap has `cap_family > 0`, then
+  `r_f(d) = exp(-age / tau_s)`, else 0.
+ Each entry carries its own row:
 `theta` (number[J]), `theta_strength` (with `presence+strength`), `precision`,
 and `u0` (with outcomes `"three"`). `T_f(i)` reads the item as `T_k(i)` does.
 Only the families seen in the fitted log are listed; a family absent from the
@@ -151,28 +164,56 @@ weight ([9-implementation-map.md](9-implementation-map.md), Cosave), so
 
 ## Items
 
-An item is keyed by its **defining plugin** (the plugin that creates the form,
-`TESForm::GetFile(0)`) and its **local FormID** within it, so the key survives a
-load-order change:
+An item is keyed by the plugin that **owns its FormID's load-order index**
+and its **local FormID** within that plugin, so the key survives a load-order
+change. A runtime FormID is the owner's index in its high bits (the top byte
+for a full plugin, `FE` plus a 12-bit light index for a light one) and the
+local id in its low bits; CommonLib's `TESDataHandler::LookupForm(local,
+plugin)` rebuilds it from the named plugin's own index:
 
-- `plugin`: the plugin's file name as the game reports it; compare without case.
+- `plugin`: the index owner's file name as the game reports it; compare
+  without case.
 - `local`: 6 upper-case hex digits: the low 24 bits of the runtime FormID for a
   full plugin, the low 12 bits for a light one (`FE xxx yyy`: `"000yyy"`).
-  CommonLib resolves it with `TESDataHandler::LookupForm(local, plugin)`.
+  CommonLib resolves it with `TESDataHandler::LookupForm(local, plugin)`; a
+  null result (the plugin or the record is gone) means the item is skipped.
+
+The owner is **not always the defining plugin** (`TESForm::GetFile(0)`, the
+first file that has the record). A plugin can create a record inside a
+master's FormID space (an injected record): its FormID carries the master's
+index, while `GetFile(0)` names the plugin that created it. LoreRim's dump has
+one: `FE97B053` "Drunkness Monitor" is defined by `BOOB - Requiem.esp` at
+`BOOB.esp`'s index `FE97B` (`BOOB - Requiem.esp` owns `FE97C`); keyed by
+`GetFile(0)`, `LookupForm(0x053, "BOOB - Requiem.esp")` would give `FE97C053`,
+another or no record. It is keyed `{"plugin": "BOOB.esp", "local": "000053"}`.
+A writer that reads `GetFile(0)` (as `hg dump all` does) must map each index to
+its owner; a writer inside the game can take the owner straight from the load
+order (`TESDataHandler`'s file at that index).
 - `name`: the item's name in the form map, for reading only.
 - `b`: the per-item term. It is this character's: it may not transfer to a new
   character (θ is meant to). Whether R8 applies b from another character is
   R8's decision.
 - `precision`: as above. `picks`: how often the fitted log picked it.
 
-The writer reads the runtime FormID → plugin map from `hg dump all`'s CSV
-(`Huginn_All.csv`, one row per effect: `kind`, `formID`, `plugin`, `name`). Not
-written, and counted in `items_dropped` by reason:
+The writer (`tools/fit/export.py`) reads the runtime FormID → defining plugin
+map from `hg dump all`'s CSV (`Huginn_All.csv`, one row per effect: `kind`,
+`formID`, `plugin` = `GetFile(0)`, `name`) and infers each index's owner from it
+(`bootstrap.index_owners`): every plugin owns one index and appears at its own
+index and at the indices it injects into, so an index goes to the one plugin
+seen there that can own no other (every other index it appears at is owned
+already), repeated until nothing changes. On LoreRim's dump every one of the
+658 indices resolves, and the one injected record above is keyed by `BOOB.esp`.
+One case the dump cannot show: a plugin whose dumped forms are all injected
+into a master that has no dumped form of its own is taken as that index's
+owner. Not written, and counted in `items_dropped` by reason:
 
 - `dynamic (FF)`: a form made in game (player potions, enchanted gear): it has
   no plugin and its id is meaningful only within one load;
 - `not in the form map`: the dump lacks the form (a dump older than the log, or
   a load order that changed);
+- `index owner unknown`: two or more plugins could own the form's index (each
+  is seen only there), so the key would be a guess; the writer prints a
+  WARNING naming them;
 - `kind differs from the form map`, `name differs from the form map`: the dump
   names another record at that FormID than the log did (a load order change;
   light plugins shift when a list update adds or removes one). Never a wrong key.

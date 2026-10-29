@@ -14,6 +14,7 @@ otherwise; b_i ~ N(0, sigma_b^2).
 import bisect
 import csv
 import datetime as dt
+import hashlib
 import json
 import math
 import sys
@@ -26,6 +27,36 @@ from common import *
 
 SIMONRIM = 'simonrim-essentails'
 TRANSIENT = {'Arcane Anchor'}   # LoreRim tome-learning spell (memory: churn expected)
+
+# The fit's code, for the result caches (data_key): a change to this file invalidates them.
+CODE_KEY = hashlib.sha1(Path(__file__).read_bytes()).hexdigest()[:16]
+DATA_KEY_VERSION = 1
+# build() fields data_key leaves out: read only by the 'ctx' and 'cheap' row features (the v2
+# log, which honest.py and export.py refuse), so cv.py (which loads the v2 log) and honest.py
+# (which does not) give the same key for the same decisions.
+DATA_KEY_SKIP = ('V2', 'v2ok', 'CLS', 'classes')
+
+
+def data_key(S, obv=None):
+    """A digest of everything a fit of S reads: every array and list of build()'s dataset (the
+    caps, cross-features, needs, inputs, recent_<family>, choice sets, outcomes, launches, meta)
+    but DATA_KEY_SKIP, the obvious pairs, and the fit code (CODE_KEY). Two runs with the same key
+    fit the same thing; a v3.pkl rebuilt with other sensor data, an effects.csv change or a
+    fitlib.py change gives another key."""
+    h = hashlib.sha1(f'huginn-fit-data {DATA_KEY_VERSION} {CODE_KEY}\n'.encode())
+    for k in sorted(S):
+        if k in DATA_KEY_SKIP:
+            continue
+        v = S[k]
+        h.update(f'{k}\0'.encode())
+        if isinstance(v, np.ndarray) and v.dtype != object:
+            h.update(f'{v.dtype.str}{v.shape}'.encode())
+            h.update(np.ascontiguousarray(v).tobytes())
+        else:
+            h.update(repr(v.tolist() if isinstance(v, np.ndarray) else v).encode('utf-8', 'replace'))
+    if obv is not None:
+        h.update(repr(sorted(obv.items())).encode())
+    return h.hexdigest()
 
 
 # ---------------------------------------------------------------------------

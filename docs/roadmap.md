@@ -615,7 +615,7 @@ Map Phase 4, in `tools/fit` (the scripts and their flags: [tools/fit/README.md](
   each with a launch-bootstrap interval on model − A*).
 - **Open for R8** (noted, not decided): the best rehearsal variant leans on the
   old engine's utility as an input -- the hand-tuned layer R8 and R11 retire.
-- **Tools for the real run and R8 (0.23.51,
+- **Tools for the real run and R8 (0.23.52,
   [tools/fit/README.md](../tools/fit/README.md)).** `honest.py`: the
   rehearsal's verifier found grouped K-fold flatters the model (it trains on
   launches after the held-out one), so the yardstick is now also read on a
@@ -647,7 +647,7 @@ Map Phase 4, in `tools/fit` (the scripts and their flags: [tools/fit/README.md](
       only on held-out lift; the encumbrance curve is fitted from the
       player's carry-weight picks, starting from a documented prior on its
       centre near 0.9 (the user's "nearing" answer). *The fit is
-      `tools/fit/curve.py` (0.23.51): prior c ~ N(0.9, 0.05²), ln slope ~
+      `tools/fit/curve.py` (0.23.52): prior c ~ N(0.9, 0.05²), ln slope ~
       N(ln 40, 0.5²); only the obvious pair (and its strength twin) reads the
       curve -- with every pair of the need free, the need's dense weights
       fitted the load itself and pulled the centre to the grid's floor.*

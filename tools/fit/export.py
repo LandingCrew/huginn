@@ -9,14 +9,17 @@ What is written: theta (needs x effect columns) and its diagonal precision, thet
 for the presence + strength grading, theta_bias for a bias-need spec, kappa, u0 per need
 (three-outcome specs), the recent_<family> weights (as rows of theta for each family and time
 constant), the extra row-feature weights (ln util, util missing, slot N), the per-item b
-keyed by defining plugin + local FormID, and the fitted response curves (--curve). A curve's
+keyed by plugin + local FormID, and the fitted response curves (--curve). A curve's
 need is re-read through it (curve.with_curve) before the fit, so theta matches the curve the
 file ships.
 
 Items. The log names forms by their runtime FormID, which changes with the load order; the
-file keys each item by its defining plugin and its FormID within it, read from the `hg dump
-all` CSV (--forms; default: Huginn_All.csv beside the v3 file v3load.py read). A dynamic (FF)
-form and a form the dump lacks are dropped and counted (`items_dropped`). The dump's load
+file keys each item by the plugin that owns its FormID's load-order index and its FormID
+within that plugin (LookupForm(local, plugin) rebuilds it), read from the `hg dump all` CSV
+(--forms; default: Huginn_All.csv beside the v3 file v3load.py read; bootstrap.index_owners:
+the owner is the defining plugin except for a record injected into a master's FormID
+space). A dynamic (FF) form, a form the dump lacks and a form whose index owner the dump
+cannot tell are dropped and counted (`items_dropped`). The dump's load
 order must be the log's -- light (FE) plugins shift when a list update adds or removes one --
 so an item whose catalog kind differs from the dump's, or a picked item whose logged name
 differs from the dump's, is dropped and counted too (never a wrong key), with a WARNING. b is
@@ -47,6 +50,18 @@ def default_forms(D):
     return None
 
 
+def build_range(meta):
+    """[oldest, newest] build of the decisions: by version, then by log order (two builds of one
+    version, '0.23.44 (aadfade)' and '0.23.44 (b1c2d3e)', are ordered by when they were logged,
+    never by their hashes). A build that reads as no version sorts first."""
+    first, last = {}, {}
+    for i, m in enumerate(meta):
+        first.setdefault(m['build'], i)
+        last[m['build']] = i
+    key = lambda b: version(b) or (0,)
+    return [min(first, key=lambda b: (key(b), first[b])), max(last, key=lambda b: (key(b), last[b]))]
+
+
 def check_spec(spec):
     model_kw, which, latest = split_spec(spec)
     if latest or 'split' in which:
@@ -60,6 +75,8 @@ def check_spec(spec):
             grading = w
     if model_kw.get('bias_need') and grading == 'presence+strength':
         raise SystemExit('a bias need with presence + strength has a strength row the format does not carry')
+    if not model_kw.get('theta', True):
+        raise SystemExit('a spec without theta is a baseline: the file carries theta (not exported)')
     return model_kw, which, grading
 
 
@@ -125,7 +142,9 @@ def document(S, Sv, M, p, spec_name, grading, three, forms, curves, source, log=
     u0 = None
     if three:
         uo = q['uout']
-        u0 = {'bias': float(uo[-1]), 'need': {n: float(uo[i]) for i, n in enumerate(S['needs'])}}
+        # the bias need is a constant 1, so its u0 weight (uout[M.K - 1]) folds into u0.bias
+        u0 = {'bias': float(uo[-1] + (uo[M.K - 1] if M.bias_need else 0.0)),
+              'need': {n: float(uo[i]) for i, n in enumerate(S['needs'])}}
     recent = None
     if nrec:
         feats = []
@@ -149,13 +168,16 @@ def document(S, Sv, M, p, spec_name, grading, three, forms, curves, source, log=
         for d in np.where(S['Y'] >= 0)[0]:
             npick[int(S['ITEM'][d, S['Y'][d]])] += 1
         names = pick_names(S)
-        mismatch = []
+        owners = bootstrap.index_owners(forms)
+        mismatch, injected, unknown = [], [], []
         for form, i in S['items'].items():
-            key, why = bootstrap.item_key(form, forms)
+            key, why = bootstrap.item_key(form, forms, owners)
             if key is None:
                 dropped[why] += 1
+                if why == 'index owner unknown':
+                    unknown.append(form)
                 continue
-            _, dname, dkind = forms[int(form, 16)]
+            dplugin, dname, dkind = forms[int(form, 16)]
             # A form map from another load order points this FormID at another record: never
             # write a wrong key. The kind is checked for every item, the name for picked ones.
             lk = (log_kinds or {}).get(form)
@@ -167,7 +189,17 @@ def document(S, Sv, M, p, spec_name, grading, three, forms, curves, source, log=
                 dropped['name differs from the form map'] += 1
                 mismatch.append((form, names[form], dname))
                 continue
+            if dplugin.lower() != key[0].lower():
+                injected.append((form, dplugin, key[0]))
             items.append((key[0], key[1], dname or names.get(form) or '', float(q['b'][i]), float(bprec[i]), npick[i]))
+        if unknown:
+            at = sorted({bootstrap.index_of(int(f, 16)) for f in unknown})
+            log(f'WARNING: {len(unknown)} items dropped: the form map cannot tell which plugin owns their load-order '
+                f'index ({", ".join(f"{x:X}" for x in at[:5])}; seen there: '
+                f'{sorted({forms[i][0] for i in forms if bootstrap.index_of(i) in at[:5]})[:6]})')
+        if injected:
+            log(f'{len(injected)} items are records injected into the FormID space of another plugin, keyed by the index '
+                f'owner (bootstrap.index_owners): ' + ', '.join(f'{f} ({d} in {o})' for f, d, o in injected[:5]))
         if mismatch:
             log(f'WARNING: {len(mismatch)} forms disagree with the form map and were dropped (a load order change? '
                 f'run `hg dump all` on the load order the log was written with):')
@@ -229,13 +261,13 @@ def main(argv=None):
     Sv, M, p, f, it = fit_all(S, obv, spec, a.maxiter)
     print(f'{len(S["Y"])} decisions, {(S["Y"] >= 0).sum()} picks, {len(S["launches"])} launches; '
           f'{a.spec!r} fitted: posterior {f:.2f} after {it + 1} iterations')
-    builds = sorted({m['build'] for m in S['meta']}, key=lambda b: version(b) or (0,))
+    builds = build_range(S['meta'])
     chars = sorted({str(d['char']) for d in D['decs']})
     if not D.get('char') and len(chars) > 1:
         print(f'WARNING: {len(chars)} characters in v3.pkl ({", ".join(chars)}): b mixes them (v3load.py --char)')
     source = {'char': D.get('char') or (chars[0] if len(chars) == 1 else None), 'launches': len(S['launches']), 'first_launch': S['launches'][0],
               'last_launch': S['launches'][-1], 'decisions': int(len(S['Y'])), 'picks': int((S['Y'] >= 0).sum()),
-              'builds': [builds[0], builds[-1]], 'forms': forms_path.name, 'tool': 'tools/fit/export.py'}
+              'builds': builds, 'forms': forms_path.name, 'tool': 'tools/fit/export.py'}
     doc = document(S, Sv, M, p, a.spec, grading, a.three, forms, curves, source, log_kinds=log_kinds_of(D))
     errs = bootstrap.validate(doc)
     if errs:

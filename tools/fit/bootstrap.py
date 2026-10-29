@@ -1,16 +1,21 @@
 """The R8 bootstrap file: format version 1 (docs/architecture/9-bootstrap-format.md). Builds the
 document from a fit, writes it deterministically, validates it, and keys items by plugin +
 local FormID. No numpy here: the writer and the validator take plain lists, so the golden
-example (tests/core/fixtures/bootstrap/bootstrap_v1_example.json) is checked without a fit.
+examples (tests/core/fixtures/bootstrap/bootstrap_v1_full.json and bootstrap_v1_minimal.json)
+are checked without a fit.
 
     make_document(...)    the document (a dict) from plain pieces; the field order is fixed
     dumps(doc)            deterministic text: objects one key per line, number arrays on one line,
                           floats at 6 significant digits, no NaN or infinity
     validate(doc)         a list of problems ([] = valid), the same rules a reader applies
     read_forms(path)      the `hg dump all` CSV (Huginn_All.csv) -> {FormID: (plugin, name, kind)}
-    item_key(form, forms) (plugin, local FormID hex) for a runtime FormID, or (None, reason)
+    index_owners(forms)   {load-order index: the plugin that owns it, or None when the dump
+                          cannot tell}
+    item_key(form, forms, owners)
+                          (index owner, local FormID hex) for a runtime FormID, or (None, reason)
 """
 import csv
+from collections import defaultdict
 import json
 import math
 
@@ -222,16 +227,70 @@ def read_forms(path):
     return out
 
 
-def item_key(form, forms):
-    """(plugin, local) for a runtime FormID (8 hex digits or an int): local is the FormID within
-    its defining plugin, 6 upper-case hex digits -- the low 24 bits for a full plugin, the low
-    12 bits for a light one (FE xxx yyy). (None, reason) for a dynamic FF form (made in game: it
-    has no plugin) or a form the map does not hold."""
+def index_of(fid):
+    """The load-order index a runtime FormID's high bits name: the top byte for a full plugin
+    (0x00-0xFD), FE plus the 12-bit light index for a light one (0xFExxx)."""
+    return fid >> 12 if fid >> 24 == 0xFE else fid >> 24
+
+
+def index_owners(forms):
+    """{load-order index: the plugin that owns it, or None} from a form map (read_forms).
+
+    The map's plugin is the form's DEFINING plugin (TESForm::GetFile(0), the first file that has
+    the record). That is the index's owner for almost every form, but not for a record a plugin
+    INJECTS into a master's FormID space (its FormID carries the master's index; the real dump
+    has one: FE97B053 'Drunkness Monitor', defined by 'BOOB - Requiem.esp' at BOOB.esp's index
+    FE97B, while 'BOOB - Requiem.esp' owns FE97C). TESDataHandler::LookupForm(local, plugin)
+    rebuilds the FormID from the named plugin's own index, so the key must name the owner.
+
+    Each plugin owns one index and each index one plugin; a plugin appears at its own index
+    and at the indices it injects into. An index is given to the one plugin seen there that
+    can own no other index (every other index it appears at is already owned), repeated until
+    nothing changes. An index with no such plugin, or with two, is None (unknown): its forms
+    are not keyed. One case this cannot see: a plugin whose dumped forms are ALL injected into
+    a master that has no dumped form of its own is taken as that index's owner."""
+    at, of = defaultdict(set), defaultdict(set)
+    name = {}
+    for fid, hit in forms.items():
+        if fid >> 24 == 0xFF or not hit[0]:
+            continue
+        pl = hit[0].lower()              # plugin names compare without case
+        name.setdefault(pl, hit[0])
+        x = index_of(fid)
+        at[x].add(pl)
+        of[pl].add(x)
+    owners = {}
+    changed = True
+    while changed:
+        changed = False
+        taken = set(owners.values())
+        for x in sorted(at):
+            if x in owners:
+                continue
+            cands = [pl for pl in at[x] if pl not in taken and of[pl] - owners.keys() == {x}]
+            if len(cands) == 1:
+                owners[x] = cands[0]
+                taken.add(cands[0])
+                changed = True
+    return {x: (name[owners[x]] if x in owners else None) for x in at}
+
+
+def item_key(form, forms, owners=None):
+    """(plugin, local) for a runtime FormID (8 hex digits or an int): plugin is the plugin that
+    owns the FormID's load-order index (index_owners; owners is computed from forms when not
+    given), local the FormID within it, 6 upper-case hex digits -- the low 24 bits for a full
+    plugin, the low 12 bits for a light one (FE xxx yyy). LookupForm(local, plugin) gives the
+    FormID back in the same load order. (None, reason) for a dynamic FF form (made in game: it
+    has no plugin), a form the map does not hold, or an index whose owner the map cannot tell."""
     fid = int(form, 16) if isinstance(form, str) else int(form)
     if fid >> 24 == 0xFF:
         return None, 'dynamic (FF)'
-    hit = forms.get(fid)
-    if hit is None:
+    if forms.get(fid) is None:
         return None, 'not in the form map'
+    if owners is None:
+        owners = index_owners(forms)
+    owner = owners.get(index_of(fid))
+    if owner is None:
+        return None, 'index owner unknown'
     local = fid & 0xFFF if fid >> 24 == 0xFE else fid & 0xFFFFFF
-    return (hit[0], f'{local:06X}'), None
+    return (owner, f'{local:06X}'), None

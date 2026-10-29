@@ -120,7 +120,7 @@ decisions, folds and seed).
   utility as a feature (`A* feature`), alone and with `recent`.
 - Every result list in `cv_<group>.pkl` is aligned with its `meta`, one entry per
   decision; `yardstick` holds the tables, `fold_of` the folds.
-- `theta + recent + A* feature (no b)` (0.23.51): the rehearsal's best variant
+- `theta + recent + A* feature (no b)` (0.23.52): the rehearsal's best variant
   without the per-item b, which belongs to this character (the verifier of
   2026-10-28: b costs hits on items the training set never picked).
 
@@ -152,12 +152,19 @@ decisions:
 - **Specs**: the cv.py specs whose name contains a `--spec` text; by default
   `honest.HONEST_DEFAULT`: θ + b, θ + b + `recent_<family>`, θ + b + recent +
   A\* feature, and the same without b. Split and latest-caps specs are refused.
-- **Cost**: one fit per chunk (380 on the mage's 1,865 picks at `--every 5`),
-  roughly half an hour to an hour per spec on one core. Each spec's online and
+- **Cost**: one fit per chunk (about 380 on the mage's 1,865 picks at
+  `--every 5`), 30 to 40 minutes per spec with numpy on 6 threads (the
+  verifier's run: 1,780 to 2,360 s), longer on fewer. Each spec's online and
   CV results are cached in the work directory
-  (`honest_cache_<kind>_<group>_<hash>.pkl`, keyed by the decisions, the spec,
-  the schedule and the fit settings), so run one process per spec (`--spec`),
-  then one naming them all to combine; `--no-cache` refits.
+  (`honest_cache_<kind>_<group>_<hash>.pkl`, keyed by `fitlib.data_key`: every
+  array the fit reads, the obvious pairs and `fitlib.py`'s code; plus the
+  spec, the schedule and `--maxiter`), so run one process per spec
+  (`--spec`), then one naming them all to combine; a rebuilt `v3.pkl` or a
+  `fitlib.py` change refits; `--no-cache` refits always. CV results come from
+  `cv_<group>.pkl` only when cv.py wrote it with the same `data_key`, folds,
+  seed and maxiter (cv.py fits at `CV_MAXITER`, 300; so `--maxiter 300`
+  reuses it). Specs that read the v2 log (`ctx`, `cheap`) are refused: honest.py
+  does not load it.
 - **Port of the verifier's scripts** (`r6-verify/online.py`, `fwd_launch.py`,
   `combine.py` in the 2026-10-28 session scratchpad): the same schedule (chunks
   of 5 picks, warm start, 150 picks before the first tested launch, launch
@@ -204,19 +211,28 @@ version 1: [docs/architecture/9-bootstrap-format.md](../../docs/architecture/9-b
 writes (deterministic text) and validates the document.
 
 - θ (needs x effect columns) with its diagonal precision; θ's strength block
-  for presence + strength; κ; u0 per need for a three-outcome spec; the
-  `recent_<family>` rows; the extra feature weights (`ln util`, `util
-  missing`); per-item b keyed by **defining plugin + local FormID**; the curves
-  of `--curve` (a curve's need is re-read through it before the fit, so θ
+  for presence + strength; κ; u0 per need for a three-outcome spec (a bias
+  need's u0 weight folded into `u0.bias`); the `recent_<family>` rows; the
+  extra feature weights (`ln util`, `util missing`, `slot 0` .. `slot 7`);
+  per-item b keyed by **the plugin that owns the FormID's load-order index +
+  local FormID** (`LookupForm(local, plugin)` rebuilds it); the curves of
+  `--curve` (a curve's need is re-read through it before the fit, so θ
   matches it).
 - Items are keyed through `hg dump all`'s CSV (`--forms`; default
-  `Huginn_All.csv` beside the v3 file). Dynamic (FF) forms, forms the dump
-  lacks, and forms whose catalog kind (any item) or logged name (picked items)
-  differs from the dump's are dropped and counted (`items_dropped`), never
-  written under a wrong key: run `hg dump all` on the load order the log was
-  written with.
-- Refused: split and latest-caps specs (diagnostics), the `ctx` and `cheap`
-  features (they read the v2 log), a bias need with presence + strength.
+  `Huginn_All.csv` beside the v3 file). Its `plugin` is the defining plugin
+  (`GetFile(0)`); `bootstrap.index_owners` maps each load-order index to its
+  owner, so a record a plugin injects into a master's FormID space is keyed
+  by the master (LoreRim's one case: `FE97B053`, `BOOB - Requiem.esp` in
+  `BOOB.esp`). Dynamic (FF) forms, forms the dump lacks, forms at an index
+  whose owner the dump cannot tell, and forms whose catalog kind (any item)
+  or logged name (picked items) differs from the dump's are dropped and
+  counted (`items_dropped`), never written under a wrong key: run `hg dump
+  all` on the load order the log was written with.
+- Refused: split and latest-caps specs (diagnostics), specs without θ (the
+  baselines), the `ctx` and `cheap` features (they read the v2 log), a bias
+  need with presence + strength.
+- `source.builds` is [oldest, newest] by version, two builds of one version
+  ordered by when they were logged.
 - The default spec is `theta + b + recent_<family>`; pass the one R6's
   yardstick chose.
 
@@ -226,16 +242,25 @@ writes (deterministic text) and validates the document.
 read, `--char` and `--list`, new need ids and unknown fields (and older records
 without them), the build segmentation and `recent_<family>`, the folds (no launch
 in two folds, deterministic), the A\* temperature and the pooled yardstick; and
-(0.23.51) the online schedule (each test chunk trained on exactly its past,
+(0.23.52) the online schedule (each test chunk trained on exactly its past,
 chunks of N picks inside one launch, no fit on no picks), no future leak (the
 online results and A\*'s page temperature before the last launch do not change
 when its choices do), `cv_results` against the former fold loop, R6's gate, the
 curve (the plugin's logistic, the pair-only mask held exactly, a known centre
 recovered, a tight prior held), the bootstrap format (the golden files are the
 writer's output and validate; the reader rules reject broken documents; item
-keys for full, light and dynamic forms; the form map's CSV) and the export (θ,
-b and κ round-trip; kind and name mismatches dropped; three outcomes, recent
-and the strength block; a log end to end). `--write-golden` rewrites
+keys for full, light and dynamic forms, keyed by the index owner for an
+injected record, an index of unknown owner not keyed; the form map's CSV), the
+export (θ, b and κ round-trip; kind and name mismatches dropped; three
+outcomes, recent and the strength block; the file read back as JSON and scored
+by an independent reader that follows the format doc, cross-features and slot
+features included, against `Model.scores` for graded + recent + features,
+presence + strength with three outcomes, and a bias need with three outcomes;
+the refusals; `source.builds`; a log end to end), `fitlib.data_key`, and
+`honest.py` and `curve.py` end to end on a tiny log (the report; the caches
+reused, and refitted for another `--maxiter` or a rebuilt `v3.pkl`; cv.py's
+pickle reused only at the same key and maxiter; the curve file fed to
+export.py). `--write-golden` rewrites
 `tests/core/fixtures/bootstrap/` after a deliberate format change.
 
 ## The scripts

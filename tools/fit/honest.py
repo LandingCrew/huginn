@@ -26,14 +26,17 @@ and R6's gate on each (fitlib.gate: menu lower end > 0; pooled upper end >= 0). 
 verdict is the honest one; CV (online) vs online isolates the schedule from the decision set.
 
 Specs: --spec keeps the cv.py specs whose name contains any TEXT; default HONEST_DEFAULT.
-Cost: one fit per chunk (~375 on the mage's 1,865 picks at --every 5); about 40 min per spec
-at 6 threads (the verifier's run), so run specs in parallel processes when the game is not up.
+Cost: one fit per chunk (about 380 on the mage's 1,865 picks at --every 5); 30 to 40 minutes
+per spec with numpy on 6 threads (the verifier's run: 1,780 to 2,360 s), longer on fewer, so
+run specs in parallel processes when the game is not up.
 
 Caching (--no-cache turns it off): each spec's online results and CV results are cached in the
-work directory (honest_cache_<kind>_<group>_<hash>.pkl), keyed by the decisions, the spec, the
-schedule and the fit settings, so parallel runs with different --spec, then one run naming them
-all, combine without refitting. CV results are also taken from cv_<group>.pkl when it was
-written for the same decisions, folds and seed (cv.py; its specs of the same name)."""
+work directory (honest_cache_<kind>_<group>_<hash>.pkl), keyed by fitlib.data_key (every array
+the fit reads, the obvious pairs and fitlib.py's code), the spec, the schedule and the fit
+settings (--maxiter), so parallel runs with different --spec, then one run naming them all,
+combine without refitting, and a rebuilt v3.pkl or a fitlib.py change refits. CV results are
+also taken from cv_<group>.pkl when it was written with the same data_key, folds, seed and
+maxiter (cv.py fits with CV_MAXITER, 300; its specs of the same name)."""
 import argparse
 import hashlib
 import os
@@ -82,17 +85,12 @@ def select_specs(group, texts):
     bad = [k for k, v in specs.items() if split_spec(v)[2] or 'split' in split_spec(v)[1]]
     if bad:
         raise SystemExit(f'not on the online schedule (diagnostics): {bad}')
+    v2 = [k for k, v in specs.items() if {'ctx', 'cheap'} & set(v.get('feat_spec', ()))]
+    if v2:
+        raise SystemExit(f'read the v2 log (old engine context weights), which honest.py does not load: {v2}')
     if not specs:
         raise SystemExit(f'no {group} spec matches {texts}')
     return specs
-
-
-def decisions_key(S):
-    """A digest of the decision set (launch, outcome, name, chosen row), for the caches."""
-    h = hashlib.sha1()
-    for m, y in zip(S['meta'], S['Y']):
-        h.update(f'{m["launch"]}|{m["out"]}|{m["name"]}|{int(y)}\n'.encode('utf-8', 'replace'))
-    return h.hexdigest()
 
 
 def cache_path(kind, group, parts):
@@ -115,19 +113,18 @@ def cached(path, use, compute):
     return val, False
 
 
-def cv_from_pickle(a, S):
-    """cv_<group>.pkl's results, when written for the same decisions, folds and seed; else {}."""
+def cv_from_pickle(a, dkey):
+    """cv_<group>.pkl's results, when written with the same data_key (the same decisions, data
+    and fit code), folds, seed and maxiter; else {}. A pickle from before the key was stored
+    (no 'data_key') is never reused."""
     p = work(f'cv_{a.group}.pkl')
     if not p.exists():
         return {}
     with open(p, 'rb') as f:
         C = pickle.load(f)
     args = C.get('args', {})
-    same = (args.get('folds') == a.folds and args.get('seed') == a.seed and not args.get('loo')
-            and args.get('since') == a.since and args.get('until') == a.until
-            and len(C['meta']) == len(S['meta'])
-            and all((m['launch'], m['out'], m['name']) == (n['launch'], n['out'], n['name'])
-                    for m, n in zip(C['meta'], S['meta'])))
+    same = (C.get('data_key') == dkey and C.get('maxiter') == a.maxiter
+            and args.get('folds') == a.folds and args.get('seed') == a.seed and not args.get('loo'))
     return C['results'] if same else {}
 
 
@@ -161,7 +158,7 @@ def main(argv=None):
     obv = obvious_pairs(S['needs'], S['cols'])
     fold_of = launch_folds(S, a.folds, a.seed)
     FOLD = fold_of[S['LA']]
-    dkey = decisions_key(S)
+    dkey = data_key(S, obv)
     out = out_file(f'honest_{a.group}.txt')
 
     def P(*x):
@@ -180,7 +177,7 @@ def main(argv=None):
     P(f'CV: grouped {int(fold_of.max()) + 1}-fold by launch (seed {a.seed})')
     P(f'specs: {", ".join(specs)}\n')
 
-    from_cv = cv_from_pickle(a, S)
+    from_cv = cv_from_pickle(a, dkey)
     use = not a.no_cache
     res_cv, res_on, timing = {}, {}, {}
     for name, spec in specs.items():

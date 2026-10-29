@@ -540,12 +540,13 @@ class PageTemperature(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# honest yardstick, curve fit, bootstrap export (0.23.51)
+# honest yardstick, curve fit, bootstrap export (0.23.52)
 # ---------------------------------------------------------------------------
 import bootstrap   # noqa: E402
 import curve       # noqa: E402
 import export      # noqa: E402
 import honest      # noqa: E402
+import cv          # noqa: E402
 
 REPO = HERE.parents[1]
 GOLDEN_DIR = REPO / 'tests' / 'core' / 'fixtures' / 'bootstrap'
@@ -673,6 +674,21 @@ class OnlineSchedule(unittest.TestCase):
             M2 = fitlib.Model(fitlib.subset(S, te), obvious=SYN_OBV, nitems=S['R'], outside=False)
             for i, r in zip(te, fitlib.evaluate(M2, fitlib.subset(S, te), p)):
                 self.assertAlmostEqual(res[i]['logp'], r['logp'], places=9)
+
+
+class DataKey(unittest.TestCase):
+    def test_changes_with_what_the_fit_reads(self):
+        S = synth_S(80, rec=True)
+        k = fitlib.data_key(S, SYN_OBV)
+        self.assertEqual(k, fitlib.data_key(dict(S), dict(SYN_OBV)))
+        for name in ('CapMat', 'N', 'IN', 'REC', 'INHA', 'UTIL', 'Y'):
+            S2 = dict(S)
+            S2[name] = S[name].copy()
+            S2[name].flat[1] = 7                           # any change to an array the fit reads
+            self.assertNotEqual(fitlib.data_key(S2, SYN_OBV), k, name)
+        self.assertNotEqual(fitlib.data_key(S, {(0, 0): 1.0}), k)                # the obvious pairs
+        self.assertNotEqual(fitlib.data_key(dict(S, needs=['a', 'b', 'c']), SYN_OBV), k)
+        self.assertEqual(fitlib.data_key(dict(S, V2=S['V2'] + 1), SYN_OBV), k)  # the v2 log is not read
 
 
 class Gate(unittest.TestCase):
@@ -831,6 +847,27 @@ class BootstrapFormat(unittest.TestCase):
         self.assertEqual(bootstrap.item_key('FF000801', forms), (None, 'dynamic (FF)'))
         self.assertEqual(bootstrap.item_key('00012345', forms), (None, 'not in the form map'))
 
+    def test_item_key_names_the_index_owner(self):
+        """An injected record (the real dump's FE97B053: defined by 'BOOB - Requiem.esp' at BOOB.esp's
+        index FE97B; the patch owns FE97C) is keyed by the index owner, so LookupForm(local, plugin)
+        rebuilds its FormID; an index the dump cannot attribute is not keyed."""
+        forms = {0xFE97B001: ('BOOB.esp', 'A', 'Spell'), 0xFE97B002: ('BOOB.esp', 'B', 'Spell'),
+                 0xFE97B053: ('BOOB - Requiem.esp', 'Drunkness Monitor', 'Spell'),
+                 0xFE97C800: ('BOOB - Requiem.esp', 'C', 'Spell'),
+                 0x05000801: ('Master.esm', 'M', 'Potion'), 0x06000802: ('Patch.esp', 'P', 'Potion'),
+                 0x05000900: ('patch.ESP', 'Injected', 'Potion'),         # plugin names compare without case
+                 0x07000001: ('One.esp', 'X', 'Armor'), 0x07000002: ('Two.esp', 'Y', 'Armor')}
+        own = bootstrap.index_owners(forms)
+        self.assertEqual(own[0xFE97B], 'BOOB.esp')
+        self.assertEqual(own[0xFE97C], 'BOOB - Requiem.esp')
+        self.assertEqual(own[0x05], 'Master.esm')
+        self.assertEqual(own[0x06], 'Patch.esp')
+        self.assertIsNone(own[0x07])                     # two plugins seen only there: which owns it is unknown
+        self.assertEqual(bootstrap.item_key(0xFE97B053, forms, own), (('BOOB.esp', '000053'), None))
+        self.assertEqual(bootstrap.item_key(0xFE97C800, forms), (('BOOB - Requiem.esp', '000800'), None))
+        self.assertEqual(bootstrap.item_key(0x05000900, forms, own), (('Master.esm', '000900'), None))
+        self.assertEqual(bootstrap.item_key(0x07000001, forms, own), (None, 'index owner unknown'))
+
     def test_read_forms(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp) / 'Huginn_All.csv'
@@ -847,9 +884,104 @@ SYN_FORMS = {0x0003EAE3: ('Skyrim.esm', 'Feather', 'Spell'), 0x00012EB7: ('Skyri
              0x00099999: ('Skyrim.esm', 'Not the Elixir', 'Potion')}
 
 
+def with_cross_and_slots(S, seed=11):
+    """S with two runtime cross-features (they name kind_food and restore_health, as an
+    xcol entry names an effect column) on some rows, and page slots 0-7 on the rows held on
+    the page (INHA 0), so the doc's x_j(i) and slot N terms are exercised."""
+    rng = np.random.default_rng(seed)
+    S = dict(S)
+    Dn, R = S['CAPID'].shape
+    S['xcol'] = np.array([1, 2])
+    S['X'] = np.where(rng.random((Dn, R, 2)) < 0.4, rng.uniform(0.1, 1.0, (Dn, R, 2)), 0.0)
+    slot = np.full((Dn, R), -1, dtype=np.int32)
+    for d in range(Dn):
+        on = np.where(S['INHA'][d] == 0)[0]
+        slot[d, on] = rng.permutation(8)[:len(on)]
+    S['SLOT'] = slot
+    return S
+
+
+def doc_scores(doc, S, forms):
+    """An independent reader of a bootstrap document, as docs/architecture/9-bootstrap-format.md
+    writes the score: (logit per row, u0 per decision) for every decision of S (the base dataset:
+    S['needs'] and S['cols'] in the build's order; recent_<family> values from S['REC']).
+    Names map by name; an item is found by resolving its (plugin, local) key back through the
+    form map, as LookupForm would."""
+    NI = {n: i for i, n in enumerate(S['needs'])}
+    CI = {c: j for j, c in enumerate(S['cols'])}
+    K, J = len(S['needs']), len(S['cols'])
+    fcol = [CI.get(c) for c in doc['cols']]
+
+    def row(vals):
+        out = np.zeros(J)
+        for b, j in enumerate(fcol):
+            if j is not None:
+                out[j] = vals[b]
+        return out
+
+    TH, THS = np.zeros((K, J)), np.zeros((K, J))
+    for a, n in enumerate(doc['needs']):
+        if n in NI:
+            TH[NI[n]] = row(doc['theta'][a])
+            if doc['theta_strength'] is not None:
+                THS[NI[n]] = row(doc['theta_strength'][a])
+    strength = doc['model']['grading'] == 'presence+strength'
+    presence = doc['model']['grading'] != 'graded'
+    rname = {n: i for i, n in enumerate(S['recency_names'])}
+    rec = []
+    for fo in (doc['recent'] or {}).get('features', []):
+        rec.append((rname[f"recent_{fo['family']}@{fo['tau_s']:g}s"], row(fo['theta']),
+                    row(fo['theta_strength']) if strength else np.zeros(J), fo.get('u0', 0.0)))
+    tbias = row(doc['theta_bias']) if doc['theta_bias'] is not None else None
+    loc_of = {}
+    owners = bootstrap.index_owners(forms)
+    for fid in forms:
+        key, _ = bootstrap.item_key(fid, forms, owners)
+        if key:
+            loc_of[(key[0].lower(), key[1])] = f'{fid:08X}'
+    b_of = {loc_of[(it['plugin'].lower(), it['local'])]: it['b'] for it in doc['items']}
+    form_of = {i: f for f, i in S['items'].items()}
+    W = {f['name']: f['w'] for f in doc['features']}
+    three = doc['model']['outcomes'] == 'three'
+    Dn, R = S['CAPID'].shape
+    logit, u0 = np.full((Dn, R), -np.inf), np.full(Dn, -np.inf)
+    for d in range(Dn):
+        n = S['N'][d]
+        r = S['REC'][d]
+        if three:
+            u0[d] = doc['u0']['bias'] + sum(w * n[NI[k]] for k, w in doc['u0']['need'].items() if k in NI) \
+                + sum(ru * r[ri] for ri, _, _, ru in rec)
+        for i in range(R):
+            if not S['MASK'][d, i]:
+                continue
+            cap = S['CapMat'][S['CAPID'][d, i]]
+            x = np.zeros(J)
+            for xi, j in enumerate(S['xcol']):
+                x[j] += S['X'][d, i, xi]
+            g = ((cap > 0).astype(float) if presence else cap) + x
+            st = (cap - 0.5) * (cap > 0)
+            s = n @ TH @ g + (n @ THS @ st if strength else 0.0)
+            for ri, th, ths, _ in rec:
+                s += r[ri] * (th @ g + (ths @ st if strength else 0.0))
+            if tbias is not None:
+                s += tbias @ g
+            s += b_of.get(form_of[int(S['ITEM'][d, i])], 0.0)
+            u = S['UTIL'][d, i]
+            if 'ln util' in W:
+                s += W['ln util'] * (0.0 if np.isnan(u) else math.log(max(u, 1e-6)))
+                s += W['util missing'] * (1.0 if np.isnan(u) else 0.0)
+            sl = int(S['SLOT'][d, i])
+            if 0 <= sl < 8:
+                s += W.get(f'slot {sl}', 0.0)
+            logit[d, i] = s - doc['kappa'] * S['INHA'][d, i]
+    return logit, u0
+
+
 class Export(unittest.TestCase):
-    def doc(self, spec, three=False, rec=False, log_kinds=None):
+    def doc(self, spec, three=False, rec=False, log_kinds=None, cross=False):
         S = synth_S(600, seed=7, nothing=0.3 if three else 0.0, rec=rec)
+        if cross:
+            S = with_cross_and_slots(S)
         Sv, M, p, f, it = export.fit_all(S, SYN_OBV, spec, maxiter=150)
         _, _, grading = export.check_spec(spec)
         msgs = []
@@ -896,9 +1028,52 @@ class Export(unittest.TestCase):
         *_, d, _ = self.doc({'outside': False, 'feat_spec': ['astar']})
         self.assertEqual([f['name'] for f in d['features']], ['ln util', 'util missing'])
         for bad in ({'feat_spec': ['ctx']}, {'_with': ['split']}, {'_latest': True},
-                    {'bias_need': True, '_with': ['presence+strength']}):
+                    {'bias_need': True, '_with': ['presence+strength']},
+                    {'theta': False, 'item': True, 'outside': False}):        # cv.py 'b only': no theta to carry
             with self.assertRaises(SystemExit):
                 export.check_spec(bad)
+
+    def assert_scores_round_trip(self, spec, three=False, rec=False):
+        """The written file, read back as JSON and scored with the format doc's formula by an
+        independent reader, gives the fitted model's logits (and u0) on every decision."""
+        S, Sv, M, p, d, _ = self.doc(spec, three=three, rec=rec, cross=True)
+        self.assertEqual(bootstrap.validate(d), [])
+        doc = json.loads(bootstrap.dumps(d))
+        Fm, _ = fitlib.row_features(Sv, M.feat_spec)
+        _, logit_m, u0_m = M.scores(Sv, p, Fm)
+        logit_r, u0_r = doc_scores(doc, S, SYN_FORMS)
+        # an item the file does not carry reads b = 0 in the reader
+        kept = {(it['plugin'], it['local']) for it in doc['items']}
+        q = M.unpack(p)
+        if M.item:
+            for f, i in S['items'].items():
+                key, _ = bootstrap.item_key(f, SYN_FORMS)
+                if key not in kept:
+                    logit_m = np.where(S['ITEM'] == i, logit_m - q['b'][i], logit_m)
+        fin = np.isfinite(logit_m)
+        np.testing.assert_array_equal(fin, np.isfinite(logit_r))
+        np.testing.assert_allclose(logit_r[fin], logit_m[fin], rtol=0, atol=2e-4 * max(1.0, np.abs(logit_m[fin]).max()))
+        if three:
+            np.testing.assert_allclose(u0_r, u0_m, rtol=0, atol=2e-4 * max(1.0, np.abs(u0_m).max()))
+        return d
+
+    def test_scores_round_trip_graded_recent_features(self):
+        d = self.assert_scores_round_trip({'outside': False, 'feat_spec': ['astar', 'pos'], '_with': ['recent']}, rec=True)
+        self.assertEqual([f['name'] for f in d['features']][:3], ['ln util', 'util missing', 'slot 0'])
+
+    def test_scores_round_trip_presence_strength_three(self):
+        self.assert_scores_round_trip({'_with': ['presence+strength', 'recent']}, three=True, rec=True)
+
+    def test_scores_round_trip_bias_need_three(self):
+        """A bias need's u0 weight is folded into u0.bias (the bias need is a constant 1)."""
+        d = self.assert_scores_round_trip({'bias_need': True, '_with': ['presence']}, three=True)
+        self.assertIsNotNone(d['theta_bias'])
+
+    def test_build_range(self):
+        meta = [{'build': b} for b in ('0.23.44 (bbbbbbb)', '0.23.41 (fff)', '0.23.44 (aaaaaaa)', 'dev', '0.23.44 (bbbbbbb)')]
+        # the same version twice: ordered by when each was logged, not by the hash
+        self.assertEqual(export.build_range(meta), ['dev', '0.23.44 (bbbbbbb)'])
+        self.assertEqual(export.build_range(meta[:3]), ['0.23.41 (fff)', '0.23.44 (aaaaaaa)'])
 
 
 class ExportMain(TempWork):
@@ -907,7 +1082,8 @@ class ExportMain(TempWork):
         self.quiet(v3load.main, [str(self.write('v3.jsonl', text))])
         forms = self.write('forms.csv', 'kind,formID,plugin,name\n'
                                         'Potion,0003EAE3,Skyrim.esm,Potion A\nWeapon,00012EB7,Skyrim.esm,Sword\n'
-                                        'Ammo,0001397D,Dawnguard.esm,Bolt\nPotion,0003EAE5,Skyrim.esm,Potion B\n'
+                                        'Ammo,0001397D,Skyrim.esm,Bolt\nAmmo,0201397D,Dawnguard.esm,Bolt 2\n'
+                                        'Potion,0003EAE5,Skyrim.esm,Potion B\n'
                                         'Armor,00099999,Skyrim.esm,Robe\n')
         cj = self.write('curve.json', json.dumps({'need': 'magicka_deficit', 'kind': 'logistic', 'centre': 0.5, 'slope': 10}))
         doc, out = self.quiet(export.main, ['--forms', str(forms), '--curve', str(cj), '--maxiter', '30'])
@@ -917,12 +1093,85 @@ class ExportMain(TempWork):
         self.assertEqual(written['model']['spec'], 'theta + b + recent_<family>')
         self.assertEqual(written['source']['char'], CHAR_A)
         self.assertEqual({(i['plugin'], i['local']) for i in written['items']},
-                         {('Skyrim.esm', '03EAE3'), ('Skyrim.esm', '012EB7'), ('Dawnguard.esm', '01397D'),
+                         {('Skyrim.esm', '03EAE3'), ('Skyrim.esm', '012EB7'), ('Skyrim.esm', '01397D'),
                           ('Skyrim.esm', '03EAE5'), ('Skyrim.esm', '099999')})
         self.assertEqual(written['curves'], {'magicka_deficit': ['logistic', 0.5, 10.0]})
         self.assertTrue(written['recent']['features'])
         with self.assertRaises(SystemExit):
             self.quiet(export.main, ['--forms', str(forms), '--out', '../x.json'])
+
+
+class HonestMain(TempWork):
+    """honest.main on a tiny log: the report, the caches (reused on a second run, refitted when
+    the data or --maxiter changes) and cv.py's pickle (reused only for the same data_key, folds,
+    seed and maxiter)."""
+
+    def log(self, n):
+        text = ''.join(session(f'2026101{i}-100000', CHAR_A, '0.23.50 (abc)', minute=i) for i in range(1, n + 1))
+        self.quiet(v3load.main, [str(self.write('v3.jsonl', text))])
+
+    ARGS = ['picks', '--spec', 'theta + b (doc 9)', '--every', '2', '--min-train', '1', '--folds', '2', '--nboot', '20']
+
+    def test_end_to_end(self):
+        self.log(4)
+        r, out = self.quiet(honest.main, self.ARGS + ['--maxiter', '20'])
+        self.assertIn('theta + b (doc 9): CV fitted, online fitted', out)
+        self.assertIn('=== R6 gate', out)
+        self.assertTrue((self.dir / 'honest_picks.txt').exists() and (self.dir / 'honest_picks.pkl').exists())
+        self.assertEqual(len(list(self.dir.glob('honest_cache_*.pkl'))), 2)
+        self.assertTrue(r['tested'].any())
+        for meth in honest.METHODS:
+            self.assertIn(('theta + b (doc 9)', meth), r['verdicts'])
+        # the same run again: both from the cache, the same verdicts
+        r2, out = self.quiet(honest.main, self.ARGS + ['--maxiter', '20'])
+        self.assertIn('theta + b (doc 9): CV cache, online cache', out)
+        self.assertEqual(r2['verdicts'], r['verdicts'])
+        # another --maxiter: refitted
+        _, out = self.quiet(honest.main, self.ARGS + ['--maxiter', '21'])
+        self.assertIn('CV fitted, online fitted', out)
+        # cv.py's pickle: reused at its maxiter (300), not at another
+        self.quiet(cv.main, ['picks', '--folds', '2', '--spec', 'theta + b (doc 9)', '--nboot', '20'])
+        _, out = self.quiet(honest.main, self.ARGS + ['--maxiter', '300'])
+        self.assertIn('CV cv pickle', out)
+        _, out = self.quiet(honest.main, self.ARGS + ['--maxiter', '20'])
+        self.assertIn('CV cache', out)
+        # a rebuilt v3.pkl (one more launch, other data): the caches and the cv pickle are not reused
+        self.log(5)
+        _, out = self.quiet(honest.main, self.ARGS + ['--maxiter', '300'])
+        self.assertIn('CV fitted, online fitted', out)
+
+    def test_stale_cv_pickle_is_not_reused(self):
+        self.log(3)
+        self.quiet(cv.main, ['picks', '--folds', '2', '--spec', 'theta + b (doc 9)', '--nboot', '20'])
+        with open(self.dir / 'cv_picks.pkl', 'rb') as f:
+            C = pickle.load(f)
+        C['data_key'] = 'something else'                  # as a pickle of other data, or of older fit code
+        with open(self.dir / 'cv_picks.pkl', 'wb') as f:
+            pickle.dump(C, f)
+        _, out = self.quiet(honest.main, self.ARGS + ['--maxiter', '300', '--no-cache'])
+        self.assertIn('CV fitted', out)
+        self.assertEqual(list(self.dir.glob('honest_cache_*.pkl')), [])
+
+
+class CurveMain(TempWork):
+    def test_end_to_end_then_export(self):
+        text = ''.join(session(f'2026101{i}-100000', CHAR_A, '0.23.50 (abc)', minute=i) for i in range(1, 4))
+        self.quiet(v3load.main, [str(self.write('v3.jsonl', text))])
+        fr, out = self.quiet(curve.main, ['--need', 'magicka_deficit', '--col', 'restore_magicka', '--spec',
+                                          'theta + b (doc 9)', '--rounds', '1', '--quick-profile'])
+        self.assertIn('[Needs] line: magicka_deficit = logistic', out)
+        self.assertIn('profile over the centre', out)
+        js = json.loads((self.dir / 'curve_magicka_deficit.json').read_text(encoding='utf-8'))
+        self.assertEqual((js['need'], js['kind']), ('magicka_deficit', 'logistic'))
+        self.assertAlmostEqual(js['centre'], fr['centre'], places=6)
+        self.assertTrue((self.dir / 'curve_magicka_deficit.txt').exists())
+        forms = self.write('forms.csv', 'kind,formID,plugin,name\nPotion,0003EAE3,Skyrim.esm,Potion A\n')
+        doc, _ = self.quiet(export.main, ['--forms', str(forms), '--curve', str(self.dir / 'curve_magicka_deficit.json'),
+                                          '--spec', 'theta + b (doc 9)', '--maxiter', '20'])
+        self.assertEqual(doc['curves']['magicka_deficit'][0], 'logistic')
+        self.assertAlmostEqual(doc['curves']['magicka_deficit'][1], js['centre'], places=4)
+        with self.assertRaises(SystemExit):
+            self.quiet(curve.main, ['--need', 'no_such_need', '--rounds', '1'])
 
 
 def write_golden():
