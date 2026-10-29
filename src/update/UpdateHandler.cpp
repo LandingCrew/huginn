@@ -12,7 +12,7 @@ namespace Huginn::Update
    {
       /// An event the player made: a button (down, held or up), the mouse
       /// moving, a stick pushed past the deadzone the game's own controls
-      /// apply to it (0.23.54: a drifting stick at rest is not input), a typed
+      /// apply to it (0.23.55: a drifting stick at rest is not input), a typed
       /// character. Not a device connecting.
       bool IsPlayerInput(RE::InputEvent* event, float leftDeadzone, float rightDeadzone)
       {
@@ -245,7 +245,7 @@ namespace Huginn::Update
    {
       SCOPED_TIMER("UpdateHandler::DoUpdate");
 
-      // 0.23.54: re-read the stick deadzones now and then -- a console
+      // 0.23.55: re-read the stick deadzones now and then -- a console
       // setini, or a mod or MCM that writes the setting, changes them
       // mid-session. Every 60 s: a change takes effect within one lap, and a
       // read is four name lookups in the engine's setting lists (well under a

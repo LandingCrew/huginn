@@ -1,7 +1,7 @@
 #pragma once
 
 // =============================================================================
-// LAP HOLD INPUTS (0.23.54) -- the game's own rules behind two lap-clock holds
+// LAP HOLD INPUTS (0.23.55) -- the game's own rules behind two lap-clock holds
 // =============================================================================
 // The need episodes' lap clock (NeedEpisodes.h, "lap") holds while the player
 // cannot or does not press. 0.23.51 left two gaps, both of which logged time

@@ -729,7 +729,7 @@ static void OnDataLoaded()
     if (Update::UpdateHandler::Register()) {
         Update::UpdateHandler::GetSingleton()->SetUpdateCallback(OnUpdate);
         logger::info("Update system registered ({}ms interval)"sv, Config::UPDATE_INTERVAL_MS);
-        // 0.23.54: the stick deadzones the idle hold reads (resynced at every
+        // 0.23.55: the stick deadzones the idle hold reads (resynced at every
         // load and every 60 s; UpdateHandler::SyncStickDeadzones).
         Update::UpdateHandler::GetSingleton()->SyncStickDeadzones("kDataLoaded"sv);
     } else {
@@ -840,7 +840,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
         Effect::EffectCatalog::GetSingleton().Build("kNewGame"sv);  // no-op once read at the main menu
         InitializeGameSystems(/*isNewGame=*/true);
         Learning::SelectionLogV3::OnLoadFinished();   // R4: after the load stamp
-        Update::UpdateHandler::GetSingleton()->SyncStickDeadzones("kNewGame"sv);   // 0.23.54: the lap clock's stick rule
+        Update::UpdateHandler::GetSingleton()->SyncStickDeadzones("kNewGame"sv);   // 0.23.55: the lap clock's stick rule
         State::DropAheadProbe::SetGameLoaded(true);  // R3: the probe hook may cast now
         State::HandModelProbe::SetGameLoaded(true);
         break;
@@ -854,7 +854,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
         logger::info("Game loaded{}"sv, loaded ? ""sv : " -- FAILED (learner left as it was)"sv);
         InitializeGameSystems(/*isNewGame=*/false, loaded);
         Learning::SelectionLogV3::OnLoadFinished();   // R4: after the load stamp
-        Update::UpdateHandler::GetSingleton()->SyncStickDeadzones("kPostLoadGame"sv);   // 0.23.54: the lap clock's stick rule
+        Update::UpdateHandler::GetSingleton()->SyncStickDeadzones("kPostLoadGame"sv);   // 0.23.55: the lap clock's stick rule
         if (loaded) {
             State::DropAheadProbe::SetGameLoaded(true);  // R3: the probe hook may cast now
             State::HandModelProbe::SetGameLoaded(true);

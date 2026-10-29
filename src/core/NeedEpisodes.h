@@ -60,7 +60,7 @@
 //           cannot or does not press: no input (a key, a button, the mouse, a
 //           stick past the game's deadzone) for lapIdleSec (30 s) or more,
 //           the movement controls disabled (a carriage ride, a cutscene), a
-//           dialogue menu open (it does not pause the game), or (0.23.54)
+//           dialogue menu open (it does not pause the game), or (0.23.55)
 //           any other open menu that blocks gameplay input without pausing
 //           (the vanilla crafting menu; LapHoldInputs.h, which also holds
 //           the stick rule). So a lap stands for time in which
@@ -137,7 +137,7 @@ namespace Huginn::Core::Needs
         double idleSec = 0.0;    ///< seconds since the player's latest input (key, button, mouse, stick)
         bool controls = true;    ///< the movement controls are enabled (off: a carriage, a cutscene)
         bool dialogue = false;   ///< a dialogue menu is open (it does not pause the game)
-        bool menu = false;       ///< 0.23.54: an open menu blocks gameplay input without pausing (LapHoldInputs.h MenuBlocksGameplay)
+        bool menu = false;       ///< 0.23.55: an open menu blocks gameplay input without pausing (LapHoldInputs.h MenuBlocksGameplay)
     };
 
     /// Why the active clock holds on a tick; kNone = it runs.

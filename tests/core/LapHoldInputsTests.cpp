@@ -1,5 +1,5 @@
 // core/LapHoldInputs.h: the game's own rules behind the lap clock's stick
-// and menu holds (0.23.54).
+// and menu holds (0.23.55).
 
 #include "core/LapHoldInputs.h"
 

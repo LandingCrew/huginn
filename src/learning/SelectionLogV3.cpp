@@ -1273,13 +1273,13 @@ namespace Huginn::Learning::SelectionLogV3
         // Reset() re-arms it with the tracker, so the first hold after a load
         // is logged too.
         Core::Needs::LapHold g_lastLapHold = Core::Needs::LapHold::kNone;
-        // 0.23.54, guarded by g_episodeMutex too: the menus behind the latest
+        // 0.23.55, guarded by g_episodeMutex too: the menus behind the latest
         // kMenu hold, so a hold that passes from one menu to another is a
         // transition of its own.
         std::string g_lastLapHoldMenus;
 
         // =====================================================================
-        // MENUS THAT BLOCK GAMEPLAY (0.23.54; core/LapHoldInputs.h)
+        // MENUS THAT BLOCK GAMEPLAY (0.23.55; core/LapHoldInputs.h)
         // =====================================================================
         // The rule reads the game's own menu flags and input contexts; these
         // are the values core mirrors.
@@ -1461,7 +1461,7 @@ namespace Huginn::Learning::SelectionLogV3
         // The lap clock runs only while the player could press something:
         // it holds after lapIdleSec without input (a stick counts past the
         // game's own deadzone, UpdateHandler::SyncStickDeadzones), with the
-        // movement controls disabled, in a dialogue, or (0.23.54) while an
+        // movement controls disabled, in a dialogue, or (0.23.55) while an
         // open menu blocks gameplay input by its own flags (LapHoldFor).
         if (live && !paused && !dead) {
             Core::Needs::LapGate gate;

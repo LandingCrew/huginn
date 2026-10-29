@@ -441,7 +441,7 @@ TEST_CASE("laps: the gate holds the clock in a dialogue, with the controls off, 
     CHECK(std::string_view(LapHoldName(LapHold::kIdle)) == "idle");
 }
 
-TEST_CASE("laps (0.23.54): a menu that blocks gameplay holds the clock; after a dialogue, before the controls and idle")
+TEST_CASE("laps (0.23.55): a menu that blocks gameplay holds the clock; after a dialogue, before the controls and idle")
 {
     const EpisodeParams p;
     LapGate menu;

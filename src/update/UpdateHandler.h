@@ -119,7 +119,7 @@ namespace Huginn::Update
       [[nodiscard]] double SecondsSinceInput(std::chrono::steady_clock::time_point now) const noexcept;
 
       /**
-       * @brief Re-read the stick deadzones from the game's INI settings (0.23.54)
+       * @brief Re-read the stick deadzones from the game's INI settings (0.23.55)
        *
        * A thumbstick event counts as input (SecondsSinceInput) only when its
        * deflection lies beyond the deadzone the game's controls apply to that

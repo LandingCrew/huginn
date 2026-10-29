@@ -488,9 +488,9 @@ Logging only: `Huginn_Selections_v3.jsonl` beside the unchanged v2 log.
     episode is cut into stretches on a shared 60 s grid of active seconds
     (unpaused, alive, at most 1 s per tick; the clock holds in a dialogue,
     in any other open menu that blocks gameplay input by its own flags (the
-    crafting menu does not pause; 0.23.54), with the movement controls
+    crafting menu does not pause; 0.23.55), with the movement controls
     disabled and after 30 s without input, a stick counting only past the
-    game's own deadzone (0.23.54)), and
+    game's own deadzone (0.23.55)), and
     each unanswered stretch writes
     a `nothing` record marked `ep.why: "lap"` (with `lap` and `epSec`), joined
     to the context the lap took (`ctx.why: "lap"`); an episode that ends
