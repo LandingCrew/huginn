@@ -475,11 +475,16 @@ Logging only: `Huginn_Selections_v3.jsonl` beside the unchanged v2 log.
       defects the rehearsal of 2026-10-28 found. Logging only: no score in the
       old engine changes.
   - *"Nothing" for persistent needs: laps.* Hunger, thirst, diseased, cold,
-    warmth_deficit and fatigue never wrote a `nothing` record: any selection
-    anywhere in their hours-long episodes answered all of it, and a load
-    dropped them still open. 0 of the mage's 13,961 `nothing` records (~45 h,
-    2026-10-15..28), while hunger was on at 8.8% of the picks and diseased at
-    11.8%, so the three-outcome fit read them as predicting a pick. Now an open
+    warmth_deficit and fatigue never wrote a `nothing` record for their own
+    episodes: any selection anywhere in their hours-long episodes answered all
+    of it, and a load dropped them still open. 0 of the mage's 14,014 `nothing`
+    records (~45 h, 2026-10-15..29). They are still in `nothing` contexts (the
+    fit's u0 = θ_out · n reads the whole need vector of the record's context,
+    another need's onset), so the gap is narrower: `nothing` was sampled where
+    other needs start, not across the time a persistent need stays on, and the
+    bias is mild and mixed (on at picks / at `nothing`: hunger 8.8% / 7.3%,
+    thirst 6.7% / 5.0%, diseased 11.8% / 10.5%, warmth_deficit 7.8% / 5.5%,
+    cold the other way, 0.2% / 2.2%). Now an open
     episode is cut into stretches on a shared 60 s grid of active seconds
     (unpaused, alive, at most 1 s per tick; the clock holds in a dialogue,
     with the movement controls disabled and after 30 s without input), and

@@ -120,7 +120,7 @@ namespace Huginn::Learning::SelectionLogV3
         uint64_t contextsBuilt = 0, heldReads = 0;
         double buildMeanMs = 0.0, buildMaxMs = 0.0, heldReadMaxMs = 0.0;
         uint64_t ctxWritten = 0, capsWritten = 0;
-        uint64_t episodesDroppedShort = 0;
+        uint64_t episodesDroppedShort = 0;                    // under minSec: episodes, and (0.23.51) lapped episodes' last stretches
         uint64_t ticks = 0;
         double tickMeanUs = 0.0, tickMaxUs = 0.0;
         size_t lastRows = 0;                                  // rows of the last record queued

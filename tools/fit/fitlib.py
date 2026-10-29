@@ -359,9 +359,10 @@ def subset(S, idx):
 # The needs whose sensor changed meaning at 0.23.41 (README, 'Reading logs written by
 # 0.23.41 and later'), plus every target_<family>: split_needs' default. Since 0.23.51 also
 # the needs whose data changed then (README, 'Reading logs written before 0.23.51'): the
-# persistent needs that wrote no nothing record before the laps, and loadout_two_handed,
-# which read a quarterstaff as two-handed before. Split at 0.23.51 (--split-at 0.23.51), their
-# old-segment columns take the old data's bias instead of the shared ones.
+# persistent needs, whose nothing contexts before the laps were only other needs' onsets
+# (a mild, mixed bias), and loadout_two_handed, which read a quarterstaff as two-handed
+# before. Split at 0.23.51 (--split-at 0.23.51), their old-segment columns take the old
+# sampling instead of the shared ones.
 LAP_SPLIT_NEEDS = ('hunger', 'thirst', 'diseased', 'cold', 'warmth_deficit', 'fatigue', 'loadout_two_handed')
 BUILD_SPLIT_NEEDS = ('follower_present', 'regen_suppressed', 'darkness', 'enemy_count', 'surrounded',
                      'boss_fight') + LAP_SPLIT_NEEDS

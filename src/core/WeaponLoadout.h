@@ -29,7 +29,10 @@
 // (WeapTypeStaff, OCF_WeapTypeStaff1H, kStaff) are a different thing and
 // carry none of these. The OCF_WeapTypeQuarterstaff1H weapons (7, typed as
 // one-handed swords and maces) stay one-handed: only a two-handed weapon is
-// tested. Any one keyword is enough, so a load order with only one of the
+// tested (StateManager_Equipment tests the right hand's kTwoHandSword /
+// kTwoHandAxe). By design that includes a one-handed weapon carrying
+// Requiem's WeapTypeQuarterstaff (the dump has one, a 1H sword named
+// "Quarterstaff"): it stays loadout_one_handed. Any one keyword is enough, so a load order with only one of the
 // three mods still reads its quarterstaffs.
 //
 // Pure: standard library only (src/core/README.md).

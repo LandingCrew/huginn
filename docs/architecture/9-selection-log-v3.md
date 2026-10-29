@@ -360,14 +360,35 @@ not answer an episode it started (the onset is after the press).
 ### Laps
 
 **Why (0.23.51).** Before 0.23.51 a persistent need never wrote a `nothing`
-record. Hunger, thirst, diseased, cold, warmth_deficit and fatigue stay on for
-minutes to hours: any confirmed selection anywhere in such an episode answered
-all of it, and a load dropped it still open. The mage's log (2026-10-15 to
-10-28, ~45 h of play, 15,869 decisions of character FEFD1B039AC78799) holds
-13,961 `nothing` records and **not one** of those six needs, while hunger was
-on (≥ 0.5) at 8.8% of the 1,908 picks, diseased at 11.8%, warmth_deficit at
-7.8% and thirst at 6.7%. The three-outcome fit (doc 9's u0 = θ_out · n) then
-reads them as predicting a pick: on at picks, never at "nothing".
+record of its own. Hunger, thirst, diseased, cold, warmth_deficit and fatigue
+stay on for minutes to hours: any confirmed selection anywhere in such an
+episode answered all of it, and a load dropped it still open. The mage's log
+(all three files, 2026-10-15 to 10-29, ~45 h of play, character
+FEFD1B039AC78799: 1,908 picks, 14,014 `nothing` records) holds **not one**
+`nothing` record for an episode of those six needs.
+
+That does not keep them out of the `nothing` contexts. The three-outcome
+fit's outside utility is u0 = θ_out · n, where n is the whole need vector of
+the record's context (`tools/fit/fitlib.py`: `build` fills n, `Model.scores`
+takes u0), and a `nothing` record's context is the onset of whichever need's episode it closes:
+a persistent need that is on then is in n. What the old data lacks is
+narrower: its `nothing` records are sampled where other needs start, not
+across the time a persistent need stays on. On at ≥ 0.5, at picks against at
+`nothing` records:
+
+| need | at picks | at `nothing` |
+|---|---|---|
+| hunger | 167 / 1,908 = 8.8% | 1,025 / 14,014 = 7.3% |
+| thirst | 128 = 6.7% | 704 = 5.0% |
+| diseased | 225 = 11.8% | 1,475 = 10.5% |
+| warmth_deficit | 149 = 7.8% | 777 = 5.5% |
+| cold | 4 = 0.2% | 310 = 2.2% |
+| fatigue | 9 = 0.5% | 96 = 0.7% |
+
+So the old data's bias is mild and mixed: four of them lean a little toward a
+pick, cold (and barely fatigue) the other way, and none is absent at
+`nothing`. Laps sample the time itself: each unanswered stretch of an open
+episode is a `nothing` record whose context has the need on.
 
 **The rule** (`core/NeedEpisodes.h`):
 
@@ -439,7 +460,8 @@ game time, but their values are in the context, not in the lap.
 
 **Several needs per lap.** The laps of one tick write one record per need that
 lapped unanswered (the record names the need; `sensors.py` and `audit.py`
-count by need). They do not all share one context: a stretch begun by the
+count by need, and count lap records apart from episodes, `v3load.is_lap`, so
+the churn and length stats stay per episode, the length read from `epSec`). They do not all share one context: a stretch begun by the
 previous lap (`ep.lap` > 0) is joined to that lap's context, an episode's first
 stretch (`ep.lap` 0) to its onset's, which can lie anywhere in the grid
 interval before. What they share is the tick: they are judged together and

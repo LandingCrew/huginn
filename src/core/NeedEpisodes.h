@@ -42,10 +42,15 @@
 //           persistent need (hunger, thirst, diseased, cold, warmth_deficit,
 //           fatigue) produced none: any selection anywhere in its hours-long
 //           episode answered all of it, and a load dropped it still open.
-//           The mage's log (2026-10-15..28, ~45 play hours) holds 13,961
-//           nothing records and not one of those six needs, while hunger was
-//           on at 8.8% of the picks and diseased at 11.8%; the three-outcome
-//           fit then read them as predicting a pick.
+//           The mage's log (2026-10-15..29, ~45 play hours) holds 14,014
+//           nothing records and not one for an episode of those six needs.
+//           They still sit in nothing contexts (the fit's u0 reads the whole
+//           need vector of the record's context, the onset of another need),
+//           so the gap is narrower: nothing was sampled where other needs
+//           start, never across the time a persistent need stays on. The
+//           bias is mild and mixed (on >= 0.5 at picks / at nothing: hunger
+//           8.8% / 7.3%, diseased 11.8% / 10.5%, cold 0.2% / 2.2%; the rest
+//           in the schema doc, Laps).
 //
 //           The grid: a monotonic ACTIVE clock adds the time between two
 //           ticks, capped at lapMaxStepSec (1 s). The caller ticks only while

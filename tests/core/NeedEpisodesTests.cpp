@@ -443,7 +443,7 @@ TEST_CASE("laps: the gate holds the clock in a dialogue, with the controls off, 
 
 TEST_CASE("laps: an AFK spell with the game unpaused adds at most lapIdleSec to the active clock")
 {
-    // The mage's log has 257 silent gaps over 120 s (20 h): no pick, no onset,
+    // The mage's log has 261 silent gaps over 120 s (20 h): no pick, no onset,
     // no menu. Unpaused and unattended, each would otherwise run the clock.
     EpisodeTracker<int> t;
     double lastInput = 0.0;

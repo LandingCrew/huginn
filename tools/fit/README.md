@@ -185,10 +185,17 @@ fixed ([schema, Laps](../../docs/architecture/9-selection-log-v3.md#laps);
 `core/WeaponLoadout.h`):
 
 - **No laps.** A persistent need (`hunger`, `thirst`, `diseased`, `cold`,
-  `warmth_deficit`, `fatigue`) wrote no `nothing` record: 0 of the mage's 13,961.
-  In a `three` fit over old data they are on at picks and never at `nothing`,
-  so they read as predicting a pick. `--laps` cannot help: there are no lap
-  records to keep.
+  `warmth_deficit`, `fatigue`) wrote no `nothing` record for its own episodes:
+  0 of the mage's 14,014 (all three files to 2026-10-29). They still appear in
+  `nothing` contexts: u0 = θ_out · n reads the whole need vector of the
+  record's context (`Model.scores`), and that context is the onset of another
+  need's episode, with whatever persistent need is on then. What old data lacks
+  is a sample of the time a persistent need stays on: its `nothing` records
+  sit where other needs start. The bias that leaves is mild and mixed. On at
+  >= 0.5, at picks / at `nothing` (1,908 / 14,014): hunger 8.8% / 7.3%, thirst
+  6.7% / 5.0%, diseased 11.8% / 10.5%, warmth_deficit 7.8% / 5.5%, fatigue
+  0.5% / 0.7%, and cold the other way, 0.2% / 2.2%. `--laps` cannot help: there
+  are no lap records to keep.
 - **The quarterstaff read as two-handed.** `loadout_two_handed` is on whenever
   the Staff of Wandering Stars is in hand (in 3,991 of the 4,706 old contexts
   with it on, the equipped weapon row is FECCC01D or FECCF01D), and
@@ -201,10 +208,17 @@ So for the `three` group:
 - **`--since 0.23.51`** when there is enough new data: no bias, nothing to undo.
 - **Or `--split-at 0.23.51`** with the `split` specs. `fitlib.BUILD_SPLIT_NEEDS`
   (the default `--split-needs`) holds these seven needs (`fitlib.LAP_SPLIT_NEEDS`), so
-  each gets one column for the old segment, which absorbs the old data's bias, and
-  one for 0.23.51 and later, which is the one to read. Add `0.23.41` to the cuts
-  (`--split-at 0.23.41 0.23.51`) when the data reaches back before it.
-- Not a plain fit over all the files: most of the bias stays.
+  each gets one column for the old segment, which takes the old sampling (and the
+  old quarterstaff reading), and one for 0.23.51 and later, which is the one to
+  read. Add `0.23.41` to the cuts (`--split-at 0.23.41 0.23.51`) when the data
+  reaches back before it.
+- Not a plain fit over all the files. For `loadout_two_handed` the old
+  quarterstaff reading is a real error, and in a pooled fit its weight is the
+  old data's share (~45 h against whatever is new). For the persistent needs
+  the old bias is small (the rates above differ by 1-2 points), but a pooled
+  column mixes two ways of sampling `nothing` and cannot say which one it
+  learned; the split costs one column per need and shows how far the two
+  segments differ.
 
 The `picks` group reads no `nothing` record; there only `loadout_two_handed` is
 affected, and the same split applies.

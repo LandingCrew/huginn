@@ -3,6 +3,7 @@ flicker, darkness, step needs that stay on, and items missing from the catalog."
 from collections import Counter, defaultdict
 import statistics as st
 from common import *
+from v3load import is_lap
 
 D = load()
 needs = D['needs']; NI = {n: i for i, n in enumerate(needs)}
@@ -62,10 +63,16 @@ p('families set but not in combat:', sum(1 for c in ctxs if c['need'].get(NI['in
 dk = NI['darkness']
 p('\n== darkness ==')
 p('input distribution (1-light; absent = open daylight or 0):', Counter(round(c['in'].get(dk, -1), 2) for c in ctxs).most_common(15))
-# darkness episode churn: count onsets per launch-hour
-ep = [d for d in D['decs'] if d['out'] == 'nothing' and d['ep']['gi'] == dk]
-p('darkness nothing episodes', len(ep), 'durSec median', st.median(d['ep']['durSec'] for d in ep),
-  'share < 5 s', round(sum(d['ep']['durSec'] < 5 for d in ep) / len(ep), 3), 'share < 2 s', round(sum(d['ep']['durSec'] < 2 for d in ep) / len(ep), 3))
+# darkness episode churn: count onsets per launch-hour. Episodes only: a lapped stretch (0.23.51,
+# is_lap) is a 60 s slice of an episode that stays open, not an episode, so it is counted apart;
+# an episode's length is epSec (onset to its end; = durSec on records without laps).
+dn = [d for d in D['decs'] if d['out'] == 'nothing' and d['ep']['gi'] == dk]
+ep = [d for d in dn if not is_lap(d)]
+if ep:
+    p('darkness nothing episodes', len(ep), 'epSec median', st.median(d['ep']['epSec'] for d in ep),
+      'share < 5 s', round(sum(d['ep']['epSec'] < 5 for d in ep) / len(ep), 3),
+      'share < 2 s', round(sum(d['ep']['epSec'] < 2 for d in ep) / len(ep), 3))
+p('darkness lap records (stretches of open episodes, not counted above)', len(dn) - len(ep))
 # torches / Light items held?
 lights = Counter()
 for c in ctxs:
@@ -137,8 +144,10 @@ openc = Counter()
 for d in picks(D):
     for k in d['open']:
         openc[k] += 1
-noth = Counter(d['ep']['gi'] for d in D['decs'] if d['out'] == 'nothing')
-rows = sorted(set(openc) | set(noth), key=lambda k: -(openc[k] + noth[k]))
+# nothing = whole episodes (and a lapped episode's last stretch); laps = lapped stretches (0.23.51)
+noth = Counter(d['ep']['gi'] for d in D['decs'] if d['out'] == 'nothing' and not is_lap(d))
+laps = Counter(d['ep']['gi'] for d in D['decs'] if is_lap(d))
+rows = sorted(set(openc) | set(noth) | set(laps), key=lambda k: -(openc[k] + noth[k] + laps[k]))
 for k in rows[:45]:
-    p(f'  {needs[k]:24} picks with it open {openc[k]:5}  nothing {noth[k]:5}')
+    p(f'  {needs[k]:24} picks with it open {openc[k]:5}  nothing {noth[k]:5}  laps {laps[k]:5}')
 out.close()

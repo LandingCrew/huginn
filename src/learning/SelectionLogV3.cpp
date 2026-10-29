@@ -1149,8 +1149,10 @@ namespace Huginn::Learning::SelectionLogV3
 
         double g_tickFirstHalfUs = 0.0;   // update thread only: Tick's share of this tick
         bool g_wasDead = false;           // update thread only: the death line once per death
-        // Update thread only: the lap clock's latest hold, so the debug log
-        // gets one line per change (core/NeedEpisodes.h LapHoldFor).
+        // Guarded by g_episodeMutex: the lap clock's latest hold, so the debug
+        // log gets one line per change (core/NeedEpisodes.h LapHoldFor).
+        // Reset() re-arms it with the tracker, so the first hold after a load
+        // is logged too.
         Core::Needs::LapHold g_lastLapHold = Core::Needs::LapHold::kNone;
 
         void RecordTickCost(Clock::time_point t0)
@@ -1281,6 +1283,7 @@ namespace Huginn::Learning::SelectionLogV3
             std::vector<size_t> onsets;
             std::vector<size_t> laps;
             Core::Needs::LapHold hold = Core::Needs::LapHold::kNone;
+            Core::Needs::LapHold prevHold = Core::Needs::LapHold::kNone;
             double active = 0.0;
             {
                 std::lock_guard lock(g_episodeMutex);
@@ -1288,12 +1291,13 @@ namespace Huginn::Learning::SelectionLogV3
                 laps = g_episodes.Laps();
                 hold = g_episodes.Hold();
                 active = g_episodes.ActiveSec();
+                prevHold = g_lastLapHold;
+                g_lastLapHold = hold;
             }
-            if (hold != g_lastLapHold) {
+            if (hold != prevHold) {
                 logger::debug("[SelectionV3] lap clock {} ({}; active {:.0f}s)"sv,
                     hold == Core::Needs::LapHold::kNone ? "runs" : "holds",
-                    Core::Needs::LapHoldName(hold == Core::Needs::LapHold::kNone ? g_lastLapHold : hold), active);
-                g_lastLapHold = hold;
+                    Core::Needs::LapHoldName(hold == Core::Needs::LapHold::kNone ? prevHold : hold), active);
             }
             if (!onsets.empty() || !laps.empty()) {
                 auto ctx = BuildContext(onsets.empty() ? "lap" : "onset", {});
@@ -1500,6 +1504,7 @@ namespace Huginn::Learning::SelectionLogV3
         {
             std::lock_guard lock(g_episodeMutex);
             g_episodes.Reset();
+            g_lastLapHold = Core::Needs::LapHold::kNone;
         }
         {
             std::lock_guard lock(g_pickMutex);
