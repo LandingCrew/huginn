@@ -4,6 +4,7 @@ effect columns ever used. Writes audit.txt."""
 import statistics as st
 from collections import Counter, defaultdict
 from common import *
+from v3load import is_lap
 
 D = load()
 decs = D['decs']; needs = D['needs']; cols = D['cols']; caps = D['caps']
@@ -107,8 +108,14 @@ p('picks sharing a ctx: ctxs with >1 pick', sum(1 for v in cs.values() if v > 1)
 # nothing records sharing ctx
 cn = Counter(d['ctxkey'] for d in decs if d['out'] == 'nothing')
 p('nothing: distinct ctxs', len(cn), 'records', sum(cn.values()))
-p('nothing by need (top 30)', Counter(needs[d['ep']['gi']] for d in decs if d['out'] == 'nothing').most_common(30))
-p('nothing durSec median', st.median([d['ep']['durSec'] for d in decs if d['out'] == 'nothing']))
+# episodes apart from lapped stretches (0.23.51, is_lap): a lap is a 60 s slice of an open
+# episode; an episode's length is epSec (= durSec on records without laps)
+ne = [d for d in decs if d['out'] == 'nothing' and not is_lap(d)]
+nl = [d for d in decs if is_lap(d)]
+p('nothing by need, episodes (top 30)', Counter(needs[d['ep']['gi']] for d in ne).most_common(30))
+p('nothing by need, lap records (top 30)', Counter(needs[d['ep']['gi']] for d in nl).most_common(30))
+if ne:
+    p('nothing episode epSec median', st.median([d['ep']['epSec'] for d in ne]))
 
 p('\n== need columns ==')
 allctx = list(D['ctxs'].values())

@@ -373,6 +373,20 @@ TEST_CASE("equipment: ammo by the launcher in hand; hands empty counts every wea
     CHECK(Val(s, NeedId::weapon_charge_deficit) == doctest::Approx(0.5));
 }
 
+TEST_CASE("loadout: a two-handed quarterstaff is loadout_quarterstaff, not loadout_two_handed (0.23.51)")
+{
+    NeedSnapshot s;
+    s.melee = true;
+    s.twoHanded = true;   // a greatsword
+    CHECK(Val(s, NeedId::loadout_two_handed) == 1.0f);
+    CHECK(Val(s, NeedId::loadout_quarterstaff) == 0.0f);
+    s.quarterstaff = true;   // the Staff of Wandering Stars: a warhammer with quarterstaff keywords
+    CHECK(Val(s, NeedId::loadout_two_handed) == 0.0f);
+    CHECK(Val(s, NeedId::loadout_quarterstaff) == 1.0f);
+    CHECK(Val(s, NeedId::hands_empty) == 0.0f);   // still a weapon in hand
+    CHECK(Val(s, NeedId::loadout_staff) == 0.0f); // not a magic staff
+}
+
 TEST_CASE("deferred needs read input 0 whatever the snapshot")
 {
     NeedSnapshot s;
@@ -542,5 +556,5 @@ TEST_CASE("field table: unique names, every name readable")
     std::set<std::string_view> names;
     for (const auto& f : kFields) names.insert(f.name);
     CHECK(names.size() == kFields.size());
-    CHECK(kFields.size() == 88);  // 85 until 0.23.50 added edgeDistance, edgeSpeed and edgeApproach; 83 until 0.23.31 added thirstStage and healthRegenSuppressed
+    CHECK(kFields.size() == 89);  // 88 until 0.23.51 added quarterstaff; 85 until 0.23.50 added edgeDistance, edgeSpeed and edgeApproach; 83 until 0.23.31 added thirstStage and healthRegenSuppressed
 }

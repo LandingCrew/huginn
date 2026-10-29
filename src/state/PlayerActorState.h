@@ -454,6 +454,10 @@ namespace Huginn::State
     bool hasShieldEquipped = false;
     bool hasOneHandedEquipped = false;
     bool hasTwoHandedEquipped = false;
+    /// 0.23.51: the two-handed weapon in hand is a quarterstaff (core/WeaponLoadout.h).
+    /// Read by the need vector only (loadout_quarterstaff; loadout_two_handed
+    /// leaves it out); hasTwoHandedEquipped, which the old engine reads, is unchanged.
+    bool hasQuarterstaffEquipped = false;
     bool hasSpellEquipped = false;
     bool hasCrossbowEquipped = false;
     bool hasTorchEquipped = false;
@@ -611,6 +615,7 @@ namespace Huginn::State
              hasShieldEquipped == other.hasShieldEquipped &&
              hasOneHandedEquipped == other.hasOneHandedEquipped &&
              hasTwoHandedEquipped == other.hasTwoHandedEquipped &&
+             hasQuarterstaffEquipped == other.hasQuarterstaffEquipped &&
              hasSpellEquipped == other.hasSpellEquipped &&
              hasCrossbowEquipped == other.hasCrossbowEquipped &&
              hasTorchEquipped == other.hasTorchEquipped &&

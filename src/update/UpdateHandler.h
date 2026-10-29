@@ -104,6 +104,17 @@ namespace Huginn::Update
        */
       [[nodiscard]] float GetTimeSinceLastUpdate() const;
 
+      /**
+       * @brief Seconds since the player's latest input (0.23.51)
+       *
+       * Any key, mouse or gamepad button event (down, held or released), the
+       * mouse moving, a stick off centre, a typed character: noted by
+       * ProcessEvent for every event batch, enabled or not. +infinity before
+       * the first. The need episodes' lap clock holds once this reaches
+       * lapIdleSec (core/NeedEpisodes.h, SelectionLogV3).
+       */
+      [[nodiscard]] double SecondsSinceInput(std::chrono::steady_clock::time_point now) const noexcept;
+
    private:
       UpdateHandler() = default;
       UpdateHandler(const UpdateHandler&) = delete;
@@ -115,6 +126,12 @@ namespace Huginn::Update
 
       /// Last update time point
       std::chrono::steady_clock::time_point m_lastUpdate;
+
+      /// The latest player input, steady_clock ticks since its epoch
+      /// (kNoInput before the first). Written by ProcessEvent (game threads),
+      /// read by the update loop.
+      static constexpr std::int64_t kNoInput = INT64_MIN;
+      std::atomic<std::int64_t> m_lastInputTicks{ kNoInput };
 
       /// Update callback function
       UpdateCallback m_updateCallback;

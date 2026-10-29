@@ -8,6 +8,28 @@ namespace Huginn::Update
 {
    namespace
    {
+      /// An event the player made: a button (down, held or up), the mouse
+      /// moving, a stick off centre, a typed character. Not a device
+      /// connecting.
+      bool IsPlayerInput(RE::InputEvent* event)
+      {
+         switch (event->GetEventType()) {
+         case RE::INPUT_EVENT_TYPE::kButton:
+         case RE::INPUT_EVENT_TYPE::kChar:
+            return true;
+         case RE::INPUT_EVENT_TYPE::kMouseMove: {
+            const auto* move = static_cast<RE::MouseMoveEvent*>(event);
+            return move->mouseInputX != 0 || move->mouseInputY != 0;
+         }
+         case RE::INPUT_EVENT_TYPE::kThumbstick: {
+            const auto* stick = static_cast<RE::ThumbstickEvent*>(event);
+            return stick->xValue != 0.0f || stick->yValue != 0.0f;
+         }
+         default:
+            return false;
+         }
+      }
+
       bool IsVanillaHotkey(const RE::BSFixedString& userEvent)
       {
          const auto* names = RE::UserEvents::GetSingleton();
@@ -55,6 +77,18 @@ namespace Huginn::Update
    {
       // Input events fire every frame - perfect for frame-based updates
       // We throttle internally with time checks to avoid excessive updates
+
+      // 0.23.51: when the player last touched anything (SecondsSinceInput),
+      // whether or not updates are enabled.
+      if (a_event) {
+         for (auto* event = *a_event; event; event = event->next) {
+            if (IsPlayerInput(event)) {
+               m_lastInputTicks.store(std::chrono::steady_clock::now().time_since_epoch().count(),
+                  std::memory_order_relaxed);
+               break;
+            }
+         }
+      }
 
       if (!m_enabled.load(std::memory_order_acquire) || !a_event) {
       return RE::BSEventNotifyControl::kContinue;
@@ -111,6 +145,14 @@ namespace Huginn::Update
       }
 
       return RE::BSEventNotifyControl::kContinue;
+   }
+
+   double UpdateHandler::SecondsSinceInput(std::chrono::steady_clock::time_point now) const noexcept
+   {
+      const auto ticks = m_lastInputTicks.load(std::memory_order_relaxed);
+      if (ticks == kNoInput) return std::numeric_limits<double>::infinity();
+      const std::chrono::steady_clock::time_point last{ std::chrono::steady_clock::duration{ ticks } };
+      return std::max(0.0, std::chrono::duration<double>(now - last).count());
    }
 
    void UpdateHandler::ForceUpdate()

@@ -16,6 +16,7 @@
 #include "needs/NeedMonitor.h"
 #include "needs/NeedSettings.h"
 #include "state/StateManager.h"
+#include "update/UpdateHandler.h"
 #include "util/ExtraListStability.h"
 #include "util/InventoryUtil.h"
 
@@ -425,8 +426,17 @@ namespace Huginn::Learning::SelectionLogV3
         // =====================================================================
         // EPISODES
         // =====================================================================
+        /// What a stretch of an episode carries: the context taken when the
+        /// stretch began (the onset, or the lap that began it; its record
+        /// joins that context) and the episode's onset time, which a lap
+        /// keeps (0.23.51, core/NeedEpisodes.h "lap").
+        struct EpisodeData
+        {
+            std::shared_ptr<const DL::Context> ctx;
+            std::string onsetUtc;
+        };
         std::mutex g_episodeMutex;
-        Core::Needs::EpisodeTracker<std::shared_ptr<const DL::Context>> g_episodes;
+        Core::Needs::EpisodeTracker<EpisodeData> g_episodes;
 
         std::atomic<uint64_t> g_nextContext{ 0 };
 
@@ -882,6 +892,9 @@ namespace Huginn::Learning::SelectionLogV3
                 head.minSec = p.minSec;
                 head.graceSec = p.graceSec;
                 head.answerSlackSec = p.answerSlackSec;
+                head.lapSec = p.lapSec;
+                head.lapMaxStepSec = p.lapMaxStepSec;
+                head.lapIdleSec = p.lapIdleSec;
                 head.curves = std::move(curves);
                 m_headCurves = head.curves;
                 const std::string line = m_encoder.BeginSegment(head);
@@ -1012,7 +1025,7 @@ namespace Huginn::Learning::SelectionLogV3
                 case Outcome::Key: ++g_stats.key; break;
                 case Outcome::Wheel: ++g_stats.wheel; break;
                 case Outcome::Menu: ++g_stats.menu; break;
-                case Outcome::Nothing: ++g_stats.nothing; break;
+                case Outcome::Nothing: ++g_stats.nothing; g_stats.nothingLaps += d.byLap ? 1 : 0; break;
                 }
                 g_stats.unlearned += d.learned ? 0 : 1;
                 g_stats.lastRows = (d.ctx ? d.ctx->rows.size() : 0) + d.added.size();
@@ -1136,6 +1149,11 @@ namespace Huginn::Learning::SelectionLogV3
 
         double g_tickFirstHalfUs = 0.0;   // update thread only: Tick's share of this tick
         bool g_wasDead = false;           // update thread only: the death line once per death
+        // Guarded by g_episodeMutex: the lap clock's latest hold, so the debug
+        // log gets one line per change (core/NeedEpisodes.h LapHoldFor).
+        // Reset() re-arms it with the tracker, so the first hold after a load
+        // is logged too.
+        Core::Needs::LapHold g_lastLapHold = Core::Needs::LapHold::kNone;
 
         void RecordTickCost(Clock::time_point t0)
         {
@@ -1247,16 +1265,47 @@ namespace Huginn::Learning::SelectionLogV3
         // world is frozen, so an onset or an expiry then is a wall-clock decay
         // or the player's own menu action, which a pick inside the still-open
         // episode answers. Ended episodes are judged in TickAfterSelections.
+        // 0.23.51: a lap (core/NeedEpisodes.h) begins a new stretch of every
+        // episode that has been open since the previous grid point; they all
+        // fall on one tick and share one context, as onsets of one tick do.
+        // A tick with an onset and a lap takes one context, tagged "onset", so
+        // ctx.why alone does not mark every lap context: a record's ep.lap
+        // says how its stretch began (0: at the onset; n: at the episode's
+        // n-th lap), and ep.why how it ended ("end" or "lap").
+        // The lap clock runs only while the player could press something:
+        // it holds after lapIdleSec without input, with the movement controls
+        // disabled, or in a dialogue (LapHoldFor).
         if (live && !paused && !dead) {
+            Core::Needs::LapGate gate;
+            gate.idleSec = Update::UpdateHandler::GetSingleton()->SecondsSinceInput(now);
+            if (const auto* controls = RE::ControlMap::GetSingleton()) gate.controls = controls->IsMovementControlsEnabled();
+            gate.dialogue = ui && ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME);
             std::vector<size_t> onsets;
+            std::vector<size_t> laps;
+            Core::Needs::LapHold hold = Core::Needs::LapHold::kNone;
+            Core::Needs::LapHold prevHold = Core::Needs::LapHold::kNone;
+            double active = 0.0;
             {
                 std::lock_guard lock(g_episodeMutex);
-                onsets = g_episodes.Tick(live->vector.value, nowSec);
+                onsets = g_episodes.Tick(live->vector.value, nowSec, gate);
+                laps = g_episodes.Laps();
+                hold = g_episodes.Hold();
+                active = g_episodes.ActiveSec();
+                prevHold = g_lastLapHold;
+                g_lastLapHold = hold;
             }
-            if (!onsets.empty()) {
-                auto ctx = BuildContext("onset", {});
+            if (hold != prevHold) {
+                logger::debug("[SelectionV3] lap clock {} ({}; active {:.0f}s)"sv,
+                    hold == Core::Needs::LapHold::kNone ? "runs" : "holds",
+                    Core::Needs::LapHoldName(hold == Core::Needs::LapHold::kNone ? prevHold : hold), active);
+            }
+            if (!onsets.empty() || !laps.empty()) {
+                auto ctx = BuildContext(onsets.empty() ? "lap" : "onset", {});
                 std::lock_guard lock(g_episodeMutex);
-                for (const size_t k : onsets) g_episodes.SetPayload(k, ctx);
+                for (const size_t k : onsets) g_episodes.SetPayload(k, EpisodeData{ ctx, ctx->utc });
+                for (const size_t k : laps) {
+                    if (auto* data = g_episodes.MutablePayload(k)) data->ctx = ctx;   // the onset's time is kept
+                }
             }
         }
 
@@ -1287,23 +1336,41 @@ namespace Huginn::Learning::SelectionLogV3
         // one tick; judged in this order, the confirmation counts
         // (NeedEpisodesTests: "a confirmation on the grace-end tick").
         if (!paused) {
-            std::vector<Core::Needs::EpisodeTracker<std::shared_ptr<const DL::Context>>::Episode> unanswered;
+            std::vector<Core::Needs::EpisodeTracker<EpisodeData>::Episode> unanswered;
             {
                 std::lock_guard lock(g_episodeMutex);
                 unanswered = g_episodes.TakeUnanswered(nowSec);
             }
+            size_t laps = 0;
+            // One utc for the whole batch: the stretches one lap tick cut are
+            // judged on one tick, and a reader tells the lap tick by the
+            // records' (launch, gen, utc) (tools/fit fitlib.build laps="once").
+            const std::string batchUtc = unanswered.empty() ? std::string{} : NowUtc();
             for (auto& e : unanswered) {
-                if (!e.payload) continue;   // an onset whose context was never attached (not expected)
+                if (!e.payload.ctx) continue;   // an onset whose context was never attached (not expected)
                 Decision d = MakeDecision(Outcome::Nothing, g_loadGeneration.load(std::memory_order_relaxed));
-                d.ctx = e.payload;
+                d.utc = batchUtc;
+                d.ctx = std::move(e.payload.ctx);
                 d.ctxAgeMs = static_cast<float>((nowSec - d.ctx->tSec) * 1000.0);
                 d.need = static_cast<int>(e.need);
-                d.durSec = e.endSec - e.onsetSec;
+                d.durSec = e.endSec - e.startSec;
                 d.peak = e.peak;
-                d.onsetUtc = d.ctx->utc;
-                logger::debug("[SelectionV3] nothing pressed: {} episode of {:.1f}s (peak {:.2f}) ended unanswered"sv,
-                    Core::Needs::kNeeds[e.need].id, d.durSec, d.peak);
+                d.onsetUtc = std::move(e.payload.onsetUtc);
+                d.lap = e.lap;
+                d.byLap = e.byLap;
+                d.episodeSec = e.endSec - e.onsetSec;
+                laps += e.byLap ? 1 : 0;
+                // Laps: one line per lap tick below, not one per need
+                // (a lap tick can close a dozen stretches at once).
+                if (!e.byLap) {
+                    logger::debug("[SelectionV3] nothing pressed: {} stretch {} of {:.1f}s (peak {:.2f}, episode {:.0f}s) "
+                                  "ended unanswered"sv,
+                        Core::Needs::kNeeds[e.need].id, d.lap, d.durSec, d.peak, d.episodeSec);
+                }
                 Queue(std::move(d));
+            }
+            if (laps) {
+                logger::debug("[SelectionV3] nothing pressed: {} lapped stretch(es) unanswered"sv, laps);
             }
         }
 
@@ -1437,6 +1504,7 @@ namespace Huginn::Learning::SelectionLogV3
         {
             std::lock_guard lock(g_episodeMutex);
             g_episodes.Reset();
+            g_lastLapHold = Core::Needs::LapHold::kNone;
         }
         {
             std::lock_guard lock(g_pickMutex);

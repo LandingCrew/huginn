@@ -592,6 +592,15 @@ snapshot shield_only
 shield 1
 end
 
+# 0.23.51: a two-handed quarterstaff (the mage's walking staff, a warhammer
+# with quarterstaff keywords): melee and two-handed to the engine, but
+# loadout_quarterstaff 1 and loadout_two_handed 0; hands not empty.
+snapshot quarterstaff
+melee 1
+twoHanded 1
+quarterstaff 1
+end
+
 # Only a spell in hand (school bits 2 and 4, plus unmapped bit 5).
 snapshot spell_only
 spell 1

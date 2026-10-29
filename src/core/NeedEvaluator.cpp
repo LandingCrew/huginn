@@ -1,4 +1,5 @@
 #include "NeedEvaluator.h"
+#include "WeaponLoadout.h"
 
 #include <algorithm>
 #include <cmath>
@@ -160,9 +161,11 @@ namespace Huginn::Core::Needs
                 case N::hands_empty: return B(!(s.melee || s.bow || s.crossbow || s.spell || s.staff));
                 // --- Loadout
                 case N::loadout_one_handed: return B(s.oneHanded);
-                case N::loadout_two_handed: return B(s.twoHanded);
+                // 0.23.51: a quarterstaff is its own loadout (core/WeaponLoadout.h).
+                case N::loadout_two_handed: return B(Loadout::TwoHandedLoadout(s.twoHanded, s.quarterstaff));
                 case N::loadout_archery: return B(s.bow || s.crossbow);
                 case N::loadout_staff: return B(s.staff);
+                case N::loadout_quarterstaff: return B(s.quarterstaff);
                 case N::loadout_shield: return B(s.shield);
                 case N::loadout_destruction: return SchoolIn(s, School::Destruction);
                 case N::loadout_conjuration: return SchoolIn(s, School::Conjuration);

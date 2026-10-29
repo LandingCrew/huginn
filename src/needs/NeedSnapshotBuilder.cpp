@@ -175,6 +175,7 @@ namespace Huginn::Needs
       s.shield = p.hasShieldEquipped;
       s.oneHanded = p.hasOneHandedEquipped;
       s.twoHanded = p.hasTwoHandedEquipped;
+      s.quarterstaff = p.hasQuarterstaffEquipped;
       s.handSchools = SchoolOf(p.rightHandSpell) | SchoolOf(p.leftHandSpell);
 
       // Activity

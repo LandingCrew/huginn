@@ -471,6 +471,65 @@ Logging only: `Huginn_Selections_v3.jsonl` beside the unchanged v2 log.
   die. The death in that run wrote two `nothing` records 3 s before the
   reload (falling 1.0 s, loadout_restoration 28.7 s); since 0.23.16 a death
   drops the open episodes and those in their grace, as a load does.)*
+- [x] **Data fixes before the real R6 fit (0.23.51, `r6-data-fixes`)**, two
+      defects the rehearsal of 2026-10-28 found. Logging only: no score in the
+      old engine changes.
+  - *"Nothing" for persistent needs: laps.* Hunger, thirst, diseased, cold,
+    warmth_deficit and fatigue never wrote a `nothing` record for their own
+    episodes: any selection anywhere in their hours-long episodes answered all
+    of it, and a load dropped them still open. 0 of the mage's 14,014 `nothing`
+    records (~45 h, 2026-10-15..29). They are still in `nothing` contexts (the
+    fit's u0 = θ_out · n reads the whole need vector of the record's context,
+    another need's onset), so the gap is narrower: `nothing` was sampled where
+    other needs start, not across the time a persistent need stays on, and the
+    bias is mild and mixed (on at picks / at `nothing`: hunger 8.8% / 7.3%,
+    thirst 6.7% / 5.0%, diseased 11.8% / 10.5%, warmth_deficit 7.8% / 5.5%,
+    cold the other way, 0.2% / 2.2%). Now an open
+    episode is cut into stretches on a shared 60 s grid of active seconds
+    (unpaused, alive, at most 1 s per tick; the clock holds in a dialogue,
+    with the movement controls disabled and after 30 s without input), and
+    each unanswered stretch writes
+    a `nothing` record marked `ep.why: "lap"` (with `lap` and `epSec`), joined
+    to the context the lap took (`ctx.why: "lap"`); an episode that ends
+    within 60 s of its onset is judged as before. 60 s: one gap between picks
+    in five exceeds it (median 17 s), long unanswered episodes run a median of
+    75 s, and a replay on the log gives each persistent need about as many lap
+    records as picks with it on (hunger ~100 against ~170), ~0.4 MB/h. Active
+    seconds rather than game time: waits, sleep and fast travel jump the game
+    clock while no press is possible. The hold (the fix round's verifier):
+    20.1 h of the log lie in 261 silent gaps over 120 s; left unattended with
+    the game unpaused, a clock without it would have lapped through them
+    (2,153 lap ticks instead of 985), while with it each gap adds at most
+    30 s (1,101 at most). `core/NeedEpisodes.h`; the rule and the
+    numbers: [schema, Laps](architecture/9-selection-log-v3.md#laps).
+    `tools/fit` reads them (`fitlib.build(laps=...)`: one per lap tick by
+    default, keyed on the records' shared `(launch, gen, utc)`, since the
+    needs open at one lap would otherwise weigh one slice k times; `cv.py --laps`;
+    `v3load.py --list` counts them); `tools/replay` too
+    (`replay.nothing_stretch`, `head_lap_sec`). Records written before
+    0.23.51 read as whole episodes (`why: "end"`, lap 0).
+  - *Old logs keep both defects.* Every log before 0.23.51 has no laps and
+    reads the quarterstaff as `loadout_two_handed`. The R6 fit's three-outcome
+    group runs with `--since 0.23.51` once there is enough new play, or with
+    `--split-at 0.23.51`: the seven needs concerned are in
+    `fitlib.BUILD_SPLIT_NEEDS`, so their old-segment columns take the bias
+    ([tools/fit/README.md](../tools/fit/README.md#reading-logs-written-before-02351)).
+  - *The quarterstaff is not a two-handed loadout.* `loadout_two_handed` was
+    on at 27.7% of the mage's picks and in 33% of the contexts, 85% of those
+    with the Staff of Wandering Stars in hand (LoreRim Traits.esp, a
+    `kTwoHandAxe` warhammer with Requiem's and Animated Armoury's
+    quarterstaff keywords). A two-handed weapon with
+    `OCF_WeapTypeQuarterstaff2H`, `WeapTypeQuarterstaff` or
+    `WeapTypeQtrStaff` (all 967 two-handed quarterstaffs in the LoreRim dump
+    carry the first) is now its own need, `loadout_quarterstaff`, and leaves
+    `loadout_two_handed` off (`core/WeaponLoadout.h`; needs.csv, NeedIds.h
+    and the `[Needs]` block regenerated; 97 needs). The old engine's
+    `hasTwoHandedEquipped` is unchanged. Not changed: the item's own cap still
+    reads `weapon_type_warhammer` (the effect columns have no quarterstaff
+    type; its stats already grade among quarterstaffs, 0.23.30).
+  - [ ] **In game (you):** see the PR's checklist (a lap record in the log
+        after a minute of standing hungry or diseased without a pick;
+        `hg needs` with the staff in hand).
 
 ### R5. Data play (in game, you)
 
@@ -558,6 +617,11 @@ Map Phase 4, in `tools/fit` (the scripts and their flags: [tools/fit/README.md](
   old engine's utility as an input -- the hand-tuned layer R8 and R11 retire.
 - [ ] Conditional logit with the three outcomes (key, menu at cost κ, nothing),
       u0 per need, sparse θ, small b, Plackett–Luce co-picks; split by launch.
+      **Data (0.23.51):** logs before 0.23.51 have no lap records and read the
+      quarterstaff as `loadout_two_handed`; run the three-outcome group with
+      `--since 0.23.51`, or `--split-at 0.23.51` (the default
+      `--split-needs` splits the seven needs concerned), never a plain fit
+      over every file ([tools/fit/README.md](../tools/fit/README.md#reading-logs-written-before-02351)).
 - [ ] Report on held-out play against A* on the same choice sets, by the
       criterion above (`cv.py`'s yardstick). *Superseded 2026-10-28:* "key
       hit rate against **76%** (arm A*, the plain ranking replay can

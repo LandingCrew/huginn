@@ -3,6 +3,7 @@ cv_<group>.txt (the tables, also on stdout) in the work directory.
 
 usage: python cv.py [picks|three|sens] [--folds K] [--seed S] [--loo] [--spec TEXT ...]
                     [--since V] [--until V] [--split-at V ...] [--split-needs all|NEED ...]
+                    [--laps once|all|none]
 (after v3load.py)
 
 Folds: grouped K-fold by launch (fitlib.launch_folds: default 10 folds, seed 1, deterministic,
@@ -14,6 +15,13 @@ per launch (~9 h on 288 launches; the 10 folds take about a tenth of that).
 versions in that range (inclusive); --split-at cuts them into build segments: the yardstick is
 also reported per segment, and the 'split' specs give the needs in --split-needs (default: those
 whose sensor changed at 0.23.41, and the target families) one column per segment.
+
+--laps (the three group): the nothing records of lapped stretches, 0.23.51 (fitlib.build: 'once',
+the default, keeps one per lap tick, fitlib.lap_tick; 'all' one per open need; 'none' drops them,
+the data of a build before 0.23.51). The picks group reads no nothing record. Logs written before
+0.23.51 have no laps and read a quarterstaff as loadout_two_handed: fit the three group with
+--since 0.23.51, or --split-at 0.23.51 (the default --split-needs splits the needs concerned;
+README, 'Reading logs written before 0.23.51').
 
 The yardstick (fitlib.YARDSTICK), for every spec against A* (the old engine's ranking replayed
 from the logged utilities, fitlib.astar_results) on the same choice sets: hit@8 for key/wheel
@@ -88,6 +96,8 @@ def parse(argv=None):
     ap.add_argument('--split-needs', nargs='+', metavar='NEED',
                     help="the needs the 'split' specs split by segment ('all'; default: the 0.23.41 changes)")
     ap.add_argument('--nboot', type=int, default=2000, help='bootstrap draws (default 2000)')
+    ap.add_argument('--laps', choices=('once', 'all', 'none'), default='once',
+                    help="lapped-stretch nothing records (0.23.51): one per lap tick (default), all, or none")
     a = ap.parse_args(argv)
     for v in [a.since, a.until] + a.split_at:
         if v is not None and version(v) is None:
@@ -110,7 +120,7 @@ def main(argv=None):
     three = a.group == 'three'
     D = load()
     v2 = load_v2()
-    kw = dict(include_nothing=three, v2=v2, since=a.since, until=a.until, split_at=a.split_at)
+    kw = dict(include_nothing=three, v2=v2, since=a.since, until=a.until, split_at=a.split_at, laps=a.laps)
     S = build(D, **kw)
     S_latest = build(D, latest_caps=True, **kw) if any(s.get('_latest') for s in specs.values()) else None
     obv = obvious_pairs(S['needs'], S['cols'])

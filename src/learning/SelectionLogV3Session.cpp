@@ -288,11 +288,11 @@ namespace Huginn::Learning::SelectionLogV3
             std::error_code ec;
             const auto path = FilePath();
             const auto size = path.empty() ? 0 : std::filesystem::file_size(path, ec);
-            logger::info("[HuginnTest] decision session: key={} wheel={} menu={} nothing={} written (queued {}, dropped {}, "
+            logger::info("[HuginnTest] decision session: key={} wheel={} menu={} nothing={} written ({} lap(s) queued; queued {}, dropped {}, "
                          "unlearned={}) bytes={} contexts={} caps={} file={} ({} bytes); tick {:.1f} us mean, {:.1f} us "
                          "max over {} tick(s), {} eligible row(s) last tick; context build {:.2f} ms mean, {:.2f} ms max "
-                         "over {} ({} held read(s), {:.2f} ms max); {} short episode(s) dropped"sv,
-                key, wheel, menu, nothing,
+                         "over {} ({} held read(s), {:.2f} ms max); {} short episode(s) or last stretch(es) dropped"sv,
+                key, wheel, menu, nothing, s.nothingLaps - before.nothingLaps,
                 (s.key + s.wheel + s.menu + s.nothing) - (before.key + before.wheel + before.menu + before.nothing),
                 s.dropped - before.dropped, s.unlearned - before.unlearned, s.bytes - before.bytes,
                 s.ctxWritten - before.ctxWritten, s.capsWritten - before.capsWritten, path.filename().string(), size,

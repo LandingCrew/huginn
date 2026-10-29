@@ -238,6 +238,14 @@ namespace Huginn::Core::DecisionLog
         out += R"(,"answerSlackSec":)";
         AppendSeconds(out, head.answerSlackSec);
         if (head.deathDrops) out += R"(,"deathDrops":1)";
+        if (head.lapSec > 0.0) {   // 0.23.51
+            out += R"(,"lapSec":)";
+            AppendSeconds(out, head.lapSec);
+            out += R"(,"lapMaxStepSec":)";
+            AppendSeconds(out, head.lapMaxStepSec);
+            out += R"(,"lapIdleSec":)";
+            AppendSeconds(out, head.lapIdleSec);
+        }
         out += '}';
         if (!head.curves.empty()) {
             out += R"(,"curves":[)";
@@ -487,6 +495,15 @@ namespace Huginn::Core::DecisionLog
             AppendNum(dec, d.peak);
             dec += R"(,"onset":)";
             dec += JsonString(d.onsetUtc);
+            // 0.23.51: which stretch of the episode (core/NeedEpisodes.h
+            // "lap"). Absent before: every record was a whole episode,
+            // why "end", lap 0, epSec = durSec.
+            dec += R"(,"why":)";
+            dec += d.byLap ? R"("lap")" : R"("end")";
+            dec += R"(,"lap":)";
+            AppendInt(dec, d.lap);
+            dec += R"(,"epSec":)";
+            AppendSeconds(dec, d.episodeSec);
             dec += '}';
         }
         else {

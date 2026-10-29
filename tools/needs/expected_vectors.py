@@ -96,7 +96,8 @@ FIELDS = {
     "enchantedWeapon": ("b", 0), "weaponCharge": ("f", 1.0), "bow": ("b", 0),
     "crossbow": ("b", 0), "arrows": ("i", 0), "bolts": ("i", 0),
     "melee": ("b", 0), "spell": ("b", 0), "staff": ("b", 0), "shield": ("b", 0),
-    "oneHanded": ("b", 0), "twoHanded": ("b", 0), "handSchools": ("u", 0),
+    "oneHanded": ("b", 0), "twoHanded": ("b", 0), "quarterstaff": ("b", 0),  # 0.23.51
+    "handSchools": ("u", 0),
     # Activity
     "sneaking": ("b", 0), "mounted": ("b", 0),
 }
@@ -320,9 +321,11 @@ FORMULAS = {
     "hands_empty": lambda s: 0.0 if (s["melee"] or s["bow"] or s["crossbow"] or s["spell"] or s["staff"]) else 1.0,
     # Loadout
     "loadout_one_handed": lambda s: float(s["oneHanded"]),
-    "loadout_two_handed": lambda s: float(s["twoHanded"]),
+    # 0.23.51: a two-handed quarterstaff is its own loadout (core/WeaponLoadout.h).
+    "loadout_two_handed": lambda s: float(s["twoHanded"] and not s["quarterstaff"]),
     "loadout_archery": lambda s: 1.0 if (s["bow"] or s["crossbow"]) else 0.0,
     "loadout_staff": lambda s: float(s["staff"]),
+    "loadout_quarterstaff": lambda s: float(s["quarterstaff"]),
     "loadout_shield": lambda s: float(s["shield"]),
     "loadout_destruction": lambda s: bit(s["handSchools"], 0),
     "loadout_conjuration": lambda s: bit(s["handSchools"], 1),

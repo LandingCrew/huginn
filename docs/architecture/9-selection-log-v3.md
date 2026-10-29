@@ -15,7 +15,7 @@ schema of that log, field by field.
 
 | | |
 |---|---|
-| Code | `src/core/DecisionLog.h/.cpp` (records, encoder), `src/core/NeedEpisodes.h` (episodes), `src/learning/SelectionLogV3*.cpp` (the game side) |
+| Code | `src/core/DecisionLog.h/.cpp` (records, encoder), `src/core/NeedEpisodes.h` (episodes and their laps), `src/learning/SelectionLogV3*.cpp` (the game side) |
 | Reader | `tools/replay/replay.py`: `iter_v3` / `load_v3`, `--v3 FILE...` prints a summary |
 | Tests | `tests/core/DecisionLogTests.cpp` (encoder vs the golden file), `tests/core/NeedEpisodesTests.cpp`, `tests/core/CoverageTests.cpp` (covered(i), the filter reasons), `tools/replay/test_replay_v3.py` (CTest `replay_v3_roundtrip`) |
 | Golden file | `tests/core/fixtures/decisions/synthetic_v3.jsonl`; `synthetic_v3_0.23.45.jsonl` beside it is the same session as 0.23.45 wrote it (before `fb`, `cr`, `covered`, `summon`), which the reader must keep decoding |
@@ -94,14 +94,14 @@ contexts per segment and clears both at a head.
 | `list` | string | modlist folder (`LoreRim-5`, `simonrim-essentails`...) |
 | `build` | string | `"<version> (<git sha>)"` |
 | `cols` | string[243] | effect columns of `9-data/effects.csv`, in order (`cap.c` indexes it) |
-| `needs` | string[94] | needs of `9-data/needs.csv`, in order (`ctx.need`, `ctx.in`, `dec.open`, `dec.ep.i` index it) |
+| `needs` | string[97] | needs of `9-data/needs.csv`, in order (`ctx.need`, `ctx.in`, `dec.open`, `dec.ep.i` index it) |
 | `cross` | string[8] | the runtime cross-features, in order (`row.x` indexes it). 7 before 0.23.46 (no `covered`) |
 | `kinds` | string[10] | catalog kinds: `Spell Scroll Potion Poison Food Weapon Ammo Armor SoulGem Light` (`row.kind`) |
 | `src` | string[10] | the old engine's candidate source types (`row.src`) |
 | `row` | string[12] | the row columns, in order (below). 10 before 0.23.46 (no `fb`, `cr`) |
 | `flags` | object | row flag bits by name |
 | `filters` | string[15] | (0.23.46) the candidate filters' reasons, in order (`row.fb` indexes it; `core/FilterReason.h`). Absent before 0.23.46 |
-| `episode` | object | the episode definition in force: `onset`, `expiry`, `minSec`, `graceSec`, `answerSlackSec`, and `deathDrops: 1` (0.23.16: a death drops the open episodes and those in their grace; absent = 0.23.15, where a death could leave `nothing` records) |
+| `episode` | object | the episode definition in force: `onset`, `expiry`, `minSec`, `graceSec`, `answerSlackSec`, and `deathDrops: 1` (0.23.16: a death drops the open episodes and those in their grace; absent = 0.23.15, where a death could leave `nothing` records), and `lapSec`, `lapMaxStepSec`, `lapIdleSec` (0.23.51: the lap grid and the idle hold of its clock, [Laps](#laps); absent = every episode judged whole, no lap records). `replay.head_lap_sec(head)` reads it |
 | `curves` | [kind, p1, p2][] | (0.23.41) the `[Needs]` response curves in force, index-aligned with `needs`: `["logistic", 0.5, 10]` (`core/ResponseCurve.h`), so a fit knows which curve made every logged `need` value from its `in`. A hot reload that changes a curve starts a new segment (a new head line) before the next record. Absent before 0.23.41: those segments used their build's `needs.csv` defaults unless the INI overrode them. `replay.head_curves(head)` reads it |
 
 ### `cap`
@@ -119,15 +119,19 @@ caps like any other.
 
 A situation as logged. Taken when one is needed: at a press (`why: "press"`),
 when a selection menu opens (`"menu"`), at the onset of a need episode
-(`"onset"`). Several decisions can share one: the picks of one menu visit (the
-Plackett–Luce co-picks), the "nothing" records of needs that started on the
-same tick.
+(`"onset"`), at a lap of the open episodes (`"lap"`, 0.23.51; a tick with an
+onset and a lap takes one context, tagged `"onset"`, so `why` alone does not
+find every lap context: a `nothing` record's `ep.lap` says how its stretch
+began, 0 at the onset, n at the episode's n-th lap). Several decisions can
+share one: the picks of one menu visit (the Plackett–Luce co-picks), the
+"nothing" records of needs that started on the same tick, and those of the
+stretches one lap began.
 
 | Field | Type | Meaning |
 |---|---|---|
 | `id` | int | unique within the launch |
 | `utc` | string | when taken, `YYYY-MM-DD HH:MM:SS.mmm` UTC |
-| `why` | string | `press`, `menu`, `onset` |
+| `why` | string | `press`, `menu`, `onset`, `lap` (0.23.51) |
 | `menu` | string | the menu's name, for `why: "menu"` (`InventoryMenu`, `MagicMenu`, `FavoritesMenu`) |
 | `need` | [[i, v]] | the need vector: non-zero curve outputs, 0..1 (`needs/NeedMonitor`, R3) |
 | `in` | [[i, v]] | what went into each curve, in the units of `needs.csv`'s `r3_input` (fractions, seconds, units of distance...) |
@@ -261,7 +265,7 @@ being active and the refractory period). Only rows shown as wildcards carry it.
 |---|---|---|
 | `v` | int | 3 |
 | `seq` | int | per launch, in write order. The writer assigns it as it writes, so a record dropped from a full queue takes no number, and a record whose write the stream reports failed gives its number back to the next one: no gaps. (A failed write that still reached the disk leaves a torn line, which the reader skips, or in the rarest case a record whose `seq` repeats in the next one.) |
-| `utc` | string | when the record was made: the confirmation for a pick; the end of the grace for nothing |
+| `utc` | string | when the record was made: the confirmation for a pick; the end of the grace for nothing (of the episode, or of the lapped stretch). Since 0.23.51 the `nothing` records judged on one tick share one `utc`, so the stretches one lap tick cut carry the same `(launch, gen, utc)` (`fitlib.lap_tick`) |
 | `launch`, `list` | string | as in the head |
 | `char` | string | 16 hex digits: the character (`g_activeCharacterID`) |
 | `gen` | int | the load within the launch (a reload abandons what came before) |
@@ -280,10 +284,10 @@ being active and the refractory period). Only rows shown as wildcards carry it.
 | `learned` | 0/1 | the frozen learner took it |
 | `skip` | string | why it did not: `stale` (the pipeline cache older than `fExternalEquipTimeWindow`), `disabled` (learning from outside equips off), `armour` (armour picks reach the v3 log only) |
 | `ctx` | int | the context it is joined to |
-| `ctxAgeMs` | int ms | press time minus the context's time (for nothing: record time minus the onset) |
+| `ctxAgeMs` | int ms | press time minus the context's time (for nothing: record time minus the stretch's start -- the onset, or the lap that began the stretch) |
 | `open` | int[] | needs with an open episode at the press (opportunity counting) |
 | `preEquipped` | 0/1 | the chosen item was equipped before the press: in a hand or the nocked ammo on the newest update tick at least 0.25 s before it. 0 for anything else (an equip event says armour was not worn), **and 0 when no tick is that old** -- in the first 0.25 s after a load, when the snapshots were just cleared, it means "not known", not "not equipped" |
-| `ep` | object or null | nothing only: `need` (id), `i` (index), `durSec`, `peak` (the highest value inside the episode), `onset` (UTC) |
+| `ep` | object or null | nothing only: `need` (id), `i` (index), `durSec` (the stretch's length: the whole episode when it never lapped), `peak` (the highest value inside the stretch), `onset` (UTC, the EPISODE's onset, kept across laps), and since 0.23.51 `why` (`"end"`: the episode expired and this is its last stretch; `"lap"`: the stretch reached the lap grid with the need still on), `lap` (the stretch's index, 0 = from the onset) and `epSec` (the episode's onset to the stretch's end). A record without `why` (before 0.23.51) is a whole episode: `"end"`, lap 0, `epSec` = `durSec` (`replay.nothing_stretch(d)` and `tools/fit/v3load.py` default them) |
 
 ## Outcomes
 
@@ -292,7 +296,7 @@ being active and the refractory period). Only rows shown as wildcards carry it.
 | `key` | a Huginn key's selection confirms (`SelectionTracker`) | the context taken at the press |
 | `wheel` | a pick on Huginn's own Wheeler wheel confirms | the context taken at the press |
 | `menu` | any other selection the player made confirms: the inventory, magic or favourites menu, a vanilla favourites hotkey, one of the player's own Wheeler wheels. Includes the picks the frozen learner drops (`learned: 0`): a stale cache, the learning toggle off, armour | for a pick from the inventory or magic menu (open, or closed within 2 s): the context taken **when the menu opened**; otherwise (the favourites menu included) the context taken at the press |
-| `nothing` | a need episode ends unanswered (below) | the context taken at the episode's onset |
+| `nothing` | a need episode ends unanswered, or (0.23.51) a lapped stretch of a still-open one passes unanswered (below) | the context taken at the stretch's start: the episode's onset, or the lap that began the stretch |
 
 A selection confirms as before (`SelectionTracker`): a consumable when its count
 drops within 2.5 s, gear when still equipped 3 s later. An unconfirmed pick (a
@@ -344,13 +348,138 @@ are in every head):
 | grace | an ended episode is judged 4 s after its expiry (the 3 s equip confirm, the slack and a few ticks), so a pick made inside it but confirmed later still answers it. It is judged on each update tick **after** the selections' confirmations: after a stall of the loop, a confirmation and the end of a grace can land on one tick, and the confirmation counts first |
 | nothing | an ended episode, ≥ 1 s long, unanswered when its grace runs out: one `nothing` record, joined to the context taken at the onset |
 | paused | episodes neither start nor end while the game is paused (a menu): the world is frozen, so a change then is a wall-clock decay or the player's own menu action, which a pick inside the still-open episode answers |
-| death | (0.23.16) when the player dies, every open episode and every ended one still in its grace is dropped, as at a load, and none opens while the player is dead: a death is not a decision. Earlier logs can hold `nothing` records cut short by a death a few seconds before a reload |
+| death | (0.23.16) when the player dies, every open episode and every ended one still in its grace is dropped, as at a load, and none opens while the player is dead: a death is not a decision. Earlier logs can hold `nothing` records cut short by a death a few seconds before a reload. Since 0.23.51 the lapped stretches still in their grace are dropped too |
+| lap | (0.23.51) an open episode is cut into stretches on a shared 60 s grid of active seconds, and each stretch is judged as an ended episode is: [Laps](#laps) |
 
 Every need takes part, the always-on ones too (`loadout_*`, `downtime`): they
 rarely end unanswered, since a weapon swap that ends a loadout episode is a
 selection, and the fit can drop any need it does not want -- the record names
 it. Several needs that start on one tick share one onset context. A press does
 not answer an episode it started (the onset is after the press).
+
+### Laps
+
+**Why (0.23.51).** Before 0.23.51 a persistent need never wrote a `nothing`
+record of its own. Hunger, thirst, diseased, cold, warmth_deficit and fatigue
+stay on for minutes to hours: any confirmed selection anywhere in such an
+episode answered all of it, and a load dropped it still open. The mage's log
+(all three files, 2026-10-15 to 10-29, ~45 h of play, character
+FEFD1B039AC78799: 1,908 picks, 14,014 `nothing` records) holds **not one**
+`nothing` record for an episode of those six needs.
+
+That does not keep them out of the `nothing` contexts. The three-outcome
+fit's outside utility is u0 = θ_out · n, where n is the whole need vector of
+the record's context (`tools/fit/fitlib.py`: `build` fills n, `Model.scores`
+takes u0), and a `nothing` record's context is the onset of whichever need's episode it closes:
+a persistent need that is on then is in n. What the old data lacks is
+narrower: its `nothing` records are sampled where other needs start, not
+across the time a persistent need stays on. On at ≥ 0.5, at picks against at
+`nothing` records:
+
+| need | at picks | at `nothing` |
+|---|---|---|
+| hunger | 167 / 1,908 = 8.8% | 1,025 / 14,014 = 7.3% |
+| thirst | 128 = 6.7% | 704 = 5.0% |
+| diseased | 225 = 11.8% | 1,475 = 10.5% |
+| warmth_deficit | 149 = 7.8% | 777 = 5.5% |
+| cold | 4 = 0.2% | 310 = 2.2% |
+| fatigue | 9 = 0.5% | 96 = 0.7% |
+
+So the old data's bias is mild and mixed: four of them lean a little toward a
+pick, cold (and barely fatigue) the other way, and none is absent at
+`nothing`. Laps sample the time itself: each unanswered stretch of an open
+episode is a `nothing` record whose context has the need on.
+
+**The rule** (`core/NeedEpisodes.h`):
+
+| | |
+|---|---|
+| active clock | the time between two update ticks, at most 1 s per tick (`lapMaxStepSec`). Ticks happen only while the game runs unpaused with the player alive, so a pause, a death, a load door or a stall adds at most a second |
+| hold | the clock also adds nothing on a tick when the player cannot or does not press (`LapHoldFor`): a dialogue menu is open (it does not pause the game), the movement controls are disabled (a carriage ride, a cutscene: `ControlMap::IsMovementControlsEnabled`), or the player's latest input -- any key, mouse or gamepad button, the mouse moving, a stick off centre -- is 30 s old or more (`lapIdleSec`; `UpdateHandler::SecondsSinceInput`). Onsets and expiries go on during a hold. The debug log has a `[SelectionV3] lap clock holds (<why>)` / `runs` line per change |
+| grid | a grid point every 60 s of active time (`lapSec`), shared by every need; it restarts at 0 on a load |
+| lap | at a grid point, every open episode whose current stretch began at or before the previous grid point laps: the stretch closes and a new one begins now, with a new context (`why: "lap"`, one for every need that lapped on that tick) |
+| so | no stretch is shorter than 60 s except an episode's last one (cut by its expiry); the first stretch lasts 60-120 s; an episode that ends within 60 s of its onset is judged exactly as before 0.23.51; the laps of every need share one tick and one context |
+| answer | a lapped stretch is answered by a confirmed selection pressed in [start, end] -- no slack: its end is the grid's cut, not something a press did, and a press after it lies in the next stretch. It waits the 4 s grace like an ended episode (a pick pressed just before the cut can confirm 3 s later) |
+| record | an unanswered lapped stretch writes one `nothing` record with `ep.why = "lap"`, joined to the context taken at its start. The episode's last stretch is an ordinary ended episode (`ep.why = "end"`, slack included; dropped under 1 s); its `durSec` is the stretch's length and `epSec` the episode's |
+
+**Why the hold.** A lap stands for time in which the player could have
+pressed something. Unpaused time in which no press is possible -- the player
+away from the keyboard with the game running, a carriage ride, a dialogue --
+would otherwise lap like play, and nothing in the record would let a fit tell
+it apart. The mage's log shows how much such time there could be: of the
+51.8 h between consecutive contexts within a launch, 20.1 h lie in 261 silent
+gaps over 120 s (no pick, no onset, no menu context), 10.4 h in gaps over
+5 min, 5.5 h over 15 min and 2.8 h over 30 min. The log cannot say how much of
+that was paused, played quietly or left unattended; unattended and unpaused,
+the clock without the hold would have run through all of it. With the hold an
+unattended gap adds at most 30 s. 30 s: input in play is near continuous
+(movement and mouse-look send events every frame they are used, a held key
+every frame it is held), so 30 s without any is a player who is not playing,
+while a lull spent looking around still counts; and it is half a lap, so an
+unattended spell can complete at most one grid point that the play before it
+had nearly reached. Two known gaps: any non-zero stick value counts as
+input, so a gamepad whose stick drifts past the engine's deadzone keeps the
+clock running while the player is away; and a menu that a list makes
+non-pausing (a crafting bench, say) passes input like play, so time in it
+laps like play. Neither is tested in game. A brief disable (a kill move, a script that stops the
+controls for a moment) only shifts the grid by its length.
+
+**Why 60 s.** The lap is a time slice in which the player could have picked
+something and did not; each unanswered slice is one "nothing" observation.
+From the same log:
+
+- *What "unanswered" means.* Between consecutive picks of one load the median
+  gap is 17 s, the 75th percentile 48 s and the 90th 121 s; 34% of gaps exceed
+  30 s, 19% exceed 60 s and 9% exceed 120 s. At 60 s a slice with no pick is
+  the less usual case (about one gap in five), not every short lull.
+- *Weight.* The ended episodes that write `nothing` records today and last
+  30 s or more have a median of 75 s; a 60 s lap weighs about like one of them,
+  and every episode under 60 s is untouched.
+- *Data and volume.* A rough replay of the rule on the log's contexts (the
+  need vector held between contexts, gaps of 120 s or less as play, 31.6
+  active hours; only an estimate: the log has no per-tick values or input, so
+  paused time inside a short gap counts as active) gives, at 30 / 60 / 120 s:
+  80 / 31 / 11 lap ticks an hour with an unanswered stretch (the contexts that
+  reach the file, ~13 KB each: about 1.1 / 0.4 / 0.15 MB/h), and 318 / 109 /
+  32 per-need records an hour. Hunger would get 254 / 102 / 40 records over
+  the log against ~170 picks with hunger on: 60 s gives each persistent need
+  the same order of evidence as its picks; 120 s is thin, 30 s triples the
+  volume for little.
+- *The silent gaps, at 60 s.* Counted as breaks (no time), the replay gives
+  985 lap ticks with an unanswered stretch (31/h of play). If every silent gap
+  over 120 s had been unattended and unpaused, the hold lets each add at most
+  30 s: 1,101 lap ticks (+116, +12%; hunger 102 -> 125). Without the hold the
+  same case would have run the clock through all 20.1 h: 2,153 lap ticks
+  (+1,168, more than doubling them; hunger 348), records of time in which
+  no one could press. A silent gap in which the player did play on quietly
+  laps as play, as it should; the log cannot say how many there were.
+
+**Why active seconds, not game time.** Game time jumps with waiting,
+sleeping, fast travel and load doors (and runs at the list's timescale), all
+of it time in which no press is possible; a game-time lap would write a burst
+of records after every wait. The choice the record stands for -- press or not
+-- happens in real playing time, as the picks do; the active clock is that
+time with the pauses taken out. Hunger and the other survival needs advance on
+game time, but their values are in the context, not in the lap.
+
+**Several needs per lap.** The laps of one tick write one record per need that
+lapped unanswered (the record names the need; `sensors.py` and `audit.py`
+count by need, and count lap records apart from episodes, `v3load.is_lap`, so
+the churn and length stats stay per episode, the length read from `epSec`). They do not all share one context: a stretch begun by the
+previous lap (`ep.lap` > 0) is joined to that lap's context, an episode's first
+stretch (`ep.lap` 0) to its onset's, which can lie anywhere in the grid
+interval before. What they share is the tick: they are judged together and
+written with one `utc`. A fit that reads `nothing` as one observation per slice
+should keep one per lap tick: `fitlib.build(laps="once")`, the default, keyed
+on `(launch, gen, utc)` (`fitlib.lap_tick`), keeps the lowest-seq record begun
+by a lap (its context is the slice's start), else the lowest-seq one (`"all"`
+keeps every one, `"none"` drops them all -- the data a build before 0.23.51
+would have logged).
+
+**Logs written before 0.23.51** have no lap records and read a quarterstaff
+as `loadout_two_handed`, so a three-outcome fit over them keeps both biases:
+fit with `--since 0.23.51`, or split those needs at 0.23.51
+([tools/fit/README.md, "Reading logs written before 0.23.51"](../../tools/fit/README.md#reading-logs-written-before-02351)).
 
 ## Perception line
 
@@ -396,8 +525,11 @@ picks it holds; unanswered episodes add some more, sharing contexts when they
 start together. At ~60 new contexts an hour that is **~0.4 MB/h on vanilla+**
 and **~1 MB/h on a soak-sized LoreRim inventory** (~2 MB/h at 120 contexts
 and 300 rows); a 64 MiB file then holds roughly 30–60 hours of LoreRim play.
-The rate of `nothing` records in real play is not known yet: R5's session will
-tell.
+The rate of `nothing` records in real play: ~310 an hour on the mage's log
+(14,014 in ~45 h, LoreRim, 0.23.15-0.23.47), most of them short episodes of
+darkness, magicka_burn and the distance bands. Laps (0.23.51) add an estimated
+~110 records and ~30 contexts an hour of play, ~0.4 MB/h; time left unattended
+adds at most 30 s of lap clock per spell ([Laps](#laps)).
 
 What bounds it:
 - **Caps once per segment**, content-addressed: the 243-column vectors are
@@ -405,8 +537,8 @@ What bounds it:
   them all).
 - **Sparse everything**: caps, needs, inputs and cross-features list their
   non-zero entries only.
-- **Shared contexts**: a menu visit's picks, and the episodes that start on one
-  tick, write one context.
+- **Shared contexts**: a menu visit's picks, the episodes that start on one
+  tick, and the stretches one lap begins, write one context.
 - **Rotation** at 64 MiB; old files can be gzipped (the reader reads `.gz`).
 - **A background writer** (as the v2 log): the game thread builds the record
   (copies) and queues it; formatting and the file run on their own thread,
