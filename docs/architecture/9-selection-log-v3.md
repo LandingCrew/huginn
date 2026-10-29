@@ -592,6 +592,19 @@ resync; the per-load log is re-armed at every load. A constructor note is
 the starting set; a menu's code can change its flags later, which the
 per-load log line shows.
 
+The two halves of the rule are not equally safe for a third-party menu. The
+input-context half checks itself: CommonLib's `IMenu` starts every menu at
+context none, and a menu that sets its own context pushes it onto the
+controls' context stack, so an always-open menu with a menu context would
+leave the game unplayable, and no shipped mod can do that. The flag half
+(`kModal`, `kInventoryItemMenu`, `kUsesMenuContext`) has no such guarantee: a
+mod can set one of those bits on an overlay that leaves the player in control.
+That overlay would hold the clock for as long as it is open, all session for an
+always-open one. The only trace is one `lap clock holds (menu: <name>)` line
+with no `runs` after it, plus that menu's `blocks gameplay` line in the
+per-load log. A cross-check against the controls' top context (gameplay on top
+means the player is in control) is not made yet; the per-load log is the check.
+
 **Why 60 s.** The lap is a time slice in which the player could have picked
 something and did not; each unanswered slice is one "nothing" observation.
 From the same log:

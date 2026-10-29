@@ -1294,6 +1294,10 @@ namespace Huginn::Learning::SelectionLogV3
         // Each open menu's classification as first seen in play, so the debug
         // log names every menu that was open while the clock ticked once per
         // load (with its flags, for the in-game check), not once per tick.
+        // Keyed on what the rule reads (the blocking flag bits and the input
+        // context), not the whole flag word: an overlay that toggles another
+        // bit every frame (kRequiresUpdate, kUsesCursor) would otherwise log
+        // at tick rate. A change in what the rule reads logs again.
         // The flags are read live on every tick, never cached for the
         // decision: a menu (or a mod) may change them while it is open.
         std::mutex g_menuSeenMutex;
@@ -1315,10 +1319,11 @@ namespace Huginn::Learning::SelectionLogV3
                 const bool blocks = Core::Needs::MenuBlocksGameplay(flags, context);
                 std::string menuName(name.c_str());
                 {
+                    const std::pair<std::uint32_t, std::uint32_t> ruleReads{ flags & Core::Needs::MenuFlag::kBlocking, context };
                     std::lock_guard lock(g_menuSeenMutex);
-                    auto [it, added] = g_menuSeen.try_emplace(menuName, flags, context);
-                    if (added || it->second != std::pair{ flags, context }) {
-                        it->second = { flags, context };
+                    auto [it, added] = g_menuSeen.try_emplace(menuName, ruleReads);
+                    if (added || it->second != ruleReads) {
+                        it->second = ruleReads;
                         logger::debug("[SelectionV3] menu '{}' open in play: flags 0x{:X}, input context {}: {}"sv,
                             menuName, flags, context,
                             blocks ? "blocks gameplay (holds the lap clock)" : "an overlay (does not hold it)");
