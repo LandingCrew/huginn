@@ -368,6 +368,31 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
         [] { return Wheeler::WheelerClient::GetSingleton().IsWheelOpen(); });
     if (haveMainIni) LoadWildcardConfigFromINI(g_utilityScorer->GetWildcardManager(), mainIni);
 
+    // ── 6c. ChoiceLearner (R8.2: the new model, in shadow) ─────────────
+    // Created, and the bootstrap file read, once (the first load): its
+    // items resolve through TESDataHandler::LookupForm. A missing or invalid
+    // file logs one error and leaves the new model off. Every load resets it
+    // to the bootstrap (ResetPipelineSubsystems, step 8: no cosave in R8.2).
+    {
+        const auto choiceSettings = haveMainIni ? Learning::ChoiceSettings::FromIni(mainIni) : Learning::ChoiceSettings{};
+        Scoring::Legacy::SetEnabled(choiceSettings.legacyLearnFeature);
+        const bool firstTime = !g_choiceLearner;
+        if (firstTime) g_choiceLearner = std::make_unique<Learning::ChoiceLearner>();
+        g_choiceLearner->SetSettings(choiceSettings);
+        g_choiceLearner->SetMemoryLife(Learning::LearningSettings::GetSingleton().BuildConfig().memory);
+        g_choiceLearner->SetFavoritesBoost(g_utilityScorer->GetConfig().favoritesMode == Scoring::FavoritesMode::Boost);
+        if (firstTime) {
+            g_choiceLearner->LoadBootstrap(std::filesystem::path("Data/SKSE/Plugins") / Learning::ChoiceLearner::kFileName);
+            static std::optional<Learning::ChoiceSubscriber> s_choiceSub;
+            s_choiceSub.emplace(*g_choiceLearner);
+            Learning::EquipEventBus::GetSingleton().Subscribe(&*s_choiceSub);
+            logger::info("[Choice] bLegacyLearnFeature = {} (R8.2: logged only; the shadow scores with the D2 feature on), "
+                         "fCoveredPrior = {:.3g}, fThetaProcessNoise = {:.3g}, fFavoriteLifeMult = {:.3g}, sBootstrapBias = {}"sv,
+                choiceSettings.legacyLearnFeature, choiceSettings.coveredPrior, choiceSettings.thetaProcessNoise,
+                choiceSettings.favoriteLifeMult, Core::Bootstrap::BiasModeName(choiceSettings.biasMode));
+        }
+    }
+
     // ── 7. OverrideManager ─────────────────────────────────────────────
     {
         auto& settings = Override::Settings::GetSingleton();

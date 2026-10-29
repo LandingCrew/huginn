@@ -22,6 +22,12 @@
 #include "input/EquipManager.h"
 #include "wheeler/WheelerClient.h"  // IsWheelOpen (combat upsert); ValidateWheelState in UpdateDebugWidgets
 #include "learning/PipelineStateCache.h"
+#include "learning/ChoiceLearner.h"
+#include "learning/ChoiceShadow.h"
+#include "core/Coverage.h"
+#include "effect/CrossFeatures.h"
+#include "effect/EffectCatalog.h"
+#include "needs/NeedMonitor.h"
 #include "telemetry/SoakMetrics.h"
 #include "ui/DebugSettings.h"
 #include "display/IDisplayBackend.h"
@@ -398,7 +404,8 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
             .inCombat = Slot::SlotLocker::GetSingleton().IsInCombat(),
             .hideUidlessGear = ctx.hideUidlessGear,
         },
-        &contextWeights);
+        &contextWeights,
+        &ctx.legacyRows);   // R8.2: the old floors per candidate (the D2 feature)
 
     // A Remembrance hold shows what the player took off whether or not the
     // ranking kept it: context weight or minimum utility can drop a sword the
@@ -629,7 +636,24 @@ void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
     };
 
     ctx.eligible.reserve(candidates.size());
+    // R8.2: the D2 feature off the same pass (index-aligned with candidates),
+    // and a check that the moved floor loop reports the floors this capture
+    // derives on its own (they are the same tests; a mismatch is a bug).
+    const bool haveLegacy = ctx.legacyRows.size() == candidates.size();
+    // Two candidates with one dedup key (type, uid, form) read the same scored
+    // row here (scoredByKey), but the floor pass's cold start scores only the
+    // first (alreadyScored by form): the second reads the legacy row of the
+    // candidate that was kept, so its floor, lm and um agree with its utility.
+    std::unordered_map<uint64_t, size_t> keptByKey;
+    if (haveLegacy) {
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            if (ctx.legacyRows[i].Scored()) keptByKey.try_emplace(Candidate::GetBase(candidates[i]).GetDeduplicationKey(), i);
+        }
+    }
+    size_t floorMismatch = 0;
+    size_t candIndex = 0;
     for (const auto& c : candidates) {
+        const size_t ci = candIndex++;
         const auto& base = Candidate::GetBase(c);
         Learning::PipelineStateCache::EligibleRow row;
         row.formID = base.formID;
@@ -655,7 +679,26 @@ void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
             }
         }
         row.old = explain(c, true, scored);
+        if (haveLegacy) {
+            size_t li = ci;
+            if (scored && !ctx.legacyRows[ci].Scored()) {
+                if (const auto k = keptByKey.find(base.GetDeduplicationKey()); k != keptByKey.end()) li = k->second;
+            }
+            const auto& lg = ctx.legacyRows[li];
+            row.lnLearnMult = lg.Scored() ? lg.lnLearnMult : 0.0f;
+            row.utilMissing = lg.utilMissing ? 1 : 0;
+            if (static_cast<uint8_t>(lg.floor) != row.old.floor) ++floorMismatch;
+        }
         ctx.eligible.push_back(row);
+    }
+    if (floorMismatch) {
+        // NOTE: Single-threaded (pipeline runs on the update thread only)
+        static auto s_lastWarn = std::chrono::steady_clock::time_point{};
+        if (ctx.now - s_lastWarn > std::chrono::seconds(30)) {
+            logger::warn("[Legacy] {} of {} candidates: the floor pass and the capture disagree on the floor (a bug)"sv,
+                floorMismatch, candidates.size());
+            s_lastWarn = ctx.now;
+        }
     }
 
     // 0.23.53: the candidates the filters dropped (one row per item; a
@@ -875,12 +918,168 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
 }
 
 // -----------------------------------------------------------------------------
+// ScoreShadow — R8.2: the new model (core/ChoiceScore.h) beside the old ranking
+// -----------------------------------------------------------------------------
+// After the old scoring and the allocation: for every eligible row, cap(i) and
+// the runtime cross-features (as the selection log v3 reads them), covered(i)
+// with doc 11's greedy upgrade gate at the summon limit, the D2 legacy feature
+// off the pass that ranked, b with its battery, and the off-page flag from the
+// page just allocated. mu, sd, the logit and the explanation go onto the row
+// (the v3 log writes them); the run's tick is cached for the held rows a
+// context adds. The ranking is not touched. Also the opportunity counter: a
+// need's onset with an answering item on this page grows its variances.
+// Cost: Tracy zone Pipeline::ScoreShadow (budget 1 ms at ~500 rows).
+
+void PipelineCoordinator::ScoreShadow(PipelineContext& ctx)
+{
+    if (!g_choiceLearner || !g_choiceLearner->Ready()) return;
+    Huginn_ZONE_NAMED("Pipeline::ScoreShadow");
+    namespace C = Core::Choice;
+    namespace DL = Core::DecisionLog;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    const auto live = Needs::NeedMonitor::GetSingleton().Latest();
+    if (!live) return;
+    auto snap = g_choiceLearner->GetSnapshot();
+    const auto& model = snap->model;
+    const auto n = snap->Needs(live->vector.value, live->vector.input);
+    const double nowSec = std::chrono::duration<double>(ctx.now.time_since_epoch()).count();
+    const uint32_t gen = g_loadGeneration.load(std::memory_order_relaxed);
+    const auto recent = g_choiceLearner->RecentValues(*snap, nowSec, gen);
+    auto run = std::make_shared<Learning::ShadowRun>();
+    run->snap = snap;
+    run->tick = C::MakeTick(model, n, recent);
+    run->playNow = g_choiceLearner->GetPlaySeconds();
+    const auto& tick = run->tick;
+
+    auto& catalog = Effect::EffectCatalog::GetSingleton();
+    auto& sm = State::StateManager::GetSingleton();
+    const auto coverage = sm.GetCoverage();
+    const float refreshPriorSec = sm.GetRefreshPriorSec();
+
+    // The page just allocated: a row is on it when an assignment shows its
+    // form with its unique ID, or either side has none.
+    auto onPage = [&ctx](RE::FormID form, uint16_t uid) -> int {
+        for (const auto& a : ctx.assignments) {
+            if (a.type == Slot::AssignmentType::Empty || a.formID != form) continue;
+            if (a.uniqueID == uid || a.uniqueID == 0 || uid == 0) return static_cast<int>(a.slotIndex);
+        }
+        return -1;
+    };
+
+    const size_t rows = ctx.eligible.size();
+    std::vector<C::Attr> attrs(rows);
+    std::vector<C::RowExtra> extras(rows);
+    std::vector<C::GateRow> gates(rows);
+    std::vector<C::Attr> page;
+    const bool atLimit = coverage.valid &&
+                         Core::Coverage::SummonLimitReached(coverage.active.summons, coverage.active.summonLimit);
+    const uint32_t outSource = atLimit ? Core::Coverage::OldestSource(coverage.commanded) : 0;
+    double leftOut = 1.0;
+    size_t outIdx = SIZE_MAX;
+    for (size_t i = 0; i < rows; ++i) {
+        const auto& e = ctx.eligible[i];
+        const auto* entry = catalog.FindOrMapId(e.formID);
+        auto& x = extras[i];
+        if (entry) {
+            Effect::StackInfo stack;
+            stack.count = e.count;
+            if (e.enchanted) {
+                stack.charge = e.chargeFraction;
+                stack.maxCharge = 1.0f;
+            }
+            const auto f = Effect::ComputeRuntimeFeatures(*entry, ctx.playerState, stack);
+            std::array<float, DL::kCrossCount> cross{};
+            cross[static_cast<size_t>(DL::Cross::overshoot_health)] = f.overshootHealth;
+            cross[static_cast<size_t>(DL::Cross::overshoot_magicka)] = f.overshootMagicka;
+            cross[static_cast<size_t>(DL::Cross::overshoot_stamina)] = f.overshootStamina;
+            cross[static_cast<size_t>(DL::Cross::weapon_charge)] = f.weaponCharge;
+            cross[static_cast<size_t>(DL::Cross::stack_count)] = f.stackCount;
+            cross[static_cast<size_t>(DL::Cross::ammo_matches_launcher)] = f.ammoMatchesLauncher;
+            cross[static_cast<size_t>(DL::Cross::school_fortified)] = f.schoolFortified;
+            attrs[i] = C::MakeAttr(model.grading, &entry->cap, cross);
+            if (coverage.valid) {
+                const auto parts = Core::Coverage::CoveredParts(entry->cap, coverage.active, refreshPriorSec);
+                x.covered = std::max(parts.other, parts.summonValue);
+                if (parts.summon && parts.atLimit) {
+                    leftOut = parts.summonLeft;
+                    if (e.formID == outSource) {
+                        if (outIdx == SIZE_MAX) outIdx = i;   // a refresh: the count stands
+                    }
+                    else {
+                        gates[i] = C::GateRow{ true, parts.other };
+                    }
+                }
+            }
+        }
+        const auto lf = Scoring::Legacy::Feature(
+            Scoring::Legacy::Row{ e.utilMissing == 0 ? DL::Floor::pass : DL::Floor::ctx,
+                                  std::isfinite(e.lnLearnMult) ? e.lnLearnMult : 0.0f, e.utilMissing != 0 },
+            true);   // R8.2: [Scoring] bLegacyLearnFeature is logged only; PR 3 passes it here
+        x.feat[static_cast<size_t>(C::Feature::ln_learn_mult)] = lf.lnLearnMult;
+        x.feat[static_cast<size_t>(C::Feature::util_missing)] = lf.utilMissing;
+        if (std::isfinite(e.utility)) {
+            x.feat[static_cast<size_t>(C::Feature::ln_util)] = std::log(std::max(static_cast<double>(e.utility), 1e-6));
+        }
+        x.feat[static_cast<size_t>(C::Feature::eligible)] = 1.0;
+        const int slot = onPage(e.formID, e.uniqueID);
+        x.offPage = slot < 0;
+        if (slot >= 0 && slot < 8) x.feat[static_cast<size_t>(C::Feature::slot0) + static_cast<size_t>(slot)] = 1.0;
+        const auto b = snap->B(e.formID, e.old.favorite, run->playNow);
+        x.bMu = b.mu;
+        x.bVar = b.var;
+        if (slot >= 0) page.push_back(attrs[i]);
+    }
+    // a_out's source is usually not a row at the limit (the summon_limit
+    // filter drops summon spells there, but in the refresh window): its s-hat
+    // is then read off its catalog entry -- what the model would score that
+    // summon with nothing up (doc 11 decision 2) -- as an extra entry the gate
+    // compares against but nothing scores.
+    if (atLimit && outIdx == SIZE_MAX && outSource != 0) {
+        if (const auto* entry = catalog.FindOrMapId(outSource)) {
+            attrs.push_back(C::MakeAttr(model.grading, &entry->cap, std::array<float, DL::kCrossCount>{}));
+            C::RowExtra x;
+            const auto b = snap->B(outSource, false, run->playNow);
+            x.bMu = b.mu;
+            x.bVar = b.var;
+            x.feat[static_cast<size_t>(C::Feature::util_missing)] = 1.0;   // not scored by the old floors
+            extras.push_back(x);
+            gates.push_back(C::GateRow{});
+            outIdx = attrs.size() - 1;
+        }
+    }
+    if (atLimit && outIdx != SIZE_MAX) {
+        C::ApplyUpgradeGate(model, tick, attrs, extras, gates, outIdx, leftOut);
+    }
+    for (size_t i = 0; i < rows; ++i) {
+        const auto s = C::Score(model, tick, attrs[i], extras[i]);
+        auto& e = ctx.eligible[i];
+        e.shadowMu = static_cast<float>(s.mu);
+        e.shadowSd = static_cast<float>(s.Sd());
+        e.shadowLogit = static_cast<float>(s.logit);
+        e.exNeed = s.Learned() ? DL::kExLearned : s.exNeed;
+        e.exCol = s.Learned() ? static_cast<int16_t>(-1) : s.exCol;
+    }
+    ctx.oldScore.shadow = std::move(run);
+
+    // The opportunity counter (onsets, not seconds), beside the cache update.
+    g_choiceLearner->OnPipelineRun(n, page);
+
+    [[maybe_unused]] const double us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+    Huginn_PLOT("Shadow us per run", static_cast<int64_t>(us));
+    Huginn_PLOT("Shadow rows per run", static_cast<int64_t>(rows));
+}
+
+// -----------------------------------------------------------------------------
 // UpdateCaches — Pipeline state cache + EquipManager slot contents
 // -----------------------------------------------------------------------------
 
 void PipelineCoordinator::UpdateCaches(PipelineContext& ctx)
 {
     Huginn_ZONE_NAMED("Pipeline::UpdateCaches");
+    // R8.2: the new model in shadow, on the run's eligible rows, before they
+    // move into the cache (and the opportunity counter beside the cache).
+    ScoreShadow(ctx);
     // Cache pipeline state for external equip attribution.
     // sortedPrefix = topNCandidates: ranks are reported for that prefix only.
     // The whole list is in score order since R7 (UtilityScorer sorts it all),

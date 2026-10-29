@@ -7,6 +7,7 @@
 #include "state/StateTypes.h"
 #include "learning/ScoredCandidate.h"
 #include "learning/PipelineStateCache.h"   // EligibleRow (R4, the selection log v3)
+#include "learning/legacy/LegacyLearnFeature.h"   // Legacy::Row (R8.2, the D2 feature)
 #include "candidate/CandidateTypes.h"
 #include "context/ContextReason.h"     // Context::ContextReason (per-tick display reason)
 #include "context/ReasonHold.h"        // Context::ReasonHold (label stability, #62)
@@ -136,6 +137,10 @@ namespace Huginn::Pipeline
         // learner's state features, the score parts of the filter drops), for
         // the selection log v3 only. The eligible rows carry their own parts.
         Learning::PipelineStateCache::OldScoreRun oldScore;
+        // 0.23.56 (R8.2): what the old floors said of each candidate (index-
+        // aligned with the candidates, and so with `eligible`), off the pass
+        // that ranked: the D2 legacy learn feature's input.
+        std::vector<Scoring::Legacy::Row> legacyRows;
 
 
         /// Reset all fields for reuse, preserving allocated container capacity.
@@ -178,6 +183,8 @@ namespace Huginn::Pipeline
             oldScore.run = {};
             oldScore.stateHash = 0;
             oldScore.dropped.clear();
+            oldScore.shadow.reset();
+            legacyRows.clear();
         }
     };
 
@@ -309,6 +316,10 @@ namespace Huginn::Pipeline
         /// locking the stale page would leak page-blind locks across the switch.
         bool AllocateAndLock(PipelineContext& ctx);
         void UpdateCaches(PipelineContext& ctx);
+        /// R8.2: the new model in shadow -- mu, sd, the logit and the
+        /// explanation of every eligible row, after the old scoring and the
+        /// allocation (the ranking is untouched); the opportunity counter.
+        void ScoreShadow(PipelineContext& ctx);
         void PushDisplay(PipelineContext& ctx);
         void LogRecommendations(PipelineContext& ctx);
         // Ground truth for what the player is actually shown: derives the

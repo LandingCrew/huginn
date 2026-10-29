@@ -9,6 +9,9 @@
 #include "SelectionTracker.h"
 #include "TestHarness.h"
 #include "UtilityScorer.h"
+#include "ChoiceLearner.h"
+#include "ChoiceShadow.h"
+#include "EquipSubscribers.h"
 #include "core/Coverage.h"
 #include "core/CrossFeatures.h"
 #include "core/FilterReason.h"
@@ -445,6 +448,14 @@ namespace Huginn::Learning::SelectionLogV3
             r.wildcardP = e.wildcardPropensity;
             r.old = e.old;   // 0.23.53: the run's score parts
             if (e.old.favorite) r.flags |= Flag::Favorite;
+            // 0.23.56 (R8.2): the new model in shadow, and the D2 legacy
+            // feature, as the run computed them (PipelineCoordinator::ScoreShadow).
+            r.mu = e.shadowMu;
+            r.sd = e.shadowSd;
+            r.lm = e.lnLearnMult;
+            r.um = e.utilMissing;
+            r.exNeed = e.exNeed;
+            r.exCol = e.exCol;
             if (entry) {
                 r.kind = static_cast<uint8_t>(entry->kind);
                 r.cap = &entry->cap;
@@ -776,6 +787,13 @@ namespace Huginn::Learning::SelectionLogV3
                 FillLearner(ctx->rows, old);
                 ctx->old = old.run;
             }
+            // 0.23.56 (R8.2): the held rows the run never gathered, scored by
+            // the new model with the run's own tick (learning/ChoiceShadow.h).
+            if (gate.IsCurrent(page.generation) && old.shadow) {
+                for (auto& r : ctx->rows) {
+                    if ((r.flags & Flag::Held) && !std::isfinite(r.mu)) ScoreLoggedRow(*old.shadow, r);
+                }
+            }
 
             const double ms = std::chrono::duration<double, std::milli>(Clock::now() - now).count();
             {
@@ -835,6 +853,7 @@ namespace Huginn::Learning::SelectionLogV3
                 // rows sit under one head.
                 Annotate(r, coverage.valid ? &coverage.active : nullptr, filtered, old.dropped,
                     d.ctx->refreshPriorSec);
+                if (old.shadow) ScoreLoggedRow(*old.shadow, r);   // R8.2
                 d.added.push_back(std::move(r));
                 if (d.ctx->old.valid) {
                     // The state features the context's rows were read against
@@ -1025,6 +1044,11 @@ namespace Huginn::Learning::SelectionLogV3
                 m_headCurves = head.curves;
                 head.refreshPriorSec = refreshPriorSec;
                 m_headRefreshPriorSec = head.refreshPriorSec;
+                if (g_choiceLearner && g_choiceLearner->Ready()) {   // 0.23.56 (R8.2)
+                    auto [created, sha] = g_choiceLearner->FileIdentity();
+                    head.bootstrapCreatedUtc = std::move(created);
+                    head.bootstrapSha256 = std::move(sha);
+                }
                 const std::string line = m_encoder.BeginSegment(head);
                 m_ctxSeen.clear();
                 m_out << line;
@@ -1219,6 +1243,10 @@ namespace Huginn::Learning::SelectionLogV3
             logger::info("[SelectionV3] {:08X} '{}' via {}: kept in the v3 log only (the learner skips it: {})"sv,
                 d.form, d.name, d.via, d.skip);
             AnswerEpisodes(p.capture.pressSec);
+            // R8.2: the frozen learner skips it, the new one does not (the fit
+            // reads every pick): it never reaches the equip bus, so the
+            // ChoiceSubscriber takes it here.
+            ChoiceSubscriber::Ingest(d);
             Queue(std::move(d));
         }
 
@@ -1547,7 +1575,8 @@ namespace Huginn::Learning::SelectionLogV3
         return cap;
     }
 
-    void OnConfirmed(const EquipEvent& event, Clock::time_point selectedAt, std::string_view how, uint64_t rid)
+    std::shared_ptr<const Decision> OnConfirmed(const EquipEvent& event, Clock::time_point selectedAt,
+                                                std::string_view how, uint64_t rid)
     {
         const Outcome outcome = event.source == EquipSource::Hotkey  ? Outcome::Key
                               : event.source == EquipSource::Wheeler ? Outcome::Wheel
@@ -1571,7 +1600,9 @@ namespace Huginn::Learning::SelectionLogV3
         if (!d.ctx) d.ctx = BuildContext("press", {});
         ResolveChosen(d, outcome != Outcome::Menu);
         AnswerEpisodes(event.v3.ctx ? event.v3.pressSec : Sec(selectedAt));
+        auto logged = std::make_shared<const Decision>(d);   // R8.2: the ChoiceSubscriber's copy
         Queue(std::move(d));
+        return logged;
     }
 
     void OnUnlearnedPick(RE::FormID formID, std::string via, std::string_view skip, std::string caseLabel)

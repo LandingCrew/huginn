@@ -84,8 +84,11 @@ namespace Huginn::Learning::SelectionLogV3
     /// SelectionTracker confirmed `event` (the press was at `selectedAt`).
     /// `rid` (0.23.53): the id SelectionLog::Write gave the same pick's v2
     /// record (0: none was written), logged as the decision's "rid".
-    void OnConfirmed(const EquipEvent& event, std::chrono::steady_clock::time_point selectedAt, std::string_view how,
-                     uint64_t rid);
+    /// R8.2: returns the decision as logged (the context, the rows, the chosen
+    /// row), which the event carries to the ChoiceSubscriber, so the new
+    /// learner's choice set is the log's (and the fit's) row for row.
+    [[nodiscard]] std::shared_ptr<const Core::DecisionLog::Decision> OnConfirmed(
+        const EquipEvent& event, std::chrono::steady_clock::time_point selectedAt, std::string_view how, uint64_t rid);
 
     /// A pick with player input behind it that the frozen learner does not
     /// take (`skip`: "stale", "disabled", "armour"). Held here until it

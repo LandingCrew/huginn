@@ -35,8 +35,11 @@ F = {'eligible': 1, 'scored': 2, 'held': 4, 'equipped': 8, 'shown': 16, 'wildcar
 # pass / cold / ctx / util / suppressed, None when not eligible), the utility
 # an unscored candidate would have had, the vanilla hotkey 0-7 (v3load.py;
 # docs/architecture/9-selection-log-v3.md).
-FORM, UID, KIND, SRC, CAP, FLAGS, SLOT, UTIL, X, WP, FB, CR, OLD = range(13)
+# SHADOW (0.23.56, R8.2) is None or (mu, sd, lm, um, ex): the new model in
+# shadow, indexed by S_MU..S_EX; ex is (need id, column id) or "learned".
+FORM, UID, KIND, SRC, CAP, FLAGS, SLOT, UTIL, X, WP, FB, CR, OLD, SHADOW = range(14)
 O_EST, O_ALPHA, O_N, O_UCB, O_REC, O_PRIOR, O_CW, O_FL, O_WU, O_HK = range(10)
+S_MU, S_SD, S_LM, S_UM, S_EX = range(5)
 
 
 def work_dir():

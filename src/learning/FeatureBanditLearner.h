@@ -1,6 +1,7 @@
 #pragma once
 
 #include "StateFeatures.h"
+#include "core/Battery.h"
 #include <chrono>
 #include <unordered_map>
 #include <shared_mutex>
@@ -37,26 +38,10 @@ namespace Huginn::Learning
    // to the PRIOR ("don't know any more"), not to 0 ("rejected"), and the UCB
    // rises, so a forgotten item is explored again. Replaces the 2%/hour weight
    // decay. `enabled` false: nothing fades and nothing is forgotten.
-   struct MemoryLife
-   {
-      bool enabled = true;
-      float lifeHours = 8.0f;          // T0: full strength this long after a pick
-      float lifePerPickHours = 2.0f;   // k: each doubling of the picks adds ~1.4 k
-      float fadeHours = 1.0f;          // s: the width of the knee
-      float forgetBelow = 0.05f;       // retention under this deletes the entry
-
-      // The one copy of the allowed ranges (the INI loader and the learner
-      // both clamp through this).
-      [[nodiscard]] MemoryLife Clamped() const noexcept
-      {
-         MemoryLife c = *this;
-         c.lifeHours = std::clamp(lifeHours, 0.1f, 10000.0f);
-         c.lifePerPickHours = std::clamp(lifePerPickHours, 0.0f, 1000.0f);
-         c.fadeHours = std::clamp(fadeHours, 0.05f, 1000.0f);
-         c.forgetBelow = std::clamp(forgetBelow, 0.0f, 0.5f);
-         return c;
-      }
-   };
+   // The struct and its retention math live in core/Battery.h (R8.2), shared
+   // with the new learner's per-item b (ChoiceLearner); the arithmetic is the
+   // same expression as before (Core::Battery::RetentionAt with lifeMult 1).
+   using MemoryLife = Core::Battery::MemoryLife;
 
    // =============================================================================
    // FEATURE BANDIT LEARNER (Phase 3.5b-d)

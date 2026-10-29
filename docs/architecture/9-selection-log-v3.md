@@ -108,12 +108,13 @@ contexts per segment and clears both at a head.
 | `cross` | string[8] | the runtime cross-features, in order (`row.x` indexes it). 7 before 0.23.46 (no `covered`) |
 | `kinds` | string[10] | catalog kinds: `Spell Scroll Potion Poison Food Weapon Ammo Armor SoulGem Light` (`row.kind`) |
 | `src` | string[10] | the old engine's candidate source types (`row.src`) |
-| `row` | string[22] | the row columns, in order (below). 12 before 0.23.53 (no `est`..`hk`), 10 before 0.23.46 (no `fb`, `cr`) |
+| `row` | string[27] | the row columns, in order (below). 22 before 0.23.56 (no `mu`..`ex`), 12 before 0.23.53 (no `est`..`hk`), 10 before 0.23.46 (no `fb`, `cr`) |
 | `flags` | object | row flag bits by name (`favorite` since 0.23.53) |
 | `filters` | string[19] | (0.23.46) the candidate filters' reasons, in order (`row.fb` indexes it; `core/FilterReason.h`). 15 before 0.23.55 (no `no_follower` .. `favorite_suppressed`); absent before 0.23.46 |
 | `floors` | string[5] | (0.23.53) how the old engine's floors treated an eligible row, in order: `pass`, `cold`, `ctx`, `util`, `suppressed` (`row.fl` indexes it; `core/OldScore.h`, [below](#the-old-engines-score-parts-02353)). `suppressed` is not written from 0.23.55 (a suppressed favourite is a filter drop, `favorite_suppressed`); the name stays so older rows read. Absent before 0.23.53 |
 | `episode` | object | the episode definition in force: `onset`, `expiry`, `minSec`, `graceSec`, `answerSlackSec`, and `deathDrops: 1` (0.23.16: a death drops the open episodes and those in their grace; absent = 0.23.15, where a death could leave `nothing` records), and `lapSec`, `lapMaxStepSec`, `lapIdleSec` (0.23.51: the lap grid and the idle hold of its clock, [Laps](#laps); absent = every episode judged whole, no lap records). `replay.head_lap_sec(head)` reads it |
 | `refreshPriorSec` | float | (0.23.55) `[Scoring] fRefreshPriorSec` in force: the centre of `covered`'s left(r) prior, and the active-buff filters' refresh window. The centre is read when a context is taken; a record whose context was taken under a different centre than the current head's starts a new segment naming that centre, so every record's `covered` values sit under the head that names their centre (a hot reload that changes it starts a new segment at the first record taken after it). Absent before 0.23.55: the centre was 5 s |
+| `bootstrap` | object | (0.23.56, R8.2) the bootstrap file the shadow model was seeded from: `created_utc` (the file's own) and `sha256` (of the file's bytes), so a log names the exact file its `mu` columns came from (the bootstrap's `provenance` names its logs the same way). Absent when the new model is off (no file, or an invalid one) and before 0.23.56 |
 | `curves` | [kind, p1, p2][] | (0.23.41) the `[Needs]` response curves in force, index-aligned with `needs`: `["logistic", 0.5, 10]` (`core/ResponseCurve.h`), so a fit knows which curve made every logged `need` value from its `in`. A hot reload that changes a curve starts a new segment (a new head line) before the next record. Absent before 0.23.41: those segments used their build's `needs.csv` defaults unless the INI overrode them. `replay.head_curves(head)` reads it |
 
 ### `cap`
@@ -187,6 +188,11 @@ Each row is an array, in the order `head.row` names:
 | 19 | `fl` | int or null | (0.23.53) the floor, an index into `head.floors`; null for a row that is not eligible |
 | 20 | `wu` | float or null | (0.23.53) for an unscored eligible row and a filter drop: the utility the scorer computes for it with no floor |
 | 21 | `hk` | int or null | (0.23.53) the vanilla favourites hotkey bound to the item, 0-7 (keys 1-8) |
+| 22 | `mu` | float or null | (0.23.56, R8.2) the new model's score of the row, in shadow ([below](#the-new-model-in-shadow-02356)): mu_i with no kappa |
+| 23 | `sd` | float or null | (0.23.56) its standard deviation under the diagonal posterior |
+| 24 | `lm` | float or null | (0.23.56) the D2 legacy feature `ln learn mult` the score read: ln(max(1 + λ·learn, 1e-6)) on a row the old floors passed, 0 on any other |
+| 25 | `um` | int or null | (0.23.56) `util missing` the score read: 0 on a row the old floors passed, 1 on any other |
+| 26 | `ex` | [k, j], "learned" or null | (0.23.56) the explanation: the need (`head.needs` index) and column (`head.cols` index) of the largest single θ·need·cap term, or `"learned"` when none is positive |
 
 | Flag | Bit | Meaning |
 |---|---|---|
@@ -246,6 +252,27 @@ build the active-buff seven let their item through in the buff's last
 §2.8 there): a covered item can be eligible with `covered` > 0, and the
 `covered` prior's centre is that key. Segment by build before pooling
 eligibility across 0.23.55.
+
+### The new model in shadow (0.23.56)
+
+R8.2 runs the new model (doc 9; `core/ChoiceScore.h`) beside the old engine,
+seeded from the R6 bootstrap (`Data/SKSE/Plugins/Huginn_Bootstrap.json`,
+[9-bootstrap-format.md](9-bootstrap-format.md)); the old engine still ranks,
+so these columns are logged only:
+
+| Row | `mu` `sd` `ex` | `lm` `um` | computed |
+|---|---|---|---|
+| eligible | the run's (`PipelineCoordinator::ScoreShadow`, after the old scoring and the allocation): the run's need vector, recent_<family> at the run, the row's cap and cross-features, covered(i) with doc 11's greedy upgrade gate, b with its battery | off the same pass that ranked (`learning/legacy/LegacyLearnFeature.h`) | the run |
+| held, never gathered | with the SAME run's tick (its v and W), the row's own cap, cross-features and covered (no upgrade gate) | 0 and 1 (the old engine did not score it) | the context |
+| neither held nor eligible (a shown row missing from both) | null | null | -- |
+
+A row's `mu` is the run's, as its `util` and old-engine parts are: the run is
+`pipe.ageMs` old, and its need vector is the run's, not the context's `need`.
+To score a row exactly as the fit would from the context, recompute it from
+the context (`tools/fit/export_scores.py` does that from fitlib). The shadow
+learner's state at the time is not logged (no cosave yet: every load resets it
+to the bootstrap, so `mu` is the bootstrap's model after the picks of the same
+load).
 
 ### The old engine's score parts (0.23.53)
 

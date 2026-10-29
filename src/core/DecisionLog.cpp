@@ -226,7 +226,7 @@ namespace Huginn::Core::DecisionLog
         // favourites hotkey); a row may end before them (trailing nulls are
         // not written).
         out += R"(,"row":["form","uid","kind","src","cap","flags","slot","util","x","wp","fb","cr",)"
-               R"("est","a","n","ucb","rec","prior","cw","fl","wu","hk"])";
+               R"("est","a","n","ucb","rec","prior","cw","fl","wu","hk","mu","sd","lm","um","ex"])";
         out += R"(,"flags":{"eligible":1,"scored":2,"held":4,"equipped":8,"shown":16,"wildcard":32,)"
                R"("override":64,"remembered":128,"addedAtPick":256,"favorite":512})";
         out += R"(,"filters":)";   // 0.23.46: a row's "fb" indexes this
@@ -255,6 +255,13 @@ namespace Huginn::Core::DecisionLog
         out += '}';
         out += R"(,"refreshPriorSec":)";   // 0.23.55: covered(i)'s left(r) centre
         AppendSeconds(out, head.refreshPriorSec);
+        if (!head.bootstrapSha256.empty()) {   // 0.23.56 (R8.2): the shadow model's seed
+            out += R"(,"bootstrap":{"created_utc":)";
+            out += JsonString(head.bootstrapCreatedUtc);
+            out += R"(,"sha256":)";
+            out += JsonString(head.bootstrapSha256);
+            out += '}';
+        }
         if (!head.curves.empty()) {
             out += R"(,"curves":[)";
             for (std::size_t i = 0; i < head.curves.size(); ++i) {
@@ -347,6 +354,12 @@ namespace Huginn::Core::DecisionLog
         if (o.floor != kNoFloor) last = 7;
         if (std::isfinite(o.wouldUtil)) last = 8;
         if (r.hotkey != kNoHotkey) last = 9;
+        // 0.23.56 (R8.2): mu, sd, lm, um, ex -- the new model in shadow.
+        if (std::isfinite(r.mu)) last = 10;
+        if (std::isfinite(r.sd)) last = 11;
+        if (std::isfinite(r.lm)) last = 12;
+        if (r.um >= 0) last = 13;
+        if (r.exNeed != kExNone) last = 14;
         for (int i = 0; i <= last; ++i) {
             out += ',';
             if (i < 7) AppendNum(out, lead[static_cast<std::size_t>(i)]);
@@ -355,7 +368,28 @@ namespace Huginn::Core::DecisionLog
                 else AppendInt(out, o.floor);
             }
             else if (i == 8) AppendNum(out, o.wouldUtil);
-            else AppendInt(out, r.hotkey);
+            else if (i == 9) {
+                if (r.hotkey == kNoHotkey) out += "null";
+                else AppendInt(out, r.hotkey);
+            }
+            else if (i == 10) AppendNum(out, r.mu);
+            else if (i == 11) AppendNum(out, r.sd);
+            else if (i == 12) AppendNum(out, r.lm);
+            else if (i == 13) {
+                if (r.um < 0) out += "null";
+                else AppendInt(out, r.um);
+            }
+            else {
+                if (r.exNeed == kExNone) out += "null";
+                else if (r.exNeed == kExLearned) out += "\"learned\"";
+                else {
+                    out += '[';
+                    AppendInt(out, r.exNeed);
+                    out += ',';
+                    AppendInt(out, r.exCol);
+                    out += ']';
+                }
+            }
         }
         out += ']';
     }

@@ -695,8 +695,11 @@ void OnUpdate(float deltaSeconds)
         auto* ui = RE::UI::GetSingleton();
         if (ui && !ui->GameIsPaused()) {
             g_featureBanditLearner->AdvancePlayTime(deltaSeconds);
+            // R8.2: the same play clock drives the new learner's b battery.
+            if (g_choiceLearner) g_choiceLearner->AdvancePlayTime(deltaSeconds);
         }
     }
+    if (g_choiceLearner) g_choiceLearner->MaybeForgetFaded();
 
     float deltaMs = deltaSeconds * 1000.0f;
 

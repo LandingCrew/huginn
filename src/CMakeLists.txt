@@ -155,6 +155,9 @@ install(
 install(
    FILES
       "${ROOT_DIR}/configs/Huginn.ini"
+      # R8.2: the R6 fit's bootstrap for the new model, beside Huginn.ini
+      # (docs/architecture/9-bootstrap-format.md)
+      "${ROOT_DIR}/configs/Huginn_Bootstrap.json"
    DESTINATION "SKSE/Plugins"
    COMPONENT "main"
 )
@@ -187,6 +190,8 @@ if("${COPY_OUTPUT}")
       # Copy configuration
       COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT_DIR}/configs/Huginn.ini" "${CompiledPluginsPath}/SKSE/Plugins/Huginn.ini"
       COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT_DIR}/configs/Huginn_Overrides.ini" "${CompiledPluginsPath}/SKSE/Plugins/Huginn_Overrides.ini"
+      # R8.2: the new model's bootstrap (Data/SKSE/Plugins/Huginn_Bootstrap.json)
+      COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${ROOT_DIR}/configs/Huginn_Bootstrap.json" "${CompiledPluginsPath}/SKSE/Plugins/Huginn_Bootstrap.json"
 
       # Copy Scaleform widget
       COMMAND "${CMAKE_COMMAND}" -E make_directory "${CompiledPluginsPath}/Interface/Huginn"

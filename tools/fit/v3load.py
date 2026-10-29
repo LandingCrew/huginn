@@ -68,6 +68,10 @@ DEC_DEFAULTS = {'char': None, 'list': '', 'gen': 1, 'name': None, 'form': None, 
                 'learned': 1, 'preEquipped': 0, 'ep': None, 'rid': None}
 # The row columns 0.23.53 appended, in the order of the row tuple's OLD element.
 OLD_COLS = ('est', 'a', 'n', 'ucb', 'rec', 'prior', 'cw', 'fl', 'wu', 'hk')
+# 0.23.56 (R8.2): the new model in shadow, by name (common.SHADOW, S_MU..S_EX):
+# mu, sd, lm (ln learn mult), um (util missing), ex ((need id, column id) by
+# the loader's global indices, or "learned"). None on older rows.
+SHADOW_COLS = ('mu', 'sd', 'lm', 'um', 'ex')
 # A nothing record's episode fields 0.23.51 added (see the module docstring);
 # epSec defaults to the record's own durSec.
 EP_DEFAULTS = {'why': 'end', 'lap': 0}
@@ -115,7 +119,8 @@ def load(paths):
                 hcross = gix(r['cross'], crossix, cross)
                 segcaps = {}
                 seg = len(heads)
-                heads.append({k: r[k] for k in ('launch', 'list', 'build', 'kinds', 'src', 'row', 'flags', 'episode', 'filters', 'floors') if k in r}
+                heads.append({k: r[k] for k in ('launch', 'list', 'build', 'kinds', 'src', 'row', 'flags', 'episode', 'filters', 'floors',
+                                                'bootstrap') if k in r}
                              | {'ncols': len(r['cols']), 'nneeds': len(r['needs']), 'file': str(path)})
                 kinds, srcs = r['kinds'], r['src']
                 hfilters = r.get('filters', [])
@@ -125,6 +130,8 @@ def load(paths):
                 hfloors = r.get('floors', [])
                 iold = [rnames.index(n) if n in rnames else None for n in OLD_COLS]   # 0.23.53
                 ifl = OLD_COLS.index('fl')
+                ishadow = [rnames.index(n) if n in rnames else None for n in SHADOW_COLS]   # 0.23.56
+                iex = SHADOW_COLS.index('ex')
 
                 def row_tuple(f):
                     form, uid, kind, src, cap, flags, slot, util, x, wp = f[:10]
@@ -137,10 +144,20 @@ def load(paths):
                         if old[ifl] is not None:
                             old[ifl] = hfloors[old[ifl]]
                         old = tuple(old)
+                    sh = [f[i] if i is not None and i < len(f) else None for i in ishadow]
+                    if all(v is None for v in sh):
+                        sh = None
+                    else:
+                        ex = sh[iex]
+                        if isinstance(ex, list) and len(ex) == 2:
+                            sh[iex] = (hneed[ex[0]], hcol[ex[1]])
+                        elif ex != 'learned':
+                            sh[iex] = None
+                        sh = tuple(sh)
                     return (form, uid, None if kind is None else kinds[kind], None if src is None else srcs[src],
                             -1 if cap == -1 else segcaps[cap], flags, slot, util,
                             tuple((hcross[i], v) for i, v in x), wp,
-                            None if fb is None else hfilters[fb], cr, old)
+                            None if fb is None else hfilters[fb], cr, old, sh)
             elif t == 'cap':
                 c = tuple(sorted((hcol[i], v) for i, v in r['c']))
                 if c not in capkey:
