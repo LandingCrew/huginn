@@ -450,6 +450,10 @@ namespace Huginn::State::DropAheadProbe
             g_falseWaterHold.Reset();
             g_swimMatchLogged = false;
             g_swimMismatchLogged = false;
+            // A load the hook never saw a loading screen for (verifier of
+            // #219): the last position is from before it, not movement.
+            g_lastPosAt = -1.0;
+            g_lastPosGameAt = -1.0;
             ResetEdge();
          }
          const auto now = std::chrono::steady_clock::now();

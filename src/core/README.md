@@ -132,8 +132,9 @@ The need vector (R3): `ResponseCurve.h` (the curve kinds), `NeedIds.h`
 `NeedSnapshot.h` (the plain record of every reading a need is computed from)
 and `NeedSnapshotIO` (its text form), `NeedEvaluator` (the inputs of
 `needs.csv`'s `r3_input` column, the skip-gate signature, `TimeDriven`),
-`NeedSensorMath.h` and `DropAhead.h` (the sensors' arithmetic; the game side
-only reads forms and casts rays), `TargetFamilies.h` (the multi-hot family
+`NeedSensorMath.h`, `DropAhead.h` and since 0.23.48 `EdgeApproach.h`
+(time_to_edge and edge_approach from the probe passes) (the sensors'
+arithmetic; the game side only reads forms and casts rays), `TargetFamilies.h` (the multi-hot family
 reading), and since 0.23.41 `TargetTracking.h` (when a tracked actor leaves
 the list, in seconds, and the player's side), `LightHold.h` (the light the
 darkness need reads, held against flicker) and `EffectSourceLog.h` (the

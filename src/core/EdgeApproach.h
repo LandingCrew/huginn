@@ -58,6 +58,13 @@
 // open Wheeler wheel (time at 0.2) neither stretches time_to_edge five times
 // nor makes a closing player look still, and a pausing menu (no samples, the
 // clock stopped) adds nothing.
+// That clock errs short for these needs (verifier of #219): GameFrameSec
+// takes the smaller of wall time x the multiplier and the frame delta and
+// caps a frame at 0.1 s, the safe side for FallTracker. Here a short clock
+// reads speed and slope high: one pass after a hitch longer than 0.1 s, and
+// for the whole effect if a slow-time effect ever leaves the player moving at
+// full speed (not verified for the Slow Time shout or LoreRim's detection
+// slow-down). Both err toward an early time_to_edge, never a missed one.
 //
 // Pure: standard library only (src/core/README.md).
 // =============================================================================
