@@ -378,8 +378,8 @@ namespace Huginn::Override
     // A poison is running and the player carries a cure: offer the cure.
     //
     // Why an override and not a weight. The context rule gave the cure the
-    // SAME weight as every Resist Poison item (ContextRuleEngine
-    // resistPoisonWeight, read by ContextWeightForCandidate for both tags),
+    // SAME weight as every Resist Poison item (the old context rules'
+    // resistPoisonWeight, read by the context weight for both tags),
     // scaled down by the player's poison resistance -- a discount that is
     // right for a resist and wrong for a cure. On LoreRim half the larder
     // carries a Resist Poison rider, so while poisoned the cure was one of

@@ -10,24 +10,27 @@
 namespace Huginn::Scoring
 {
     // =============================================================================
-    // SCORE BREAKDOWN - Transparency into how the final score was computed
+    // SCORE BREAKDOWN - the OLD utility's parts (R8.4: legacy rows only)
     // =============================================================================
+    // Set by the legacy pass (learning/legacy/) on the rows the old floors keep:
+    // the D2 feature's inputs (ln learn mult = ln(1 + lambda * learningScore))
+    // and the v2 / v3 logs' old columns. Nothing ranks or displays on it.
     struct ScoreBreakdown
     {
         // Input components
-        float contextWeight = 0.0f;     // From ContextRuleEngine (relevance to current situation)
-        float rewardEstimate = 0.0f;            // From FeatureBanditLearner (learned preference)
-        float prior = 0.0f;             // From PriorCalculator (intrinsic quality heuristic)
+        float contextWeight = 0.0f;     // the old context weight (relevance to current situation)
+        float rewardEstimate = 0.0f;            // the old learner (learned preference)
+        float prior = 0.0f;             // the old prior (intrinsic quality heuristic)
         float ucb = 0.0f;               // Upper Confidence Bound (exploration bonus)
         float confidence = 0.0f;        // α: How much to trust reward estimate vs prior (0-1)
 
         // Computed components
         float learningScore = 0.0f;     // α*R + (1-α)*prior + β*UCB
         float lambda = 0.0f;            // λ(confidence) — learning amplification actually applied
-        float recencyBoost = 0.0f;      // From UsageMemory (event-driven short-term recall)
-        float correlationBonus = 0.0f;  // From CorrelationBooster
-        float potionMultiplier = 1.0f;  // From PotionDiscriminator
-        float favoritesMultiplier = 1.0f; // From favorites system
+        float recencyBoost = 0.0f;      // the old learner's recency (event-driven short-term recall)
+        float correlationBonus = 0.0f;  // the old correlation bonus
+        float potionMultiplier = 1.0f;  // the old potion multiplier
+        float favoritesMultiplier = 1.0f; // the uniform favourites boost (fFavoritesBoostMax)
 
         // Log string, compact: only the factors that enter the utility formula
         // (u = ctx*(1+λ*learn)*mults), with neutral 1.00x multipliers omitted.
@@ -149,7 +152,7 @@ namespace Huginn::Scoring
         }
 
         [[nodiscard]] float GetContextWeight() const noexcept {
-            // Return the context weight computed during scoring (from ContextRuleEngine)
+            // The old context weight of a legacy row (the D2 feature's floor input)
             // NOTE: baseRelevance field removed in v0.12.x - use breakdown.contextWeight instead
             return breakdown.contextWeight;
         }

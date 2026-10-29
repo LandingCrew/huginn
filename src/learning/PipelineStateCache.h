@@ -61,7 +61,8 @@ namespace Huginn::Learning
             Candidate::SourceType sourceType{};
             Slot::SlotClassification slotClass = Slot::SlotClassification::Regular;  // SlotClassifier::Classify
             size_t rank = 0;            // kUnrankedTail past the sorted prefix
-            float utility = 0.0f;
+            float utility = 0.0f;       // the old engine's (the v2 log only): ranks nothing since R8.3
+            double score = 0.0;         // R8.4: what it ranked on (SlotScore: mu; ln u in the fallback)
             Scoring::ScoreBreakdown breakdown;
             bool isWildcard = false;
             bool isColdStartBoosted = false;
@@ -79,8 +80,8 @@ namespace Huginn::Learning
         };
 
         /// R4: one ELIGIBLE candidate of the run -- every item CandidateGenerator
-        /// produced, before the scorer's floors (fMinimumContextWeight,
-        /// fMinimumUtility) dropped any. One row per item: a weapon stack is
+        /// produced, whatever the old engine's floors said (R8.3: they drop
+        /// nothing from the ranking). One row per item: a weapon stack is
         /// its own row (formID + uniqueID). Copied out of the run for the
         /// selection log v3 (learning/SelectionLogV3); nothing scores from it.
         struct EligibleRow
@@ -213,6 +214,7 @@ namespace Huginn::Learning
                     .slotClass = Slot::SlotClassifier::Classify(sc),
                     .rank = (i < sortedPrefix) ? i : kUnrankedTail,
                     .utility = sc.utility,
+                    .score = sc.SlotScore(),
                     .breakdown = sc.breakdown,
                     .isWildcard = sc.isWildcard,
                     .isColdStartBoosted = sc.isColdStartBoosted,
@@ -247,7 +249,7 @@ namespace Huginn::Learning
         {
             bool wasCandidate = false;
             size_t rank = 0;
-            float utility = 0.0f;
+            double score = 0.0;   // R8.4: SlotScore (was the old utility)
             bool wasDisplayed = false;
             size_t displayPage = 0;
         };
@@ -262,7 +264,7 @@ namespace Huginn::Learning
                 const auto& row = m_scores[it->second];
                 info.wasCandidate = true;
                 info.rank = row.rank;
-                info.utility = row.utility;
+                info.score = row.score;
             }
 
             for (const auto& s : m_shown) {

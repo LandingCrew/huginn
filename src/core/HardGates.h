@@ -11,11 +11,11 @@
 //
 // Each predicate is ONE function here, read by both sides:
 //   - the filter (candidate/CandidateFilters.cpp), on facts read from the
-//     game's state by Context::HardGateInputs (context/ContextRuleEngine.h);
-//   - the old engine's context code: ContextRuleEngine::EvaluateRules sets
+//     game's state by Context::HardGateInputs (context/ContextFacts.h);
+//   - the old engine's context code: the legacy context rules set
 //     followerPresent, the fortify<Craft> weights and darknessWeight from the
 //     same three facts (FollowerNear, StationCraft, DarknessApplies), and
-//     WeightForCandidate's zero arms read those.
+//     the old context weight's zero arms read those.
 // So the filter drops exactly the items the old context weight zeroed (the
 // INI weights aside: a weight configured to 0 still zeroes in the old engine
 // without the filter dropping the item; the shipped weights are all > 0).
@@ -53,7 +53,7 @@ namespace Huginn::Core::Gate
     };
 
     /// The craft of a bench type (the furniture's WBDT). The old engine's
-    /// mapping, unchanged (it was ContextRuleEngine.cpp's
+    /// mapping, unchanged (it was the context rules'
     /// CraftSkillForWorkstation, which now reads this): every create-object
     /// bench counts as Smithing -- a cooking spit included. That is a known
     /// limit of the frozen engine (BenchKind.h); the filter keeps it so that it

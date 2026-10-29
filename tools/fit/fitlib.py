@@ -855,8 +855,8 @@ def row_features(S, spec):
                of a pick whose v2 record joins, else 0; and 'util missing', the not-scored flag.
       mults    (D5, with learn) 'ln fav', 'ln corr', 'ln potion': the other multipliers, same rows.
       learner  (L1, no old scorer) 'ln learner': ln(1 + lambda(alpha) (alpha est + rec)), the
-               learner's own per-item state (FeatureBanditLearner's estimate and confidence,
-               UsageMemory's recency; no prior, no UCB), from the pick's v2 record or else the
+               learner's own per-item state (the old learner's estimate and confidence and
+               its recency; no prior, no UCB), from the pick's v2 record or else the
                latest earlier one that holds the item (learner_before); and 'eligible', the row's
                eligible flag."""
     feats = []

@@ -106,19 +106,19 @@ TEST_CASE("reach: the [Reach] line")
     in.scored = true;
     in.ranked = true;
     in.rank = 14;
-    in.utility = 0.834f;
+    in.score = 0.834;
     in.pageKnown = true;
     in.page = 0;
     in.keys = { { 0, "Oakflesh on Self" }, { 2, "Conjure Skeletal Hero" } };
 
     CHECK(FormatLine(in) ==
           "[Reach] 'Fast Healing' 0002F3B8 kind=spell via=magic menu fight=yes case=B-low (low rank) "
-          "rank=14 util=0.83 | page 0: 0=Oakflesh on Self 2=Conjure Skeletal Hero");
+          "rank=14 score=+0.83 | page 0: 0=Oakflesh on Self 2=Conjure Skeletal Hero");
 
     SUBCASE("past the sorted prefix: rank=tail")
     {
         in.ranked = false;
-        CHECK(FormatLine(in).find(" rank=tail util=0.83 |") != std::string::npos);
+        CHECK(FormatLine(in).find(" rank=tail score=+0.83 |") != std::string::npos);
     }
     SUBCASE("not scored at all")
     {
@@ -126,10 +126,10 @@ TEST_CASE("reach: the [Reach] line")
         in.caseLabel = "A (not candidate)";
         in.inFight = false;
         const auto line = FormatLine(in);
-        CHECK(line.find(" fight=no case=A (not candidate) rank=- util=- |") != std::string::npos);
+        CHECK(line.find(" fight=no case=A (not candidate) rank=- score=- |") != std::string::npos);
         // 0.23.46: why, as a field of its own; the case label is unchanged.
         in.notCandidate = "affordability";
-        CHECK(FormatLine(in).find(" case=A (not candidate) rank=- util=- filtered_by=affordability | page 0:") !=
+        CHECK(FormatLine(in).find(" case=A (not candidate) rank=- score=- filtered_by=affordability | page 0:") !=
               std::string::npos);
     }
     SUBCASE("gear: no case label, no page cached yet")
@@ -140,7 +140,7 @@ TEST_CASE("reach: the [Reach] line")
         in.pageKnown = false;
         in.keys.clear();
         CHECK(FormatLine(in) ==
-              "[Reach] 'Fast Healing' 0002F3B8 kind=gear via=magic menu fight=yes case=- rank=- util=- | page ?");
+              "[Reach] 'Fast Healing' 0002F3B8 kind=gear via=magic menu fight=yes case=- rank=- score=- | page ?");
     }
     SUBCASE("an empty page")
     {

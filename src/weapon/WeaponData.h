@@ -337,7 +337,7 @@ namespace Huginn::Weapon
       /// agree on what counts as one thing.
       ///
       /// The LEARNER does not, and that is a decision rather than an oversight.
-      /// FeatureBanditLearner is keyed on FormID alone, so both Iron Daggers
+      /// The old learner is keyed on FormID alone (the choice learner's b too), so both Iron Daggers
       /// share one weight vector. Tempering does not change what a weapon is
       /// FOR, and splitting the weights would halve the evidence behind each
       /// one and reset a weapon's learned preference every time the player

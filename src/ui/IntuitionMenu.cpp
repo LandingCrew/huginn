@@ -8,6 +8,8 @@
 #include "state/PlayerActorState.h"
 #include "weapon/WeaponData.h"
 #include "slot/SlotAllocator.h"
+#include "core/EffectColumns.h"   // Verbose: the explanation's column name (R8.4)
+#include "core/NeedIds.h"         // ... and need name
 
 #include <algorithm>
 #include <atomic>
@@ -787,13 +789,23 @@ namespace Huginn::UI
             }
         }
 
-        // === Verbose mode: append score breakdown ===
-        if (mode == DisplayMode::Verbose) {
-            const auto& b = scored.breakdown;
-            std::string scores = std::format("ctx:{:.1f} est:{:.1f} p:{:.1f}",
-                b.contextWeight, b.rewardEstimate, b.prior);
-            if (b.recencyBoost > 0.0f) {
-                scores += std::format(" rec:{:.1f}", b.recencyBoost);
+        // === Verbose mode: append the score and its explanation ===
+        // R8.4 (0.24.1): the choice score mu and the explanation term (the
+        // largest theta n cap term, need x column), or "learned" when no need
+        // term is positive; the old engine's context / estimate / prior
+        // breakdown is gone. An override shows no score (pinned), and the
+        // fallback ranking (no bootstrap) has no explanation.
+        if (mode == DisplayMode::Verbose && !assignment.IsOverride()) {
+            const auto& t = scored.choice.top[0];
+            std::string scores;
+            if (t.need >= 0) {
+                const auto ni = static_cast<size_t>(t.need);
+                const auto ci = static_cast<size_t>(t.col);
+                scores = std::format("mu:{:+.1f} {}x{}", scored.score,
+                    ni < Core::Needs::kNeedCount ? Core::Needs::kNeeds[ni].id : std::string_view("?"),
+                    ci < Core::Effect::kColumnCount ? Core::Effect::kColumns[ci].id : std::string_view("?"));
+            } else {
+                scores = std::format("mu:{:+.1f} learned", scored.score);
             }
             if (!detail.empty()) {
                 detail += std::format(" \xC2\xB7 {}", scores);

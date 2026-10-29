@@ -3,7 +3,7 @@
 // =============================================================================
 // COMBAT ONSET (R8.1, 0.23.55) -- one combat clock
 // =============================================================================
-// Map Phase 6 item 2. The old PotionDiscriminator kept its own combat timer
+// Map Phase 6 item 2. The old potion multiplier kept its own combat timer
 // (OnCombatStart / OnCombatEnd / Update, fed by StateManager's
 // ConsumeCombatTransition); the need vector reads the combat_onset sensor
 // (NeedSensorState::combatStartAt, written on the same published transition,

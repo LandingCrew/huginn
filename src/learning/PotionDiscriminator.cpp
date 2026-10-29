@@ -67,11 +67,12 @@ namespace Huginn::Scoring
         }
 
         // Strength ordering WITHIN one potion (Fair vs Faint) is not decided
-        // here: a potion scored on its own cannot see its siblings. See
-        // UtilityScorer::ApplyPotionTierPreference, which replaced a magnitude
-        // bonus here and an "overkill" penalty below. Together they flipped
-        // Fair and Faint as health crossed the Medium bucket, and in play the
-        // three strengths of Restore Health traded slots every few seconds.
+        // here: a potion scored on its own cannot see its siblings. A magnitude
+        // bonus here and an "overkill" penalty below once did, and together
+        // they flipped Fair and Faint as health crossed the Medium bucket (in
+        // play the three strengths of Restore Health traded slots every few
+        // seconds); a tier preference after the floors replaced them, and R8.4
+        // deleted that too: the choice score orders strengths through cap(i).
 
         // =====================================================================
         // Situation-Specific Adjustments

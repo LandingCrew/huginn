@@ -91,7 +91,6 @@ namespace Huginn::Slot
         // needs it to tell one instance's lock from the other's.
         uint16_t uniqueID = 0;
         std::string name;
-        float utility = 0.0f;   // the old engine's value: display and logs only
         // What the slot code ranked it on (ScoredCandidate::SlotScore): any
         // sign. An override carries Core::kPinnedScore (+inf), an empty slot
         // Core::kUnrankedScore (-inf); neither is ever compared.
@@ -135,7 +134,6 @@ namespace Huginn::Slot
                 sc.GetFormID(),
                 sc.GetUniqueID(),
                 std::string(sc.GetName()),
-                sc.utility,
                 sc.SlotScore()
             };
         }

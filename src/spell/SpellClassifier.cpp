@@ -922,7 +922,7 @@ namespace Huginn::Spell
       // and Stealth — not because they are those things, but because that was
       // the only way to reach SpellType::Utility and ::Buff with no bit of
       // their own. Both now carry a real SpellTagExt and derive their type from
-      // it. The Stealth one had a live consequence: WeightForCandidate reads
+      // it. The Stealth one had a live consequence: the context weight reads
       // Stealth into stealthWeight, so every waterbreathing spell was ranked as
       // a sneaking tool (#79).
       if (contains("paralyze")) {

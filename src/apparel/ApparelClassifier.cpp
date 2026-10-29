@@ -100,8 +100,8 @@ namespace Huginn::Apparel
       }
 
       // The primary is the strongest craft overall: what the widget shows, what
-      // the log names, and what PriorCalculator ranks on. The context weight does
-      // NOT come from it — WeightForCandidate reads the whole triple, so a piece
+      // the log names, and what the old prior ranks on. The legacy context
+      // weight does NOT come from it — it reads the whole triple, so a piece
       // still surfaces at the bench for its weaker craft.
       data.craftSkill = data.magnitudes.Primary();
       data.magnitude = data.magnitudes.For(data.craftSkill);

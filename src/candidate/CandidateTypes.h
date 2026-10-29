@@ -68,7 +68,7 @@ namespace Huginn::Candidate
         // Why an OVERRIDE surfaced this candidate (set by OverrideManager only —
         // ordinary candidates leave it None and the display falls back to the
         // per-tick context reason). See Context::ContextReason.
-        // NOTE: baseRelevance field removed in v0.12.x - replaced by ContextRuleEngine.contextWeight
+        // NOTE: baseRelevance field removed in v0.12.x (R8.3: ranked on the choice score)
         Context::ContextReason overrideReason = Context::ContextReason::None;
 
         // Deduplication key combines source type, unique ID, and form ID.
@@ -220,14 +220,14 @@ namespace Huginn::Candidate
     // event, so `isEquipped` is what keeps a piece you are already wearing out of
     // the pool. It is also the only source with no baseline context weight — a
     // Fortify Smithing ring is relevant at a forge and nowhere else, so
-    // WeightForCandidate returns 0 away from a workstation instead of falling
+    // the legacy context weight is 0 away from a workstation instead of falling
     // back to baseRelevanceWeight.
     // =============================================================================
     struct ApparelCandidate : CandidateBase
     {
         Apparel::CraftSkill  craftSkill = Apparel::CraftSkill::None;  // Strongest craft
         float                magnitude = 0.0f;  // ...and its magnitude — the ranking key
-        // Every craft this piece fortifies. WeightForCandidate reads this rather
+        // Every craft this piece fortifies. The context weight reads this rather
         // than craftSkill: a "Fortify Alchemy 5 / Fortify Smithing 20" ring has a
         // Smithing primary but must still surface at an alchemy lab.
         Apparel::CraftMagnitudes magnitudes;
@@ -337,7 +337,7 @@ namespace Huginn::Candidate
         return std::visit([](const auto& c) -> bool { return IsFavoritedCandidate(c); }, v);
     }
 
-    // NOTE: GetRelevance() helper removed in v0.12.x - use ContextRuleEngine.Evaluate() instead
+    // NOTE: GetRelevance() helper removed in v0.12.x (R8.3: ranked on the choice score)
 
     // Helper: Check if variant is a specific type
     template<typename T>

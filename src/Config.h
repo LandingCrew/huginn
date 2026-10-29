@@ -231,7 +231,7 @@ namespace Huginn::Config
 
    // The 2%/hour weight decay (DECAY_RATE_PER_HOUR) is gone: what the player
    // stops choosing now fades by confidence and is forgotten -- memory with a
-   // useful life, FeatureBanditLearner::MemoryLife and [Learning] in the INI.
+   // useful life, the old learner's MemoryLife and [Learning] in the INI.
 
 
    // -----------------------------------------------------------------------------

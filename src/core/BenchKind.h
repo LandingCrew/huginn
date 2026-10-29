@@ -12,7 +12,7 @@
 // vector only (needs/NeedSnapshotBuilder.cpp, 0.23.16: workstation_smithing
 // fired at a cooking spit in the LoreRim R3 session).
 //
-// The old engine's CraftSkillForWorkstation (context/ContextRuleEngine.cpp)
+// The old engine's CraftSkillForWorkstation (context/ContextFacts.h)
 // still reads every create-object bench as Smithing; it feeds scoring
 // (fortifySmithingWeight) and is frozen until R8 replaces it.
 //

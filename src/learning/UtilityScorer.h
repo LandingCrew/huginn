@@ -18,41 +18,33 @@
 #include "StateFeatures.h"
 #include "candidate/CandidateTypes.h"
 #include "legacy/LegacyLearnFeature.h"
+#include "legacy/LegacyRun.h"
 
 #include <vector>
 
 namespace Huginn::Scoring
 {
     // =============================================================================
-    // UTILITY SCORER
+    // UTILITY SCORER -- the old scorer's host (R8.4: on the D2 allowlist)
     // =============================================================================
-    // Unified scoring system for all candidate types (spells, potions, weapons, etc.)
+    // Two jobs since the cutover (R8.3), neither of them ranking on utility:
     //
-    // Scoring Formula (version-dependent):
+    // 1. THE LEGACY PASS (kept for D2, learning/legacy/LegacyLearnFeature.h):
+    //      utility = contextWeight × (1 + λ(confidence) × learningScore)
+    //                × correlationBonus × potionMultiplier × favoritesMultiplier
+    //    with λ(confidence) = lambdaMin + confidence × (lambdaMax - lambdaMin),
+    //    computed only so the old floors (fMinimumContextWeight, fMinimumUtility,
+    //    the cold start) decide which rows get the choice score's
+    //    ln learn mult = ln(1 + λ·learningScore), and for the v2 / v3 logs.
+    //    favoritesMultiplier is the uniform favoritesBoostMax.
     //
-    // LEGACY (v0.12.x):
-    //   utility = (contextWeight + λ * learningScore + correlationBonus)
-    //             * potionMultiplier * favoritesMultiplier
+    // 2. LIVE DUTIES OF THE NEW ENGINE: the rank sort and the wildcards
+    //    (RankAndApplyWildcards, on the choice score; R10 replaces the
+    //    wildcards), the magicka / stamina envelopes the needs read, and the
+    //    [Recs] lines.
     //
-    // MULTIPLICATIVE (v1.0):
-    //   utility = contextWeight × (1 + λ(confidence) × learningScore)
-    //             × correlationBonus × potionMultiplier × favoritesMultiplier
-    //
-    // Where λ(confidence) = lambdaMin + confidence × (lambdaMax - lambdaMin)
-    //
-    // Where:
-    //   - contextWeight: From ContextRuleEngine (how relevant now) [0,1]
-    //   - learningScore: α*R + (1-α)*prior + β*UCB (learned + heuristic + exploration)
-    //   - correlationBonus: Equipment synergy bonuses (multiplicative in v1.0)
-    //   - potionMultiplier: Combat timing and value discrimination
-    //   - favoritesMultiplier: Boost/suppress favorited items
-    //
-    // The scorer:
-    //   1. Takes raw candidates from CandidateGenerator
-    //   2. Computes utility for each candidate
-    //   3. Sorts the whole list (stable; R7 -- the slot fill reads past the top N)
-    //   4. Applies wildcards for exploration
-    //   5. Returns ranked ScoredCandidateList
+    // Retirement of (1): a refit on 0.23.53+ logs where a variant without the
+    // old scorer passes R6's gate, or the user's call (roadmap, R8).
     // =============================================================================
 
     class UtilityScorer
@@ -70,19 +62,18 @@ namespace Huginn::Scoring
         // @param combatOnsetAgo R8.1: seconds since the current fight began,
         //        kNever out of combat (core/CombatOnset.h), for the
         //        PotionDiscriminator: the combat_onset clock.
-        // @param outWeights Optional: the context weight map this pass
-        //        scored against (the v3 log's old parts read it).
-        // @param outLegacy Optional: one Legacy::Row per candidate
-        //        (index-aligned), with the index of its row in the result.
-        [[nodiscard]] ScoredCandidateList LegacyPass(
+        // R8.4: returns the whole pass as a Legacy::Run (learning/legacy/
+        // LegacyRun.h): the kept rows, one Legacy::Row per candidate
+        // (index-aligned) with the row each candidate reads resolved, and the
+        // context weight map this pass scored against (the v3 log's old parts
+        // read it).
+        [[nodiscard]] Legacy::Run LegacyPass(
             const std::vector<Candidate::CandidateVariant>& candidates,
             const State::GameState& state,
             const State::PlayerActorState& player,
             const State::TargetCollection& targets,
             const State::WorldState& world,
-            float combatOnsetAgo,
-            Context::ContextWeightMap* outWeights = nullptr,
-            std::vector<Legacy::Row>* outLegacy = nullptr);
+            float combatOnsetAgo);
 
         // R8.3: the whole list in rank order on SlotScore()'s score (stable;
         // R7 -- the slot fill reads past the top N), then the wildcards.
@@ -98,16 +89,6 @@ namespace Huginn::Scoring
 
         /// Replace the ContextRuleEngine's config snapshot (e.g., after INI hot-reload).
         void SetContextWeightConfig(const State::ContextWeightConfig& config);
-
-        /// Name the dominant reason behind a weight map from ScoreCandidates'
-        /// outWeights. Thin forward to the owned ContextRuleEngine, whose config
-        /// (and therefore whose thresholds) this scorer already keeps in sync.
-        [[nodiscard]] Context::ContextReason DominantContextReason(
-            const Context::ContextWeightMap& weights,
-            const Context::ContextReasonSignals& signals) const
-        {
-            return m_contextEngine.DominantReason(weights, signals);
-        }
 
         // Component access (for advanced configuration)
         [[nodiscard]] WildcardManager& GetWildcardManager() noexcept { return m_wildcardMgr; }
@@ -129,7 +110,8 @@ namespace Huginn::Scoring
         [[nodiscard]] float HeldStamina(float raw) const noexcept { return m_staminaEnvelope.Value(raw); }
 
         // Recommendation logging (release-available; see DebugSettings::recLogVerbosity).
-        // detail: append learn's inputs (Q/P/UCB/α) to each line.
+        // detail: append the legacy feature's inputs (ctx, λ, learn and its
+        // Q/P/UCB/α) to each line.
         // force: bypass the membership-change dedup (on-demand `hg recs` dumps).
         // fallback (R8.3): the list ranks on the old utility (no bootstrap).
         void LogTopCandidates(const ScoredCandidateList& ranked, size_t count = 5,
@@ -138,11 +120,9 @@ namespace Huginn::Scoring
         /// 0.23.53, LOGGING ONLY (selection log v3): what ScoreCandidates
         /// computes for one candidate, with no floor applied -- the same
         /// ScoreCandidateInternal the scoring loop calls, at the context
-        /// weight, learner metrics and recency the caller passes. The
-        /// favourites multiplier is the provisional one (rank 0 of 1); the
-        /// rank scaling and the potion tier order that ScoreCandidates applies
-        /// afterwards to the rows it kept are not. Reads only: nothing scored
-        /// is changed and nothing is kept.
+        /// weight, learner metrics and recency the caller passes (the uniform
+        /// favourites multiplier, as the floor pass uses). Reads only: nothing
+        /// scored is changed and nothing is kept.
         [[nodiscard]] ScoredCandidate ExplainCandidate(
             const Candidate::CandidateVariant& candidate,
             const State::GameState& state,
@@ -176,33 +156,12 @@ namespace Huginn::Scoring
             const Learning::FeatureItemMetrics& metrics,
             float recencyBoost);
 
-        // Get favorites multiplier for a candidate
-        [[nodiscard]] float GetFavoritesMultiplier(
-            const Candidate::CandidateVariant& candidate,
-            size_t rank,
-            size_t totalItems) const;
+        // The favourites multiplier for a candidate: favoritesBoostMax for a
+        // favourite in Boost mode, else 1 (ScorerConfig::FavoritesMultiplier).
+        [[nodiscard]] float GetFavoritesMultiplier(const Candidate::CandidateVariant& candidate) const;
 
         // Check if candidate is favorited
         [[nodiscard]] bool IsCandidateFavorited(const Candidate::CandidateVariant& candidate) const;
-
-        // Boost mode: replace Step 7's provisional uniform max boost with the
-        // rank-scaled multiplier (rank 0 = strongest favorite → favoritesBoostMax,
-        // weakest → favoritesBoostMin) and recompute those utilities. Runs after
-        // the scoring loop + cold-start fallback, before the top-N sort. Never
-        // removes entries: favorites keep list membership even if rescaling drops
-        // them below minimumUtility (favorites-always-pass / learner-observability
-        // contract — rank scaling corrects order, not membership).
-        void ApplyFavoritesRankScaling(ScoredCandidateList& scored);
-
-        // Order the strengths of ONE potion (Restore Health Fair / Faint /
-        // Depleted: same type, same tags) by the configured preference. The
-        // family keeps its best utility; under Higher the strongest takes it and
-        // each weaker strength gets the one above divided by POTION_TIER_STEP
-        // (Lower reverses; None leaves the scores alone). A per-potion
-        // multiplier cannot do this -- it cannot see the siblings -- and the
-        // two it replaced flipped their order as health crossed a bucket.
-        // Runs with ApplyFavoritesRankScaling, before the top-N sort.
-        void ApplyPotionTierPreference(ScoredCandidateList& scored) const;
 
         // Stage 1f: context→candidate weight mapping moved to
         // Context::WeightForCandidate (context/ContextWeightForCandidate.h) — see
@@ -231,9 +190,6 @@ namespace Huginn::Scoring
         Context::VitalEnvelope m_magickaEnvelope;
         Context::VitalEnvelope m_staminaEnvelope;
         Context::ContextRuleEngine m_contextEngine;  // Stage 1f: New component
-
-        // Scratch buffer for favorites rank scaling (update thread only, reused per tick)
-        std::vector<size_t> m_favoriteRankScratch;
     };
 
 }  // namespace Huginn::Scoring

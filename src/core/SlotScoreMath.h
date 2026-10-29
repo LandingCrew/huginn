@@ -24,7 +24,7 @@
 //     ranked, +inf for an override (pinned by a rule, never compared).
 //
 // THE BRIDGE (R7, until the new scorer lands in R8): score = ln(utility). The
-// old engine's utilities are >= 0 (fMinimumUtility is clamped to >= 0), so the
+// old engine's utilities are >= 0 (its utility floor is clamped to >= 0), so the
 // bridge is defined on every row the slot code ever sees; ln 0 = -inf. With
 // sigma = 0 and m = 1 + fChallengerMargin (1.5 shipped), the slot code on the
 // bridged scores makes the decisions the old multiplicative code made on the
@@ -67,9 +67,9 @@ namespace Huginn::Core
     /// size: with a non-power-of-two discount the old cap products carry noise of
     /// up to ~1.4e-7 in log space, and the band has to sit above it. It can drop
     /// to kScoreTieEpsilon at R8, when scores stop being float utilities and the
-    /// tier preference is gone. Not a tuning knob: under the bridge the old engine's
-    /// potion tier preference divides a family's next tier by exactly 1.5
-    /// (POTION_TIER_STEP), the same 1.5 as the hold's margin, so adjacent tiers sit
+    /// tier preference is gone (R8.4 deleted it). Not a tuning knob: under the bridge the
+    /// old engine's potion tier preference divided a family's next tier by exactly 1.5
+    /// (its fixed tier step), the same 1.5 as the hold's margin, so adjacent tiers sat
     /// ON the margin and only the rounding of u / 1.5 * 1.5 decided the old
     /// comparison (a recorded play snapshot hit it: Potion of Plentiful Magicka at
     /// 0.207614 against Minor at 0.13840933). With the band both arithmetics hold
@@ -79,7 +79,7 @@ namespace Huginn::Core
 
     /// THE BRIDGE: the old engine's utility as a score. ln(u) for u > 0; -inf
     /// for u <= 0 and for NaN (no ranked row has either: utilities are >= the
-    /// INI's fMinimumUtility, which is clamped to >= 0).
+    /// INI's utility floor, which is clamped to >= 0).
     [[nodiscard]] inline SlotScore BridgeScore(float utility) noexcept
     {
         if (!(utility > 0.0f)) {

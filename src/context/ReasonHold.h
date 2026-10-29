@@ -7,7 +7,9 @@ namespace Huginn::Context
     // =========================================================================
     // REASON HOLD (#62)
     // =========================================================================
-    // DominantReason answers per tick. Some reasons are momentarily true — a
+    // The tick's raw reason (R8.3: the most urgent explanation on the page,
+    // PipelineCoordinator::UpdateContextReason) answers per tick. Some
+    // reasons are momentarily true — a
     // crouch, a crosshair crossing a draugr — and a reason true for 100ms still
     // repaints every label on the wheel and reverts before it can be read:
     //
@@ -16,14 +18,15 @@ namespace Huginn::Context
     //
     // Both lines are CORRECT. The player really was sneaking. The problem is
     // display stability, not detection, which is why this is separate from #60
-    // and why it is applied here rather than inside DominantReason: the ranking
-    // must keep using the instantaneous truth, and only the label is damped.
+    // and why it is applied here rather than where the raw reason is read: the
+    // ranking must keep using the instantaneous truth, and only the label is
+    // damped.
     //
     // POLICY — asymmetric, and priority-aware:
     //
     //   * A MORE URGENT reason is adopted instantly. Critical HP must never
     //     wait behind a stale Sneaking. Priority is ContextReason's declaration
-    //     order, the same ordering DominantReason resolves ties with, so there
+    //     order, the same ordering the raw reason resolves ties with, so there
     //     is no second notion of urgency to keep in sync.
     //
     //   * Anything else — releasing to None, or a LESS urgent reason arriving —
@@ -34,8 +37,8 @@ namespace Huginn::Context
     // The hold delays only a DOWNGRADE, never an escalation, and never by more
     // than holdMs. Both halves of that need the pipeline to keep running, and
     // the skip check bails before scoring, so IsHolding() exists for the two
-    // gates to bypass on while one is pending — the same way they already do for
-    // the elemental window and for a fall. Keep them wired together (see
+    // gates to bypass on while one is pending — the same way they already do
+    // for a fall. Keep them wired together (see
     // PipelineCoordinator::NeedsForcedRun) or the guarantee is a class-level
     // truth the system does not honour.
     //
@@ -61,7 +64,7 @@ namespace Huginn::Context
     class ReasonHold
     {
     public:
-        /// @param raw     What DominantReason produced this tick.
+        /// @param raw     The tick's raw reason (UpdateContextReason).
         /// @param nowMs   Monotonic milliseconds. Wall clock rather than tick
         ///                count because the pipeline skips unchanged states —
         ///                ticks are not evenly spaced.

@@ -3,14 +3,11 @@
 #include "context/ContextWeightForCandidate.h"   // Context::WeightForCandidate (moved from here, #10)
 #include "util/ScopedTimer.h"
 #include "state/StateManager.h"                 // GetPlayerVitals: vital envelopes tick every frame
-#include "override/OverrideConfig.h"                // URGENT_RESTORE_WINDOW_SEC: one "strongest" for slots and override
 #include "Profiling.h"
 #include "core/EffectColumns.h"   // [Recs]: the explanation's column names (R8.3)
 #include "core/NeedIds.h"         // ... and need names
 #include <algorithm>
 #include <chrono>
-#include <map>
-#include <tuple>
 
 namespace Huginn::Scoring
 {
@@ -30,19 +27,19 @@ namespace Huginn::Scoring
     // MAIN SCORING METHOD
     // =========================================================================
 
-    ScoredCandidateList UtilityScorer::LegacyPass(
+    Legacy::Run UtilityScorer::LegacyPass(
         const std::vector<Candidate::CandidateVariant>& candidates,
         const State::GameState& state,
         const State::PlayerActorState& player,
         const State::TargetCollection& targets,
         const State::WorldState& world,  // Stage 1f: Added WorldState
-        float combatOnsetAgo,
-        Context::ContextWeightMap* outWeights,
-        std::vector<Legacy::Row>* outLegacy)
+        float combatOnsetAgo)
     {
         SCOPED_TIMER("UtilityScorer::LegacyPass");
 
-        ScoredCandidateList scored;
+        Legacy::Run run;
+        run.ran = true;
+        ScoredCandidateList& scored = run.kept;
         scored.reserve(candidates.size());
 
         // Magicka and stamina are scored at their recent low while they
@@ -68,11 +65,9 @@ namespace Huginn::Scoring
             weights = m_contextEngine.EvaluateRules(scoringPlayer, targets, world);
         }
 
-        // Hand the map back so the display explanation is read off the SAME
-        // weights that ranked the list, not a second derivation (#10).
-        if (outWeights) {
-            *outWeights = weights;
-        }
+        // Hand the map back: the v3 log's old parts read the SAME weights the
+        // floors tested (Legacy::OldScoreCapture).
+        run.weights = weights;
 
         // Phase 3.5c: Pre-compute StateFeatures for FeatureBanditLearner (once per scoring pass)
         auto stateFeatures = Learning::StateFeatures::FromState(player, targets);
@@ -128,7 +123,7 @@ namespace Huginn::Scoring
             .topNCandidates = m_config.topNCandidates,
             .coldStartUCBBoost = m_config.coldStartUCBBoost,
         };
-        const auto pass = Legacy::FloorPass(candidates, floorParams, hooks, scored, outLegacy);
+        const auto pass = Legacy::FloorPass(candidates, floorParams, hooks, scored, &run.rows);
         const float maxUtilitySeen = pass.maxUtilitySeen;
 
         // Diagnostic, rate-limited. R8.3: no longer an empty page (every
@@ -159,13 +154,11 @@ namespace Huginn::Scoring
             }
         }
 
-        // R8.3: no favourites rank scaling and no potion tier preference here
-        // any more. They only ever reordered the ranking, and nothing ranks on
-        // utility now (the fallback ranking without a bootstrap included); the
-        // utility a row carries is the floor pass's, which the D2 feature was
-        // fitted on. ApplyFavoritesRankScaling / ApplyPotionTierPreference go
-        // in R8's PR 4 with their INI keys.
-        return scored;
+        // No post-floor steps (R8.4 deleted the two R8.3 stopped calling):
+        // the utility a row carries is the floor pass's, which the D2 feature
+        // was fitted on.
+        run.ResolveRows(candidates);
+        return run;
     }
 
     void UtilityScorer::RankAndApplyWildcards(ScoredCandidateList& scored, const WildcardPage& displayPage)
@@ -189,86 +182,6 @@ namespace Huginn::Scoring
         {
             Huginn_ZONE_NAMED("Score::Wildcards");
             m_wildcardMgr.ApplyWildcards(scored, displayPage);
-        }
-    }
-
-    void UtilityScorer::ApplyPotionTierPreference(ScoredCandidateList& scored) const
-    {
-        // Family identity: everything that makes two potions "the same potion
-        // at a different strength". Different skills or schools are different
-        // potions even under one tag (FortifyCombatSkill: Block vs Archery).
-        using Key = std::tuple<Item::ItemType, Item::ItemTag, Item::ItemTagExt,
-            Item::MagicSchool, Item::CombatSkill, Item::UtilitySkill>;
-        struct Member { size_t index; float strength; };
-        std::map<Key, std::vector<Member>> families;
-
-        for (size_t i = 0; i < scored.size(); ++i) {
-            const auto* item = std::get_if<Candidate::ItemCandidate>(&scored[i].candidate);
-            if (!item) continue;
-            switch (item->type) {
-            case Item::ItemType::HealthPotion:
-            case Item::ItemType::MagickaPotion:
-            case Item::ItemType::StaminaPotion:
-                // The override's measure, so "Higher" means the same potion in
-                // a slot as the CRITICAL override would hand you
-                families[{ item->type, item->tags, item->tagsExt, item->school,
-                           item->combatSkill, item->utilitySkill }]
-                    .push_back({ i, Item::RestoredWithin(item->magnitude, item->duration,
-                                     Override::Defaults::URGENT_RESTORE_WINDOW_SEC) });
-                break;
-            case Item::ItemType::ResistPotion:
-            case Item::ItemType::BuffPotion:
-            case Item::ItemType::CurePotion:
-                families[{ item->type, item->tags, item->tagsExt, item->school,
-                           item->combatSkill, item->utilitySkill }]
-                    // Magnitude x duration: a buff's strength can live in
-                    // either. Waterbreathing is magnitude 0 at every strength
-                    // and differs only in duration (180/240/300 s on LoreRim),
-                    // so magnitude alone called Faint and Fair equal. With
-                    // neither -- a cure -- the gold value is the only potency
-                    // there is: LoreRim's Cure Disease (value 100) now cures
-                    // within 1-4 days, its Cure Greater Disease (200) at once,
-                    // and both read 'Cure Disease' 0/0s.
-                    .push_back({ i, (item->magnitude <= 0.0f && item->duration <= 0.0f)
-                        ? static_cast<float>(item->value)
-                        : std::max(item->magnitude, 1.0f) * std::max(item->duration, 1.0f) });
-                break;
-            default:
-                break;
-            }
-        }
-
-        const auto preference = m_config.potionTierPreference;
-        if (preference == PotionTierPreference::None) {
-            return;  // natural scores stand; the slot hold stops near-ties trading
-        }
-        for (auto& [key, members] : families) {
-            if (members.size() < 2) continue;
-
-            float familyTop = 0.0f;
-            for (const auto& m : members) {
-                familyTop = std::max(familyTop, scored[m.index].utility);
-            }
-
-            // Strongest first for Higher, weakest first for Lower. Equal
-            // strengths share a utility -- nothing to prefer between them.
-            std::sort(members.begin(), members.end(), [preference](const Member& a, const Member& b) {
-                return preference == PotionTierPreference::Lower ? a.strength < b.strength
-                                                                 : a.strength > b.strength;
-            });
-
-            float u = familyTop;
-            for (size_t k = 0; k < members.size(); ++k) {
-                if (k > 0 && members[k].strength != members[k - 1].strength) {
-                    u /= POTION_TIER_STEP;
-                }
-                auto& entry = scored[members[k].index];
-                if (entry.utility > 0.0f) {
-                    // Keep the [Recs] breakdown honest about why this moved
-                    entry.breakdown.potionMultiplier *= u / entry.utility;
-                }
-                entry.utility = u;
-            }
         }
     }
 
@@ -350,12 +263,10 @@ namespace Huginn::Scoring
         // =====================================================================
         // Step 7: Get favorites multiplier
         // =====================================================================
-        // Boost mode: provisional uniform boost (rank 0 of 1 = favoritesBoostMax).
-        // ScoreCandidates replaces it with the rank-scaled value once the whole
-        // cohort is scored (see ApplyFavoritesRankScaling). The single-candidate
-        // path has no cohort to rank against, so max is its final value.
-        result.breakdown.favoritesMultiplier =
-            GetFavoritesMultiplier(candidate, 0, 1);
+        // Boost mode: the uniform favoritesBoostMax (what the floor pass has
+        // always tested against; R8.4 removed the rank scaling that used to
+        // replace it after the floors).
+        result.breakdown.favoritesMultiplier = GetFavoritesMultiplier(candidate);
 
         // =====================================================================
         // Step 8: Compute final utility via the shared formula helper.
@@ -398,79 +309,20 @@ namespace Huginn::Scoring
     // FAVORITES HANDLING
     // =========================================================================
 
-    float UtilityScorer::GetFavoritesMultiplier(
-        const Candidate::CandidateVariant& candidate,
-        size_t rank,
-        size_t totalItems) const
+    float UtilityScorer::GetFavoritesMultiplier(const Candidate::CandidateVariant& candidate) const
     {
-        switch (m_config.favoritesMode) {
-            case FavoritesMode::Boost:
-                if (IsCandidateFavorited(candidate)) {
-                    return m_config.GetFavoritesMultiplier(rank, totalItems);
-                }
-                return 1.0f;
-
-            case FavoritesMode::Off:
-                return 1.0f;
-
-            case FavoritesMode::Suppress:
-                if (IsCandidateFavorited(candidate)) {
-                    return 0.0f;  // Effectively removes from consideration
-                }
-                return 1.0f;
+        // Suppress: 0 for a favourite, as before. Unreachable in a run since
+        // R8.1 (the favorite_suppressed filter drops it before scoring); kept
+        // so ExplainCandidate's arithmetic is unchanged.
+        if (m_config.favoritesMode == FavoritesMode::Suppress) {
+            return IsCandidateFavorited(candidate) ? 0.0f : 1.0f;
         }
-
-        return 1.0f;
+        return m_config.FavoritesMultiplier(IsCandidateFavorited(candidate));
     }
 
     bool UtilityScorer::IsCandidateFavorited(const Candidate::CandidateVariant& candidate) const
     {
         return Candidate::IsFavorited(candidate);
-    }
-
-    void UtilityScorer::ApplyFavoritesRankScaling(ScoredCandidateList& scored)
-    {
-        if (m_config.favoritesMode != FavoritesMode::Boost) {
-            return;
-        }
-
-        m_favoriteRankScratch.clear();
-        for (size_t i = 0; i < scored.size(); ++i) {
-            if (IsCandidateFavorited(scored[i].candidate)) {
-                m_favoriteRankScratch.push_back(i);
-            }
-        }
-        // 0 favorites: nothing to scale. 1 favorite: rank 0 of 1 is defined as
-        // favoritesBoostMax, which Step 7's provisional value already is.
-        if (m_favoriteRankScratch.size() < 2) {
-            return;
-        }
-
-        // Rank favorites by current utility. Step 7 gave every favorite the same
-        // provisional multiplier, so this order equals their pre-boost order.
-        std::sort(m_favoriteRankScratch.begin(), m_favoriteRankScratch.end(),
-            [&scored](size_t a, size_t b) noexcept {
-                return scored[a].utility > scored[b].utility;
-            });
-
-        // The multiplier is monotone non-increasing in rank, so rewriting
-        // utilities cannot reorder favorites relative to each other — the ranks
-        // derived above stay valid and no re-sort is needed here (the caller's
-        // full sort establishes the final combined order).
-        const size_t total = m_favoriteRankScratch.size();
-        for (size_t rank = 0; rank < total; ++rank) {
-            auto& entry = scored[m_favoriteRankScratch[rank]];
-            entry.breakdown.favoritesMultiplier = m_config.GetFavoritesMultiplier(rank, total);
-            entry.utility = ComputeUtility(entry.breakdown);
-        }
-
-        // Deliberately NO minimumUtility re-filter here: favorites stay in the
-        // list even if rescaling drops them below the threshold. The scoring
-        // loop's favorites-always-pass contract (they must remain observable by
-        // the learner) applies to membership; rank scaling only corrects their
-        // ORDER. Erasing here would also under-fill slots after the cold-start
-        // fallback already ran, and near-threshold favorites would flicker in
-        // and out of the list across ticks.
     }
 
     bool UtilityScorer::Update(float deltaSeconds)
@@ -534,10 +386,11 @@ namespace Huginn::Scoring
         // R8.3: the ranking is the choice score mu. Each line: mu (and sd),
         // the three largest theta[need][col] n a terms (the first is the
         // explanation), b, and the D2 legacy feature (lm = ln learn mult on a
-        // row the old floors kept, "um" when they did not), then the old
-        // utility and its parts on the rows the legacy pass kept, for
-        // comparison only. The fallback ranking (no bootstrap) prints the old
-        // line, flagged. Phase 9 / R11 expand this.
+        // row the old floors kept, "um" when they did not). R8.4: no old
+        // utility on these lines; with `detail` (hg recs), the inputs lm was
+        // computed from on a kept row (ctx, λ, learn and its parts). The
+        // fallback ranking (no bootstrap) prints the old line, flagged.
+        // Phase 9 / R11 expand this.
         logger::info("[Recs] === Top {}/{} candidates | {} ==="sv, numToLog, ranked.size(),
             fallback ? "FALLBACK: s = ln u, u = ctx*(1+λ*learn)*mults"
                      : "mu = Σ θ·n·cap + b + w·lm (+ recent, covered); terms need×col");
@@ -557,9 +410,9 @@ namespace Huginn::Scoring
                     ci < Core::Effect::kColumnCount ? Core::Effect::kColumns[ci].id : std::string_view("?"), t.value);
             }
             if (terms.empty()) terms = "learned";
-            const std::string legacy = scored.legacyScored
-                ? fmt::format(" | old u={:.3f} {}", scored.utility, detail ? bd.ToDetailString() : bd.ToCompactString())
-                : std::string(" | old: under the floors");
+            const std::string legacy = !scored.legacyScored ? std::string(" | lm: under the old floors")
+                                     : detail               ? fmt::format(" | lm from {}", bd.ToDetailString())
+                                                            : std::string{};
 
             if (fallback) {
                 logger::info("[Recs] {}. {} ({}) s={:+.3f} u={:.3f} | {}{}{}"sv,

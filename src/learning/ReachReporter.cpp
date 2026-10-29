@@ -130,7 +130,7 @@ namespace Huginn::Learning::ReachReporter
             line.scored = true;
             line.ranked = row->rank < PipelineStateCache::kUnrankedTail;
             line.rank = row->rank;
-            line.utility = row->utility;
+            line.score = row->score;
         }
         FillKeys(line, event.shown.valid, event.shown.page, event.shown.shown);
 
@@ -173,7 +173,7 @@ namespace Huginn::Learning::ReachReporter
             line.scored = true;
             line.ranked = info.rank < PipelineStateCache::kUnrankedTail;
             line.rank = info.rank;
-            line.utility = info.utility;
+            line.score = info.score;
         }
         const auto shown = cache.TakeShown();
         FillKeys(line, shown.valid, shown.page, shown.shown);

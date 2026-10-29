@@ -23,7 +23,7 @@
 //   theta, strength, the recent rows and theta_covered: one {mu, sigma^2}
 //   entry per weight, each with a stable key (core/Bootstrap.h StableKey: a
 //   hash of the need and column NAMES, the recent family and tau, "covered"),
-//   never a position (the lesson of StateFeatures.h:63-67, where a positional
+//   never a position (the lesson of the old learner's features, where a positional
 //   cosave key broke once). The entries sit in a dense array in the build's
 //   index order for the scorer's speed; ExportEntries / ImportEntries (the
 //   cosave's THTA, R8.3) go by key only.

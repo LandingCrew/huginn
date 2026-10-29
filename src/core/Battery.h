@@ -4,9 +4,9 @@
 // BATTERY (R8.2) -- memory with a useful life of play
 // =============================================================================
 // The useful-life math of the old learner (roadmap Phase 3 #3a, 0.23.0), moved
-// here from FeatureBanditLearner so the new learner's per-item b
+// here from the old learner so the new learner's per-item b
 // (ChoiceLearner, doc 9's battery) runs the same arithmetic on the same play
-// clock. FeatureBanditLearner calls RetentionAt with lifeMult = 1, which is
+// clock. The old learner calls RetentionAt with lifeMult = 1, which is
 // exactly its old expression (the float part is evaluated as before, then
 // multiplied by 1.0, which is exact).
 //

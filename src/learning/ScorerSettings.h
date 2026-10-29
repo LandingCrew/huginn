@@ -32,7 +32,6 @@ namespace Huginn::Scoring
         inline constexpr float COMBAT_START_WINDOW = 10.0f;
         inline constexpr float REGEN_POTION_COMBAT_START_MULT = 1.5f;
         inline constexpr float FLAT_RESTORE_LOW_RESOURCE_MULT = 1.5f;
-        inline constexpr const char* POTION_TIER_PREFERENCE = "Higher";
 
         // Thresholds
         inline constexpr float MINIMUM_UTILITY = 0.1f;
@@ -50,7 +49,6 @@ namespace Huginn::Scoring
 
         // Favorites
         inline constexpr const char* FAVORITES_MODE = "Boost";
-        inline constexpr float FAVORITES_BOOST_MIN = 1.3f;
         inline constexpr float FAVORITES_BOOST_MAX = 2.5f;
 
     }
@@ -61,7 +59,10 @@ namespace Huginn::Scoring
     // Singleton that loads scoring parameters from Data/SKSE/Plugins/Huginn.ini.
     // Reads [Scoring] section (core, correlations, potion discrimination,
     // thresholds, performance, the refresh pass) and [Favorites] section
-    // (mode, boost range).
+    // (mode, boost). R8.4 (0.24.1): everything here but the refresh pass and
+    // the favourites mode feeds only the D2 legacy feature
+    // (learning/legacy/LegacyLearnFeature.h): which rows the old floors keep
+    // and their ln learn mult. Nothing ranks on the old utility.
     //
     // Call BuildConfig() to produce a ScorerConfig struct suitable for
     // UtilityScorer::SetConfig().
@@ -94,7 +95,6 @@ namespace Huginn::Scoring
 
         // Helper: parse string to FavoritesMode enum
         [[nodiscard]] static FavoritesMode ParseFavoritesMode(const char* str);
-        [[nodiscard]] static PotionTierPreference ParsePotionTierPreference(const char* str);
 
         // --- Core Scoring ---
         float lambdaMin = ScorerDefaults::LAMBDA_MIN;
@@ -114,7 +114,6 @@ namespace Huginn::Scoring
         float combatStartWindow = ScorerDefaults::COMBAT_START_WINDOW;
         float regenPotionCombatStartMult = ScorerDefaults::REGEN_POTION_COMBAT_START_MULT;
         float flatRestoreLowResourceMult = ScorerDefaults::FLAT_RESTORE_LOW_RESOURCE_MULT;
-        PotionTierPreference potionTierPreference = PotionTierPreference::Higher;
 
         // --- Thresholds ---
         float minimumUtility = ScorerDefaults::MINIMUM_UTILITY;
@@ -130,7 +129,6 @@ namespace Huginn::Scoring
 
         // --- Favorites ---
         FavoritesMode favoritesMode = FavoritesMode::Boost;
-        float favoritesBoostMin = ScorerDefaults::FAVORITES_BOOST_MIN;
         float favoritesBoostMax = ScorerDefaults::FAVORITES_BOOST_MAX;
 
     };

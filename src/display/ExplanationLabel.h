@@ -18,8 +18,8 @@ namespace Huginn::Display
     // theta n cap term of each one's choice score, display/NeedReason.h;
     // PipelineCoordinator::UpdateContextReason), and it speaks only for a slot
     // whose OWN explanation is that reason (ScoredCandidate::explainedReason,
-    // in place of Context::ReasonAppliesTo, #64). This file decides how to say
-    // it. Adding a reason means adding a case below.
+    // #64; R8.4 deleted the per-slot attribution off the context weights it
+    // replaced). This file decides how to say it. Adding a reason means adding a case below.
     // =========================================================================
 
     /// Human-readable text for a context reason, or "" for None.

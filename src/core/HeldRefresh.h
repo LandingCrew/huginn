@@ -10,7 +10,7 @@
 // (verifier, PR #207).
 //
 // Two sources, because the scored list is not every item: the scorer drops
-// anything under fMinimumContextWeight / fMinimumUtility, and the candidate
+// anything under the old floors (R8.3: the fallback ranking only), and the candidate
 // filters drop the very item just used -- a potion on cooldown (3 s), a health
 // potion at full health, a resist potion while its resist is up. All of them
 // are exactly the moment the count changed. So:
