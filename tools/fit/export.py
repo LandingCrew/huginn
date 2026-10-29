@@ -41,7 +41,8 @@ import bootstrap
 import curve
 from fitlib import *
 
-EXPORTABLE_FEATURES = {'astar', 'pos'}
+EXPORTABLE_FEATURES = {'astar', 'pos', 'learn', 'mults', 'learner'}
+V2_FEATURES = {'learn', 'mults', 'learner'}     # read the v2 log (fitlib.row_features)
 
 
 def default_forms(D):
@@ -71,7 +72,7 @@ def check_spec(spec):
         raise SystemExit('split and latest-caps specs are diagnostics: not exported')
     bad = set(model_kw.get('feat_spec', ())) - EXPORTABLE_FEATURES
     if bad:
-        raise SystemExit(f'features {sorted(bad)} read the v2 log (the old engine context weights): not exported')
+        raise SystemExit(f'features {sorted(bad)} read the old engine context weights: not exported')
     grading = 'graded'
     for w in which:
         if w in ('presence', 'presence+strength'):
@@ -83,11 +84,29 @@ def check_spec(spec):
     return model_kw, which, grading
 
 
-def fit_all(S, obv, spec, maxiter=400):
-    """The spec fitted on every decision of S: (variant S, model, p, final NLL)."""
+def hold_mask(S, hold):
+    """theta_fixed for --hold-needs: the named needs' theta rows (base needs x columns) held at
+    their prior centre theta0 (fitlib.Model). None when nothing is held."""
+    if not hold:
+        return None
+    bad = [n for n in hold if n not in S['needs']]
+    if bad:
+        raise SystemExit(f'--hold-needs: {bad} are not needs of the log')
+    m = np.zeros((len(S['needs']), S['J']), dtype=bool)
+    for n in hold:
+        m[S['needs'].index(n), :] = True
+    return m
+
+
+def fit_all(S, obv, spec, maxiter=400, hold=()):
+    """The spec fitted on every decision of S: (variant S, model, p, final NLL). hold: needs whose
+    theta rows stay at their prior centre (hold_mask; the presence + strength block too)."""
     model_kw, which, _ = split_spec(spec)
     Sv, ov = variant(S, obv, which)
-    M = Model(Sv, obvious=ov, nitems=len(S['items']), **model_kw)
+    fixed = hold_mask(S, hold)
+    if fixed is not None and Sv['J'] != S['J']:            # presence + strength: the strength block too
+        fixed = np.hstack([fixed] * (Sv['J'] // S['J']))
+    M = Model(Sv, obvious=ov, nitems=len(S['items']), theta_fixed=fixed, **model_kw)
     Fm, _ = row_features(Sv, M.feat_spec)
     p, f, it = lbfgs(lambda q: M.loss(Sv, q, Fm)[:2], M.init(), maxiter=maxiter)
     return Sv, M, p, f, it
@@ -126,7 +145,8 @@ def log_kinds_of(D):
     return out
 
 
-def document(S, Sv, M, p, spec_name, grading, three, forms, curves, source, log=print, log_kinds=None):
+def document(S, Sv, M, p, spec_name, grading, three, forms, curves, source, log=print, log_kinds=None,
+             provenance=None):
     """The bootstrap document (bootstrap.make_document) from a fit on S (Sv: S with the variants).
     forms: bootstrap.read_forms; log_kinds: log_kinds_of(D), to check the form map's kinds."""
     q = M.unpack(p)
@@ -135,6 +155,9 @@ def document(S, Sv, M, p, spec_name, grading, three, forms, curves, source, log=
     info = M.info(Sv, p, Fm) if M.theta else None
     theta = q['theta'] if M.theta else np.zeros((M.K, Sv['J']))
     prec = (info + 1.0 / M.sig ** 2) if M.theta else np.zeros((M.K, Sv['J']))
+    if M.theta and M.fixed is not None:
+        # a held weight (--hold-needs) was not learned: it carries its prior's precision only
+        prec = np.where(M.fixed, 1.0 / M.sig ** 2, prec)
     strength = grading == 'presence+strength'
     blk = lambda m, rows: (m[rows, :J], m[rows, J:2 * J] if strength else None)
     base = slice(0, K)
@@ -214,7 +237,8 @@ def document(S, Sv, M, p, spec_name, grading, three, forms, curves, source, log=
         theta_strength=None if ths is None else ths.tolist(),
         theta_strength_precision=None if prs is None else prs.tolist(), theta_bias=theta_bias,
         kappa=float(q['kappa']), u0=u0, recent=recent, features=features, items=items, items_dropped=dict(dropped),
-        curves=curves, created_utc=dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%d %H:%M:%S'))
+        curves=curves, created_utc=dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
+        provenance=provenance)
 
 
 def parse(argv=None):
@@ -227,6 +251,10 @@ def parse(argv=None):
     ap.add_argument('--since', metavar='V')
     ap.add_argument('--until', metavar='V')
     ap.add_argument('--maxiter', type=int, default=400)
+    ap.add_argument('--hold-needs', nargs='+', default=[], metavar='NEED',
+                    help="needs whose theta rows stay at their prior (data that misreads them; README)")
+    ap.add_argument('--provenance', metavar='JSON',
+                    help='a JSON object written as the provenance field (how the spec was chosen: data, metrics)')
     return ap.parse_args(argv)
 
 
@@ -254,14 +282,16 @@ def main(argv=None):
         if c.get('kind') != 'logistic':
             raise SystemExit(f'{path}: only logistic curves are written (format version 1)')
         curves[c['need']] = (c['kind'], c['centre'], c['slope'])
-    S = build(D, include_nothing=a.three, v2=None, since=a.since, until=a.until)
+    model_kw, _, _ = split_spec(spec)
+    v2 = load_v2() if V2_FEATURES & set(model_kw.get('feat_spec', ())) else None
+    S = build(D, include_nothing=a.three, v2=v2, since=a.since, until=a.until)
     for need, (_, c, s) in curves.items():
         # theta is fitted on the need as the shipped curve will read it (curve.py's fit)
         if need not in S['needs']:
             raise SystemExit(f'curve for {need!r}: not a need of the log')
         S = curve.with_curve(S, S['needs'].index(need), c, s)
     obv = obvious_pairs(S['needs'], S['cols'])
-    Sv, M, p, f, it = fit_all(S, obv, spec, a.maxiter)
+    Sv, M, p, f, it = fit_all(S, obv, spec, a.maxiter, hold=a.hold_needs)
     print(f'{len(S["Y"])} decisions, {(S["Y"] >= 0).sum()} picks, {len(S["launches"])} launches; '
           f'{a.spec!r} fitted: posterior {f:.2f} after {it + 1} iterations')
     builds = build_range(S['meta'])
@@ -271,7 +301,16 @@ def main(argv=None):
     source = {'char': D.get('char') or (chars[0] if len(chars) == 1 else None), 'launches': len(S['launches']), 'first_launch': S['launches'][0],
               'last_launch': S['launches'][-1], 'decisions': int(len(S['Y'])), 'picks': int((S['Y'] >= 0).sum()),
               'builds': builds, 'forms': forms_path.name, 'tool': 'tools/fit/export.py'}
-    doc = document(S, Sv, M, p, a.spec, grading, a.three, forms, curves, source, log_kinds=log_kinds_of(D))
+    if a.hold_needs:
+        source['held_needs'] = list(a.hold_needs)
+    prov = None
+    if a.provenance:
+        with open(a.provenance, encoding='utf-8') as fh:
+            prov = json.load(fh)
+        if not isinstance(prov, dict):
+            raise SystemExit('--provenance: a JSON object expected')
+    doc = document(S, Sv, M, p, a.spec, grading, a.three, forms, curves, source, log_kinds=log_kinds_of(D),
+                   provenance=prov)
     errs = bootstrap.validate(doc)
     if errs:
         raise SystemExit('the document does not validate: ' + '; '.join(errs))

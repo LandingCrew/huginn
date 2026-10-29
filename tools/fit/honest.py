@@ -88,7 +88,7 @@ def select_specs(group, texts):
         raise SystemExit(f'not on the online schedule (diagnostics): {bad}')
     v2 = [k for k, v in specs.items() if {'ctx', 'cheap'} & set(v.get('feat_spec', ()))]
     if v2:
-        raise SystemExit(f'read the v2 log (old engine context weights), which honest.py does not load: {v2}')
+        raise SystemExit(f'read the old context weights (cv.py baselines; the data key leaves out the slot classes): {v2}')
     if not specs:
         raise SystemExit(f'no {group} spec matches {texts}')
     return specs
@@ -160,7 +160,8 @@ def main(argv=None):
     specs = select_specs(a.group, a.spec)
     three = a.group == 'three'
     D = load()
-    S = build(D, include_nothing=three, v2=None, since=a.since, until=a.until)
+    # the v2 log, as cv.py loads it: the learner features (D2, D5, L1) read it, and the data key covers them
+    S = build(D, include_nothing=three, v2=load_v2(), since=a.since, until=a.until)
     obv = obvious_pairs(S['needs'], S['cols'])
     fold_of = launch_folds(S, a.folds, a.seed)
     FOLD = fold_of[S['LA']]

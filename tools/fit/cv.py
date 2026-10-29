@@ -70,6 +70,12 @@ PICKS = {
     # without b: what transfers to a new character (b is per item, of this one; the R6 verifier
     # of 2026-10-28 found b costs held-out hits on items the training set never picked)
     'theta + recent + A* feature (no b)': dict(outside=False, item=False, feat_spec=['astar'], _with=['recent']),
+    # the old score's components (the R8 component test of 2026-10-29, ported for the real R6 fit;
+    # fitlib.row_features): which part of ln(old util) does the work. They read the v2 log.
+    'theta + b + recent + learn mult (D2)': dict(outside=False, feat_spec=['learn'], _with=['recent']),
+    'theta + b + recent + learn mult + fav/corr/potion (D5)': dict(outside=False, feat_spec=['learn', 'mults'],
+                                                                  _with=['recent']),
+    'theta + b + recent + old learner state (L1)': dict(outside=False, feat_spec=['learner'], _with=['recent']),
 }
 PICKS_SPLIT = {   # only with --split-at
     'theta + b, needs split by build': dict(outside=False, _with=['split']),

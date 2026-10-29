@@ -861,7 +861,8 @@ class DataKey(unittest.TestCase):
             self.assertNotEqual(fitlib.data_key(S2, SYN_OBV), k, name)
         self.assertNotEqual(fitlib.data_key(S, {(0, 0): 1.0}), k)                # the obvious pairs
         self.assertNotEqual(fitlib.data_key(dict(S, needs=['a', 'b', 'c']), SYN_OBV), k)
-        self.assertEqual(fitlib.data_key(dict(S, V2=S['V2'] + 1), SYN_OBV), k)  # the v2 log is not read
+        self.assertNotEqual(fitlib.data_key(dict(S, V2=np.zeros_like(S['V2'])), SYN_OBV), k)  # D5 reads V2 (0.23.54)
+        self.assertEqual(fitlib.data_key(dict(S, CLS=S['CLS'] + 1), SYN_OBV), k)  # only 'cheap' reads it
 
 
 class Gate(unittest.TestCase):
@@ -1151,7 +1152,13 @@ def doc_scores(doc, S, forms):
             u = S['UTIL'][d, i]
             if 'ln util' in W:
                 s += W['ln util'] * (0.0 if np.isnan(u) else math.log(max(u, 1e-6)))
-                s += W['util missing'] * (1.0 if np.isnan(u) else 0.0)
+            s += W.get('util missing', 0.0) * (1.0 if np.isnan(u) else 0.0)
+            # the old score's components: the old engine's own values for the row (the format doc)
+            s += W.get('ln learn mult', 0.0) * S['LRN'][d, i, 0] + W.get('ln learner', 0.0) * S['LRN'][d, i, 1]
+            s += W.get('eligible', 0.0) * S['ELIG'][d, i]
+            v = S['V2'][d, i]
+            if not np.isnan(v[0]) and not np.isnan(u):
+                s += sum(W.get('ln ' + n, 0.0) * math.log(max(v[k], 1e-6)) for k, n in ((3, 'fav'), (1, 'corr'), (2, 'potion')))
             sl = int(S['SLOT'][d, i])
             if 0 <= sl < 8:
                 s += W.get(f'slot {sl}', 0.0)
@@ -1159,12 +1166,30 @@ def doc_scores(doc, S, forms):
     return logit, u0
 
 
+def with_learner(S, seed=13):
+    """S with the v2-derived arrays an old engine would give (fitlib.build's LRN, ELIG, V2): a
+    learner multiplier on the scored rows, the carried-forward learner state, eligibility and
+    the fav / corr / potion multipliers."""
+    rng = np.random.default_rng(seed)
+    S = dict(S)
+    Dn, R = S['CAPID'].shape
+    scored = rng.random((Dn, R)) < 0.7
+    S['UTIL'] = np.where(scored, S['UTIL'], np.nan)
+    S['LRN'] = np.stack([np.where(scored, rng.uniform(0, 1.5, (Dn, R)), 0.0),
+                         np.where(rng.random((Dn, R)) < 0.5, rng.uniform(0, 1.5, (Dn, R)), 0.0)], axis=-1)
+    S['ELIG'] = (rng.random((Dn, R)) < 0.8).astype(float)
+    V2 = np.full((Dn, R, 4), np.nan)
+    V2[scored] = rng.uniform(0.5, 2.5, (int(scored.sum()), 4))
+    S['V2'] = V2
+    return S
+
+
 class Export(unittest.TestCase):
-    def doc(self, spec, three=False, rec=False, log_kinds=None, cross=False):
-        S = synth_S(600, seed=7, nothing=0.3 if three else 0.0, rec=rec)
+    def doc(self, spec, three=False, rec=False, log_kinds=None, cross=False, hold=()):
+        S = with_learner(synth_S(600, seed=7, nothing=0.3 if three else 0.0, rec=rec))
         if cross:
             S = with_cross_and_slots(S)
-        Sv, M, p, f, it = export.fit_all(S, SYN_OBV, spec, maxiter=150)
+        Sv, M, p, f, it = export.fit_all(S, SYN_OBV, spec, maxiter=150, hold=hold)
         _, _, grading = export.check_spec(spec)
         msgs = []
         d = export.document(S, Sv, M, p, 'spec', grading, three, SYN_FORMS, {'encumbrance': ('logistic', 0.9, 40)},
@@ -1213,7 +1238,9 @@ class Export(unittest.TestCase):
     def test_features_and_refusals(self):
         *_, d, _ = self.doc({'outside': False, 'feat_spec': ['astar']})
         self.assertEqual([f['name'] for f in d['features']], ['ln util', 'util missing'])
-        for bad in ({'feat_spec': ['ctx']}, {'_with': ['split']}, {'_latest': True},
+        for ok in (['learn'], ['learn', 'mults'], ['learner'], ['astar', 'pos']):
+            export.check_spec({'outside': False, 'feat_spec': ok})
+        for bad in ({'feat_spec': ['ctx']}, {'feat_spec': ['cheap']}, {'_with': ['split']}, {'_latest': True},
                     {'bias_need': True, '_with': ['presence+strength']},
                     {'theta': False, 'item': True, 'outside': False}):        # cv.py 'b only': no theta to carry
             with self.assertRaises(SystemExit):
@@ -1250,6 +1277,40 @@ class Export(unittest.TestCase):
         d = self.assert_scores_round_trip({'outside': False, 'feat_spec': ['astar', 'pos'], '_with': ['recent']}, rec=True)
         self.assertEqual([f['name'] for f in d['features']][:3], ['ln util', 'util missing', 'slot 0'])
 
+    def test_scores_round_trip_old_score_components(self):
+        """D2 + D5's multipliers, and L1: the feature names the format lists, scored by the reader."""
+        d = self.assert_scores_round_trip({'outside': False, 'feat_spec': ['learn', 'mults'], '_with': ['recent']}, rec=True)
+        self.assertEqual([f['name'] for f in d['features']],
+                         ['ln learn mult', 'util missing', 'ln fav', 'ln corr', 'ln potion'])
+        d = self.assert_scores_round_trip({'outside': False, 'feat_spec': ['learner']})
+        self.assertEqual([f['name'] for f in d['features']], ['ln learner', 'eligible'])
+
+    def test_hold_needs_keeps_theta_rows_at_the_prior(self):
+        for spec in ({'outside': False, '_with': ['recent']}, {'outside': False, '_with': ['presence+strength']}):
+            S, Sv, M, p, d, _ = self.doc(spec, rec=True, hold=['hunger'])
+            q = M.unpack(p)
+            k = SYN_NEEDS.index('hunger')
+            np.testing.assert_array_equal(q['theta'][k], M.theta0[k])
+            np.testing.assert_allclose(d['theta_precision'][k], 1.0 / M.sig[k, :len(SYN_COLS)] ** 2, rtol=1e-5)
+            self.assertFalse(np.allclose(q['theta'][0], M.theta0[0]))        # the others are fitted
+            if d['theta_strength'] is not None:
+                self.assertEqual(d['theta_strength'][k], [0.0] * len(SYN_COLS))
+        with self.assertRaises(SystemExit):
+            export.hold_mask(synth_S(30), ['not_a_need'])
+        self.assertIsNone(export.hold_mask(synth_S(30), []))
+
+    def test_provenance_is_written_last_and_unchecked(self):
+        *_, d, _ = self.doc({'outside': False})
+        doc = dict(d)
+        doc.pop('created_utc')
+        prov = {'chosen_by': 'R6 gate', 'metrics': {'menu': [0.5, 0.4, 0.6]}}
+        d2 = bootstrap.make_document(source=doc['source'], spec='x', outcomes='picks', grading='graded',
+                                     needs=doc['needs'], cols=doc['cols'], theta=doc['theta'],
+                                     theta_precision=doc['theta_precision'], kappa=doc['kappa'], provenance=prov)
+        self.assertEqual(list(d2)[-1], 'provenance')
+        self.assertEqual(bootstrap.validate(json.loads(bootstrap.dumps(d2))), [])
+        self.assertEqual(json.loads(bootstrap.dumps(d2))['provenance'], prov)
+
     def test_scores_round_trip_presence_strength_three(self):
         self.assert_scores_round_trip({'_with': ['presence+strength', 'recent']}, three=True, rec=True)
 
@@ -1263,6 +1324,135 @@ class Export(unittest.TestCase):
         # the same version twice: ordered by when each was logged, not by the hash
         self.assertEqual(export.build_range(meta), ['dev', '0.23.44 (bbbbbbb)'])
         self.assertEqual(export.build_range(meta[:3]), ['0.23.41 (fff)', '0.23.44 (aaaaaaa)'])
+
+
+def v2_record(utc, form, char, cands, launch='20261011-100000', gen=2):
+    """One v2 record (Huginn_Selections.jsonl) with the candidate columns load_v2 reads; cands:
+    {form: dict of the learner's values} (the rest of the columns get neutral values)."""
+    cols = ['form', 'type', 'need', 'rank', 'util', 'ctx', 'est', 'prior', 'ucb', 'alpha', 'learn', 'lambda', 'rec',
+            'corr', 'potion', 'fav', 'wildcard', 'coldStart', 'pred']
+    rows = []
+    for k, (f, c) in enumerate(cands.items()):
+        v = dict(form=f, type='Potion', need='HealthAny', rank=k, util=1.0, ctx=0.5, est=0.0, prior=0.0, ucb=0.0,
+                 alpha=0.0, learn=0.0, **{'lambda': 0.0}, rec=0.0, corr=1.0, potion=1.0, fav=1.0, wildcard=0,
+                 coldStart=0, pred=0.0)
+        v.update(c)
+        rows.append([v[x] for x in cols])
+    return json.dumps({'v': 2, 'utc': utc, 'launch': launch, 'list': 'py', 'char': char, 'gen': gen, 'form': form,
+                       'cols': cols, 'cands': rows})
+
+
+class LearnerFeatures(TempWork):
+    """The old score's components (fitlib.row_features 'learn', 'mults', 'learner'; the R8
+    component test): read from the v2 log, joined per pick, carried forward per item."""
+
+    def setUp(self):
+        super().setUp()
+        self._v2env = os.environ.pop('HUGINN_FIT_V2', None)
+
+    def tearDown(self):
+        if self._v2env is not None:
+            os.environ['HUGINN_FIT_V2'] = self._v2env
+        super().tearDown()
+
+    def dataset(self, launches=1):
+        # launch 1: key 0003EAE3 at 15:01:01 (its v2 record joins), menu 00099999, wheel 00012EB7 at 15:01:04
+        text = ''.join(session(f'2026101{i}-100000', CHAR_A, '0.23.50 (abc)', minute=i) for i in range(1, launches + 1))
+        self.quiet(v3load.main, [str(self.write('v3.jsonl', text))])
+        lines = [
+            # an earlier record of this character holds the sword (not a candidate of the key pick's record)
+            v2_record('2026-10-09 14:59:00.000', 'AAAAAAAA', CHAR_A,
+                      {'00012EB7': {'lambda': 1.0, 'alpha': 0.5, 'est': 0.4, 'rec': 0.3}}),
+            # a later one of ANOTHER character: never carried forward to this one
+            v2_record('2026-10-09 15:00:59.000', 'BBBBBBBB', CHAR_B,
+                      {'00012EB7': {'lambda': 9.0, 'alpha': 1.0, 'est': 5.0}}),
+            # the key pick's own record, 0.5 s after it
+            v2_record('2026-10-09 15:01:01.500', '0003EAE3', CHAR_A,
+                      {'0003EAE3': {'lambda': 2.0, 'learn': 0.5, 'alpha': 0.5, 'est': 0.6, 'rec': 0.1, 'fav': 2.5,
+                                    'corr': 1.3, 'potion': 0.8}}),
+        ]
+        self.write('Huginn_Selections.jsonl', '\n'.join(lines) + '\n')     # beside the v3 file: v2_path finds it
+        D = common.load()
+        v2 = fitlib.load_v2()
+        return fitlib.build(D, include_nothing=False, v2=v2), v2
+
+    def row(self, S, d, form):
+        i = S['items'][form]
+        return int(np.where(S['MASK'][d] & (S['ITEM'][d] == i))[0][0])
+
+    def test_join_carry_forward_and_char(self):
+        S, _ = self.dataset()
+        key = [d for d in range(len(S['Y'])) if S['OUT'][d] == 'key'][0]
+        wheel = [d for d in range(len(S['Y'])) if S['OUT'][d] == 'wheel'][0]
+        pot, sword = self.row(S, key, '0003EAE3'), self.row(S, key, '00012EB7')
+        # D2 on the scored, joined row: ln(1 + lambda learn)
+        self.assertAlmostEqual(S['LRN'][key, pot, 0], math.log(1 + 2.0 * 0.5))
+        # L1 on it: ln(1 + lambda (alpha est + rec)), rec from the pick's own record
+        self.assertAlmostEqual(S['LRN'][key, pot, 1], math.log(1 + 2.0 * (0.5 * 0.6 + 0.1)))
+        # the sword: no utility (not scored) -> D2 0; L1 from the earlier record of the same
+        # character (not the other character's later one), recency 0 (not in this pick's record)
+        self.assertEqual(S['LRN'][key, sword, 0], 0.0)
+        self.assertAlmostEqual(S['LRN'][key, sword, 1], math.log(1 + 1.0 * (0.5 * 0.4)))
+        # the wheel pick (the sword) has no v2 record: its rows are carried forward, no D2 term
+        self.assertFalse(S['v2ok'][wheel])
+        ws = self.row(S, wheel, '00012EB7')
+        self.assertEqual(S['Y'][wheel], ws)
+        self.assertEqual(S['LRN'][wheel, ws, 0], 0.0)
+        self.assertAlmostEqual(S['LRN'][wheel, ws, 1], math.log(1 + 1.0 * (0.5 * 0.4)))
+        # a form no record holds reads 0; the eligible flag is the row's
+        self.assertEqual(S['LRN'][key, self.row(S, key, '0001397D')].tolist(), [0.0, 0.0])
+        self.assertEqual(S['ELIG'][key, pot], 1.0)
+        self.assertEqual(S['ELIG'][key, self.row(S, key, '0003EAE5')], 0.0)
+
+    def test_row_features(self):
+        S, _ = self.dataset()
+        key = [d for d in range(len(S['Y'])) if S['OUT'][d] == 'key'][0]
+        pot, sword = self.row(S, key, '0003EAE3'), self.row(S, key, '00012EB7')
+        Fm, names = fitlib.row_features(S, ['learn', 'mults'])
+        self.assertEqual(names, ['ln learn mult', 'util missing', 'ln fav', 'ln corr', 'ln potion'])
+        np.testing.assert_allclose(Fm[key, pot], [math.log(2.0), 0.0, math.log(2.5), math.log(1.3), math.log(0.8)])
+        np.testing.assert_allclose(Fm[key, sword], [0.0, 1.0, 0.0, 0.0, 0.0])
+        Fm, names = fitlib.row_features(S, ['learner'])
+        self.assertEqual(names, ['ln learner', 'eligible'])
+        np.testing.assert_allclose(Fm[key, sword], [math.log(1.2), 1.0])
+
+    def test_learner_before_dynamic_forms_stay_in_their_load(self):
+        v2 = fitlib.V2Index()
+        c = lambda est: (0.5, 1, 1, 1, 'x', 1.0, 1.0, 0.0, est, 1.0, 0.0, 0.0)
+        v2.appear['FF000801'] = [(common.T('2026-10-09 15:00:00.000'), 'L1', 1, CHAR_A, c(0.1)),
+                                 (common.T('2026-10-09 15:00:10.000'), 'L2', 1, CHAR_A, c(0.2))]
+        t = common.T('2026-10-09 15:00:20.000')
+        self.assertEqual(fitlib.learner_before(v2, 'FF000801', t, 'L1', 1, CHAR_A)[8], 0.1)   # skips L2's
+        self.assertIsNone(fitlib.learner_before(v2, 'FF000801', t, 'L3', 1, CHAR_A))
+        self.assertIsNone(fitlib.learner_before(v2, 'FF000801', t, 'L1', 2, CHAR_A))          # another load
+        self.assertIsNone(fitlib.learner_before(v2, 'FF000801', common.T('2026-10-09 15:00:00.000'), 'L1', 1, CHAR_A))
+        self.assertIsNone(fitlib.learner_before(v2, '00012EB7', t, 'L1', 1, CHAR_A))
+        self.assertIsNone(fitlib.learner_before({}, '00012EB7', t, 'L1', 1, CHAR_A))           # no v2 log
+
+    def test_no_v2_log_reads_zero(self):
+        self.quiet(v3load.main, [str(self.write('v3.jsonl', session('20261011-100000', CHAR_A, '0.23.50 (abc)')))])
+        with contextlib.redirect_stderr(io.StringIO()):
+            S = fitlib.build(common.load(), include_nothing=False, v2=fitlib.load_v2())
+        self.assertFalse(S['LRN'].any())
+        self.assertTrue(S['ELIG'].any())
+
+    def test_data_key_covers_the_learner_features(self):
+        S, _ = self.dataset()
+        k = fitlib.data_key(S)
+        self.assertNotEqual(fitlib.data_key(dict(S, LRN=S['LRN'] + 1)), k)
+        self.assertNotEqual(fitlib.data_key(dict(S, ELIG=1 - S['ELIG'])), k)
+
+    def test_component_specs_fit(self):
+        S, _ = self.dataset(launches=3)
+        obv = fitlib.obvious_pairs(S['needs'], S['cols'])
+        FOLD = np.zeros(len(S['Y']), dtype=int)
+        for name in ('theta + b + recent + learn mult (D2)', 'theta + b + recent + learn mult + fav/corr/potion (D5)',
+                     'theta + b + recent + old learner state (L1)'):
+            spec = cv.PICKS[name]
+            res, fits = fitlib.online_results(S, obv, spec, every=1, min_train=1, maxiter=10)
+            self.assertGreater(fits, 0, name)
+            self.assertEqual(len(res), len(S['Y']))
+            self.assertEqual(len(fitlib.cv_results(S, obv, spec, FOLD, maxiter=10)), len(S['Y']))
 
 
 class ExportMain(TempWork):

@@ -23,7 +23,9 @@ FORMAT = 'huginn.bootstrap'
 VERSION = 1
 GRADINGS = ('graded', 'presence', 'presence+strength')
 OUTCOMES = ('picks', 'three')
-FEATURES = ('ln util', 'util missing') + tuple(f'slot {s}' for s in range(8))
+FEATURES = (('ln util', 'util missing') + tuple(f'slot {s}' for s in range(8))
+            # the old score's components (R6's real fit, 0.23.54; the format doc, features)
+            + ('ln learn mult', 'ln fav', 'ln corr', 'ln potion', 'ln learner', 'eligible'))
 
 
 def num(v):
@@ -38,11 +40,12 @@ def nums(vs):
 
 def make_document(*, source, spec, outcomes, grading, needs, cols, theta, theta_precision, kappa,
                   theta_strength=None, theta_strength_precision=None, theta_bias=None, u0=None, recent=None,
-                  features=(), items=(), items_dropped=None, curves=None, created_utc=None):
+                  features=(), items=(), items_dropped=None, curves=None, created_utc=None, provenance=None):
     """The bootstrap document. Matrices are lists of rows (need-major); recent is None or
     {'window_s', 'taus_s', 'features': [{'family', 'tau_s', 'theta', 'theta_strength'?,
     'precision', 'u0'?}]}; u0 is None or {'bias', 'need': {name: w}}; features [(name, w)];
-    items [(plugin, local hex, name, b, precision, picks)]; curves {need: (kind, p1, p2)}."""
+    items [(plugin, local hex, name, b, precision, picks)]; curves {need: (kind, p1, p2)};
+    provenance: None or a JSON object, written last as `provenance` (informational, unchecked)."""
     doc = {'format': FORMAT, 'version': VERSION}
     if created_utc is not None:
         doc['created_utc'] = created_utc
@@ -77,6 +80,8 @@ def make_document(*, source, spec, outcomes, grading, needs, cols, theta, theta_
                     for p, loc, nm, b, pr, k in sorted(items, key=lambda t: (t[0].lower(), t[1]))]
     doc['items_dropped'] = dict(sorted((items_dropped or {}).items()))
     doc['curves'] = {n: [c[0], num(c[1]), num(c[2])] for n, c in sorted((curves or {}).items())}
+    if provenance is not None:
+        doc['provenance'] = provenance
     return doc
 
 
