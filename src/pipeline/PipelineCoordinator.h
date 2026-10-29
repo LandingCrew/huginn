@@ -18,6 +18,11 @@
 #include <optional>
 #include <vector>
 
+namespace Huginn::Context
+{
+    struct ContextWeightMap;
+}
+
 namespace Huginn::Pipeline
 {
     // =========================================================================
@@ -118,6 +123,10 @@ namespace Huginn::Pipeline
         // 0.23.46: every gathered candidate the filters dropped, with the
         // filter that dropped it (the selection log v3's `filtered_by`).
         std::vector<Core::Filter::Dropped> filtered;
+        // 0.23.53: the old engine's view of this run (scorer parameters, the
+        // learner's state features, the score parts of the filter drops), for
+        // the selection log v3 only. The eligible rows carry their own parts.
+        Learning::PipelineStateCache::OldScoreRun oldScore;
 
 
         /// Reset all fields for reuse, preserving allocated container capacity.
@@ -155,6 +164,9 @@ namespace Huginn::Pipeline
             pageCandidatesScratch.clear();
             eligible.clear();
             filtered.clear();
+            oldScore.run = {};
+            oldScore.stateHash = 0;
+            oldScore.dropped.clear();
         }
     };
 
@@ -276,7 +288,11 @@ namespace Huginn::Pipeline
         void EnrichElementalDamage(PipelineContext& ctx);
         void ScoreCandidates(PipelineContext& ctx);
         /// R4: copy every generated candidate into ctx.eligible (reads only).
-        void CaptureEligible(PipelineContext& ctx, const std::vector<Candidate::CandidateVariant>& candidates);
+        /// 0.23.53: with the old engine's score parts of every candidate,
+        /// whatever the floors, scored against `weights` (the map the scoring
+        /// pass used), and of the filter drops (ctx.oldScore).
+        void CaptureEligible(PipelineContext& ctx, const std::vector<Candidate::CandidateVariant>& candidates,
+            const Context::ContextWeightMap& weights);
         /// Allocate + lock + visual states. Returns false (abandon the tick) if an
         /// off-thread page switch landed after ResolveDisplayPage's snapshot —
         /// locking the stale page would leak page-blind locks across the switch.

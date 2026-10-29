@@ -33,6 +33,13 @@
 //         "nothing" records of needs that started on one tick share the onset's)
 //   dec   one decision, referring to its context by id
 //
+// 0.23.53: every held or eligible row also carries the old engine's score
+// parts whatever its floors (OldScore.h: the learner's est, confidence,
+// evidence and UCB, the recency boost, the prior, the context weight, the
+// floor, an unscored candidate's would-be utility), the favourite bit and the
+// vanilla hotkey; a context the run's scorer parameters and state features
+// ("old"); a pick the id of its v2 record ("rid").
+//
 // This file is the pure part: the plain records, the encoder that turns them
 // into lines (tracking which caps and contexts the current segment has
 // defined) and the JSON helpers. The game side (learning/SelectionLogV3*)
@@ -45,6 +52,7 @@
 #include "EffectMapper.h"
 #include "FilterReason.h"
 #include "NeedEvaluator.h"
+#include "OldScore.h"
 
 #include <array>
 #include <cstddef>
@@ -101,12 +109,16 @@ namespace Huginn::Core::DecisionLog
         inline constexpr std::uint16_t Override = 64;      // shown by an override
         inline constexpr std::uint16_t Remembered = 128;   // shown by a Remembrance hold
         inline constexpr std::uint16_t AddedAtPick = 256;  // the chosen item, missing from the context
+        /// 0.23.53: in the player's favourites (an item's ExtraHotkey, a spell
+        /// in MagicFavorites), or a candidate the old engine read as favourited.
+        inline constexpr std::uint16_t Favorite = 512;
     }
 
     inline constexpr std::uint8_t kNoKind = 255;    // not in the effect catalog
     inline constexpr std::uint8_t kNoSource = 255;  // not a candidate of the old engine
     inline constexpr std::uint8_t kNoFilter = 255;  // not dropped by a candidate filter
     inline constexpr float kNone = std::numeric_limits<float>::quiet_NaN();
+    inline constexpr std::int8_t kNoHotkey = -1;
 
     /// One item the player could have chosen.
     struct Row
@@ -128,6 +140,11 @@ namespace Huginn::Core::DecisionLog
         /// gave `covered` (Coverage::Result::remaining; -1 = no timer); none
         /// when the row is not covered.
         float coveredSec = kNone;
+        /// 0.23.53: the old engine's score parts (row columns est..wu, fl).
+        OldScore old;
+        /// 0.23.53, row column "hk": the vanilla favourites hotkey bound to
+        /// the item (0-7 = keys 1-8), kNoHotkey when none.
+        std::int8_t hotkey = kNoHotkey;
         /// cap(i): the catalog's static entry (immutable, process lifetime) or
         /// a per-instance entry owned by capOwner. nullptr = not in the catalog.
         const Effect::Cap* cap = nullptr;
@@ -178,6 +195,9 @@ namespace Huginn::Core::DecisionLog
             float limit = 1.0f;               // the commanded-actor limit (perk entry point)
             std::vector<Coverage::CommandedActor> list;
         } summon;
+        /// The old engine's run behind the eligible rows (0.23.53, OldScore.h);
+        /// written as "old" when valid.
+        OldRun old;
         std::vector<Row> rows;
     };
 
@@ -214,6 +234,10 @@ namespace Huginn::Core::DecisionLog
         /// before the press (hands and nocked ammo; 0 for anything else, which
         /// an equip event shows was not worn).
         bool preEquipped = false;
+        /// 0.23.53: the record id shared with this pick's v2 record
+        /// (Huginn_Selections.jsonl "rid", per launch: join on launch + rid).
+        /// 0 = no v2 record (nothing, a pick the frozen learner skipped, test mode).
+        std::uint64_t rid = 0;
         // nothing only. A record stands for one STRETCH of a need episode
         // (core/NeedEpisodes.h "lap", 0.23.51): the whole episode when it
         // never lapped.

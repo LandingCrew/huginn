@@ -18,6 +18,9 @@ namespace Huginn::Learning
       float rewardEstimate;      // w . phi(s)
       float ucb;         // Exploration bonus (per-item evidence, n_eff)
       float confidence;  // n_eff / (n_eff + PRIOR_PSEUDO_OBSERVATIONS), n_eff = trains x retention
+      // 0.23.53, logging only (selection log v3): the stored evidence n
+      // before fading (n_eff = trains x retention). Nothing scores from it.
+      float trains = 0.0f;
    };
 
    // Memory with a useful life (roadmap Phase 3 #3a, 0.23.6). What the player
@@ -129,6 +132,10 @@ namespace Huginn::Learning
          [[nodiscard]] FeatureItemMetrics GetMetrics(
             RE::FormID formID,
             const std::array<float, StateFeatures::NUM_FEATURES>& phi) const;
+
+         /// 0.23.53, logging only: the sum of n over every entry (the UCB's
+         /// total), read under the same lock as the metrics.
+         [[nodiscard]] float TotalTrains() const noexcept { return m_owner.m_totalTrains; }
 
       private:
          friend class FeatureBanditLearner;

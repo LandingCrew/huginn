@@ -2,6 +2,7 @@
 
 #include "ScoredCandidate.h"
 #include "core/FilterReason.h"
+#include "core/OldScore.h"
 #include "slot/SlotAssignment.h"
 #include "slot/SlotClassifier.h"
 #include <chrono>
@@ -88,6 +89,22 @@ namespace Huginn::Learning
             bool enchanted = false;             // weapons/staves with an enchantment (charge applies)
             float utility = std::numeric_limits<float>::quiet_NaN();     // when it passed the floors
             float wildcardPropensity = std::numeric_limits<float>::quiet_NaN();  // when it is a wildcard
+            /// 0.23.53: the old engine's score parts for the row, whatever the
+            /// floors (PipelineCoordinator::CaptureEligible).
+            Core::DecisionLog::OldScore old;
+        };
+
+        /// 0.23.53: the old engine's view of a run, for the selection log v3
+        /// only: the scorer parameters and learner totals (`run`), the state
+        /// hash the recency boost keyed on, and the score parts of every
+        /// candidate the filters dropped (one row per (form, uid); utility
+        /// none). A held row the run never gathered gets its learner metrics
+        /// when a context is taken, against run.phi and stateHash.
+        struct OldScoreRun
+        {
+            Core::DecisionLog::OldRun run;
+            uint32_t stateHash = 0;
+            std::vector<EligibleRow> dropped;
         };
 
         /// R4: the page as shown, without the scored list (cheap; the selection
@@ -140,7 +157,8 @@ namespace Huginn::Learning
             size_t sortedPrefix,
             std::vector<EligibleRow> eligible = {},
             size_t pageSlots = 0,
-            std::vector<Core::Filter::Dropped> filtered = {})
+            std::vector<Core::Filter::Dropped> filtered = {},
+            OldScoreRun old = {})
         {
             std::unique_lock lock(m_mutex);
 
@@ -151,6 +169,7 @@ namespace Huginn::Learning
             m_valid = true;
             m_eligible = std::move(eligible);
             m_filtered = std::move(filtered);
+            m_old = std::move(old);
             m_pageSlots = pageSlots;
             ++m_generation;
 
@@ -258,13 +277,16 @@ namespace Huginn::Learning
         /// R4: the eligible rows of the last run, if it is newer than
         /// `haveGeneration` (else nothing is copied and false is returned).
         /// 0.23.46: `filtered` (if given) gets the same run's dropped candidates.
+        /// 0.23.53: `old` (if given) the same run's OldScoreRun.
         bool TakeEligibleIfNewer(uint64_t haveGeneration, std::vector<EligibleRow>& out, uint64_t& generation,
-                                 std::vector<Core::Filter::Dropped>* filtered = nullptr) const
+                                 std::vector<Core::Filter::Dropped>* filtered = nullptr,
+                                 OldScoreRun* old = nullptr) const
         {
             std::shared_lock lock(m_mutex);
             if (m_generation == haveGeneration) return false;
             out = m_eligible;
             if (filtered) *filtered = m_filtered;
+            if (old) *old = m_old;
             generation = m_generation;
             return true;
         }
@@ -373,6 +395,7 @@ namespace Huginn::Learning
         // R4 (selection log v3 only)
         std::vector<EligibleRow> m_eligible;
         std::vector<Core::Filter::Dropped> m_filtered;   // 0.23.46: the run's filter drops
+        OldScoreRun m_old;                               // 0.23.53: the old engine's view of the run
         size_t m_pageSlots = 0;
         uint64_t m_generation = 0;
     };

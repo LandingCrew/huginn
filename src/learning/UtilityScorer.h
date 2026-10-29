@@ -123,6 +123,29 @@ namespace Huginn::Scoring
         void LogTopCandidates(const ScoredCandidateList& ranked, size_t count = 5,
             bool detail = false, bool force = false) const;
 
+        /// 0.23.53, LOGGING ONLY (selection log v3): what ScoreCandidates
+        /// computes for one candidate, with no floor applied -- the same
+        /// ScoreCandidateInternal the scoring loop calls, at the context
+        /// weight, learner metrics and recency the caller passes. The
+        /// favourites multiplier is the provisional one (rank 0 of 1); the
+        /// rank scaling and the potion tier order that ScoreCandidates applies
+        /// afterwards to the rows it kept are not. Reads only: nothing scored
+        /// is changed and nothing is kept.
+        [[nodiscard]] ScoredCandidate ExplainCandidate(
+            const Candidate::CandidateVariant& candidate,
+            const State::GameState& state,
+            const State::PlayerActorState& player,
+            const State::TargetCollection& targets,
+            const State::WorldState& world,
+            const Context::ContextWeightMap& weights,
+            float contextWeight,
+            const Learning::FeatureItemMetrics& metrics,
+            float recencyBoost)
+        {
+            return ScoreCandidateInternal(candidate, state, player, targets, world, weights, contextWeight, metrics,
+                recencyBoost);
+        }
+
     private:
         // Internal scoring implementation
         // Stage 1f: Added WorldState and ContextWeightMap parameters

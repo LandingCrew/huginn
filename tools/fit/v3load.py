@@ -39,7 +39,17 @@ others) and the context's `summon` object (None before 0.23.46).
 episode expired, "lap": the stretch reached the grid with the need still on),
 `lap` (the stretch's index) and `epSec` (the episode's onset to the stretch's
 end). An older record is a whole episode and reads why "end", lap 0, epSec =
-durSec (EP_DEFAULTS); the heads keep `episode.lapSec` (absent before)."""
+durSec (EP_DEFAULTS); the heads keep `episode.lapSec` (absent before).
+
+0.23.53 logged the old engine's score parts on every held or eligible row and
+the favourites: row columns est, a, n, ucb, rec, prior, cw, fl, wu, hk (by the
+head's `row` names; a row may end before the last of them, a missing one reads
+None), kept as the row tuple's OLD element -- a tuple indexed by O_EST..O_HK
+(common.py), fl by floor name from the head's `floors` -- or None when the row
+carries none of them (every row before 0.23.53); the `favorite` flag bit; the
+context's `old` object (the run's scorer parameters, kept as written; None
+before); and the decision's `rid` (the id its v2 record carries; None when it
+has none, and before 0.23.53)."""
 import argparse
 import json
 import pickle
@@ -52,7 +62,9 @@ from common import work
 # one gets (an older build, or a field a later one drops).
 DEC_DEFAULTS = {'char': None, 'list': '', 'gen': 1, 'name': None, 'form': None, 'kind': '', 'src': '',
                 'via': '', 'case': '', 'how': '', 'skip': '', 'confirmMs': 0, 'ctxAgeMs': 0, 'repeat': 0,
-                'learned': 1, 'preEquipped': 0, 'ep': None}
+                'learned': 1, 'preEquipped': 0, 'ep': None, 'rid': None}
+# The row columns 0.23.53 appended, in the order of the row tuple's OLD element.
+OLD_COLS = ('est', 'a', 'n', 'ucb', 'rec', 'prior', 'cw', 'fl', 'wu', 'hk')
 # A nothing record's episode fields 0.23.51 added (see the module docstring);
 # epSec defaults to the record's own durSec.
 EP_DEFAULTS = {'why': 'end', 'lap': 0}
@@ -100,22 +112,32 @@ def load(paths):
                 hcross = gix(r['cross'], crossix, cross)
                 segcaps = {}
                 seg = len(heads)
-                heads.append({k: r[k] for k in ('launch', 'list', 'build', 'kinds', 'src', 'row', 'flags', 'episode', 'filters') if k in r}
+                heads.append({k: r[k] for k in ('launch', 'list', 'build', 'kinds', 'src', 'row', 'flags', 'episode', 'filters', 'floors') if k in r}
                              | {'ncols': len(r['cols']), 'nneeds': len(r['needs']), 'file': str(path)})
                 kinds, srcs = r['kinds'], r['src']
                 hfilters = r.get('filters', [])
                 rnames = r.get('row') or []
                 ifb = rnames.index('fb') if 'fb' in rnames else None
                 icr = rnames.index('cr') if 'cr' in rnames else None
+                hfloors = r.get('floors', [])
+                iold = [rnames.index(n) if n in rnames else None for n in OLD_COLS]   # 0.23.53
+                ifl = OLD_COLS.index('fl')
 
                 def row_tuple(f):
                     form, uid, kind, src, cap, flags, slot, util, x, wp = f[:10]
                     fb = f[ifb] if ifb is not None and ifb < len(f) else None
                     cr = f[icr] if icr is not None and icr < len(f) else None
+                    old = [f[i] if i is not None and i < len(f) else None for i in iold]
+                    if all(v is None for v in old):
+                        old = None
+                    else:
+                        if old[ifl] is not None:
+                            old[ifl] = hfloors[old[ifl]]
+                        old = tuple(old)
                     return (form, uid, None if kind is None else kinds[kind], None if src is None else srcs[src],
                             -1 if cap == -1 else segcaps[cap], flags, slot, util,
                             tuple((hcross[i], v) for i, v in x), wp,
-                            None if fb is None else hfilters[fb], cr)
+                            None if fb is None else hfilters[fb], cr, old)
             elif t == 'cap':
                 c = tuple(sorted((hcol[i], v) for i, v in r['c']))
                 if c not in capkey:
@@ -127,7 +149,7 @@ def load(paths):
                 except (KeyError, IndexError, TypeError, ValueError):
                     stats['bad_ctx'] += 1; continue      # a cap a torn line took, a torn row
                 ctx = {k: v for k, v in r.items() if k not in CTX_REBUILT}
-                for k in ('utc', 'why', 'menu', 'pipe', 'race', 'heldFull', 'wc', 'summon', 'env'):
+                for k in ('utc', 'why', 'menu', 'pipe', 'race', 'heldFull', 'wc', 'summon', 'env', 'old'):
                     ctx.setdefault(k, None)
                 ctx.update({'seg': seg, 'id': r['id'], 'rows': rows,
                             'need': {hneed[i]: v for i, v in r.get('need', [])},

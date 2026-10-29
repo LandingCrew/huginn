@@ -222,11 +222,17 @@ namespace Huginn::Core::DecisionLog
         }
         out += R"(],"src":)";
         AppendNameList(out, head.sourceNames);
-        out += R"(,"row":["form","uid","kind","src","cap","flags","slot","util","x","wp","fb","cr"])";
+        // 0.23.53: est..hk appended (the old engine's score parts, the
+        // favourites hotkey); a row may end before them (trailing nulls are
+        // not written).
+        out += R"(,"row":["form","uid","kind","src","cap","flags","slot","util","x","wp","fb","cr",)"
+               R"("est","a","n","ucb","rec","prior","cw","fl","wu","hk"])";
         out += R"(,"flags":{"eligible":1,"scored":2,"held":4,"equipped":8,"shown":16,"wildcard":32,)"
-               R"("override":64,"remembered":128,"addedAtPick":256})";
+               R"("override":64,"remembered":128,"addedAtPick":256,"favorite":512})";
         out += R"(,"filters":)";   // 0.23.46: a row's "fb" indexes this
         AppendNameList(out, Filter::kReasonNames);
+        out += R"(,"floors":)";    // 0.23.53: a row's "fl" indexes this
+        AppendNameList(out, kFloorNames);
         out += R"(,"episode":{"onset":)";
         AppendNum(out, head.onset);
         out += R"(,"expiry":)";
@@ -327,6 +333,28 @@ namespace Huginn::Core::DecisionLog
         else AppendInt(out, r.filteredBy);
         out += ',';
         AppendNum(out, r.coveredSec);
+        // 0.23.53: est, a, n, ucb, rec, prior, cw, fl, wu, hk -- written up to
+        // the last one that is set: a held row the run never gathered ends
+        // after rec, a row with none of them after cr.
+        const auto& o = r.old;
+        const std::array<float, 7> lead{ o.est, o.alpha, o.trains, o.ucb, o.rec, o.prior, o.ctx };
+        int last = -1;   // index of the last set column among the ten
+        for (int i = 0; i < static_cast<int>(lead.size()); ++i) {
+            if (std::isfinite(lead[static_cast<std::size_t>(i)])) last = i;
+        }
+        if (o.floor != kNoFloor) last = 7;
+        if (std::isfinite(o.wouldUtil)) last = 8;
+        if (r.hotkey != kNoHotkey) last = 9;
+        for (int i = 0; i <= last; ++i) {
+            out += ',';
+            if (i < 7) AppendNum(out, lead[static_cast<std::size_t>(i)]);
+            else if (i == 7) {
+                if (o.floor == kNoFloor) out += "null";
+                else AppendInt(out, o.floor);
+            }
+            else if (i == 8) AppendNum(out, o.wouldUtil);
+            else AppendInt(out, r.hotkey);
+        }
         out += ']';
     }
 
@@ -407,6 +435,41 @@ namespace Huginn::Core::DecisionLog
                     }
                     ctxLine += "]}";
                 }
+                if (c.old.valid) {   // 0.23.53
+                    const auto& o = c.old;
+                    ctxLine += R"(,"old":{"minCtx":)";
+                    AppendNum(ctxLine, o.minCtx);
+                    ctxLine += R"(,"minUtil":)";
+                    AppendNum(ctxLine, o.minUtil);
+                    ctxLine += R"(,"topN":)";
+                    AppendInt(ctxLine, o.topN);
+                    ctxLine += R"(,"coldBoost":)";
+                    AppendNum(ctxLine, o.coldBoost);
+                    ctxLine += R"(,"beta":)";
+                    AppendNum(ctxLine, o.beta);
+                    ctxLine += R"(,"lambdaMin":)";
+                    AppendNum(ctxLine, o.lambdaMin);
+                    ctxLine += R"(,"lambdaMax":)";
+                    AppendNum(ctxLine, o.lambdaMax);
+                    ctxLine += R"(,"n0":)";
+                    AppendNum(ctxLine, o.n0);
+                    ctxLine += R"(,"fav":)";
+                    ctxLine += JsonString(o.favMode);
+                    ctxLine += R"(,"favMin":)";
+                    AppendNum(ctxLine, o.favMin);
+                    ctxLine += R"(,"favMax":)";
+                    AppendNum(ctxLine, o.favMax);
+                    ctxLine += R"(,"scored":)";
+                    AppendInt(ctxLine, o.scored);
+                    ctxLine += R"(,"total":)";
+                    AppendNum(ctxLine, o.totalTrains);
+                    ctxLine += R"(,"phi":[)";
+                    for (std::size_t i = 0; i < o.phi.size(); ++i) {
+                        if (i) ctxLine += ',';
+                        AppendNum(ctxLine, o.phi[i]);
+                    }
+                    ctxLine += "]}";
+                }
                 ctxLine += R"(,"rows":[)";
                 for (std::size_t i = 0; i < c.rows.size(); ++i) {
                     if (i) ctxLine += ',';
@@ -420,6 +483,9 @@ namespace Huginn::Core::DecisionLog
         AppendInt(dec, kVersion);
         dec += R"(,"seq":)";
         AppendUInt(dec, d.seq);
+        dec += R"(,"rid":)";   // 0.23.53: the v2 record's id (launch + rid)
+        if (d.rid) AppendUInt(dec, d.rid);
+        else dec += "null";
         dec += R"(,"utc":)";
         dec += JsonString(d.utc);
         dec += R"(,"launch":)";

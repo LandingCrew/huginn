@@ -15,10 +15,11 @@ schema of that log, field by field.
 
 | | |
 |---|---|
-| Code | `src/core/DecisionLog.h/.cpp` (records, encoder), `src/core/NeedEpisodes.h` (episodes and their laps), `src/learning/SelectionLogV3*.cpp` (the game side) |
+| Code | `src/core/DecisionLog.h/.cpp` (records, encoder), `src/core/OldScore.h` (the old engine's score parts, 0.23.53), `src/core/NeedEpisodes.h` (episodes and their laps), `src/learning/SelectionLogV3*.cpp` (the game side), `src/pipeline/PipelineCoordinator.cpp` `CaptureEligible` (the eligible rows and their score parts) |
 | Reader | `tools/replay/replay.py`: `iter_v3` / `load_v3`, `--v3 FILE...` prints a summary |
 | Tests | `tests/core/DecisionLogTests.cpp` (encoder vs the golden file), `tests/core/NeedEpisodesTests.cpp`, `tests/core/CoverageTests.cpp` (covered(i), the filter reasons), `tools/replay/test_replay_v3.py` (CTest `replay_v3_roundtrip`) |
-| Golden file | `tests/core/fixtures/decisions/synthetic_v3.jsonl`; `synthetic_v3_0.23.45.jsonl` beside it is the same session as 0.23.45 wrote it (before `fb`, `cr`, `covered`, `summon`), which the reader must keep decoding |
+| Golden file | `tests/core/fixtures/decisions/synthetic_v3.jsonl`; beside it the same session as older builds wrote it, which the readers must keep decoding: `synthetic_v3_0.23.45.jsonl` (before `fb`, `cr`, `covered`, `summon`) and `synthetic_v3_0.23.52.jsonl` (before the old engine's columns `est`..`hk`, the `favorite` flag, `ctx.old` and `dec.rid`) |
+| Fit loader | `tools/fit/v3load.py` (row tuple indices in `tools/fit/common.py`), tested by `tools/fit/test_fit.py` |
 
 ## Files
 
@@ -59,6 +60,15 @@ schema of that log, field by field.
 - A field may be **added** to any line type within v3: readers ignore keys they
   do not know. A row column may be added only at the end, and the head's
   `row` list names the columns, so a reader can check.
+- A row may be **shorter** than the head's `row` list (0.23.53): the old
+  engine's columns (`est`..`hk`) are written only up to the last one that is
+  set, and a column past a row's end reads null. The first twelve columns are
+  always written. Both readers index the appended columns by the head's names
+  and check the row's length. 0.23.53 stayed v3 for this reason: every
+  addition is an appended column, a new flag bit, a new head list, a new
+  context object or a new decision field, so files written before it read
+  unchanged (`synthetic_v3_0.23.52.jsonl`), and a v4 would have made every
+  existing reader refuse the new files for nothing.
 - Removing a field, changing a field's meaning or unit, reordering row
   columns, or changing the episode definition in a way the head's `episode`
   object cannot express is **v4**.
@@ -98,9 +108,10 @@ contexts per segment and clears both at a head.
 | `cross` | string[8] | the runtime cross-features, in order (`row.x` indexes it). 7 before 0.23.46 (no `covered`) |
 | `kinds` | string[10] | catalog kinds: `Spell Scroll Potion Poison Food Weapon Ammo Armor SoulGem Light` (`row.kind`) |
 | `src` | string[10] | the old engine's candidate source types (`row.src`) |
-| `row` | string[12] | the row columns, in order (below). 10 before 0.23.46 (no `fb`, `cr`) |
-| `flags` | object | row flag bits by name |
+| `row` | string[22] | the row columns, in order (below). 12 before 0.23.53 (no `est`..`hk`), 10 before 0.23.46 (no `fb`, `cr`) |
+| `flags` | object | row flag bits by name (`favorite` since 0.23.53) |
 | `filters` | string[15] | (0.23.46) the candidate filters' reasons, in order (`row.fb` indexes it; `core/FilterReason.h`). Absent before 0.23.46 |
+| `floors` | string[5] | (0.23.53) how the old engine's floors treated an eligible row, in order: `pass`, `cold`, `ctx`, `util`, `suppressed` (`row.fl` indexes it; `core/OldScore.h`, [below](#the-old-engines-score-parts-02353)). Absent before 0.23.53 |
 | `episode` | object | the episode definition in force: `onset`, `expiry`, `minSec`, `graceSec`, `answerSlackSec`, and `deathDrops: 1` (0.23.16: a death drops the open episodes and those in their grace; absent = 0.23.15, where a death could leave `nothing` records), and `lapSec`, `lapMaxStepSec`, `lapIdleSec` (0.23.51: the lap grid and the idle hold of its clock, [Laps](#laps); absent = every episode judged whole, no lap records). `replay.head_lap_sec(head)` reads it |
 | `curves` | [kind, p1, p2][] | (0.23.41) the `[Needs]` response curves in force, index-aligned with `needs`: `["logistic", 0.5, 10]` (`core/ResponseCurve.h`), so a fit knows which curve made every logged `need` value from its `in`. A hot reload that changes a curve starts a new segment (a new head line) before the next record. Absent before 0.23.41: those segments used their build's `needs.csv` defaults unless the INI overrode them. `replay.head_curves(head)` reads it |
 
@@ -143,6 +154,7 @@ stretches one lap began.
 | `wc.base`, `wc.max` | float | the wildcard odds in force (per-slot probability base and cap) |
 | `env` | object | (0.23.41) where and when, for what the darkness need's input cannot say: `interior` 0/1 (an interior cell), `hour` (game hour, 0-24), `daylight` 0/1 (outdoors under a full sky in the climate's daytime: darkness reads 0), `light` (the raw light on the player, 0-1 in 0.1 steps, before the hold the darkness need reads -- `core/LightHold.h`). Absent before 0.23.41 |
 | `summon` | object | (0.23.46) the player's summons: `n` the living actors the player commands (the count the summon filter compares), `limit` the commanded-actor limit the perks give (the perk entry point from 1; Twin Souls makes it 2; read only while a summon is up, so with `n` 0 it is the last value read in this launch, 1 before the first summon: meaningful only when `n` > 0), `act` one entry per living commanded actor, `[source, kind, remaining, elapsed, actor]`: the spell or scroll that cast it (the staff for a staff's enchantment; null if unknown), `"summon"` / `"reanimate"` / `"other"` (its effect's archetype: thralls apart from summons, doc 11 decision 3), seconds left on that effect (-1 = no timer), seconds since it was cast (a new cast dismisses the oldest), the actor's reference. Absent before 0.23.46 |
+| `old` | object | (0.23.53) the old engine's pipeline run behind the eligible rows (the run `pipe` describes): `minCtx` and `minUtil` (`fMinimumContextWeight`, `fMinimumUtility`), `topN` (`iTopNCandidates`: the cold start runs when fewer rows than this pass), `coldBoost` (the cold start raises a row's context to `coldBoost` × `ucb`), `beta` (the exploration weight), `lambdaMin`, `lambdaMax`, `n0` (the learner's pseudo-observations), `fav` (`"boost"`, `"off"`, `"suppress"`), `favMin`, `favMax` (the favourites multiplier's range), `scored` (rows the run kept), `total` (the learner's total evidence, the UCB's), `phi` (the 18 state features the learner read, `StateFeatures`). Written when a run of this session is cached (`pipe.ok` 1). Absent before 0.23.53 |
 | `heldFull` | 0/1 | 1: the held rows were read in full. 0: taken while inventory extra data must not be read, from kPreLoadGame until the post-load window ends (`Util::IsExtraListStable`, the registries' gate, plus a v3-local load-in-progress flag): one plain row per base form, no unique IDs, no per-instance caps or stack charges, `equipped` from the hands and the nocked ammo only (armour reads unworn) |
 | `rows` | row[] | every item the player could choose (below) |
 
@@ -164,6 +176,16 @@ Each row is an array, in the order `head.row` names:
 | 9 | `wp` | float or null | wildcard propensity, for a row shown as a wildcard (below) |
 | 10 | `fb` | int or null | (0.23.46) `filtered_by`: for a row that is not `eligible`, the candidate filter that dropped it in the same pipeline run as the eligible flags, an index into `head.filters`; null for an eligible row, and for one no registry gathered at all (not a candidate type, a registry that does not know it). Absent in older rows: read as null |
 | 11 | `cr` | float or null | (0.23.46) the remaining seconds of the active effect that gave the row's `covered` (-1 = no timer: a constant effect, or a summon below the limit); null when `covered` is 0. Absent in older rows: read as null |
+| 12 | `est` | float or null | (0.23.53) the old learner's estimate w·φ (`FeatureBanditLearner`) |
+| 13 | `a` | float or null | (0.23.53) its confidence α = n_eff / (n_eff + n0) |
+| 14 | `n` | float or null | (0.23.53) its stored evidence n for the item, before fading (n_eff = n × retention = n0·α / (1 − α)); 0 for an item it has no entry for |
+| 15 | `ucb` | float or null | (0.23.53) its exploration bonus |
+| 16 | `rec` | float or null | (0.23.53) `UsageMemory`'s recency boost |
+| 17 | `prior` | float or null | (0.23.53) `PriorCalculator`'s prior |
+| 18 | `cw` | float or null | (0.23.53) the context weight (`ContextRuleEngine`), before any cold-start boost |
+| 19 | `fl` | int or null | (0.23.53) the floor, an index into `head.floors`; null for a row that is not eligible |
+| 20 | `wu` | float or null | (0.23.53) for an unscored eligible row and a filter drop: the utility the scorer computes for it with no floor |
+| 21 | `hk` | int or null | (0.23.53) the vanilla favourites hotkey bound to the item, 0-7 (keys 1-8) |
 
 | Flag | Bit | Meaning |
 |---|---|---|
@@ -176,6 +198,7 @@ Each row is an array, in the order `head.row` names:
 | `override` | 64 | shown by an override |
 | `remembered` | 128 | shown by a Remembrance hold |
 | `addedAtPick` | 256 | the chosen item, missing from its context; carried in `dec.add` |
+| `favorite` | 512 | (0.23.53) in the player's favourites: an inventory stack with `ExtraHotkey` (as `WeaponRegistry` reads it), a spell `MagicFavorites` lists (favourited or on a hotkey), or a candidate the old engine read as favourited (spells, weapons: the favourites multiplier's flag). An item's is read with the held set's extra data, so a `heldFull: 0` context has it only for spells and candidates |
 
 The **choice sets** of doc 9, read off the flags: the page A = rows with
 `shown`; the menu set H \ A = rows with `held`, without `shown` and not
@@ -207,6 +230,65 @@ candidate of one key: the first stays eligible) and `truncated` (past
 `maxCandidatesAfterFilter`). The shadow fit of doc 11 groups the active-buff
 seven as "covered" drops; a shown row with `fb` is still a key alternative
 (choice sets come from `shown`, never from eligibility).
+
+### The old engine's score parts (0.23.53)
+
+The R6 component test found that R8 passes the gate only by keeping the old
+learner's `learningScore` on the rows the old floors pass, and could not tell
+whether the rest of the gap comes from the floors (the context weight acting
+as a binary gate) or from the stale scores it had to carry forward for rows
+the floors dropped. So every held or eligible row carries what the old engine
+computes for it whatever the floors, logged only (nothing scores from it):
+
+| Row | `est` `a` `n` `ucb` `rec` | `prior` `cw` | `fl` | `wu` | read when |
+|---|---|---|---|---|---|
+| eligible, `scored` | the parts its `util` was computed from (its breakdown); `n` read with them | yes | `pass` or `cold` | null | the run |
+| eligible, not scored | computed again (`UtilityScorer::ExplainCandidate`: the scoring loop's own `ScoreCandidateInternal`) | yes | `ctx`, `util` or `suppressed` | yes | the run |
+| dropped by a filter (`fb`) | as above | yes | null | yes | the run |
+| held, never gathered | the learner's metrics and the recency, against the run's `old.phi` and state hash | null | null | null | the context |
+
+"The run" is the pipeline run the eligible flags and `ctx.old` come from
+(`PipelineCoordinator::CaptureEligible`); a held row the run never gathered
+(24.5% of rows on the 2026-10-29 log: carried armour, potions and spells no
+registry makes a candidate of) has no candidate to score, so it gets only
+what the learner and the recency say of its FormID, read when the context is
+taken (the learner's weights then, the run's state features). A chosen row
+added at the pick is read the same way. A context taken before this
+session's first run (`pipe.ok` 0) has no `old` and no parts.
+
+**The floors** (`fl`), read off the same tests `UtilityScorer::ScoreCandidates`
+applies, in its order: a favourite under favourites mode Suppress is never
+scored (`suppressed`); a non-favourite under `minCtx` is dropped (`ctx`);
+anything else not kept fell under `minUtil` (`util`). A kept row is `pass`, or
+`cold` when the cold-start rescue kept it (fewer than `topN` rows passed, and
+its context was raised to max(`cw`, `coldBoost` × `ucb`)). The cold start
+also looks at `ctx` rows it does not keep: they stay `ctx`.
+
+**What follows from them:**
+- learn = a·est + (1 − a)·prior + beta·ucb + rec, λ = lambdaMin + a·(lambdaMax − lambdaMin), and
+  util = c·(1 + λ·learn)·m with c = `cw` (`pass`) or max(`cw`, coldBoost·ucb) (`cold`), so the product
+  m = corr × potion × fav of a scored row is util / (c·(1 + λ·learn)) (it includes the favourites rank
+  scaling and the potion tier order applied after the loop).
+- `wu` is c·(1 + λ·learn)·m at the raw `cw` with the favourites multiplier provisional (rank 0 of 1:
+  `favMax` for a favourite under Boost, 0 under Suppress) and without the potion tier order: the
+  utility the loop computes before its floor test.
+- n_eff = n0·a / (1 − a); `n` − n_eff is the evidence the learner's fading has set aside.
+
+**Limits.** A scored row's `n` and an unscored row's parts are read just after
+the scoring pass under a fresh learner lock: a selection confirming on another
+thread in between moves them by one update (the scored rows' other parts are
+the breakdown's, exact). A row's parts are the run's, not the press's: the
+run is `pipe.ageMs` old, as the page is. Rows that are neither held nor
+eligible (a shown item missing from both) carry none.
+
+**Record id** (`dec.rid`, 0.23.53): each pick the v2 log records (key,
+wheel and menu picks the frozen learner takes, outside test mode) gets one
+number per launch, from 1, written as `"rid"` into its v2 record
+(`Huginn_Selections.jsonl`) and into its v3 decision; join on (`launch`,
+`rid`). The breakdown of the scored candidates in the v2 record no longer
+needs the form-and-time join. Null for `nothing`, for the picks the learner
+skips (`learned: 0`: they write no v2 record), and when the v2 writer dropped
+the record (its queue full).
 
 **Runtime cross-features** (`effects.csv` item features; the math is
 `core/CrossFeatures.h`, the inputs `effect/CrossFeatures.cpp`), computed every
@@ -264,6 +346,7 @@ being active and the refractory period). Only rows shown as wildcards carry it.
 | Field | Type | Meaning |
 |---|---|---|
 | `v` | int | 3 |
+| `rid` | int or null | (0.23.53) the id this pick's v2 record carries ([Record id](#the-old-engines-score-parts-02353)); null when there is none. Absent before 0.23.53 |
 | `seq` | int | per launch, in write order. The writer assigns it as it writes, so a record dropped from a full queue takes no number, and a record whose write the stream reports failed gives its number back to the next one: no gaps. (A failed write that still reached the disk leaves a torn line, which the reader skips, or in the rarest case a record whose `seq` repeats in the next one.) |
 | `utc` | string | when the record was made: the confirmation for a pick; the end of the grace for nothing (of the episode, or of the lapped stretch). Since 0.23.51 the `nothing` records judged on one tick share one `utc`, so the stretches one lap tick cut carry the same `(launch, gen, utc)` (`fitlib.lap_tick`) |
 | `launch`, `list` | string | as in the head |
@@ -531,6 +614,22 @@ darkness, magicka_burn and the distance bands. Laps (0.23.51) add an estimated
 ~110 records and ~30 contexts an hour of play, ~0.4 MB/h; time left unattended
 adds at most 30 s of lap clock per spell ([Laps](#laps)).
 
+**0.23.53's columns** (the old engine's score parts, `hk`, `ctx.old`,
+`dec.rid`), projected over the 2026-10-29 log (1,041,112 rows, 5,389 contexts,
+6,195 decisions in 30.4 h of LoreRim play; 2.25 MB/h as written) with values
+drawn from the v2 log's candidate breakdowns and each row written as the
+encoder writes it: +27.7 B per scored row, +34.6 per unscored eligible row,
++36.6 per filter drop, +10.9 per held row never gathered (mostly
+`0,0,0,1,0`: an item the learner has no entry for), +293 B per context
+(`old`), +11 B per decision (`rid`): **+0.89 MB/h (+40%), 3.1 MB/h in all**,
+about 26 B per row on average; a 64 MiB file then holds about 20 hours of
+LoreRim play. The synthetic golden session grew from 23,440 to 24,885 bytes.
+The CPU side: the scored rows reuse their breakdown (one learner lookup each
+for `n`); an unscored row or a filter drop costs one more pass of the
+scorer's per-candidate parts (prior, correlation, potion multiplier) per
+pipeline run; a held row never gathered costs one learner lookup and a
+20-entry recency scan per context.
+
 What bounds it:
 - **Caps once per segment**, content-addressed: the 243-column vectors are
   written once and referenced by id (the first context of a segment carries
@@ -565,3 +664,8 @@ What bounds it:
   before 0.23.41 their rows had `kind` null and `cap` -1.
 - A press inside a menu opened before a game load (none in practice) falls back
   to the press-time context.
+- The old engine's score parts (0.23.53) are the pipeline run's, read with
+  the limits in [their section](#the-old-engines-score-parts-02353); a held
+  row never gathered has no prior, context weight or floor (it has no
+  candidate). The favourite bit of an inventory item needs the held set's
+  extra data (`heldFull: 1`).

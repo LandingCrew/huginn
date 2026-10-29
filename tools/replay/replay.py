@@ -426,7 +426,13 @@ def validate(recs):
 
 DEFAULT_LOG_V3 = os.path.expanduser(r"~/Documents/My Games/Skyrim.INI/SKSE/Huginn_Selections_v3.jsonl")
 V3_FLAGS = {"eligible": 1, "scored": 2, "held": 4, "equipped": 8, "shown": 16, "wildcard": 32,
-            "override": 64, "remembered": 128, "addedAtPick": 256}
+            "override": 64, "remembered": 128, "addedAtPick": 256, "favorite": 512}
+# Row columns appended within v3 after the first ten, by name (the head's `row`
+# list says which a segment has, and where): 0.23.46 fb, cr; 0.23.53 the old
+# engine's score parts est..wu and fl, and the favourites hotkey hk. A row may
+# end before the last of them (0.23.53 writes up to the last one set): a
+# column past a row's end reads None.
+V3_APPENDED = ("fb", "cr", "est", "a", "n", "ucb", "rec", "prior", "cw", "fl", "wu", "hk")
 
 
 class V3FormatError(ValueError):
@@ -490,14 +496,14 @@ def _sparse(pairs, names):
 
 def _row_extras(head):
     """Where the row columns added after the first ten sit, by the head's
-    `row` list (a column may only be appended within v3): (fb index, cr index),
-    None for a column this head does not have. 0.23.46 added fb and cr."""
+    `row` list (a column may only be appended within v3): {name: index} for
+    the V3_APPENDED columns this head has. 0.23.46 added fb and cr; 0.23.53
+    est, a, n, ucb, rec, prior, cw, fl, wu and hk."""
     names = head.get("row") or []
-    return (names.index("fb") if "fb" in names else None,
-            names.index("cr") if "cr" in names else None)
+    return {n: names.index(n) for n in V3_APPENDED if n in names}
 
 
-def _v3_row(raw, head, caps, extras=(None, None)):
+def _v3_row(raw, head, caps, extras=None):
     form, uid, kind, src, cap, flags, slot, util, x, wp = raw[:10]
     if cap != -1 and cap not in caps:
         raise V3FormatError(f"cap {cap} used before it is defined")
@@ -505,9 +511,13 @@ def _v3_row(raw, head, caps, extras=(None, None)):
     # eligible, by name from the head's "filters") and cr (the remaining
     # seconds behind x["covered"], -1 = no timer). Rows written before 0.23.46
     # have neither: both read None, and x has no "covered".
-    i_fb, i_cr = extras
-    fb = raw[i_fb] if i_fb is not None and i_fb < len(raw) else None
-    cr = raw[i_cr] if i_cr is not None and i_cr < len(raw) else None
+    # 0.23.53: the old engine's score parts (est, a, n, ucb, rec, prior, cw,
+    # wu; fl the floor by name from the head's "floors") and hk. None when the
+    # head has no such column or the row ends before it.
+    extras = extras or {}
+    col = {n: (raw[i] if i < len(raw) else None) for n, i in extras.items()}
+    fb = col.get("fb")
+    fl = col.get("fl")
     return {
         "form": form,
         "uid": uid,
@@ -521,7 +531,18 @@ def _v3_row(raw, head, caps, extras=(None, None)):
         "x": _sparse(x, head["cross"]),
         "wp": wp,
         "fb": None if fb is None else head["filters"][fb],
-        "cr": cr,
+        "cr": col.get("cr"),
+        # 0.23.53 (docs/architecture/9-selection-log-v3.md, rows)
+        "est": col.get("est"),
+        "a": col.get("a"),
+        "n": col.get("n"),
+        "ucb": col.get("ucb"),
+        "rec": col.get("rec"),
+        "prior": col.get("prior"),
+        "cw": col.get("cw"),
+        "fl": None if fl is None else head["floors"][fl],
+        "wu": col.get("wu"),
+        "hk": col.get("hk"),
     }
 
 
@@ -562,6 +583,10 @@ def iter_v3(paths, stats=None):
 
     0.23.46 additions, defaulted for older files: a row's "fb" and "cr" (None),
     x["covered"] (absent), the context's "summon" (absent: ctx.get("summon")).
+    0.23.53: a row's old-engine parts "est", "a", "n", "ucb", "rec", "prior",
+    "cw", "fl" (a floor name), "wu" and its "hk" (None when absent), the
+    "favorite" flag bit, the context's "old" (absent before) and the
+    decision's "rid" (absent before; null when no v2 record shares it).
     0.23.51: a nothing record's ep may carry "why" ("end" / "lap"), "lap" and
     "epSec" (lapped stretches of an open episode); nothing_stretch(d) reads
     them with the defaults of an older record, head_lap_sec(head) the grid.
@@ -598,7 +623,7 @@ def iter_v3(paths, stats=None):
         stats.setdefault(key, 0)
     for path in paths:
         head, caps, ctxs = None, {}, {}
-        extras = (None, None)
+        extras = {}
         damaged = False   # damage since the last good head
         lost_head = False  # a lost head already counted for this damage
         # A corrupt .gz: what decodes before the break may be garbage that

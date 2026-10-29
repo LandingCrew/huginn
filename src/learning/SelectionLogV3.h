@@ -28,6 +28,12 @@
 //     every row the candidate filter that dropped it (`fb`) and how much of
 //     its effect is already up (`covered`, `cr`), and the player's summons
 //     against their limit (StateManager::GetCoverage, the pipeline's drops);
+//   - (0.23.53) the old engine's score parts of every candidate of the run,
+//     whatever the floors, and of its filter drops, with the run's scorer
+//     parameters and state features (PipelineCoordinator::CaptureEligible,
+//     through PipelineStateCache); for a held row the run never gathered, the
+//     learner's metrics and the recency read when the context is taken; the
+//     favourites (ExtraHotkey, MagicFavorites) with the held set;
 //   - the outcome: SelectionTracker's confirmed selections (key, wheel,
 //     menu), the picks the frozen learner drops (a stale pipeline cache,
 //     learning from outside equips switched off, armour; recorded here only,
@@ -76,7 +82,10 @@ namespace Huginn::Learning::SelectionLogV3
     [[nodiscard]] DecisionCapture CaptureForPress(RE::FormID formID, EquipSource source, std::string_view via);
 
     /// SelectionTracker confirmed `event` (the press was at `selectedAt`).
-    void OnConfirmed(const EquipEvent& event, std::chrono::steady_clock::time_point selectedAt, std::string_view how);
+    /// `rid` (0.23.53): the id SelectionLog::Write gave the same pick's v2
+    /// record (0: none was written), logged as the decision's "rid".
+    void OnConfirmed(const EquipEvent& event, std::chrono::steady_clock::time_point selectedAt, std::string_view how,
+                     uint64_t rid);
 
     /// A pick with player input behind it that the frozen learner does not
     /// take (`skip`: "stale", "disabled", "armour"). Held here until it

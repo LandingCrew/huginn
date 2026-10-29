@@ -7,6 +7,7 @@
 #include "state/StateConstants.h"
 #include "candidate/CandidateGenerator.h"
 #include "context/ContextRuleEngine.h"   // Context::ContextReasonSignals (#10)
+#include "context/ContextWeightForCandidate.h"   // a candidate's raw context weight (0.23.53 log)
 #include "override/OverrideManager.h"
 #include "override/OverrideConfig.h"
 #include "core/BucketHysteresis.h"
@@ -412,7 +413,7 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
         }
     }
 
-    CaptureEligible(ctx, candidates);
+    CaptureEligible(ctx, candidates, contextWeights);
 
     // Name the dominant reason once per tick, off the weights the ranking just
     // used — the display explanation can't disagree with the scoring (#10).
@@ -504,9 +505,23 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
 // -- one row per item (a weapon stack is its own row) -- with the utility of the
 // rows the scorer kept and the propensity of a wildcard. Reads only: the scored
 // list, the candidates and the wildcard cache are not touched.
+//
+// 0.23.53: and the old engine's score parts of every candidate, whatever the
+// floors (Core::DecisionLog::OldScore): the R6 component test needs the old
+// learner's estimate, confidence, evidence, UCB, recency and prior on the rows
+// the floors dropped too, and which floor dropped them, to tell the floors'
+// share of the gap from stale imputation. A scored row takes the parts its
+// utility was computed from (its breakdown); an unscored one, and every
+// candidate the filters dropped, is put through the scorer's own
+// ScoreCandidateInternal again (UtilityScorer::ExplainCandidate) with no
+// floor. Its floor is read off the same tests ScoreCandidates applies:
+// suppressed favourite, then the context floor (favourites exempt), else the
+// utility floor (the cold start rescues only what it keeps, which is scored).
+// Logging only: nothing here changes what was scored.
 
 void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
-    const std::vector<Candidate::CandidateVariant>& candidates)
+    const std::vector<Candidate::CandidateVariant>& candidates,
+    const Context::ContextWeightMap& weights)
 {
     Huginn_ZONE_NAMED("Pipeline::CaptureEligible");
     // First scored row per dedup key (type, uniqueID, formID) wins, as the
@@ -519,6 +534,80 @@ void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
     }
 
     const auto& wildcards = g_utilityScorer->GetWildcardManager();
+
+    // 0.23.53: the old engine's view of the run (see above).
+    namespace DL = Core::DecisionLog;
+    const auto& cfg = g_utilityScorer->GetConfig();
+    auto& old = ctx.oldScore;
+    old.dropped.clear();
+    old.stateHash = ctx.currentState.GetHash();
+    const auto phi = Learning::StateFeatures::FromState(ctx.playerState, ctx.targets).ToArray();
+    std::optional<Learning::FeatureBanditLearner::LockedReader> learner;
+    if (g_featureBanditLearner) learner.emplace(g_featureBanditLearner->AcquireReader());
+    std::optional<Learning::UsageMemory::SnapshotReader> usage;
+    if (g_usageMemory) usage.emplace(g_usageMemory->AcquireReader(ctx.currentState));
+    {
+        auto& run = old.run;
+        run = {};
+        run.valid = true;
+        run.minCtx = cfg.minimumContextWeight;
+        run.minUtil = cfg.minimumUtility;
+        run.topN = static_cast<int>(cfg.topNCandidates);
+        run.coldBoost = cfg.coldStartUCBBoost;
+        run.beta = cfg.explorationWeight;
+        run.lambdaMin = cfg.lambdaMin;
+        run.lambdaMax = cfg.lambdaMax;
+        run.n0 = Learning::FeatureBanditLearner::PriorPseudoObservations();
+        run.favMode = cfg.favoritesMode == Scoring::FavoritesMode::Boost ? "boost"
+                    : cfg.favoritesMode == Scoring::FavoritesMode::Off   ? "off"
+                                                                         : "suppress";
+        run.favMin = cfg.favoritesBoostMin;
+        run.favMax = cfg.favoritesBoostMax;
+        run.scored = static_cast<int>(std::ranges::count_if(ctx.scoredCandidates,
+            [](const Scoring::ScoredCandidate& sc) { return !sc.isRememberedOnly; }));
+        run.totalTrains = learner ? learner->TotalTrains() : 0.0f;
+        run.phi.assign(phi.begin(), phi.end());
+    }
+    // One candidate's parts. `scored`: its row in the scored list (the parts
+    // its utility used); `eligible`: a candidate of the run (it gets a floor).
+    const auto explain = [&](const Candidate::CandidateVariant& c, bool eligible,
+                             const Scoring::ScoredCandidate* scored) {
+        DL::OldScore o;
+        const RE::FormID form = Candidate::GetFormID(c);
+        o.favorite = Candidate::IsFavorited(c);
+        o.ctx = Context::WeightForCandidate(c, weights);   // before a cold-start boost
+        Learning::FeatureItemMetrics m{ 0.0f, 1.0f, 0.0f };
+        if (learner) m = learner->GetMetrics(form, phi);
+        o.trains = m.trains;
+        if (scored) {
+            const auto& b = scored->breakdown;
+            o.est = b.rewardEstimate;
+            o.alpha = b.confidence;
+            o.ucb = b.ucb;
+            o.rec = b.recencyBoost;
+            o.prior = b.prior;
+            o.floor = static_cast<uint8_t>(scored->isColdStartBoosted ? DL::Floor::cold : DL::Floor::pass);
+            return o;
+        }
+        const float rec = usage ? usage->GetRecencyBoost(form) : 0.0f;
+        o.est = m.rewardEstimate;
+        o.alpha = m.confidence;
+        o.ucb = m.ucb;
+        o.rec = rec;
+        const auto ex = g_utilityScorer->ExplainCandidate(c, ctx.currentState, ctx.playerState, ctx.targets,
+            ctx.worldState, weights, o.ctx, m, rec);
+        o.prior = ex.breakdown.prior;
+        o.wouldUtil = ex.utility;
+        if (eligible) {
+            const bool favorite = o.favorite;
+            const DL::Floor f = (favorite && cfg.favoritesMode == Scoring::FavoritesMode::Suppress) ? DL::Floor::suppressed
+                              : (o.ctx < cfg.minimumContextWeight && !favorite)                     ? DL::Floor::ctx
+                                                                                                     : DL::Floor::util;
+            o.floor = static_cast<uint8_t>(f);
+        }
+        return o;
+    };
+
     ctx.eligible.reserve(candidates.size());
     for (const auto& c : candidates) {
         const auto& base = Candidate::GetBase(c);
@@ -537,13 +626,38 @@ void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
                 row.chargeFraction = cand.currentCharge;   // already current / max (WeaponRegistry)
             }
         }, c);
+        const Scoring::ScoredCandidate* scored = nullptr;
         if (const auto it = scoredByKey.find(base.GetDeduplicationKey()); it != scoredByKey.end()) {
+            scored = it->second;
             row.utility = it->second->utility;
             if (it->second->isWildcard) {
                 row.wildcardPropensity = wildcards.GetWildcardPropensity(ctx.displayPageIndex, base.formID);
             }
         }
+        row.old = explain(c, true, scored);
         ctx.eligible.push_back(row);
+    }
+
+    // 0.23.53: the candidates the filters dropped (one row per item; a
+    // duplicate is the eligible row's own item and is skipped).
+    if (!ctx.filtered.empty()) {
+        Huginn_ZONE_NAMED("Pipeline::CaptureEligible::Dropped");
+        const auto stackKey = [](RE::FormID form, uint16_t uid) { return (static_cast<uint64_t>(uid) << 32) | form; };
+        std::unordered_set<uint64_t> wanted;
+        wanted.reserve(ctx.filtered.size());
+        for (const auto& d : ctx.filtered) {
+            if (d.reason != Core::Filter::Reason::duplicate) wanted.insert(stackKey(d.form, d.uid));
+        }
+        for (const auto& c : Candidate::CandidateGenerator::GetSingleton().LastGathered()) {
+            const auto& base = Candidate::GetBase(c);
+            if (wanted.erase(stackKey(base.formID, base.uniqueID)) == 0) continue;   // not dropped, or done
+            Learning::PipelineStateCache::EligibleRow row;
+            row.formID = base.formID;
+            row.uniqueID = base.uniqueID;
+            row.sourceType = base.sourceType;
+            row.old = explain(c, false, nullptr);
+            old.dropped.push_back(row);
+        }
     }
 }
 
@@ -758,7 +872,8 @@ void PipelineCoordinator::UpdateCaches(PipelineContext& ctx)
         ctx.displayPageIndex,
         g_utilityScorer->GetConfig().topNCandidates,
         std::move(ctx.eligible), ctx.displaySlotCount,    // R4: the selection log v3's rows
-        std::move(ctx.filtered));                         // 0.23.46: and why the others were dropped
+        std::move(ctx.filtered),                          // 0.23.46: and why the others were dropped
+        std::move(ctx.oldScore));                         // 0.23.53: the old engine's view of the run
 
     // Cache slot contents for EquipManager (keyboard equip hotkeys)
     auto& equipMgr = Input::EquipManager::GetSingleton();
