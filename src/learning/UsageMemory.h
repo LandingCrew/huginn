@@ -109,6 +109,13 @@ namespace Huginn::Learning
             return SnapshotReader(*this, state.GetHash());
         }
 
+        /// 0.23.53, logging only (selection log v3): a reader against a state
+        /// hash taken earlier (a pipeline run's), for rows that run never saw.
+        [[nodiscard]] SnapshotReader AcquireReader(uint32_t contextHash) const
+        {
+            return SnapshotReader(*this, contextHash);
+        }
+
         // Clear all usage history (e.g., on save load)
         void Clear()
         {

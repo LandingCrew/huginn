@@ -1,6 +1,8 @@
 #include "SelectionLogV3.h"
 
 #include "Globals.h"
+#include "FeatureBanditLearner.h"
+#include "UsageMemory.h"
 #include "PipelineStateCache.h"
 #include "PlayerInputGate.h"
 #include "Profiling.h"
@@ -90,11 +92,34 @@ namespace Huginn::Learning::SelectionLogV3
         //   covered  how much of the row's effect is already active on the
         //            player (core/Coverage.h), with `cr` the remaining
         //            seconds of the effect that gave it.
-        void Annotate(Row& r, const Core::Coverage::Active* coverage, const std::vector<Core::Filter::Dropped>& filtered)
+        // 0.23.53: the run's score parts of a filter drop, matched as
+        // Core::Filter::Find matches the reason (exact stack, then the form
+        // where either side has no unique ID).
+        const Core::DecisionLog::OldScore* FindDropped(const std::vector<PipelineStateCache::EligibleRow>& dropped,
+                                                       RE::FormID form, uint16_t uid)
+        {
+            const PipelineStateCache::EligibleRow* loose = nullptr;
+            for (const auto& d : dropped) {
+                if (d.formID != form) continue;
+                if (d.uniqueID == uid) return &d.old;
+                if (!loose && (d.uniqueID == 0 || uid == 0)) loose = &d;
+            }
+            return loose ? &loose->old : nullptr;
+        }
+
+        void Annotate(Row& r, const Core::Coverage::Active* coverage, const std::vector<Core::Filter::Dropped>& filtered,
+                      const std::vector<PipelineStateCache::EligibleRow>& dropped)
         {
             if (!(r.flags & Flag::Eligible)) {
                 if (const auto reason = Core::Filter::Find(filtered, r.form, r.uid)) {
                     r.filteredBy = static_cast<uint8_t>(*reason);
+                    if (const auto* o = FindDropped(dropped, r.form, r.uid)) {
+                        r.old = *o;
+                        r.old.floor = Core::DecisionLog::kNoFloor;   // not eligible: no floor
+                        // A candidate the old engine read as favourited, as an
+                        // eligible row's bit is set from e.old.favorite.
+                        if (o->favorite) r.flags |= Flag::Favorite;
+                    }
                 }
             }
             if (coverage && r.cap) {
@@ -115,6 +140,10 @@ namespace Huginn::Learning::SelectionLogV3
             bool equipped = false;
             float chargeFraction = 0.0f;   // enchanted weapons: current / max
             bool hasCharge = false;
+            // 0.23.53: in the favourites (an item's ExtraHotkey, a spell in
+            // MagicFavorites) and the vanilla hotkey bound to it (0-7), else -1.
+            bool favorite = false;
+            int8_t hotkey = Core::DecisionLog::kNoHotkey;
             const Effect::CatalogEntry* entry = nullptr;
             std::shared_ptr<const Effect::CatalogEntry> instance;   // tempered / player-enchanted
         };
@@ -241,18 +270,33 @@ namespace Huginn::Learning::SelectionLogV3
                     for (auto* xl : *entryData->extraLists) {
                         if (!xl) continue;
                         const bool worn = xl->HasType<RE::ExtraWorn>() || xl->HasType<RE::ExtraWornLeft>();
+                        // 0.23.53: favourited (ExtraHotkey, as WeaponRegistry
+                        // reads it), and the vanilla hotkey bound (0-7).
+                        bool fav = false;
+                        int8_t hotkey = Core::DecisionLog::kNoHotkey;
+                        if (const auto* xh = xl->GetByType<RE::ExtraHotkey>()) {
+                            fav = true;
+                            const auto key = static_cast<uint8_t>(xh->hotkey.underlying());
+                            if (key < 8) hotkey = static_cast<int8_t>(key);
+                        }
                         if (!perStack) {
                             plain.equipped = plain.equipped || worn;
+                            plain.favorite = plain.favorite || fav;
+                            if (hotkey != Core::DecisionLog::kNoHotkey) plain.hotkey = hotkey;
                             continue;
                         }
                         const auto* xu = xl->GetByType<RE::ExtraUniqueID>();
                         auto instance = InstanceFor(catalog, obj, xl);
                         HeldItem h{ .form = obj->GetFormID(), .uid = xu ? xu->uniqueID : uint16_t{ 0 },
                                     .count = std::max(1, static_cast<int32_t>(xl->GetCount())), .equipped = worn,
-                                    .entry = entry, .instance = std::move(instance) };
+                                    .favorite = fav, .hotkey = hotkey, .entry = entry, .instance = std::move(instance) };
                         ReadCharge(obj, xl, h);
                         if (h.uid == 0 && !h.equipped && !h.instance && !(h.hasCharge && h.chargeFraction < 1.0f)) {
-                            continue;   // a list that does not set the stack apart: part of the plain row
+                            // A list that does not set the stack apart: part of
+                            // the plain row (its favourite with it).
+                            plain.favorite = plain.favorite || fav;
+                            if (hotkey != Core::DecisionLog::kNoHotkey) plain.hotkey = hotkey;
+                            continue;
                         }
                         remaining -= h.count;
                         out.items.push_back(std::move(h));
@@ -266,13 +310,31 @@ namespace Huginn::Learning::SelectionLogV3
                 }
             }
 
-            // Known spells (base and added), in hand = equipped.
+            // Known spells (base and added), in hand = equipped. 0.23.53: in
+            // the favourites when MagicFavorites lists them; the vanilla
+            // hotkey is the index in its hotkeys array.
+            std::unordered_set<RE::FormID> favSpells;
+            std::unordered_map<RE::FormID, int8_t> spellKeys;
+            if (const auto* mf = RE::MagicFavorites::GetSingleton()) {
+                for (auto* f : mf->spells) {
+                    if (f) favSpells.insert(f->GetFormID());
+                }
+                for (uint32_t i = 0; i < mf->hotkeys.size() && i < 8; ++i) {
+                    if (auto* f = mf->hotkeys[i]) {
+                        favSpells.insert(f->GetFormID());
+                        spellKeys.try_emplace(f->GetFormID(), static_cast<int8_t>(i));
+                    }
+                }
+            }
             std::unordered_set<RE::FormID> seen;
             auto addSpell = [&](RE::SpellItem* spell) {
                 if (!spell || !seen.insert(spell->GetFormID()).second) return;
                 const auto* entry = catalog.FindOrMap(spell);   // 0.23.41: spells no tome teaches too
                 if (!entry) return;
+                const auto key = spellKeys.find(spell->GetFormID());
                 out.items.push_back(HeldItem{ .form = spell->GetFormID(), .equipped = spell == left || spell == right,
+                                              .favorite = favSpells.contains(spell->GetFormID()),
+                                              .hotkey = key != spellKeys.end() ? key->second : Core::DecisionLog::kNoHotkey,
                                               .entry = entry });
             };
             if (auto* base = player->GetActorBase()) {
@@ -349,6 +411,9 @@ namespace Huginn::Learning::SelectionLogV3
             std::vector<PipelineStateCache::EligibleRow> eligible;
             // 0.23.46: what the same run's filters dropped, and why.
             std::vector<Core::Filter::Dropped> filtered;
+            // 0.23.53: the old engine's view of the same run (scorer
+            // parameters, state features and hash, the drops' score parts).
+            PipelineStateCache::OldScoreRun old;
             // The catalog entry of each eligible row, looked up once per run
             // (nullptr: not in the catalog); redone once the catalog is ready.
             std::vector<const Effect::CatalogEntry*> entries;
@@ -375,6 +440,8 @@ namespace Huginn::Learning::SelectionLogV3
             r.flags = Flag::Eligible | (std::isfinite(e.utility) ? Flag::Scored : 0);
             r.util = e.utility;
             r.wildcardP = e.wildcardPropensity;
+            r.old = e.old;   // 0.23.53: the run's score parts
+            if (e.old.favorite) r.flags |= Flag::Favorite;
             if (entry) {
                 r.kind = static_cast<uint8_t>(entry->kind);
                 r.cap = &entry->cap;
@@ -387,6 +454,35 @@ namespace Huginn::Learning::SelectionLogV3
                 SetCross(r, Effect::ComputeRuntimeFeatures(*entry, player, stack));
             }
             return r;
+        }
+
+        // 0.23.53: the learner's metrics and the recency boost for the rows
+        // the run left without them (held rows it never gathered, a chosen row
+        // added at the pick), read now against the run's state features and
+        // state hash. Rows that are neither held nor eligible (a shown row
+        // missing from both) are left alone, and nothing is read without a
+        // run (no state features to read against).
+        void FillLearner(std::vector<Row>& rows, const PipelineStateCache::OldScoreRun& old)
+        {
+            if (!old.run.valid || old.run.phi.size() != Learning::StateFeatures::NUM_FEATURES) return;
+            if (!g_featureBanditLearner || !g_usageMemory) return;
+            const bool any = std::ranges::any_of(rows, [](const Row& r) {
+                return (r.flags & (Flag::Held | Flag::Eligible)) && !r.old.HasLearner();
+            });
+            if (!any) return;
+            std::array<float, Learning::StateFeatures::NUM_FEATURES> phi{};
+            std::copy(old.run.phi.begin(), old.run.phi.end(), phi.begin());
+            const auto learner = g_featureBanditLearner->AcquireReader();
+            const auto usage = g_usageMemory->AcquireReader(old.stateHash);
+            for (auto& r : rows) {
+                if (!(r.flags & (Flag::Held | Flag::Eligible)) || r.old.HasLearner()) continue;
+                const auto m = learner.GetMetrics(r.form, phi);
+                r.old.est = m.rewardEstimate;
+                r.old.alpha = m.confidence;
+                r.old.trains = m.trains;
+                r.old.ucb = m.ucb;
+                r.old.rec = usage.GetRecencyBoost(r.form);
+            }
         }
 
         // The hands and the nocked ammo of the last few ticks, for preEquipped.
@@ -507,6 +603,7 @@ namespace Huginn::Learning::SelectionLogV3
             ctx->menu = std::move(menu);
             std::vector<PipelineStateCache::EligibleRow> wildcardRows;   // eligible rows with a propensity
             std::vector<Core::Filter::Dropped> filtered;
+            PipelineStateCache::OldScoreRun old;   // 0.23.53
             RunGate gate;
             {
                 std::lock_guard lock(g_tickMutex);
@@ -514,6 +611,7 @@ namespace Huginn::Learning::SelectionLogV3
                 ctx->input = g_tick.input;
                 ctx->rows = g_tick.rows;
                 filtered = g_tick.filtered;
+                old = g_tick.old;
                 for (const auto& e : g_tick.eligible) {
                     if (std::isfinite(e.wildcardPropensity)) wildcardRows.push_back(e);
                 }
@@ -555,7 +653,8 @@ namespace Huginn::Learning::SelectionLogV3
                 const auto f = Effect::ComputeRuntimeFeatures(use, player, stack);
                 if (const auto it = index.find(key(h.form, h.uid)); it != index.end()) {
                     auto& r = ctx->rows[it->second];
-                    r.flags |= Flag::Held | (h.equipped ? Flag::Equipped : 0);
+                    r.flags |= Flag::Held | (h.equipped ? Flag::Equipped : 0) | (h.favorite ? Flag::Favorite : 0);
+                    if (h.hotkey != Core::DecisionLog::kNoHotkey) r.hotkey = h.hotkey;
                     if (h.instance) {
                         r.cap = &h.instance->cap;
                         r.capOwner = std::shared_ptr<const Core::Effect::Cap>(h.instance, &h.instance->cap);
@@ -567,7 +666,8 @@ namespace Huginn::Learning::SelectionLogV3
                 r.form = h.form;
                 r.uid = h.uid;
                 r.kind = static_cast<uint8_t>(use.kind);
-                r.flags = Flag::Held | (h.equipped ? Flag::Equipped : 0);
+                r.flags = Flag::Held | (h.equipped ? Flag::Equipped : 0) | (h.favorite ? Flag::Favorite : 0);
+                r.hotkey = h.hotkey;
                 r.cap = &use.cap;
                 if (h.instance) r.capOwner = std::shared_ptr<const Core::Effect::Cap>(h.instance, &h.instance->cap);
                 SetCross(r, f);
@@ -627,7 +727,7 @@ namespace Huginn::Learning::SelectionLogV3
             // the player's summons, their limit and their sources (steps 3-4).
             {
                 const auto coverage = State::StateManager::GetSingleton().GetCoverage();
-                for (auto& r : ctx->rows) Annotate(r, coverage.valid ? &coverage.active : nullptr, filtered);
+                for (auto& r : ctx->rows) Annotate(r, coverage.valid ? &coverage.active : nullptr, filtered, old.dropped);
                 ctx->summon.valid = true;
                 ctx->summon.count = player.buffs.summonCount;
                 ctx->summon.limit = player.buffs.summonLimit;
@@ -662,6 +762,14 @@ namespace Huginn::Learning::SelectionLogV3
                 const auto& wc = g_utilityScorer->GetWildcardManager();
                 ctx->wildcardBase = wc.GetBaseProbability();
                 ctx->wildcardMax = wc.GetMaxProbability();
+            }
+
+            // 0.23.53: the old engine's run behind the eligible rows, and the
+            // learner's metrics for the held rows it never gathered. Only a
+            // run of this session (as for the page).
+            if (gate.IsCurrent(page.generation) && old.run.valid) {
+                FillLearner(ctx->rows, old);
+                ctx->old = old.run;
             }
 
             const double ms = std::chrono::duration<double, std::milli>(Clock::now() - now).count();
@@ -709,15 +817,24 @@ namespace Huginn::Learning::SelectionLogV3
             }
             {
                 // 0.23.46: annotated as the context's rows are, at the confirmation.
+                // 0.23.53: with the learner's metrics, against the context's run.
                 std::vector<Core::Filter::Dropped> filtered;
+                PipelineStateCache::OldScoreRun old;
                 {
                     std::lock_guard lock(g_tickMutex);
                     filtered = g_tick.filtered;
+                    old = g_tick.old;
                 }
                 const auto coverage = State::StateManager::GetSingleton().GetCoverage();
-                Annotate(r, coverage.valid ? &coverage.active : nullptr, filtered);
+                Annotate(r, coverage.valid ? &coverage.active : nullptr, filtered, old.dropped);
+                d.added.push_back(std::move(r));
+                if (d.ctx->old.valid) {
+                    // The state features the context's rows were read against
+                    // (the tick's run may be newer); the hash is the tick's.
+                    old.run = d.ctx->old;
+                    FillLearner(d.added, old);
+                }
             }
-            d.added.push_back(std::move(r));
             d.row = static_cast<int>(rows.size());
         }
 
@@ -1192,12 +1309,13 @@ namespace Huginn::Learning::SelectionLogV3
             std::lock_guard lock(g_tickMutex);
             uint64_t generation = g_tick.cacheGeneration;
             bool newRun = PipelineStateCache::GetSingleton().TakeEligibleIfNewer(g_tick.cacheGeneration,
-                g_tick.eligible, generation, &g_tick.filtered);
+                g_tick.eligible, generation, &g_tick.filtered, &g_tick.old);
             g_tick.cacheGeneration = generation;
             if (newRun && !g_runGate.IsCurrent(generation)) {
                 // The previous save's candidates, still cached after a load.
                 g_tick.eligible.clear();
                 g_tick.filtered.clear();
+                g_tick.old = {};
             }
             auto& catalog = Effect::EffectCatalog::GetSingleton();
             if (newRun || (!g_tick.entriesFromReadyCatalog && catalog.Ready())) {
@@ -1406,7 +1524,7 @@ namespace Huginn::Learning::SelectionLogV3
         return cap;
     }
 
-    void OnConfirmed(const EquipEvent& event, Clock::time_point selectedAt, std::string_view how)
+    void OnConfirmed(const EquipEvent& event, Clock::time_point selectedAt, std::string_view how, uint64_t rid)
     {
         const Outcome outcome = event.source == EquipSource::Hotkey  ? Outcome::Key
                               : event.source == EquipSource::Wheeler ? Outcome::Wheel
@@ -1426,6 +1544,7 @@ namespace Huginn::Learning::SelectionLogV3
         d.ctxAgeMs = event.v3.ageMs;
         d.open = event.v3.open;
         d.preEquipped = event.v3.preEquipped;
+        d.rid = rid;   // 0.23.53: the v2 record's id
         if (!d.ctx) d.ctx = BuildContext("press", {});
         ResolveChosen(d, outcome != Outcome::Menu);
         AnswerEpisodes(event.v3.ctx ? event.v3.pressSec : Sec(selectedAt));

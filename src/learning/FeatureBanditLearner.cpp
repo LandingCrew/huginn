@@ -267,6 +267,7 @@ namespace Huginn::Learning
       if (auto it = m_owner.m_items.find(formID); it != m_owner.m_items.end()) {
          metrics.rewardEstimate = DotProduct(it->second.weights, phi);
          itemTrains = m_owner.EffectiveTrains(it->second, m_now);
+         metrics.trains = it->second.trainCount;   // logging only (0.23.53)
       }
 
       metrics.confidence = m_owner.ComputeConfidence(itemTrains);

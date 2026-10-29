@@ -343,8 +343,8 @@ namespace Huginn::Learning
 
         // Log BEFORE dispatch: the log records the learner's prediction for the
         // press-time state, which the dispatch is about to update.
-        SelectionLog::Write(event, how);
-        SelectionLogV3::OnConfirmed(event, selectedAt, how);   // R4: logging only
+        const uint64_t rid = SelectionLog::Write(event, how);
+        SelectionLogV3::OnConfirmed(event, selectedAt, how, rid);   // R4: logging only; rid joins the two (0.23.53)
         EquipEventBus::GetSingleton().Dispatch(event);
     }
 }

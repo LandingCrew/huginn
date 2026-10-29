@@ -202,7 +202,12 @@ namespace Huginn::Learning
             float wildcardMax = 0.0f;
             std::vector<float> predictions;   // Parallel to event.shown.scores
             uint64_t character = 0;           // g_activeCharacterID at confirmation
+            uint64_t rid = 0;                 // 0.23.53: the id the v3 decision shares
         };
+
+        // 0.23.53: per launch, from 1. The v3 log writes the same id on the
+        // pick's decision ("rid"), so the two join on (launch, rid).
+        std::atomic<uint64_t> g_nextRecordId{ 0 };
 
         // Pure formatting -- runs on the writer thread.
         std::string FormatRecord(const Record& r)
@@ -218,6 +223,8 @@ namespace Huginn::Learning
             line += std::format(R"({{"v":2,"utc":"{:%F %T}","launch":"{}","list":{},"char":"{:016X}","gen":{},"form":"{:08X}","name":{},"src":"{}","via":{},)",
                 r.utc, g_launchStamp, JsonString(g_listName), r.character, event.loadGeneration, event.formID, JsonString(r.name),
                 EquipSourceToString(event.source), JsonString(event.via));
+            // 0.23.53: the record id the pick's v3 decision carries too.
+            line += std::format(R"("rid":{},)", r.rid);
             line += std::format(R"("case":{},"kind":"{}","reward":{:.2f},"how":"{}","confirmMs":{:.0f},)",
                 JsonString(event.attribution), SelectionKindToString(event.kind), r.reward, r.how, event.confirmMs);
             line += std::format(R"("pipeline":{},"page":{},"ageMs":{:.0f},"sortedPrefix":{},)",
@@ -285,7 +292,8 @@ namespace Huginn::Learning
                 return *writer;
             }
 
-            void Enqueue(Record record)
+            /// False when the record was dropped (the queue is full).
+            bool Enqueue(Record record)
             {
                 {
                     std::lock_guard lock(m_mutex);
@@ -297,11 +305,12 @@ namespace Huginn::Learning
                                 kMaxQueued);
                             m_warnedFull = true;
                         }
-                        return;
+                        return false;
                     }
                     m_queue.push_back(std::move(record));
                 }
                 m_cv.notify_one();
+                return true;
             }
 
         private:
@@ -368,7 +377,7 @@ namespace Huginn::Learning
         };
     }
 
-    void SelectionLog::Write(const EquipEvent& event, const char* how)
+    uint64_t SelectionLog::Write(const EquipEvent& event, const char* how)
     {
         const float reward = RewardFor(event.kind);
         Predictions pred = Predict(event);
@@ -379,7 +388,7 @@ namespace Huginn::Learning
         // Nor any other test-mode press (R4's decision session): the v3 log
         // writes those to its own test file, and this file is the player's.
         if (Slot::Capture::SessionActive() || TestHarness::Active()) {
-            return;
+            return 0;
         }
 
         Record record;
@@ -395,6 +404,10 @@ namespace Huginn::Learning
         }
         record.predictions = std::move(pred.scores);
         record.character = g_activeCharacterID.load(std::memory_order_relaxed);
-        RecordWriter::Get().Enqueue(std::move(record));
+        const uint64_t rid = g_nextRecordId.fetch_add(1, std::memory_order_relaxed) + 1;
+        record.rid = rid;
+        // A dropped record (queue full) leaves its id unused: the v3 decision
+        // then carries none rather than an id no v2 record has.
+        return RecordWriter::Get().Enqueue(std::move(record)) ? rid : 0;
     }
 }

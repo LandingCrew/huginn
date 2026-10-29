@@ -33,6 +33,10 @@ GOLDEN = REPO / "tests" / "core" / "fixtures" / "decisions" / "synthetic_v3.json
 # The golden file as 0.23.45 wrote it: no fb/cr row columns, no covered, no
 # summon. The reader must keep reading files written before 0.23.46.
 GOLDEN_0_23_45 = REPO / "tests" / "core" / "fixtures" / "decisions" / "synthetic_v3_0.23.45.jsonl"
+# The golden file as 0.23.52 wrote it: before the old engine's score parts
+# (est..wu, fl), hk, the favorite flag, ctx.old and dec.rid (0.23.53).
+GOLDEN_0_23_52 = REPO / "tests" / "core" / "fixtures" / "decisions" / "synthetic_v3_0.23.52.jsonl"
+OLD_KEYS = ("est", "a", "n", "ucb", "rec", "prior", "cw", "fl", "wu", "hk")
 
 # python -I leaves the script's folder off sys.path: load replay.py by path
 # (and write no __pycache__ into the tree).
@@ -66,7 +70,12 @@ class GoldenFile(unittest.TestCase):
         self.assertEqual(h["cross"][4], "stack_count")
         # 0.23.46: covered at the end of cross, two row columns, the filter names.
         self.assertEqual(h["cross"][7], "covered")
-        self.assertEqual(h["row"][-2:], ["fb", "cr"])
+        self.assertEqual(h["row"][10:12], ["fb", "cr"])
+        # 0.23.53: the old engine's score parts and the hotkey, the favorite
+        # flag, the floor names.
+        self.assertEqual(h["row"][12:], list(OLD_KEYS))
+        self.assertEqual(h["flags"]["favorite"], 512)
+        self.assertEqual(h["floors"], ["pass", "cold", "ctx", "util", "suppressed"])
         self.assertEqual(h["filters"][8], "summon_limit")
         self.assertEqual(len(h["filters"]), 15)
         self.assertEqual(h["kinds"][7], "Armor")
@@ -136,6 +145,59 @@ class GoldenFile(unittest.TestCase):
         self.assertEqual(ctx["summon"], {"n": 2, "limit": 2, "act": [["000640B6", "summon", 8, 52, "FF000ABC"],
                                                                      ["0007E8DF", "reanimate", -1, 10.25, "FF000ABD"]]})
 
+    def test_old_engine_parts(self):
+        # 0.23.53: every number from DecisionLogTests.cpp.
+        d = self.decs[0]
+        self.assertEqual(d["rid"], 41)
+        old = d["ctx"]["old"]
+        self.assertEqual({k: old[k] for k in ("topN", "fav", "scored")}, {"topN": 10, "fav": "boost", "scored": 2})
+        for k, v in (("minCtx", 0.05), ("minUtil", 0.1), ("coldBoost", 0.2), ("beta", 0.2), ("lambdaMin", 0.5),
+                     ("lambdaMax", 3.0), ("n0", 2.0), ("favMin", 1.3), ("favMax", 2.5), ("total", 37.5)):
+            self.assertTrue(close(old[k], v), k)
+        self.assertEqual(len(old["phi"]), 18)
+        self.assertEqual((old["phi"][0], old["phi"][17]), (1, 0.25))
+        self.assertTrue(close(old["phi"][1], 0.3))
+        rows = d["ctx"]["rows"]
+
+        def parts(r):
+            return tuple(r[k] for k in OLD_KEYS)
+
+        # 0: scored by the main loop.
+        want = (0.42, 0.6667, 4, 0.3105, 0.1875, 0.55, 0.8)
+        for k, v in zip(OLD_KEYS, want):
+            self.assertTrue(close(rows[0][k], v), k)
+        self.assertEqual((rows[0]["fl"], rows[0]["wu"], rows[0]["hk"]), ("pass", None, None))
+        self.assertEqual(rows[0]["flags"] & replay.V3_FLAGS["favorite"], 0)
+        # 1: a favourite on hotkey index 2, rescued by the cold start.
+        self.assertEqual(rows[1]["flags"] & replay.V3_FLAGS["favorite"], 512)
+        self.assertEqual(rows[1]["hk"], 2)
+        self.assertEqual(rows[1]["fl"], "cold")
+        self.assertEqual((rows[1]["est"], rows[1]["a"], rows[1]["n"], rows[1]["ucb"], rows[1]["rec"]), (0, 0, 0, 1, 0))
+        self.assertTrue(close(rows[1]["cw"], 0.02))
+        # 2: under the utility floor, with its would-be utility.
+        self.assertEqual(rows[2]["fl"], "util")
+        self.assertTrue(close(rows[2]["wu"], 0.0812))
+        self.assertTrue(close(rows[2]["est"], -0.05))
+        self.assertTrue(close(rows[2]["n"], 2.5))
+        self.assertIsNone(rows[2]["util"])
+        # 3: held, never gathered: the learner's metrics only.
+        self.assertEqual(parts(rows[3]), (0, 0, 0, 1, 0, None, None, None, None, None))
+        # 4: favourited on key 8, nothing else.
+        self.assertEqual(parts(rows[4]), (None,) * 9 + (7,))
+        self.assertEqual(rows[4]["flags"], 4 | 512)
+        # 5: a filter drop: the run's parts, no floor.
+        self.assertEqual(rows[5]["fb"], "summon_limit")
+        self.assertIsNone(rows[5]["fl"])
+        self.assertTrue(close(rows[5]["wu"], 0.9))
+        self.assertTrue(close(rows[5]["prior"], 0.6))
+        # The record ids: the picks the learner took carry their v2 record's.
+        self.assertEqual([x["rid"] for x in self.decs], [41, None, 42, None, 43, None, 41])
+        # A context without a run (the onset) has no "old"; its row no parts.
+        self.assertNotIn("old", self.decs[3]["ctx"])
+        self.assertEqual(parts(self.decs[3]["ctx"]["rows"][0]), (None,) * 10)
+        # The armour row added at the pick has none either.
+        self.assertEqual(parts(self.decs[1]["chosen"]), (None,) * 10)
+
     def test_menu_pick_of_armour_with_added_row(self):
         d = self.decs[1]
         self.assertEqual(d["name"], "Épée Boots")   # cp1252 bytes, escaped
@@ -197,6 +259,31 @@ class GoldenFile(unittest.TestCase):
         self.assertEqual(d["ctx"]["rows"][0]["cap"], self.decs[0]["ctx"]["rows"][0]["cap"])
 
 
+class GoldenFile0_23_52(unittest.TestCase):
+    """The same session as 0.23.52 wrote it (before 0.23.53): every row reads
+    the old engine's parts and hk as None, no favorite bit, no ctx.old, no rid."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.decs = replay.load_v3([GOLDEN_0_23_52])
+
+    def test_defaults(self):
+        self.assertEqual([d["out"] for d in self.decs], ["key", "menu", "menu", "nothing", "wheel", "nothing", "key"])
+        h = self.decs[0]["head"]
+        self.assertEqual(h["row"][-2:], ["fb", "cr"])
+        self.assertNotIn("floors", h)
+        self.assertNotIn("favorite", h["flags"])
+        for d in self.decs:
+            self.assertNotIn("rid", d)
+            self.assertNotIn("old", d["ctx"])
+            for r in d["rows"]:
+                self.assertEqual(tuple(r[k] for k in OLD_KEYS), (None,) * 10)
+                self.assertEqual(r["flags"] & 512, 0)
+        # Everything else decodes as before.
+        self.assertEqual(self.decs[0]["ctx"]["rows"][5]["fb"], "summon_limit")
+        self.assertTrue(close(self.decs[0]["chosen"]["util"], 1.234))
+
+
 class GoldenFile0_23_45(unittest.TestCase):
     """The same session as 0.23.45 wrote it, before fb/cr, covered and summon:
     every row reads fb = cr = None, no row has covered, no context a summon."""
@@ -250,6 +337,12 @@ def encode(segments):
                    r["flags"], r["slot"], r["util"], x, r["wp"]]
             if "fb" in head.get("row", []):   # 0.23.46 heads: the two appended columns
                 out += [None if r.get("fb") is None else head["filters"].index(r["fb"]), r.get("cr")]
+            if "est" in head.get("row", []):   # 0.23.53 heads: up to the last one set
+                tail = [None if k == "fl" and r.get(k) is None else
+                        head["floors"].index(r[k]) if k == "fl" else r.get(k) for k in OLD_KEYS]
+                while tail and tail[-1] is None:
+                    tail.pop()
+                out += tail
             return out
 
         for d in decs:
@@ -279,9 +372,11 @@ def make_session():
     sword = {"weapon_damage": 0.75, "weapon_type_sword": 1}
     potion = {"restore": 0.33, "restore_magicka": 0.33}
 
-    def r(form, kind, src, cap, flags, slot=-1, util=None, x=None, wp=None, uid=0, fb=None, cr=None):
-        return {"form": form, "uid": uid, "kind": kind, "src": src, "cap": cap, "flags": flags,
-                "slot": slot, "util": util, "x": x or {}, "wp": wp, "fb": fb, "cr": cr}
+    def r(form, kind, src, cap, flags, slot=-1, util=None, x=None, wp=None, uid=0, fb=None, cr=None, **old):
+        row = {"form": form, "uid": uid, "kind": kind, "src": src, "cap": cap, "flags": flags,
+               "slot": slot, "util": util, "x": x or {}, "wp": wp, "fb": fb, "cr": cr}
+        row.update({k: old.get(k) for k in OLD_KEYS})   # 0.23.53
+        return row
 
     ctx_a = {"id": 10, "utc": "2026-10-09 15:00:00.000", "why": "press",
              "need": {"magicka_deficit": 0.9, "enemy_close": 1}, "input": {"magicka_deficit": 0.8, "enemy_close": 300.0},
@@ -289,8 +384,11 @@ def make_session():
              "wc": {"base": 0.165, "max": 0.5},
              "env": {"interior": 0, "hour": 21.25, "daylight": 0, "light": 0.1},
              "rows": [r("0003EAE3", "Potion", "Potion", potion, 1 | 2 | 4 | 16, 0, 2.5,
-                        {"overshoot_magicka": 0.1, "stack_count": 0.6}),
-                      r("00012EB7", "Weapon", "Weapon", sword, 1 | 4, uid=12, x={"weapon_charge": 0.25}),
+                        {"overshoot_magicka": 0.1, "stack_count": 0.6},
+                        est=0.31, a=0.75, n=6, ucb=0.25, rec=0, prior=0.5, cw=0.9, fl="pass"),
+                      # 0.23.53: a favourite on key 1 under the context floor.
+                      r("00012EB7", "Weapon", "Weapon", sword, 1 | 4 | 512, uid=12, x={"weapon_charge": 0.25},
+                        est=0, a=0, n=0, ucb=1, rec=0, prior=0.4, cw=0.01, fl="ctx", wu=0.004, hk=0),
                       r("0001397D", "Ammo", "Ammo", None, 1 | 4, x={"ammo_matches_launcher": 1}),
                       # 0.23.46: a potion on cooldown, its effect up with 12.5 s left.
                       r("0003EAE5", "Potion", None, potion, 4, x={"covered": 0.75}, fb="cooldown", cr=12.5)]}
@@ -339,7 +437,7 @@ class PythonRoundTrip(unittest.TestCase):
             want_rows = want["ctx"]["rows"] + want["add"]
             self.assertEqual(len(got["rows"]), len(want_rows))
             for g, w in zip(got["rows"], want_rows):
-                for k in ("form", "uid", "kind", "src", "cap", "flags", "slot", "util", "x", "wp", "fb", "cr"):
+                for k in ("form", "uid", "kind", "src", "cap", "flags", "slot", "util", "x", "wp", "fb", "cr") + OLD_KEYS:
                     self.assertEqual(g[k], w[k], k)
             self.assertEqual(got["ctx"]["need"], want["ctx"]["need"])
             self.assertEqual(got["ctx"]["input"], want["ctx"]["input"])
@@ -371,6 +469,7 @@ class PythonRoundTrip(unittest.TestCase):
         for d in seg1:   # what the old segment reads back as
             for r in d["ctx"]["rows"] + d["add"]:
                 r["fb"], r["cr"] = None, None
+                r.update(dict.fromkeys(OLD_KEYS))
         decs = self.roundtrip(text)
         self.assertEqual(len(decs[0]["ctx"]["rows"]), 4)
         for d in decs[:3]:
@@ -379,6 +478,11 @@ class PythonRoundTrip(unittest.TestCase):
                 self.assertNotIn("covered", r["x"])
         self.assertNotIn("filters", decs[0]["head"])
         self.assertIn("filters", decs[3]["head"])
+        for d in decs[:3]:
+            for r in d["rows"]:
+                self.assertEqual(tuple(r[k] for k in OLD_KEYS), (None,) * 10)
+        self.assertEqual(decs[3]["rows"][1]["hk"], 0)   # the new segment reads them
+        self.assertEqual(decs[3]["rows"][1]["fl"], "ctx")
 
     def test_refuses_malformed(self):
         head, seg1, seg2 = make_session()

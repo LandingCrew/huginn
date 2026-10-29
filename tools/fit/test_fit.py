@@ -236,6 +236,138 @@ class NewAndUnknownKeys(TempWork):
         self.assertNotIn('char', decs[0])
 
 
+class OldEngineColumns(TempWork):
+    """0.23.53: the old engine's score parts and the favourites hotkey (row columns est..hk),
+    the favorite bit, ctx.old and dec.rid. A row that carries none of the columns -- every row
+    of an older head -- reads OLD None; a decision without rid reads None."""
+
+    def text(self):
+        def older(r):                # a 0.23.52 writer: twelve row columns, no floors, no rid
+            if r['t'] == 'head':
+                r['row'] = r['row'][:12]
+                r.pop('floors', None)
+                r['flags'].pop('favorite', None)
+            elif r['t'] == 'ctx':
+                r['rows'] = [row[:12] for row in r['rows']]
+            elif r['t'] == 'dec':
+                r['add'] = [row[:12] for row in r['add']]
+        old = edit_lines(session('20261028-100000', CHAR_A, '0.23.52 (abc1234)', minute=1), older)
+
+        def with_rid(r):             # the key press carries its v2 record's id
+            if r['t'] == 'dec':
+                r['rid'] = 7 if r['out'] == 'key' else None
+            elif r['t'] == 'ctx' and r['id'] == 10:
+                r['old'] = {'minCtx': 0.05, 'minUtil': 0.1, 'topN': 10, 'scored': 1, 'phi': [1] + [0] * 17}
+        new = edit_lines(session('20261029-100000', CHAR_A, '0.23.53 (abc1234)', minute=2), with_rid)
+        return old + new
+
+    def test_v3load(self):
+        D = v3load.load([self.write('v3.jsonl', self.text())])
+        self.assertEqual(len(D['decs']), 8)
+        new = D['ctxs'][('20261029-100000', 10)]
+        old = D['ctxs'][('20261028-100000', 10)]
+        rows = new['rows']
+        self.assertEqual(rows[0][common.OLD], (0.31, 0.75, 6, 0.25, 0, 0.5, 0.9, 'pass', None, None))
+        self.assertEqual(rows[1][common.OLD][common.O_FL], 'ctx')
+        self.assertEqual(rows[1][common.OLD][common.O_HK], 0)
+        self.assertEqual(rows[1][common.OLD][common.O_WU], 0.004)
+        self.assertTrue(rows[1][common.FLAGS] & common.F['favorite'])
+        self.assertIsNone(rows[2][common.OLD])        # a row with none of the columns
+        self.assertEqual(rows[3][common.FB], 'cooldown')   # the earlier columns unchanged
+        self.assertTrue(all(r[common.OLD] is None for r in old['rows']))
+        self.assertEqual(len(rows[0]), 13)
+        self.assertEqual(len(old['rows'][0]), 13)
+        self.assertEqual(new['old']['topN'], 10)       # kept as written
+        self.assertIsNone(old['old'])
+        rids = {(d['launch'], d['out']): d['rid'] for d in D['decs']}
+        self.assertEqual(rids[('20261029-100000', 'key')], 7)
+        self.assertIsNone(rids[('20261029-100000', 'nothing')])
+        self.assertIsNone(rids[('20261028-100000', 'key')])   # older: the default
+        self.assertEqual(D['heads'][-1]['floors'], ['pass', 'cold', 'ctx', 'util', 'suppressed'])
+        self.assertNotIn('floors', D['heads'][0])
+
+    def test_build_still_runs(self):
+        self.quiet(v3load.main, [str(self.write('v3.jsonl', self.text()))])
+        S = fitlib.build(common.load(), include_nothing=True)
+        launches = [m['launch'] for m in S['meta']]
+        self.assertGreater(len(launches), 0)
+        # The same session in both launches: the new columns change nothing the fit builds.
+        self.assertEqual(launches.count('20261028-100000'), launches.count('20261029-100000'))
+        new = np.array([m['launch'] == '20261029-100000' for m in S['meta']])
+        for key in ('N', 'Y'):
+            if key in S and isinstance(S[key], np.ndarray) and len(S[key]) == len(new):
+                self.assertTrue(np.array_equal(S[key][new], S[key][~new]), key)
+
+    def test_replay_reader(self):
+        decs = replay.load_v3([self.write('v3.jsonl', self.text())])
+        new = [d for d in decs if d['launch'] == '20261029-100000']
+        old = [d for d in decs if d['launch'] == '20261028-100000']
+        self.assertEqual(new[0]['ctx']['rows'][0]['fl'], 'pass')
+        self.assertEqual(new[0]['ctx']['rows'][1]['hk'], 0)
+        self.assertEqual(new[0]['rid'], 7)
+        self.assertTrue(all(r['est'] is None and r['hk'] is None for d in old for r in d['rows']))
+
+
+class FloorCheck(TempWork):
+    """v3load.floor_check: each row's old-engine floor (fl) against the tests the scorer
+    applies. The C++ encoder's golden session (whose floors CaptureEligible's rules give)
+    passes; rows edited to break each rule are caught, and a value logged equal to its
+    floor is not judged."""
+    GOLDEN = HERE.parents[1] / 'tests' / 'core' / 'fixtures' / 'decisions' / 'synthetic_v3.jsonl'
+    # row columns of the 0.23.53 head (DecisionLog.cpp): flags 5, cw 18, fl 19, wu 20
+    FLAGS, CW, FL, WU = 5, 18, 19, 20
+    FLOORS = ['pass', 'cold', 'ctx', 'util', 'suppressed']
+
+    def golden(self):
+        return self.GOLDEN.read_text(encoding='utf-8')
+
+    def test_golden_passes(self):
+        bad, checked, _ = v3load.floor_check(v3load.load([self.write('v3.jsonl', self.golden())]))
+        self.assertGreater(checked, 0)
+        self.assertEqual(dict(bad), {})
+
+    def test_older_rows_skipped(self):
+        p = self.GOLDEN.parent / 'synthetic_v3_0.23.52.jsonl'
+        bad, checked, _ = v3load.floor_check(v3load.load([p]))
+        self.assertEqual((dict(bad), checked), ({}, 0))
+
+    def test_violations(self):
+        def breaks(r):               # context 1 (the second segment writes it again)
+            if r['t'] != 'ctx' or r['id'] != 1:
+                return
+            rows = {row[0]: row for row in r['rows']}
+            fl = self.FLOORS.index
+            a = rows['0003EADE']     # scored, pass, cw 0.8: call it ctx
+            a[self.FL] = fl('ctx')
+            b = rows['00012EB7']     # unscored util: a wu above minUtil 0.1
+            b[self.WU] = 0.25
+            c = rows['000640B6']     # a filter drop: give it a floor
+            c[self.FL] = fl('util')
+            c[self.WU] = 0.0001
+            r['rows'].append(['00099999', 0, 0, 0, -1, 1, -1, None, [], None, None, None,
+                              0, 0, 0, 1, 0, 0.3, 0.9, fl('suppressed'), 0])   # fav is boost
+            r['rows'].append(['00099998', 0, 0, 0, -1, 1, -1, None, [], None, None, None,
+                              0, 0, 0, 1, 0, 0.3, 0.01, fl('util'), 0.01])    # non-favourite, cw < minCtx
+            r['rows'].append(['00099997', 0, 0, 0, -1, 3, -1, 0.5, [], None, None, None,
+                              0, 0, 0, 1, 0, 0.3, 0.01, fl('pass')])          # non-favourite pass, cw < minCtx
+            r['rows'].append(['00099996', 0, 0, 0, -1, 1, -1, None, [], None, None, None,
+                              0, 0, 0, 1, 0, 0.3, 0.05, fl('ctx'), 0.1])      # both exactly at a floor
+            r['rows'].append(['00099995', 0, 0, 0, -1, 1 | 512, -1, None, [], None, None, None,
+                              0, 0, 0, 1, 0, 0.3, 0.01, fl('util'), 0.05])    # a favourite under minCtx
+        D = v3load.load([self.write('v3.jsonl', edit_lines(self.golden(), breaks))])
+        bad, checked, ex = v3load.floor_check(D)
+        self.assertEqual(dict(bad), {'ctx_above_min': 1, 'scored_mismatch': 1, 'util_above_min': 1,
+                                     'not_eligible': 1, 'not_suppress': 1, 'util_below_ctx': 1,
+                                     'pass_below_ctx': 1})
+        self.assertEqual(ex['ctx_above_min'][0][2], '0003EADE')
+        self.assertEqual(ex['util_above_min'][0][2], '00012EB7')
+        self.assertEqual(ex['not_eligible'][0][2], '000640B6')
+        self.assertEqual(ex['util_below_ctx'][0][2], '00099998')
+        self.assertEqual(ex['pass_below_ctx'][0][2], '00099997')
+        _, out = self.quiet(v3load.main, [str(self.write('v3b.jsonl', edit_lines(self.golden(), lambda r: None)))])
+        self.assertIn('no violations', out)
+
+
 def lap_session(launch, char, build):
     """The synthetic session plus the lapped stretches (0.23.51) of two lap ticks, none
     answered. Tick 1 (15:02:30, judged 15:02:34) cuts three stretches: hunger and diseased,

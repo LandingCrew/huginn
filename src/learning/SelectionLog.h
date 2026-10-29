@@ -48,6 +48,10 @@ namespace Huginn::Learning
     {
         /// Call immediately BEFORE dispatching `event`, so `pred` is the estimate
         /// the selection is about to correct. `how` = what confirmed it.
-        void Write(const EquipEvent& event, const char* how);
+        /// Logs a confirmed selection (debug log + Huginn_Selections.jsonl).
+        /// Returns the record id written into the JSONL record ("rid", 0.23.53:
+        /// per launch, from 1; join on launch + rid), or 0 when no record was
+        /// queued (test mode, a slot capture session, the writer queue full).
+        uint64_t Write(const EquipEvent& event, const char* how);
     }
 }

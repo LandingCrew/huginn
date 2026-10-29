@@ -25,11 +25,18 @@ DATA = REPO / 'docs' / 'architecture' / '9-data'
 EFFECTS_CSV = DATA / 'effects.csv'
 
 F = {'eligible': 1, 'scored': 2, 'held': 4, 'equipped': 8, 'shown': 16, 'wildcard': 32,
-     'override': 64, 'remembered': 128, 'addedAtPick': 256}
+     'override': 64, 'remembered': 128, 'addedAtPick': 256, 'favorite': 512}
 # row tuple indices. FB (the filter that dropped a row that is not eligible, by
 # name) and CR (the remaining seconds behind the `covered` cross-feature) start
-# at 0.23.46 and are None on older rows (v3load.py).
-FORM, UID, KIND, SRC, CAP, FLAGS, SLOT, UTIL, X, WP, FB, CR = range(12)
+# at 0.23.46 and are None on older rows (v3load.py). OLD (0.23.53) is None or a
+# tuple of the old engine's score parts and the favourites hotkey, indexed by
+# O_EST..O_HK: the learner's estimate, confidence alpha, stored evidence n,
+# UCB, the recency boost, the prior, the context weight, the floor (a name:
+# pass / cold / ctx / util / suppressed, None when not eligible), the utility
+# an unscored candidate would have had, the vanilla hotkey 0-7 (v3load.py;
+# docs/architecture/9-selection-log-v3.md).
+FORM, UID, KIND, SRC, CAP, FLAGS, SLOT, UTIL, X, WP, FB, CR, OLD = range(13)
+O_EST, O_ALPHA, O_N, O_UCB, O_REC, O_PRIOR, O_CW, O_FL, O_WU, O_HK = range(10)
 
 
 def work_dir():

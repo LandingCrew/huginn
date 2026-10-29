@@ -6,7 +6,10 @@
 // value it decodes against the numbers written here), so the two ends of the
 // format are pinned to one file. To regenerate after a deliberate format
 // change: run the tests, copy <build>/tests/synthetic_v3.actual.jsonl over the
-// fixture, and update the Python test's expectations.
+// fixture, and update the Python test's expectations. Before a deliberate
+// format change, keep the old golden file beside it under the version that
+// wrote it (synthetic_v3_0.23.52.jsonl: before 0.23.53's old-engine columns),
+// so the readers keep reading it.
 
 #include "core/DecisionLog.h"
 #include "core/NeedIds.h"
@@ -108,6 +111,25 @@ namespace
             p->env.hour = 13.5f;
             p->env.openDaylight = false;
             p->env.light = 0.3f;
+            // 0.23.53: the old engine's run behind the eligible rows.
+            p->old.valid = true;
+            p->old.minCtx = 0.05f;
+            p->old.minUtil = 0.1f;
+            p->old.topN = 10;
+            p->old.coldBoost = 0.2f;
+            p->old.beta = 0.2f;
+            p->old.lambdaMin = 0.5f;
+            p->old.lambdaMax = 3.0f;
+            p->old.n0 = 2.0f;
+            p->old.favMode = "boost";
+            p->old.favMin = 1.3f;
+            p->old.favMax = 2.5f;
+            p->old.scored = 2;
+            p->old.totalTrains = 37.5f;
+            p->old.phi.assign(18, 0.0f);
+            p->old.phi[0] = 1.0f;     // bias
+            p->old.phi[1] = 0.3f;     // health
+            p->old.phi[17] = 0.25f;
             {
                 Row r;   // 0: a potion on key 3
                 r.form = 0x0003EADE;
@@ -119,6 +141,15 @@ namespace
                 r.cross[static_cast<std::size_t>(Cross::overshoot_health)] = -0.25f;
                 r.cross[static_cast<std::size_t>(Cross::stack_count)] = 0.4553f;
                 r.cap = &potion;
+                // 0.23.53: scored by the main loop.
+                r.old.est = 0.42f;
+                r.old.alpha = 0.6667f;
+                r.old.trains = 4.0f;
+                r.old.ucb = 0.3105f;
+                r.old.rec = 0.1875f;
+                r.old.prior = 0.55f;
+                r.old.ctx = 0.8f;
+                r.old.floor = static_cast<std::uint8_t>(Floor::pass);
                 p->rows.push_back(r);
             }
             {
@@ -132,6 +163,18 @@ namespace
                 r.cross[static_cast<std::size_t>(Cross::school_fortified)] = 1.0f;
                 r.wildcardP = 0.0825f;
                 r.cap = &fireSpell;
+                // 0.23.53: a favourite on vanilla hotkey 3 (index 2), rescued
+                // by the cold start (context 0.02 under the 0.05 floor).
+                r.flags |= Flag::Favorite;
+                r.hotkey = 2;
+                r.old.est = 0.0f;
+                r.old.alpha = 0.0f;
+                r.old.trains = 0.0f;
+                r.old.ucb = 1.0f;
+                r.old.rec = 0.0f;
+                r.old.prior = 0.3f;
+                r.old.ctx = 0.02f;
+                r.old.floor = static_cast<std::uint8_t>(Floor::cold);
                 p->rows.push_back(r);
             }
             {
@@ -144,6 +187,16 @@ namespace
                 r.cross[static_cast<std::size_t>(Cross::weapon_charge)] = 0.5f;
                 r.cap = sword.get();
                 r.capOwner = sword;
+                // 0.23.53: under the utility floor, with what it would have scored.
+                r.old.est = -0.05f;
+                r.old.alpha = 0.5f;
+                r.old.trains = 2.5f;
+                r.old.ucb = 0.8f;
+                r.old.rec = 0.0f;
+                r.old.prior = 0.7f;
+                r.old.ctx = 0.06f;
+                r.old.floor = static_cast<std::uint8_t>(Floor::util);
+                r.old.wouldUtil = 0.0812f;
                 p->rows.push_back(r);
             }
             {
@@ -152,12 +205,20 @@ namespace
                 r.kind = static_cast<std::uint8_t>(Effect::Kind::Armour);
                 r.flags = Flag::Held | Flag::Equipped;
                 r.cap = &boots;
+                // 0.23.53: held, never gathered: the learner's metrics only
+                // (the row ends after rec).
+                r.old.est = 0.0f;
+                r.old.alpha = 0.0f;
+                r.old.trains = 0.0f;
+                r.old.ucb = 1.0f;
+                r.old.rec = 0.0f;
                 p->rows.push_back(r);
             }
             {
                 Row r;   // 4: an item outside the catalog
                 r.form = 0xFF000801;
-                r.flags = Flag::Held;
+                r.flags = Flag::Held | Flag::Favorite;   // 0.23.53: favourited on key 8,
+                r.hotkey = 7;                            // nothing else: nine nulls before hk
                 p->rows.push_back(r);
             }
             {
@@ -172,6 +233,15 @@ namespace
                 r.cross[static_cast<std::size_t>(Cross::covered)] = 0.8176f;
                 r.coveredSec = 8.0f;
                 r.cap = &familiar;
+                // 0.23.53: a filter drop: the run's parts, no floor.
+                r.old.est = 0.12f;
+                r.old.alpha = 0.8f;
+                r.old.trains = 8.0f;
+                r.old.ucb = 0.2f;
+                r.old.rec = 0.0f;
+                r.old.prior = 0.6f;
+                r.old.ctx = 0.4f;
+                r.old.wouldUtil = 0.9f;
                 p->rows.push_back(r);
             }
             // 0.23.46: the player's summons: a familiar (8 s left, cast 52 s
@@ -190,7 +260,7 @@ namespace
             m->why = "menu";
             m->menu = "InventoryMenu";
             m->rows.resize(2);   // potion and spell only
-            m->rows[1].flags = Flag::Eligible | Flag::Scored | Flag::Held;   // the wildcard ...
+            m->rows[1].flags = Flag::Eligible | Flag::Scored | Flag::Held | Flag::Favorite;   // the wildcard ...
             m->rows[1].slot = -1;                                             // ... no longer shown
             m->rows[1].wildcardP = kNone;
             menu = m;
@@ -234,6 +304,7 @@ namespace
             d1.ctx = press;
             d1.ctxAgeMs = 12.0f;
             d1.open = { static_cast<std::uint8_t>(N(Needs::NeedId::health_deficit)), static_cast<std::uint8_t>(N(Needs::NeedId::in_combat)) };
+            d1.rid = 41;   // 0.23.53: its v2 record's id
             decisions.push_back(d1);
 
             // 2. A menu pick of armour the context does not hold (the frozen learner skips armour).
@@ -277,6 +348,7 @@ namespace
             d3.ctx = menu;
             d3.ctxAgeMs = 5300.0f;
             d3.repeat = true;
+            d3.rid = 42;
             decisions.push_back(d3);
 
             // 4. Nothing pressed while hungry.
@@ -305,6 +377,7 @@ namespace
             d5.ctx = press;
             d5.ctxAgeMs = 79000.0f;
             d5.preEquipped = true;   // the spell was already in the other hand
+            d5.rid = 43;
             decisions.push_back(d5);
 
             // 6. (0.23.51) A lap: diseased since 12:02:00, its second stretch
@@ -413,6 +486,55 @@ TEST_CASE("decision log: caps and contexts are defined once per segment")
     // The armour pick's added row reuses the boots' cap id (content-addressed).
     const std::string menu = e.Encode(syn.decisions[1]);
     CHECK(menu.find(R"("t":"cap")") == std::string::npos);
+}
+
+TEST_CASE("decision log: the old engine's columns end at the last one set (0.23.53)")
+{
+    const auto encodeRow = [](const Row& r) {
+        Encoder e;
+        (void)e.BeginSegment(Synthetic::MakeHead());
+        auto ctx = std::make_shared<Context>();
+        ctx->id = 9;
+        ctx->rows.push_back(r);
+        Decision d;
+        d.ctx = ctx;
+        const std::string out = e.Encode(d);
+        const auto at = out.find(R"("rows":[[)");
+        REQUIRE(at != std::string::npos);
+        const auto end = out.find("]]}", at);
+        return out.substr(at + 8, end + 1 - (at + 8));   // the row, brackets included
+    };
+    Row r;
+    r.form = 0x12;
+    r.flags = Flag::Held;
+    // No old-engine part: the row ends after cr, as before 0.23.53.
+    CHECK(encodeRow(r) == R"(["00000012",0,null,null,-1,4,-1,null,[],null,null,null])");
+    r.old.est = 0.0f;
+    r.old.alpha = 0.0f;
+    r.old.trains = 0.0f;
+    r.old.ucb = 1.0f;
+    r.old.rec = 0.0f;
+    CHECK(encodeRow(r) == R"(["00000012",0,null,null,-1,4,-1,null,[],null,null,null,0,0,0,1,0])");
+    r.old.floor = static_cast<std::uint8_t>(Floor::ctx);   // a floor with no prior/cw: nulls before it
+    CHECK(encodeRow(r) == R"(["00000012",0,null,null,-1,4,-1,null,[],null,null,null,0,0,0,1,0,null,null,2])");
+    r.old.floor = kNoFloor;
+    r.hotkey = 0;
+    CHECK(encodeRow(r) == R"(["00000012",0,null,null,-1,4,-1,null,[],null,null,null,0,0,0,1,0,null,null,null,null,0])");
+    // The head names the columns and the floors.
+    const std::string head = Encoder().BeginSegment(Synthetic::MakeHead());
+    CHECK(head.find(R"("fb","cr","est","a","n","ucb","rec","prior","cw","fl","wu","hk"])") != std::string::npos);
+    CHECK(head.find(R"("addedAtPick":256,"favorite":512})") != std::string::npos);
+    CHECK(head.find(R"("floors":["pass","cold","ctx","util","suppressed"])") != std::string::npos);
+}
+
+TEST_CASE("decision log: a pick carries the v2 record id; nothing carries none (0.23.53)")
+{
+    const Synthetic syn;
+    Encoder e;
+    (void)e.BeginSegment(Synthetic::MakeHead());
+    CHECK(e.Encode(syn.decisions[0]).find(R"("seq":1,"rid":41,)") != std::string::npos);
+    CHECK(e.Encode(syn.decisions[1]).find(R"("seq":2,"rid":null,)") != std::string::npos);   // the learner skipped it
+    CHECK(e.Encode(syn.decisions[3]).find(R"("seq":4,"rid":null,)") != std::string::npos);   // nothing
 }
 
 TEST_CASE("decision log: the synthetic session matches the golden file")
