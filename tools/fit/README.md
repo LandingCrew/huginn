@@ -317,6 +317,21 @@ export.py). `--write-golden` rewrites
 | `bootstrap.py` | The bootstrap format, version 1: document, deterministic text, validation, item keys. No numpy. |
 | `test_fit.py` | The tests above. |
 
+## Reading logs written by 0.23.55 and later
+
+- The head's `filters` gains four names after `truncated` (R8.1, `core/FilterReason.h`):
+  `no_follower` (a spell or scroll for someone else, no follower near), `no_workstation`
+  (fortify apparel with no station up for a craft it fortifies), `not_dark` (a torch while
+  darkness does not apply) and `favorite_suppressed` (a favourite under
+  `sFavoritesMode = Suppress`). `v3load.py` and `tools/replay` read `fb` by the head's own
+  list, so older files read the same.
+- Behaviour change in the same build: those items were eligible rows with floor `ctx` (or,
+  for Suppress, `suppressed`) and are now filter drops (`fb` set, not eligible). A spell for
+  others at context weight 0 can no longer be raised by the cold start (`cold`). The floor
+  `suppressed` is no longer written. The active-buff filters let their item through in the
+  buff's last `fRefreshPriorSec` seconds (default 5), so a covered item can be eligible with
+  `covered` > 0. Segment by build before pooling eligibility or floors across 0.23.55.
+
 ## Reading logs written by 0.23.46 and later
 
 - Rows have two more columns, named by the head's `row` list: `fb` (`filtered_by`, the candidate

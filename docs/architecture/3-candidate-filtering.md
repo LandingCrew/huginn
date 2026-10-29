@@ -83,7 +83,7 @@ vector — no in-place `erase_if`.
 
 | # | Stage | Where |
 |---|---|---|
-| 1 | **Consolidated visitor** — affordability, equipped, full vitals, active buff, in that order, early-exiting on the first failure | `RunVisitorFilters()`, `CandidateFilters.cpp:20` |
+| 1 | **Consolidated visitor** — affordability, equipped, full vitals, the hard gates (§2.7, 0.23.55), active buff (with the refresh pass, §2.8), in that order, early-exiting on the first failure | `RunVisitorFilters()` |
 | 2 | **Cooldown** — tested against a set of active cooldown keys snapshotted once per pass, so there is no per-candidate lock | `CandidateFilters.cpp:289` |
 | 3 | **Deduplication** — inline, via a reusable `unordered_set<uint64_t>` | `CandidateFilters.cpp:300` |
 | 4 | **Truncation** to `maxCandidatesAfterFilter` | `CandidateFilters.cpp:317` |
@@ -101,13 +101,18 @@ game's job threads.
 The visitor is written per variant alternative, and the arms are **not symmetric**. This
 table is the code, not an idealisation:
 
-| | Affordability | Equipped | Full vitals | Active buff |
-|---|---|---|---|---|
-| **Spell** | `currentMagicka < effectiveCost` → policy-dependent (§3) | `player.IsSpellEquipped(formID)` | RestoreHealth, RestoreMagicka | Invisibility, Muffle, Armor, `SpellType::Summon` once `summonCount` reaches `summonLimit` (0.23.46; before, any summon up hid them all), plus resist redundancy |
-| **Item** (Potion/Food/SoulGem) | `count <= 0` | — (never filtered) | RestoreHealth, RestoreMagicka, RestoreStamina — **skipped entirely for `Food` and `Alcohol`** | resist redundancy, Waterbreathing, Invisibility |
-| **Scroll** | `count <= 0` | — | RestoreHealth only | Invisibility, Muffle |
-| **Ammo** | `count <= 0` | `isEquipped` | — | — |
-| **Weapon / Staff** | always passes | always passes | — | — |
+| | Affordability | Equipped | Full vitals | Hard gates (§2.7) | Active buff |
+|---|---|---|---|---|---|
+| **Spell** | `currentMagicka < effectiveCost` → policy-dependent (§3) | `player.IsSpellEquipped(formID)` | RestoreHealth, RestoreMagicka | `favorite_suppressed`, `no_follower` (TargetsOthers) | Invisibility, Muffle, Armor, `SpellType::Summon` once `summonCount` reaches `summonLimit` (0.23.46; before, any summon up hid them all), plus resist redundancy |
+| **Item** (Potion/Food/SoulGem) | `count <= 0` | — (never filtered) | RestoreHealth, RestoreMagicka, RestoreStamina — **skipped entirely for `Food` and `Alcohol`** | — | resist redundancy, Waterbreathing, Invisibility |
+| **Scroll** | `count <= 0` | — | RestoreHealth only | `no_follower` (TargetsOthers) | Invisibility, Muffle |
+| **Ammo** | `count <= 0` | `isEquipped` | — | — | — |
+| **Weapon / Staff** | always passes | always passes | — | `favorite_suppressed` | — |
+| **Torch** | `count <= 0` | `isEquipped` | — | `not_dark` | — |
+| **Apparel** | — (worn pieces are never gathered) | — | — | `no_workstation` | — |
+
+Every active-buff test passes its item again in the buff's last `fRefreshPriorSec`
+seconds (§2.8).
 
 Gaps worth knowing, all present in v0.19.10:
 
@@ -166,12 +171,73 @@ drift (`CooldownManager.cpp:14`).
 
 ### 2.6 FilterStats
 
-`FilterStats` (`CandidateFilters.h:18`) counts what each stage removed. (Its
-`filteredByRelevance` counter, dead since the relevance filter went, was removed in 0.22.8.)
+`FilterStats` (`CandidateFilters.h:18`) counts what each stage removed; the hard gates
+count in `filteredByHardGate` (0.23.55). (Its `filteredByRelevance` counter, dead since the
+relevance filter went, was removed in 0.22.8.)
 
 > **The relevance filter is gone.** `baseRelevance` no longer exists on `CandidateBase`, and
-> neither does the `GetRelevance()` helper. Context-based exclusion now happens in
-> `UtilityScorer` via the two soft thresholds in §5.
+> neither does the `GetRelevance()` helper. Context-based exclusion happens in
+> `UtilityScorer` via the two soft thresholds in §5, except the four hard zeros, which are
+> filters again since 0.23.55 (§2.7).
+
+### 2.7 Hard gates (R8.1, 0.23.55)
+
+Map Phase 6 item 1: before the new scorer ranks anything, the cases in which the old engine
+gave a candidate a context weight of exactly 0, and the favourites Suppress skip, are
+candidate filters. The new scorer never sees those items, so it cannot fill a page with
+fortify rings and torches. They run in the visitor after full vitals and before the
+active-buff filters, and each drop is a `Core::Filter::Dropped` with its reason:
+
+| Reason | Drops | The old engine's zero it replaces |
+|---|---|---|
+| `no_follower` | a spell or scroll tagged `TargetsOthers` with no living follower near | `WeightForCandidate`'s `!followerPresent` arms |
+| `no_workstation` | apparel when no craft it fortifies (Smithing, Enchanting, Alchemy) has its station in the crosshair; a ring that fortifies two crafts passes at either | the apparel arm (no baseline; only the station's fortify weight) |
+| `not_dark` | a torch while darkness does not apply: daylight (`WorldState::isDark` false, `fDarkLightLevel` with its hysteresis), or Night Eye, a light spell or a torch already up | the torch arm (`darknessWeight` only) |
+| `favorite_suppressed` | a favourite (spells and weapons carry the flag) under `[Favorites] sFavoritesMode = Suppress` | the two Suppress skips in `UtilityScorer::ScoreCandidates`, deleted |
+
+One predicate per gate, in `src/core/HardGates.h` (host-tested), on facts read from the
+state by `Context::HardGateInputs` (`context/ContextRuleEngine.h`): `FollowerNear(targets)`,
+`StationCraft(world)` and `DarknessApplies(player, world)`. `EvaluateRules` raises
+`followerPresent`, the fortify weights and `darknessWeight` from the same three functions,
+so a gate drops exactly what the old weight zeroed. (A context weight configured to 0 in the
+INI still zeroes an item the gate lets through; the shipped weights are all positive.) The
+filter reads state, never a `ContextWeightMap`. `WeightForCandidate`'s zero arms and
+`IsHardContextGated` stay for the legacy learn feature (R8 PR 2) but no longer decide
+anything in a pipeline run.
+
+A Remembrance hold's own item that a gate drops (a torch taken off in daylight, a ring away
+from the forge) is set aside for the hold, as an unaffordable one is: until 0.23.55 those
+items passed the filters, so the hold could always find them.
+
+Behaviour against 0.23.54: such items are `filtered_by` their gate in the selection log
+instead of eligible and unscored (floor `ctx`, or `suppressed`); and a spell for others at
+context weight 0 can no longer be raised by the cold-start rescue (`IsHardContextGated`
+covered only apparel and torches).
+
+### 2.8 The refresh pass (doc 11 decision 4, 0.23.55)
+
+Each active-buff filter (`invisibility`, `muffle`, `armor`, `summon_limit`, `warming`,
+`waterbreathing`, `resist`) lets its item through once the buff that blocks it has less than
+`[Scoring] fRefreshPriorSec` left (default 5 s; 0 turns the pass off), so the player can
+recast before it drops. An effect with no duration (abilities, worn enchantments, any
+constant effect) never runs out, so its block never passes.
+
+"The buff that blocks it" (`src/core/RefreshPass.h`):
+
+- invisibility, muffle, armor, warming, waterbreathing: every active effect that sets the
+  filter's flag; the block ends with the last of them (the longest remaining time; one
+  constant effect means never);
+- resist: the element's resistance stays over `resistThresholdToFilter` until enough of its
+  timed parts (value modifiers on the element's AV, weaknesses subtracting) have ended;
+  whatever no timed effect explains (gear, a race, an ability) is permanent;
+- summon_limit: the count stays at the limit until enough commanded actors time out.
+
+The magic-effects poll computes one bit per block (`ActorBuffs::refreshDue`, against the
+window and the threshold pushed into `StateManager`), so a block entering its last seconds
+marks the state changed, and the pipeline's skip gate compares the bits like its ambient
+signature: the item comes back on the next run, not when something else happens to move.
+The poll logs `[StateManager] Refresh due: <blocks> (window Ns)` on each change. The same
+`fRefreshPriorSec` is the centre of `covered(i)`'s `left(r)` prior in the selection log.
 
 ---
 
@@ -338,7 +404,9 @@ Stage 2 → Stage 6.
    so the loop does two lock acquisitions instead of ~2N.
 3. **Soft gate 1** — skips any candidate whose context weight is below
    `minimumContextWeight` (`UtilityScorer.cpp:78`). **Favorited candidates are exempt**:
-   explicit player intent must stay observable to the learner even at low context.
+   explicit player intent must stay observable to the learner even at low context. (A
+   favourite under Suppress never gets here: the `favorite_suppressed` filter dropped it,
+   §2.7.)
 4. Scores each survivor (§6).
 5. **Soft gate 2** — keeps the result only if `utility >= minimumUtility`
    (`UtilityScorer.cpp:93`).
@@ -465,14 +533,16 @@ fMinimumUtility = 0.1                ; below this, dropped from results
 fMinimumContextWeight = 0.05         ; below this, skipped before scoring (favorites exempt)
 fColdStartUCBBoost = 0.2             ; context floor for untried items
 iTopNCandidates = 10
+fRefreshPriorSec = 5.0               ; the active-buff filters' refresh window (§2.8), 0-120, 0 = off
 ```
 
-Loaded by `ScorerSettings` (`src/learning/ScorerSettings.cpp`), which is hot-reloadable.
+Loaded by `ScorerSettings` (`src/learning/ScorerSettings.cpp`), which is hot-reloadable;
+`fRefreshPriorSec` is pushed into `StateManager` on every load.
 
 ### 8.3 `[Favorites]`
 
 ```ini
-sFavoritesMode = Boost               ; Boost / Off / Suppress
+sFavoritesMode = Boost               ; Boost / Off / Suppress (Suppress: a filter, §2.7)
 fFavoritesBoostMin = 1.3
 fFavoritesBoostMax = 2.5
 ```
@@ -571,7 +641,12 @@ There is no automated test suite in the repository; these are in-game checks
 - [ ] Healing spell and health potion excluded at ≥ 99% HP
 - [ ] Food and alcohol still surface at full health (vitals arm is skipped for them)
 - [ ] Resist potion excluded when that resistance is already above 50%
-- [ ] Invisibility potion excluded while invisible
+- [ ] Invisibility potion excluded while invisible, and offered again in the last
+      `fRefreshPriorSec` seconds of the effect (§2.8)
+- [ ] A spell for others is `filtered_by` `no_follower` with no follower near
+- [ ] A Fortify Smithing ring is `filtered_by` `no_workstation` away from a forge and offered at one
+- [ ] A torch is `filtered_by` `not_dark` in daylight and offered in a dark cave
+- [ ] Under `sFavoritesMode = Suppress` a favourite is `filtered_by` `favorite_suppressed`
 - [ ] Two enchanted weapons sharing a base FormID both survive dedup (distinct `uniqueID`)
 - [ ] Empty soul gems never appear; a stack of ten petty gems with one soul reports count 1
 

@@ -123,7 +123,10 @@ namespace Huginn::Learning::SelectionLogV3
                 }
             }
             if (coverage && r.cap) {
-                const auto c = Core::Coverage::Covered(*r.cap, *coverage);
+                // R8.1: left(r) centred at [Scoring] fRefreshPriorSec, the
+                // window the active-buff filters' refresh pass uses.
+                const auto c = Core::Coverage::Covered(*r.cap, *coverage,
+                    State::StateManager::GetSingleton().GetRefreshPriorSec());
                 r.cross[static_cast<size_t>(Cross::covered)] = c.value;
                 r.coveredSec = c.value > 0.0f ? c.remaining : kNone;
             }

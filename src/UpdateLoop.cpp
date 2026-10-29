@@ -238,13 +238,9 @@ static void UpdateSubsystems(float deltaSeconds, float deltaMs)
         Huginn_ZONE_NAMED("UtilityScorer::Update");
         // Wildcard expiry: the exploration slot reverts to the ranked pick
         forcePipelineRun |= g_utilityScorer->Update(deltaSeconds);
-
-        auto transition = State::StateManager::GetSingleton().ConsumeCombatTransition();
-        if (transition == State::StateManager::CombatTransition::Entered) {
-            g_utilityScorer->OnCombatStart();
-        } else if (transition == State::StateManager::CombatTransition::Exited) {
-            g_utilityScorer->OnCombatEnd();
-        }
+        // R8.1 (0.23.55): no combat transition to hand on. The
+        // PotionDiscriminator's own timer is gone; it reads the combat_onset
+        // clock (NeedSensorState::combatStartAt) through the pipeline.
     }
 
     {

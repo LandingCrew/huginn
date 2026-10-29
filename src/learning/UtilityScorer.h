@@ -69,6 +69,9 @@ namespace Huginn::Scoring
         //        SlotAllocator read — otherwise a page switch landing mid-tick
         //        rolls wildcards against the new page while the pipeline
         //        allocates the snapshotted one (critique #10).
+        // @param combatOnsetAgo R8.1: seconds since the current fight began,
+        //        kNever out of combat (core/CombatOnset.h), for the
+        //        PotionDiscriminator: the combat_onset clock.
         // @param outWeights Optional: receives the context weight map this pass
         //        scored against, so callers can explain the ranking without
         //        re-deriving context (see DominantContextReason, critique #10).
@@ -78,6 +81,7 @@ namespace Huginn::Scoring
             const State::PlayerActorState& player,
             const State::TargetCollection& targets,
             const State::WorldState& world,
+            float combatOnsetAgo,
             const WildcardPage& displayPage,
             Context::ContextWeightMap* outWeights = nullptr);
 
@@ -101,9 +105,9 @@ namespace Huginn::Scoring
         // Component access (for advanced configuration)
         [[nodiscard]] WildcardManager& GetWildcardManager() noexcept { return m_wildcardMgr; }
 
-        // Combat state tracking (call from main update loop)
-        void OnCombatStart();
-        void OnCombatEnd();
+        // R8.1 (0.23.55): OnCombatStart / OnCombatEnd are gone with the
+        // PotionDiscriminator's own timer; ScoreCandidates takes the
+        // combat_onset clock instead.
         // @return true if a displayed exploration wildcard expired this tick
         //         (caller must force a pipeline run so the slot content swaps)
         [[nodiscard]] bool Update(float deltaSeconds);
@@ -137,13 +141,14 @@ namespace Huginn::Scoring
             const State::PlayerActorState& player,
             const State::TargetCollection& targets,
             const State::WorldState& world,
+            float combatOnsetAgo,
             const Context::ContextWeightMap& weights,
             float contextWeight,
             const Learning::FeatureItemMetrics& metrics,
             float recencyBoost)
         {
-            return ScoreCandidateInternal(candidate, state, player, targets, world, weights, contextWeight, metrics,
-                recencyBoost);
+            return ScoreCandidateInternal(candidate, state, player, targets, world, combatOnsetAgo, weights,
+                contextWeight, metrics, recencyBoost);
         }
 
     private:
@@ -157,6 +162,7 @@ namespace Huginn::Scoring
             const State::PlayerActorState& player,
             const State::TargetCollection& targets,
             const State::WorldState& world,
+            float combatOnsetAgo,
             const Context::ContextWeightMap& weights,
             float contextWeight,
             const Learning::FeatureItemMetrics& metrics,

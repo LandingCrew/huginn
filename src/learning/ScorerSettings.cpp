@@ -1,5 +1,6 @@
 #include "ScorerSettings.h"
 #include "IniLoad.h"
+#include "state/StateManager.h"   // SetRefreshPriorSec (R8.1)
 
 namespace Huginn::Scoring
 {
@@ -48,6 +49,12 @@ namespace Huginn::Scoring
         topNCandidates = static_cast<size_t>(
             ini.GetLongValue(section, "iTopNCandidates", static_cast<long>(ScorerDefaults::TOP_N_CANDIDATES)));
 
+        // Refresh pass (R8.1): pushed to the state layer, which computes the
+        // active-buff filters' refresh bits on its next magic-effects poll.
+        refreshPriorSec = ReadClampedFloat(ini, section, "fRefreshPriorSec", ScorerDefaults::REFRESH_PRIOR_SEC,
+            0.0f, ScorerDefaults::REFRESH_PRIOR_SEC_MAX, "ScorerSettings"sv);
+        State::StateManager::GetSingleton().SetRefreshPriorSec(refreshPriorSec);
+
         // =====================================================================
         // [Favorites] section
         // =====================================================================
@@ -61,14 +68,16 @@ namespace Huginn::Scoring
 
         logger::info("[ScorerSettings] Loaded: λMin={:.2f}, λMax={:.2f}, "
             "exploration={:.2f}, favorites={}, boostRange=[{:.1f}, {:.1f}], "
-            "minUtility={:.2f}, minCtxWeight={:.2f}, coldStart={:.2f}, topN={}, potionTier={}",
+            "minUtility={:.2f}, minCtxWeight={:.2f}, coldStart={:.2f}, topN={}, potionTier={}, "
+            "refreshPrior={:.1f}s",
             lambdaMin, lambdaMax, explorationWeight,
             favoritesMode == FavoritesMode::Boost ? "Boost" :
                 favoritesMode == FavoritesMode::Off ? "Off" : "Suppress",
             favoritesBoostMin, favoritesBoostMax,
             minimumUtility, minimumContextWeight, coldStartUCBBoost, topNCandidates,
             potionTierPreference == PotionTierPreference::Higher ? "Higher" :
-                potionTierPreference == PotionTierPreference::Lower ? "Lower" : "None");
+                potionTierPreference == PotionTierPreference::Lower ? "Lower" : "None",
+            refreshPriorSec);
     }
 
     void ScorerSettings::ResetToDefaults()
@@ -95,6 +104,9 @@ namespace Huginn::Scoring
         coldStartUCBBoost = ScorerDefaults::COLD_START_UCB_BOOST;
 
         topNCandidates = ScorerDefaults::TOP_N_CANDIDATES;
+
+        refreshPriorSec = ScorerDefaults::REFRESH_PRIOR_SEC;
+        State::StateManager::GetSingleton().SetRefreshPriorSec(refreshPriorSec);
 
         favoritesMode = FavoritesMode::Boost;
         favoritesBoostMin = ScorerDefaults::FAVORITES_BOOST_MIN;

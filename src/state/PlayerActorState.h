@@ -2,6 +2,7 @@
 
 #include "StateConstants.h"
 #include "StateTypes.h"              // For EffectType
+#include "core/RefreshPass.h"       // ActorBuffs::refreshDue (R8.1)
 #include <cmath>
 #include <cstdint>
 #include <string_view>
@@ -212,6 +213,13 @@ namespace Huginn::State
     // makes it 2). The summon filter hides summon spells only at the limit.
     std::uint8_t summonCount = 0;
     float summonLimit = 1.0f;
+    // R8.1 (0.23.55): the active-buff blocks due for their refresh -- blocking
+    // now, and ending within [Scoring] fRefreshPriorSec (core/RefreshPass.h,
+    // one bit per Core::Refresh::Block). The filters let the blocked item
+    // through on its bit. Computed by the magic-effects poll, and compared
+    // below, so a block entering its last seconds marks the state changed and
+    // the pipeline runs on it. Player only (0 on a target).
+    Core::Refresh::DueBits refreshDue = 0;
 
     EffectType activeCloakType = EffectType::None;  // Fire/Frost/Shock
 
@@ -286,6 +294,9 @@ namespace Huginn::State
         logger::trace("  {}.summons changed: {}/{} -> {}/{}", prefix, other.summonCount, other.summonLimit,
                       summonCount, summonLimit);
       }
+      if (refreshDue != other.refreshDue) {
+        logger::trace("  {}.refreshDue changed: {:#x} -> {:#x}", prefix, other.refreshDue, refreshDue);
+      }
       // Regen buffs/debuffs (v0.6.6)
       if (hasHealthRegenBuff != other.hasHealthRegenBuff) {
         logger::trace("  {}.hasHealthRegenBuff changed: {} -> {}", prefix, other.hasHealthRegenBuff, hasHealthRegenBuff);
@@ -340,6 +351,7 @@ namespace Huginn::State
                    hasActiveSummon == other.hasActiveSummon &&
                    summonCount == other.summonCount &&
                    summonLimit == other.summonLimit &&
+                   refreshDue == other.refreshDue &&
                    // Regen buffs/debuffs (v0.6.6)
                    hasHealthRegenBuff == other.hasHealthRegenBuff &&
                    hasHealthRegenDebuff == other.hasHealthRegenDebuff &&

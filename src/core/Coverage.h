@@ -21,7 +21,8 @@
 //              (duration - elapsed); kNoTimer for a constant effect (worn
 //              gear, an ability-free permanent buff), which never runs out.
 //   left(r)    the refresh prior of doc 11's decision 4: a logistic centred at
-//              kRefreshPriorSec = 5 s with scale kRefreshPriorScaleSec = 2 s,
+//              [Scoring] fRefreshPriorSec (R8.1, 0.23.55; default
+//              kRefreshPriorSec = 5 s) with scale kRefreshPriorScaleSec = 2 s,
 //              1 with no timer. A buff with a few seconds left reads partly
 //              uncovered. A PRIOR, labelled as one: R8 fits the curve from the
 //              player's refresh picks; the logged `cr` (r of the arg max) lets
@@ -64,16 +65,18 @@ namespace Huginn::Core::Coverage
     inline constexpr float kNoTimer = -1.0f;
 
     /// Doc 11 decision 4's refresh prior: the remaining seconds at which a buff
-    /// reads half uncovered, and the logistic's scale. R8 makes the centre the
-    /// INI key [Scoring] fRefreshPriorSec and fits both from refresh picks.
+    /// reads half uncovered (the default of [Scoring] fRefreshPriorSec since
+    /// R8.1, 0.23.55, which the callers pass as `centreSec`), and the
+    /// logistic's scale. R8 fits both from refresh picks.
     inline constexpr float kRefreshPriorSec = 5.0f;
     inline constexpr float kRefreshPriorScaleSec = 2.0f;
 
-    /// left(r): 1 with no timer; ~0.08 at 0 s, 0.5 at 5 s, 0.99 at 15 s.
-    [[nodiscard]] inline float LeftPrior(float remainingSec) noexcept
+    /// left(r): 1 with no timer; at the default centre ~0.08 at 0 s, 0.5 at
+    /// 5 s, 0.99 at 15 s. `centreSec` is [Scoring] fRefreshPriorSec.
+    [[nodiscard]] inline float LeftPrior(float remainingSec, float centreSec) noexcept
     {
         if (remainingSec < 0.0f) return 1.0f;
-        return 1.0f / (1.0f + std::exp(-(remainingSec - kRefreshPriorSec) / kRefreshPriorScaleSec));
+        return 1.0f / (1.0f + std::exp(-(remainingSec - centreSec) / kRefreshPriorScaleSec));
     }
 
     /// The summon columns covered by the count, not by a graded strength.
@@ -159,7 +162,8 @@ namespace Huginn::Core::Coverage
         float remaining = kNoTimer;  // r of the column that gave it (kNoTimer: no timer, or no factor)
     };
 
-    [[nodiscard]] inline Result Covered(const Effect::Cap& cap, const Active& a) noexcept
+    /// covered(i), its left(r) centred at `refreshCentreSec` ([Scoring] fRefreshPriorSec).
+    [[nodiscard]] inline Result Covered(const Effect::Cap& cap, const Active& a, float refreshCentreSec) noexcept
     {
         Result best;
         for (const auto& v : cap) {
@@ -180,7 +184,7 @@ namespace Huginn::Core::Coverage
                 share = std::min(1.0f, act / v.v);
                 r = a.remaining[i];
             }
-            const float value = share * LeftPrior(r);
+            const float value = share * LeftPrior(r, refreshCentreSec);
             if (value > best.value) best = Result{ value, r };
         }
         return best;

@@ -6,6 +6,7 @@
 #include "state/WorldState.h"
 #include "ContextWeightConfig.h"
 #include "ContextReason.h"
+#include "core/HardGates.h"   // R8.1: the hard gates read the same facts as the rules below
 
 #include <algorithm>  // std::max (GetMaxWeight)
 
@@ -21,7 +22,9 @@ namespace Huginn::Context
     //
     // Two readers, deliberately sharing one list: EvaluateRules picks which
     // fortify weight to raise, and PipelineCoordinator decides whether standing
-    // at this bench is worth defeating the hash skip for. When those drifted, the
+    // at this bench is worth defeating the hash skip for. Since R8.1 the list
+    // itself is Core::Gate::CraftOfBench (core/HardGates.h), which the
+    // no_workstation filter reads too. When those drifted, the
     // coordinator kept the full pipeline running at 100 ms for benches that
     // raised no weight at all.
     [[nodiscard]] Apparel::CraftSkill CraftSkillForWorkstation(int32_t benchType) noexcept;
@@ -201,13 +204,43 @@ namespace Huginn::Context
     // =============================================================================
 
     /// True when darknessWeight fires: dark, and the player has no way to see
-    /// yet -- no Night Eye, no light spell, no torch out. EvaluateRules and the
-    /// pipeline's skip gate both read this, so they cannot disagree.
+    /// yet -- no Night Eye, no light spell, no torch out. EvaluateRules, the
+    /// pipeline's skip gate and the torch gate (not_dark, R8.1) all read this,
+    /// so they cannot disagree.
     [[nodiscard]] inline bool DarknessApplies(
         const State::PlayerActorState& player, const State::WorldState& world) noexcept
     {
-        return world.isDark && !player.buffs.hasNightEye &&
-               !player.buffs.hasLightSpell && !player.hasTorchEquipped;
+        return Core::Gate::DarknessApplies(world.isDark, player.buffs.hasNightEye,
+                                           player.buffs.hasLightSpell, player.hasTorchEquipped);
+    }
+
+    /// A living follower near: what followerPresent says, and so what gates a
+    /// spell for someone else (EvaluateRules and no_follower, R8.1).
+    [[nodiscard]] inline bool FollowerNear(const State::TargetCollection& targets) noexcept
+    {
+        return targets.GetFollowerCount() > 0;   // == !GetNearbyFollowers().empty(), without the copy
+    }
+
+    /// The craft whose fortify weight is up: the bench in the crosshair
+    /// (EvaluateRules and no_workstation, R8.1).
+    [[nodiscard]] inline Core::Gate::Craft StationCraft(const State::WorldState& world) noexcept
+    {
+        return Core::Gate::StationCraft(world.isLookingAtWorkstation, world.workstationType);
+    }
+
+    /// R8.1 (0.23.55): the facts the hard gates in CandidateFilters read, from
+    /// the same state and the same three functions EvaluateRules reads, so a
+    /// gate drops exactly what the old context weight zeroed. Never from a
+    /// ContextWeightMap: the filters run before scoring.
+    [[nodiscard]] inline Core::Gate::Inputs HardGateInputs(const State::PlayerActorState& player,
+        const State::TargetCollection& targets, const State::WorldState& world, bool suppressFavorites) noexcept
+    {
+        return Core::Gate::Inputs{
+            .followerNear = FollowerNear(targets),
+            .station = StationCraft(world),
+            .darknessApplies = DarknessApplies(player, world),
+            .suppressFavorites = suppressFavorites,
+        };
     }
 
     /// Survival need as a tier: 0 none, 1 half weight, 2 full weight.

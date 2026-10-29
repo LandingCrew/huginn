@@ -80,6 +80,15 @@ namespace Huginn::Pipeline
         // like ambientSignature: a crossing of an override threshold always
         // gets a run, whatever the buckets or the locks are doing.
         uint8_t overrideSignature = 0;
+        // R8.1 (0.23.55): the active-buff blocks due for their refresh
+        // (ActorBuffs::refreshDue). Compared like ambientSignature: a block
+        // entering its last fRefreshPriorSec seconds moves no hashed bucket,
+        // and the filters only let its item through on a run.
+        Core::Refresh::DueBits refreshDue = 0;
+        // R8.1: seconds since the current fight began, kNever out of combat
+        // (core/CombatOnset.h): the combat_onset clock, read once per run for
+        // the PotionDiscriminator.
+        float combatOnsetAgo = 0.0f;
 
         // Pipeline outputs (built by successive steps)
         std::vector<Scoring::ScoredCandidate> scoredCandidates;
@@ -149,6 +158,8 @@ namespace Huginn::Pipeline
             fallingActive = false;
             underwaterActive = false;
             workstationActive = false;
+            refreshDue = 0;
+            combatOnsetAgo = 0.0f;
 
             scoredCandidates.clear();
             overrides.activeOverrides.clear();
@@ -337,6 +348,7 @@ namespace Huginn::Pipeline
         // once whenever it changes, in either direction.
         uint8_t m_lastAmbientSignature = 0;
         uint8_t m_lastOverrideSignature = 0xFF;   // never a real signature: first run always counts
+        Core::Refresh::DueBits m_lastRefreshDue = 0;   // R8.1: refreshDue at the last run
 
         // Holds the displayed reason so a momentary one stays readable.
         // Label-only: ScoreCandidates above it always sees the raw weights.

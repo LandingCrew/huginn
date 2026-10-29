@@ -13,6 +13,8 @@
 #include "../Profiling.h"
 #include "../util/NameMatch.h"
 #include "../effect/EffectCatalog.h"
+#include "core/RefreshPass.h"   // the refresh pass (R8.1)
+#include <ranges>
 
 namespace Huginn::State
 {
@@ -247,6 +249,13 @@ namespace Huginn::State
     const bool catalogReady = catalog.Ready();
     Core::Coverage::Active coverage;
 
+    // R8.1 (0.23.55): the refresh pass's inputs, filled in the same walk: the
+    // remaining time of every effect that sets an active-buff flag (each Add
+    // sits beside the flag it times), and the timed parts of each resistance.
+    // Abilities are skipped above all of them, so an ability never times a
+    // block: its part of a resistance counts as permanent.
+    Core::Refresh::Inputs refresh;
+
     // Single iteration over active effects (pattern from EffectsSensor.cpp)
     if (activeEffects) {
       for (auto* effect : *activeEffects) {
@@ -308,6 +317,13 @@ namespace Huginn::State
           }
         }
 
+        // R8.1: this effect's remaining seconds; kNoTimer for one with no
+        // duration (a worn enchantment, a constant effect): it never ends, so
+        // a block it holds is never due for its refresh.
+        const float remainingSec = effect->duration > 0.0f
+                                       ? std::max(0.0f, effect->duration - effect->elapsedSeconds)
+                                       : Core::Refresh::kNoTimer;
+
         // 0.23.46: a beneficial effect (a buff, a worn enchantment, a restore
         // still running) covers its column for covered(i). Abilities stay out,
         // as above; a detrimental one never covers.
@@ -342,6 +358,7 @@ namespace Huginn::State
              (spell && (Util::NameContainsWord(spell->GetName(), "warming") ||
                         Util::NameContainsWord(spell->GetName(), "warmth"))))) {
           newBuffs.hasWarmingEffect = true;
+          refresh.warming.Add(remainingSec);
         }
 
         auto primaryAV = baseEffect->data.primaryAV;
@@ -551,6 +568,28 @@ namespace Huginn::State
           }
         }
 
+        // R8.1: a timed part of a resistance the resist filter reads (a
+        // value modifier on the element's AV: a resist potion or spell, or a
+        // weakness, which subtracts). A constant one is not kept: with every
+        // part no timed effect explains, it counts as permanent.
+        if (archetype == RE::EffectSetting::Archetype::kValueModifier ||
+            archetype == RE::EffectSetting::Archetype::kPeakValueModifier) {
+          using E = Core::Refresh::Element;
+          std::optional<E> element;
+          switch (primaryAV) {
+            case RE::ActorValue::kResistFire: element = E::fire; break;
+            case RE::ActorValue::kResistFrost: element = E::frost; break;
+            case RE::ActorValue::kResistShock: element = E::shock; break;
+            case RE::ActorValue::kPoisonResist: element = E::poison; break;
+            case RE::ActorValue::kResistMagic: element = E::magic; break;
+            default: break;
+          }
+          if (element) {
+            refresh.resist[static_cast<std::size_t>(*element)].Add(
+                baseEffect->IsDetrimental() ? -magnitude : magnitude, remainingSec);
+          }
+        }
+
         // Process effects by archetype (match ActiveBuffsSensor approach - don't rely on IsDetrimental flag)
         switch (archetype) {
           // BUFFS
@@ -564,6 +603,7 @@ namespace Huginn::State
 
           case RE::EffectSetting::Archetype::kInvisibility:
             newBuffs.isInvisible = true;
+            refresh.invisibility.Add(remainingSec);
 #ifdef _DEBUG
             logger::trace("[StateManager] --> Detected INVISIBILITY");
 #endif
@@ -577,10 +617,12 @@ namespace Huginn::State
             // threshold-based classification. The recommendation engine handles preference.
             if (primaryAV == RE::ActorValue::kDamageResist) {
               newBuffs.hasArmorBuff = true;
+              refresh.armor.Add(remainingSec);
             }
             // Water Breathing
             else if (primaryAV == RE::ActorValue::kWaterBreathing) {
               newBuffs.hasWaterBreathing = true;
+              refresh.waterbreathing.Add(remainingSec);
 #ifdef _DEBUG
               logger::trace("[StateManager] --> Detected WATER BREATHING");
 #endif
@@ -662,6 +704,7 @@ namespace Huginn::State
             // Muffle (Fame AV)
             if (primaryAV == RE::ActorValue::kFame) {
               newBuffs.hasMuffle = true;
+              refresh.muffle.Add(remainingSec);
 #ifdef _DEBUG
               logger::trace("[StateManager] --> Detected MUFFLE");
 #endif
@@ -784,6 +827,12 @@ namespace Huginn::State
     coverage.summons = summonCount;
     coverage.summonLimit = newBuffs.summonLimit;
     coverage.summonRemaining = Core::Coverage::OldestRemaining(commanded);
+    // R8.1: the summon filter's block (the summon filter's own test) and when
+    // enough of the commanded actors time out to free a place.
+    refresh.summonBlocked = Core::Coverage::SummonLimitReached(summonCount, newBuffs.summonLimit);
+    refresh.summonLeft = Core::Refresh::SummonTimeLeft(
+        commanded | std::views::transform([](const Core::Coverage::CommandedActor& c) { return c.remaining; }),
+        summonCount, Core::Coverage::SummonLimitCount(newBuffs.summonLimit));
     {
       std::unique_lock lock(m_coverageMutex);
       m_coverage.valid = catalogReady;
@@ -887,6 +936,20 @@ namespace Huginn::State
     // Update effects and buffs with change detection
     {
       std::unique_lock lock(m_playerMutex);
+      // R8.1: which active-buff blocks are due for their refresh, against the
+      // resistances the last resistance poll published. A bit that flips
+      // changes the buffs below, so the pipeline runs on it.
+      {
+        const auto& r = m_playerState.resistances;
+        refresh.resistTotal = { r.fire, r.frost, r.shock, r.poison, r.magic };
+        refresh.resistThreshold = m_resistFilterThreshold.load();
+        newBuffs.refreshDue = Core::Refresh::ComputeDue(refresh, m_refreshPriorSec.load());
+        if (newBuffs.refreshDue != m_lastRefreshDue) {
+          logger::info("[StateManager] Refresh due: {} (window {:.1f}s)"sv,
+            Core::Refresh::DueNames(newBuffs.refreshDue), m_refreshPriorSec.load());
+          m_lastRefreshDue = newBuffs.refreshDue;
+        }
+      }
       bool effectsChanged = (m_playerState.effects != newEffects);
       bool buffsChanged = (m_playerState.buffs != newBuffs);
       bool vampireChanged = (m_playerState.vampireStage != newVampireStage);

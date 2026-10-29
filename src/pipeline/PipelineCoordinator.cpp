@@ -12,6 +12,7 @@
 #include "override/OverrideConfig.h"
 #include "core/BucketHysteresis.h"
 #include "core/CombatLock.h"
+#include "core/CombatOnset.h"   // the one combat clock (R8.1)
 #include "util/InventoryUtil.h"
 #include "slot/SlotAllocator.h"
 #include "slot/SlotLocker.h"
@@ -226,6 +227,13 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
 
     ctx.currentMagicka = ctx.actorValue->GetActorValue(RE::ActorValue::kMagicka);
 
+    // R8.1: the refresh pass's bits, as the magic-effects poll left them.
+    ctx.refreshDue = ctx.playerState.buffs.refreshDue;
+
+    // R8.1: the one combat clock (combat_onset's), for the discriminator.
+    ctx.combatOnsetAgo = Core::Needs::CombatOnsetAgo(ctx.playerState.isInCombat,
+        stateManager.GetCombatStartAt(), State::NeedClock::Now());
+
     // Override thresholds on the RAW vitals (see PipelineContext::overrideSignature).
     {
         namespace OC = Override::Config;
@@ -259,8 +267,12 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
 
     // One run on each change, either way: into the dark and out of it, a
     // hunger or cold stage crossed, a warming effect starting or ending.
+    // R8.1: and a buff entering (or leaving) its refresh window, so the
+    // active-buff filter lets its item through without waiting for something
+    // hashed to move.
     const bool ambientChanged = ctx.ambientSignature != m_lastAmbientSignature ||
-                                ctx.overrideSignature != m_lastOverrideSignature;
+                                ctx.overrideSignature != m_lastOverrideSignature ||
+                                ctx.refreshDue != m_lastRefreshDue;
 
     if (ctx.stateHash == m_lastPipelineHash && !pageChanged &&
         !unhashedStateActive && !ambientChanged && !NeedsForcedRun()) {
@@ -274,6 +286,7 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
     m_wasUnderwater = ctx.underwaterActive;
     m_lastAmbientSignature = ctx.ambientSignature;
     m_lastOverrideSignature = ctx.overrideSignature;
+    m_lastRefreshDue = ctx.refreshDue;
 
     // Commit point for the learner latch: everything below this line scores and
     // publishes, so whatever reward set the flag is about to reach the widget.
@@ -357,12 +370,17 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     Huginn_ZONE_NAMED("Pipeline::ScoreCandidates");
     auto& candidateGen = Candidate::CandidateGenerator::GetSingleton();
 
-    // Held items the affordability filter would drop come back separately,
-    // for the hold alone (see the Remembrance loop below).
+    // Held items the affordability filter or a hard gate would drop come back
+    // separately, for the hold alone (see the Remembrance loop below).
     const auto heldIDs = Slot::Remembrance::GetSingleton().ActiveFormIDs();
-    std::vector<Candidate::CandidateVariant> heldUnaffordable;
-    auto candidates = candidateGen.GenerateCandidates(ctx.playerState, ctx.currentMagicka,
-        heldIDs, &heldUnaffordable, &ctx.filtered);
+    std::vector<Candidate::CandidateVariant> heldAside;
+    // R8.1 (0.23.55): the hard gates read the same state EvaluateRules does
+    // (Context::HardGateInputs), and the favourites mode the scorer used to
+    // skip Suppress favourites by.
+    const auto gates = Context::HardGateInputs(ctx.playerState, ctx.targets, ctx.worldState,
+        g_utilityScorer->GetConfig().favoritesMode == Scoring::FavoritesMode::Suppress);
+    auto candidates = candidateGen.GenerateCandidates(ctx.playerState, ctx.currentMagicka, gates,
+        heldIDs, &heldAside, &ctx.filtered);
 
     Context::ContextWeightMap contextWeights{};
     // Read once for the tick: the wildcard roll below and AllocateAndLock
@@ -372,7 +390,7 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     // tick — so wildcards key and size against the same page AllocateAndLock
     // will fill. In combat (the lock's notion of it) no wildcard is placed.
     ctx.scoredCandidates = g_utilityScorer->ScoreCandidates(
-        candidates, ctx.currentState, ctx.playerState, ctx.targets, ctx.worldState,
+        candidates, ctx.currentState, ctx.playerState, ctx.targets, ctx.worldState, ctx.combatOnsetAgo,
         Scoring::WildcardPage{
             .index = ctx.displayPageIndex,
             .slotCount = ctx.displaySlotCount,
@@ -386,7 +404,9 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     // ranking kept it: context weight or minimum utility can drop a sword the
     // moment a spell goes in its hand, which is exactly when the hold wants
     // it. Added unranked, at the end, flagged so only the hold may place it.
-    // An unaffordable held spell is added the same way, from the aside list.
+    // An unaffordable held spell is added the same way, from the aside list,
+    // and (R8.1) a held item a hard gate dropped: a torch in daylight, a ring
+    // away from the forge, which until 0.23.55 reached here as candidates.
     for (const RE::FormID id : heldIDs) {
         const bool ranked = std::ranges::any_of(ctx.scoredCandidates,
             [id](const Scoring::ScoredCandidate& sc) { return sc.GetFormID() == id; });
@@ -409,7 +429,7 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
             return false;
         };
         if (!addHeld(candidates)) {
-            addHeld(heldUnaffordable);
+            addHeld(heldAside);
         }
     }
 
@@ -514,9 +534,12 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
 // utility was computed from (its breakdown); an unscored one, and every
 // candidate the filters dropped, is put through the scorer's own
 // ScoreCandidateInternal again (UtilityScorer::ExplainCandidate) with no
-// floor. Its floor is read off the same tests ScoreCandidates applies:
-// suppressed favourite, then the context floor (favourites exempt), else the
-// utility floor (the cold start rescues only what it keeps, which is scored).
+// floor. Its floor is read off the same tests ScoreCandidates applies: the
+// context floor (favourites exempt), else the utility floor (the cold start
+// rescues only what it keeps, which is scored). R8.1 (0.23.55): no longer
+// "suppressed favourite" first: such a favourite is a filter drop now
+// (favorite_suppressed), never an eligible row, so Floor::suppressed stays in
+// the format for older files and is not written.
 // Logging only: nothing here changes what was scored.
 
 void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
@@ -595,14 +618,11 @@ void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
         o.ucb = m.ucb;
         o.rec = rec;
         const auto ex = g_utilityScorer->ExplainCandidate(c, ctx.currentState, ctx.playerState, ctx.targets,
-            ctx.worldState, weights, o.ctx, m, rec);
+            ctx.worldState, ctx.combatOnsetAgo, weights, o.ctx, m, rec);
         o.prior = ex.breakdown.prior;
         o.wouldUtil = ex.utility;
         if (eligible) {
-            const bool favorite = o.favorite;
-            const DL::Floor f = (favorite && cfg.favoritesMode == Scoring::FavoritesMode::Suppress) ? DL::Floor::suppressed
-                              : (o.ctx < cfg.minimumContextWeight && !favorite)                     ? DL::Floor::ctx
-                                                                                                     : DL::Floor::util;
+            const DL::Floor f = (o.ctx < cfg.minimumContextWeight && !o.favorite) ? DL::Floor::ctx : DL::Floor::util;
             o.floor = static_cast<uint8_t>(f);
         }
         return o;

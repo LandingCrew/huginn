@@ -1,4 +1,5 @@
 #include "NeedEvaluator.h"
+#include "CombatOnset.h"
 #include "WeaponLoadout.h"
 
 #include <algorithm>
@@ -87,7 +88,7 @@ namespace Huginn::Core::Needs
                     return s.survival ? std::clamp(1.0f - s.warmth / kWarmthHigh, 0.0f, 1.0f) : 0.0f;
                 // --- Enemy
                 case N::in_combat: return B(s.inCombat);
-                case N::combat_onset: return s.inCombat ? s.combatStartAgo : kNever;
+                case N::combat_onset: return CombatOnsetAgo(s.inCombat, s.combatStartAgo);   // core/CombatOnset.h: the discriminator reads the same
                 // 0.23.41: the raw count; the curve (linear 1..5) makes one
                 // hostile 0. enemyCount / 6 through a saturating curve read
                 // 0.34 for every single hostile.

@@ -61,14 +61,14 @@ See [docs/README.md](docs/README.md) for full system design.
 | `src/persist/` | Learner weight serialization (cosave) |
 | `src/settings/` | SettingsReloader (dMenu hot-reload) |
 | `src/effect/` | Effect extractor (R2): EffectReader (forms -> records), EffectCatalog (cap(i) per item, built when the main menu first opens; not read for scoring yet), `hg dump all` |
-| `src/core/` | Pure, host-tested code (`huginn_core_tests`): the effect mapper (EffectColumns, EffectRecords, EffectRules, EffectConditions, EffectMapper, CrossFeatures), MiniRegex, SlicedWalk (the catalog's sliced read), ActorTypeClassifier, TargetType, TargetFamilies, RingBuffer, SignatureDedup, the slot math (SlotAllocCore, SlotClassCapMath, SlotScoreMath, SlotSnapshotIO); the old engine's score parts as the v3 log records them (OldScore, 0.23.53); the need vector and its sensors (NeedEvaluator, NeedIds, NeedSnapshot, NeedSnapshotIO, NeedSensorMath, ResponseCurve, DropAhead, EdgeApproach (time_to_edge and edge_approach from the drop probes, 0.23.50), WaterSelfCheck, FallTracker, BenchKind, WeaponLoadout, R3); the selection log v3 format (DecisionLog) and need episodes and their 60 s laps (NeedEpisodes, R4); covered(i) and the summon limit (Coverage) and the candidate filters' reasons (FilterReason), logged in v3 rows from 0.23.46 |
+| `src/core/` | Pure, host-tested code (`huginn_core_tests`): the effect mapper (EffectColumns, EffectRecords, EffectRules, EffectConditions, EffectMapper, CrossFeatures), MiniRegex, SlicedWalk (the catalog's sliced read), ActorTypeClassifier, TargetType, TargetFamilies, RingBuffer, SignatureDedup, the slot math (SlotAllocCore, SlotClassCapMath, SlotScoreMath, SlotSnapshotIO); the old engine's score parts as the v3 log records them (OldScore, 0.23.53); the need vector and its sensors (NeedEvaluator, NeedIds, NeedSnapshot, NeedSnapshotIO, NeedSensorMath, ResponseCurve, DropAhead, EdgeApproach (time_to_edge and edge_approach from the drop probes, 0.23.50), WaterSelfCheck, FallTracker, BenchKind, WeaponLoadout, R3); the selection log v3 format (DecisionLog) and need episodes and their 60 s laps (NeedEpisodes, R4); covered(i) and the summon limit (Coverage) and the candidate filters' reasons (FilterReason), logged in v3 rows from 0.23.46; the hard gates (HardGates: the old context zeros as filters), the active-buff refresh pass (RefreshPass) and the one combat clock (CombatOnset), R8.1 |
 
 ## Configuration
 
 **Compile-time constants** — `src/Config.h` (learning rate, rewards, intervals, target limits)
 
 **INI settings** — `Data/SKSE/Plugins/Huginn.ini`:
-- `[Scoring]` — Utility scoring params (loaded by `ScorerSettings`)
+- `[Scoring]` — Utility scoring params (loaded by `ScorerSettings`); `fRefreshPriorSec` is the active-buff filters' refresh window (R8.1)
 - `[ContextWeights]` — context weight multipliers (loaded by `ContextWeightSettings`)
 - `[Widget]` — Scaleform HUD position, alpha, scale, display mode
 - `[Wheeler]` — Wheeler integration settings
