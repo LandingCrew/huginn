@@ -112,7 +112,7 @@ contexts per segment and clears both at a head.
 | `flags` | object | row flag bits by name (`favorite` since 0.23.53) |
 | `filters` | string[15] | (0.23.46) the candidate filters' reasons, in order (`row.fb` indexes it; `core/FilterReason.h`). Absent before 0.23.46 |
 | `floors` | string[5] | (0.23.53) how the old engine's floors treated an eligible row, in order: `pass`, `cold`, `ctx`, `util`, `suppressed` (`row.fl` indexes it; `core/OldScore.h`, [below](#the-old-engines-score-parts-02353)). Absent before 0.23.53 |
-| `episode` | object | the episode definition in force: `onset`, `expiry`, `minSec`, `graceSec`, `answerSlackSec`, and `deathDrops: 1` (0.23.16: a death drops the open episodes and those in their grace; absent = 0.23.15, where a death could leave `nothing` records), and `lapSec`, `lapMaxStepSec`, `lapIdleSec` (0.23.51: the lap grid and the idle hold of its clock, [Laps](#laps); absent = every episode judged whole, no lap records). `replay.head_lap_sec(head)` reads it |
+| `episode` | object | the episode definition in force: `onset`, `expiry`, `minSec`, `graceSec`, `answerSlackSec`, and `deathDrops: 1` (0.23.16: a death drops the open episodes and those in their grace; absent = 0.23.15, where a death could leave `nothing` records), and `lapSec`, `lapMaxStepSec`, `lapIdleSec` (0.23.51: the lap grid and the idle hold of its clock, [Laps](#laps); absent = every episode judged whole, no lap records). `replay.head_lap_sec(head)` reads it. The 0.23.54 holds (a menu that blocks gameplay, the stick deadzone) add no field: they change which seconds the clock counts, not the record; a reader tells them apart by `head.build` |
 | `curves` | [kind, p1, p2][] | (0.23.41) the `[Needs]` response curves in force, index-aligned with `needs`: `["logistic", 0.5, 10]` (`core/ResponseCurve.h`), so a fit knows which curve made every logged `need` value from its `in`. A hot reload that changes a curve starts a new segment (a new head line) before the next record. Absent before 0.23.41: those segments used their build's `needs.csv` defaults unless the INI overrode them. `replay.head_curves(head)` reads it |
 
 ### `cap`
@@ -484,7 +484,7 @@ episode is a `nothing` record whose context has the need on.
 | | |
 |---|---|
 | active clock | the time between two update ticks, at most 1 s per tick (`lapMaxStepSec`). Ticks happen only while the game runs unpaused with the player alive, so a pause, a death, a load door or a stall adds at most a second |
-| hold | the clock also adds nothing on a tick when the player cannot or does not press (`LapHoldFor`): a dialogue menu is open (it does not pause the game), the movement controls are disabled (a carriage ride, a cutscene: `ControlMap::IsMovementControlsEnabled`), or the player's latest input -- any key, mouse or gamepad button, the mouse moving, a stick off centre -- is 30 s old or more (`lapIdleSec`; `UpdateHandler::SecondsSinceInput`). Onsets and expiries go on during a hold. The debug log has a `[SelectionV3] lap clock holds (<why>)` / `runs` line per change |
+| hold | the clock also adds nothing on a tick when the player cannot or does not press (`LapHoldFor`, first reason wins): a dialogue menu is open (it does not pause the game); (0.23.54) any other open menu blocks gameplay input by its own flags ([below](#menus-that-block-gameplay-02354)); the movement controls are disabled (a carriage ride, a cutscene: `ControlMap::IsMovementControlsEnabled`); or the player's latest input -- any key, mouse or gamepad button, the mouse moving, a stick pushed past the game's own deadzone (0.23.54, [below](#stick-drift-02354)) -- is 30 s old or more (`lapIdleSec`; `UpdateHandler::SecondsSinceInput`). Onsets and expiries go on during a hold. The debug log has a `[SelectionV3] lap clock holds (<why>)` / `runs (<why>)` line per change, `<why>` one of `dialogue`, `menu: <names>`, `controls disabled`, `idle`; a menu hold that passes from one menu to another logs again |
 | grid | a grid point every 60 s of active time (`lapSec`), shared by every need; it restarts at 0 on a load |
 | lap | at a grid point, every open episode whose current stretch began at or before the previous grid point laps: the stretch closes and a new one begins now, with a new context (`why: "lap"`, one for every need that lapped on that tick) |
 | so | no stretch is shorter than 60 s except an episode's last one (cut by its expiry); the first stretch lasts 60-120 s; an episode that ends within 60 s of its onset is judged exactly as before 0.23.51; the laps of every need share one tick and one context |
@@ -506,12 +506,91 @@ unattended gap adds at most 30 s. 30 s: input in play is near continuous
 every frame it is held), so 30 s without any is a player who is not playing,
 while a lull spent looking around still counts; and it is half a lap, so an
 unattended spell can complete at most one grid point that the play before it
-had nearly reached. Two known gaps: any non-zero stick value counts as
-input, so a gamepad whose stick drifts past the engine's deadzone keeps the
-clock running while the player is away; and a menu that a list makes
-non-pausing (a crafting bench, say) passes input like play, so time in it
-laps like play. Neither is tested in game. A brief disable (a kill move, a script that stops the
+had nearly reached. A brief disable (a kill move, a script that stops the
 controls for a moment) only shifts the grid by its length.
+
+0.23.51 named two gaps in the hold; 0.23.54 closes both, taking each rule
+from the game's own state rather than a constant of ours
+(`core/LapHoldInputs.h`, host-tested in `tests/core/LapHoldInputsTests.cpp`).
+
+#### Stick drift (0.23.54)
+
+Before, any non-zero thumbstick value counted as input, so a stick resting a
+little off centre kept the idle hold from ever engaging. Now a stick event
+counts only when its deflection lies beyond the deadzone **the game's own
+controls apply to that stick**: `fMovementAxisDeadzone:Controls` for the left
+stick (movement), `fHeadingAxisDeadzone:Controls` for the right (turning the
+view). A drift the game itself ignores is not the player.
+
+| | |
+|---|---|
+| where the game keeps it | engine INI settings, read with `RE::GetINISetting` (SkyrimPrefs.ini's collection, then Skyrim.ini's, as the game resolves a name). Both names are in SkyrimSE.exe 1.6.1170's strings beside the other `:Controls` gameplay settings (`fReverseDirThreshold`, `fSprintStopThreshold`) |
+| scale | a fraction of full deflection, as the stick events' values (`ThumbstickEvent` x and y in [-1, 1]). Engine default 0.15 for both: BethINI 3.6's list of every SSE setting with its default (`Presets/Skyrim Special Edition/Skyrim.ini`) has `fMovementAxisDeadzone=0.1500`, `fHeadingAxisDeadzone=0.1500`; no LoreRim profile INI sets either |
+| test | radial: x² + y² > dz². A per-axis test would miss a diagonal push of the same size; when the game's own test is per axis the radial one errs on the side of "input" (the clock runs), the pre-0.23.54 behaviour |
+| fallback | 0.15 (`kFallbackStickDeadzone`) when a setting is missing, not a float, or outside [0, 1) |
+| resync | at kDataLoaded, every kNewGame / kPostLoadGame, and every 60 s from the update loop (a console `setini`, a mod or an MCM can change it mid-session; 60 s takes a change within one lap, and a read is four name lookups). The values go to the input hook through atomics. Logged at info only when they change: `[UpdateHandler] stick input deadzones (<why>): left .. (fMovementAxisDeadzone), right .. (fHeadingAxisDeadzone); device fLThumbDeadzone .., fRThumbDeadzone .. (reference)` |
+
+Why not the gamepad device's own `fLThumbDeadzone` / `fRThumbDeadzone`
+(defaults 0.25, with `fLThumbDeadzoneMax` 0.97; their strings sit beside the
+gamepad definition file name, `Interface/Controls/PC/Gamepad.txt`, so they
+belong to the device code): a `...Max` pair suggests the device cuts its
+deadzone and rescales what lies beyond it to the full range before it makes
+the stick events, so testing an event against it would apply it twice and
+drop small pushes the game acts on. The controls' deadzones are the last word
+on whether a stick event does anything in play. The device pair is logged
+for reference; whether the device does rescale is not verified (the code that
+would show it is encrypted in the shipped exe), and is an in-game check.
+
+#### Menus that block gameplay (0.23.54)
+
+Before, a menu that takes the player's input but does not pause the game let
+the clock run as in play. The vanilla crafting menu is one: by
+CommonLibSSE-NG's notes on each menu's constructor (the `// flags =` lines in
+its menu headers), `CraftingMenu` has `kUsesMenuContext | kDisablePauseMenu |
+kUpdateUsesCursor | kInventoryItemMenu | kDontHideCursorWhenTopmost`, no
+`kPausesGame`. Now the clock holds (`menu`) while any open menu (on the UI's
+stack) blocks gameplay input, judged from **that menu's own flags and input
+context** on every tick, no list of names:
+
+> a menu blocks gameplay when it has `kPausesGame`, `kUsesMenuContext`,
+> `kModal` or `kInventoryItemMenu`, or an input context of its own that is not
+> gameplay (an id below `kTotal`: menu mode, item menu, book, map, favourites,
+> lockpicking, ...).
+
+`kPausesGame` never matters to the clock (a pausing menu stops the ticks) and
+is kept so the rule says what it means. From the constructor notes, vanilla:
+
+| caught (holds when open unpaused) | by |
+|---|---|
+| Crafting Menu, Creation Club Menu | `kUsesMenuContext`, item-menu context (neither pauses) |
+| Dialogue Menu | menu-mode context (its own `dialogue` hold goes first and keeps its name) |
+| Inventory, Magic, Container, Barter, Gift, Favorites | `kInventoryItemMenu` (Inventory's noted context is none, so this flag is what catches an unpaused one) |
+| Tween, Sleep/Wait, Map, Lockpicking, Book, Journal, Stats, Training, Console, MessageBox, Level Up, Tutorial | a menu context, `kUsesMenuContext` or `kModal` (all pause in vanilla) |
+
+| never caught | flags, context |
+|---|---|
+| HUD Menu | `kAlwaysOpen kRequiresUpdate kAllowSaving kCustomRendering kAssignCursorToRenderer`, none |
+| Cursor Menu, Fader Menu, LoadWaitSpinner, Kinect Menu | render and saving flags only, none |
+| Mist Menu | `kDisablePauseMenu kAllowSaving kDontHideCursorWhenTopmost`, none |
+| Huginn's IntuitionMenu | `kAlwaysOpen kRequiresUpdate kAllowSaving`, none |
+| Loading Menu | pauses: no tick, so nothing to hold |
+
+Left out on purpose: `kDisablePauseMenu` (the Mist menu has it), `kUsesCursor`
+and `kUpdateUsesCursor` (an overlay may show a pointer), and
+`kFreezeFrameBackground` (a render flag); every vanilla menu that carries one
+of them and takes input is caught by the rule anyway. Wheeler reports its
+wheel through its own API (`WheelerClient::IsWheelOpen`); whether it also puts
+a menu on the UI's stack is not known here, and if it does, it is judged like
+any other. Third-party menus (QuickLoot's loot menu, TrueHUD, Wheeler's if it
+has one) are judged by their flags like any other: the
+debug log names every menu open in play once per load, `[SelectionV3] menu
+'<name>' open in play: flags 0x.., input context ..: blocks gameplay (holds
+the lap clock)` or `an overlay (does not hold it)`, which is how a wrongly
+caught overlay would show. Nothing about the menus is cached for the decision
+(a menu or a mod may change its flags while open), so there is nothing to
+resync; the per-load log is re-armed at every load. A constructor note is
+the starting set; a menu's code can change its flags later, which the
+per-load log line shows.
 
 **Why 60 s.** The lap is a time slice in which the player could have picked
 something and did not; each unanswered slice is one "nothing" observation.

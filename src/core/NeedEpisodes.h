@@ -58,9 +58,12 @@
 //           death, a load door or a stall adds at most a second. On a tick
 //           the clock also HOLDS (adds nothing; LapHoldFor) while the player
 //           cannot or does not press: no input (a key, a button, the mouse, a
-//           stick) for lapIdleSec (30 s) or more, the movement controls
-//           disabled (a carriage ride, a cutscene), or a dialogue menu open
-//           (it does not pause the game). So a lap stands for time in which
+//           stick past the game's deadzone) for lapIdleSec (30 s) or more,
+//           the movement controls disabled (a carriage ride, a cutscene), a
+//           dialogue menu open (it does not pause the game), or (0.23.54)
+//           any other open menu that blocks gameplay input without pausing
+//           (the vanilla crafting menu; LapHoldInputs.h, which also holds
+//           the stick rule). So a lap stands for time in which
 //           the player could have pressed something; an AFK spell with the
 //           game unpaused adds at most lapIdleSec. Every
 //           lapSec of active time is a grid point. At a grid point every open
@@ -134,6 +137,7 @@ namespace Huginn::Core::Needs
         double idleSec = 0.0;    ///< seconds since the player's latest input (key, button, mouse, stick)
         bool controls = true;    ///< the movement controls are enabled (off: a carriage, a cutscene)
         bool dialogue = false;   ///< a dialogue menu is open (it does not pause the game)
+        bool menu = false;       ///< 0.23.54: an open menu blocks gameplay input without pausing (LapHoldInputs.h MenuBlocksGameplay)
     };
 
     /// Why the active clock holds on a tick; kNone = it runs.
@@ -141,6 +145,7 @@ namespace Huginn::Core::Needs
     {
         kNone,
         kDialogue,
+        kMenu,
         kControls,
         kIdle,
     };
@@ -149,6 +154,7 @@ namespace Huginn::Core::Needs
     {
         switch (h) {
         case LapHold::kDialogue: return "dialogue";
+        case LapHold::kMenu: return "menu";
         case LapHold::kControls: return "controls disabled";
         case LapHold::kIdle: return "idle";
         default: return "none";
@@ -156,10 +162,13 @@ namespace Huginn::Core::Needs
     }
 
     /// The gate's verdict: the first reason that applies, in the order
-    /// dialogue, controls, idle.
+    /// dialogue, menu, controls, idle. A dialogue blocks gameplay input too
+    /// (its menu brings its own controls), so it would also count as a menu;
+    /// it goes first so its hold keeps the name it had in 0.23.51.
     [[nodiscard]] constexpr LapHold LapHoldFor(const EpisodeParams& p, const LapGate& g) noexcept
     {
         if (g.dialogue) return LapHold::kDialogue;
+        if (g.menu) return LapHold::kMenu;
         if (!g.controls) return LapHold::kControls;
         if (p.lapIdleSec > 0.0 && g.idleSec >= p.lapIdleSec) return LapHold::kIdle;
         return LapHold::kNone;
