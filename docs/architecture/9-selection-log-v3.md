@@ -417,7 +417,11 @@ unattended gap adds at most 30 s. 30 s: input in play is near continuous
 every frame it is held), so 30 s without any is a player who is not playing,
 while a lull spent looking around still counts; and it is half a lap, so an
 unattended spell can complete at most one grid point that the play before it
-had nearly reached. A brief disable (a kill move, a script that stops the
+had nearly reached. Two known gaps: any non-zero stick value counts as
+input, so a gamepad whose stick drifts past the engine's deadzone keeps the
+clock running while the player is away; and a menu that a list makes
+non-pausing (a crafting bench, say) passes input like play, so time in it
+laps like play. Neither is tested in game. A brief disable (a kill move, a script that stops the
 controls for a moment) only shifts the grid by its length.
 
 **Why 60 s.** The lap is a time slice in which the player could have picked
@@ -521,8 +525,8 @@ picks it holds; unanswered episodes add some more, sharing contexts when they
 start together. At ~60 new contexts an hour that is **~0.4 MB/h on vanilla+**
 and **~1 MB/h on a soak-sized LoreRim inventory** (~2 MB/h at 120 contexts
 and 300 rows); a 64 MiB file then holds roughly 30–60 hours of LoreRim play.
-The rate of `nothing` records in real play: 307 an hour on the mage's log
-(13,961 in ~45 h, LoreRim, 0.23.15-0.23.50), most of them short episodes of
+The rate of `nothing` records in real play: ~310 an hour on the mage's log
+(14,014 in ~45 h, LoreRim, 0.23.15-0.23.47), most of them short episodes of
 darkness, magicka_burn and the distance bands. Laps (0.23.51) add an estimated
 ~110 records and ~30 contexts an hour of play, ~0.4 MB/h; time left unattended
 adds at most 30 s of lap clock per spell ([Laps](#laps)).
