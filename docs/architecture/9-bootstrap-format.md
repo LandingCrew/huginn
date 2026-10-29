@@ -338,8 +338,10 @@ beyond the rules above:
   gem, light: the file names no kind, so "kind" is checked as "a catalog
   kind"), when its name differs from `name` (exactly, or on the ASCII bytes
   when either holds a byte >= 0x80: the dump's CSV reader replaces cp1252
-  bytes), or when another item already resolved to the same form. One info
-  line names the counts, the parse time and the file's SHA-256.
+  bytes), or when another item already resolved to the same form. An item
+  whose `name` is empty is not name-checked (only its kind is), so a writer
+  should give every item its name; the shipped file names every item. One
+  info line names the counts, the parse time and the file's SHA-256.
 - **b and the character (`[Learning] sBootstrapBias`, roadmap R6 open point
   4).** `match` (default): the file's b seeds the learner only when the save's
   character (the cosave's HCID) is the file's `source.char`; theta applies to
@@ -351,7 +353,7 @@ beyond the rules above:
 - **Replay equivalence.** `tools/fit/export_scores.py` writes fitlib's per-row
   logits under a file; `tests/core/ChoiceReplayTests.cpp` reproduces them to
   1e-5 (on the checked-in synthetic fixture, and on the mage's 1,865 fitted
-  decisions through `HUGINN_REPLAY_FIXTURE`: largest difference 6e-11, hit@8,
+  decisions through `HUGINN_REPLAY_FIXTURE`: largest difference 9e-11, hit@8,
   page hit@1 and NLL identical).
 
 ## Producing one

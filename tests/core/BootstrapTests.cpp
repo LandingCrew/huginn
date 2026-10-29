@@ -11,11 +11,15 @@
 
 #include <ostream>
 
+#include <array>
+#include <cmath>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <optional>
 #include <sstream>
 #include <string>
+#include <vector>
 
 using namespace Huginn::Core;
 namespace C = Huginn::Core::Choice;
@@ -326,6 +330,22 @@ TEST_CASE("bootstrap: names agree exactly, or on their ASCII bytes when either i
     // cp1252 o-umlaut in the game, U+FFFD (the CSV reader's replacement) in the file
     CHECK(Bootstrap::NamesAgree("Bj\xEF\xBF\xBDrn's Axe", "Bj\xF6rn's Axe"));
     CHECK_FALSE(Bootstrap::NamesAgree("Bj\xEF\xBF\xBDrn's Sword", "Bj\xF6rn's Axe"));
+}
+
+TEST_CASE("bootstrap: CurveNeeds re-reads a curve need from its input, keeps the rest")
+{
+    std::array<float, C::K> value{}, input{};
+    value[3] = 0.25f;
+    value[5] = 0.75f;
+    value[7] = 0.5f;
+    input[3] = 2.0f;
+    input[5] = std::numeric_limits<float>::quiet_NaN();
+    const std::vector<Bootstrap::BuildCurve> curves{ { 3, 1.0, 2.0 }, { 5, 0.0, 1.0 }, { C::K, 0.0, 1.0 } };
+    const auto n = Bootstrap::CurveNeeds(curves, value, input);
+    CHECK(n[3] == doctest::Approx(1.0 / (1.0 + std::exp(-2.0))));   // re-read: slope 2, x - centre 1
+    CHECK(n[5] == doctest::Approx(0.75));                            // non-finite input: logged value
+    CHECK(n[7] == doctest::Approx(0.5));                             // no curve: logged value
+    CHECK(n[0] == 0.0);
 }
 
 TEST_CASE("bootstrap: stable keys and the SHA-256 the log head carries")

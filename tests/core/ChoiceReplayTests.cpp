@@ -32,6 +32,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <optional>
 #include <ostream>
@@ -232,20 +233,19 @@ TEST_CASE("choice replay: the C++ score reproduces fitlib's per-row logits under
         }
         withRecent += anyRec ? 1 : 0;
         // the need vector, the curve needs re-read through the file's curves
-        std::array<double, C::K> n{};
+        // by the learner's own helper (an input the row does not log is NaN:
+        // that need keeps its logged value)
+        std::array<double, C::K> value{}, input{};
+        input.fill(std::numeric_limits<double>::quiet_NaN());
         for (const auto& p : v.Find("n")->Items()) {
             const auto it = needByName.find(p.Items()[0].AsString());
-            if (it != needByName.end()) n[it->second] = p.Items()[1].AsNumber();
+            if (it != needByName.end()) value[it->second] = p.Items()[1].AsNumber();
         }
         for (const auto& p : v.Find("in")->Items()) {
             const auto it = needByName.find(p.Items()[0].AsString());
-            if (it == needByName.end()) continue;
-            for (const auto& c : mapped.curves) {
-                if (c.need == it->second) {
-                    n[c.need] = 1.0 / (1.0 + std::exp(-c.slope * (p.Items()[1].AsNumber() - c.centre)));
-                }
-            }
+            if (it != needByName.end()) input[it->second] = p.Items()[1].AsNumber();
         }
+        const std::array<double, C::K> n = Bootstrap::CurveNeeds(mapped.curves, value, input);
         const C::Tick tick = C::MakeTick(model, n, r);
         std::string muText, logitText;
         for (const auto& row : v.Find("rows")->Items()) {

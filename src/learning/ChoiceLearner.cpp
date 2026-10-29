@@ -4,6 +4,7 @@
 #include "core/Sha256.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <format>
@@ -88,7 +89,15 @@ namespace Huginn::Learning
     ChoiceSettings ChoiceSettings::FromIni(const CSimpleIniA& ini)
     {
         ChoiceSettings s;
-        s.biasMode = Core::Bootstrap::ParseBiasMode(ini.GetValue("Learning", "sBootstrapBias", "match"));
+        const std::string_view bias = ini.GetValue("Learning", "sBootstrapBias", "match");
+        s.biasMode = Core::Bootstrap::ParseBiasMode(bias);
+        const bool isMatch = bias.size() == 5 && std::equal(bias.begin(), bias.end(), "match", [](char a, char b) {
+            return static_cast<char>(std::tolower(static_cast<unsigned char>(a))) == b;
+        });
+        if (s.biasMode == Core::Bootstrap::BiasMode::Match && !isMatch) {
+            // ParseBiasMode reads anything it does not know as match
+            logger::warn("[Choice] [Learning] sBootstrapBias = '{}' is not match, always or never: read as match"sv, bias);
+        }
         s.thetaProcessNoise = std::clamp(ini.GetDoubleValue("Learning", "fThetaProcessNoise", s.thetaProcessNoise), 0.0, 1.0);
         s.coveredPrior = std::clamp(ini.GetDoubleValue("Scoring", "fCoveredPrior", s.coveredPrior), -10.0, 10.0);
         s.legacyLearnFeature = ini.GetBoolValue("Scoring", "bLegacyLearnFeature", s.legacyLearnFeature);
@@ -102,15 +111,7 @@ namespace Huginn::Learning
     std::array<double, C::K> ChoiceLearner::Snapshot::Needs(const Core::Needs::NeedArray& value,
                                                             const Core::Needs::NeedArray& input) const
     {
-        std::array<double, C::K> n{};
-        for (std::size_t k = 0; k < C::K; ++k) n[k] = value[k];
-        for (const auto& c : curves) {
-            if (c.need >= C::K) continue;
-            const double x = input[c.need];
-            if (!std::isfinite(x)) continue;
-            n[c.need] = 1.0 / (1.0 + std::exp(-c.slope * (x - c.centre)));
-        }
-        return n;
+        return Core::Bootstrap::CurveNeeds(curves, value, input);
     }
 
     C::BRead ChoiceLearner::Snapshot::B(std::uint32_t form, bool favorite, double playNow) const
@@ -422,7 +423,7 @@ namespace Huginn::Learning
             // REPEAT_PICK_WINDOW_SEC: the same decision again, no update
             record();
             ++m_stats.picksSkipped;
-            Touch();
+            // no Touch(): m_recent and m_taken are not in the Snapshot
             return;
         }
         const bool keyOrWheel = d.outcome == DL::Outcome::Key || d.outcome == DL::Outcome::Wheel;
@@ -430,12 +431,7 @@ namespace Huginn::Learning
 
         // The situation: the context's needs (through the file's curves) and
         // recent_<family> at the pick, before this pick enters the timeline.
-        std::array<double, C::K> n{};
-        for (std::size_t k = 0; k < C::K; ++k) n[k] = ctx.need[k];
-        for (const auto& c : m_curves) {
-            if (c.need >= C::K || !std::isfinite(ctx.input[c.need])) continue;
-            n[c.need] = 1.0 / (1.0 + std::exp(-c.slope * (static_cast<double>(ctx.input[c.need]) - c.centre)));
-        }
+        const std::array<double, C::K> n = Core::Bootstrap::CurveNeeds(m_curves, ctx.need, ctx.input);
         const auto r = m_recent.Values(m_model, pickTime, d.gen);
         const C::Tick tick = C::MakeTick(m_model, n, r);
 

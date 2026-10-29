@@ -985,7 +985,7 @@ changed in the same PR, and the shipped INI loses the dead keys.
         (host test); the update's Var_p precision, step = variance,
         Plackett-Luce and opportunity counting (host tests); the scorer
         reproduces R6's per-row logits on the logged data (1,865 decisions,
-        largest difference 6e-11, identical hit@8 / page hit@1 / NLL).
+        largest difference 9e-11, identical hit@8 / page hit@1 / NLL).
       - New INI keys: `[Scoring] bLegacyLearnFeature`, `fCoveredPrior`;
         `[Learning] sBootstrapBias` (default `match`, R6 open point 4, the
         user's), `fThetaProcessNoise`; `[Favorites] fFavoriteLifeMult`.

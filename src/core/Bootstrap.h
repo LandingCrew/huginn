@@ -36,6 +36,8 @@
 #include "core/ChoiceScore.h"
 #include "core/MiniJson.h"
 
+#include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -150,6 +152,26 @@ namespace Huginn::Core::Bootstrap
         std::vector<BuildCurve> curves;
         MapReport report;
     };
+
+    /// The need vector the model reads (format doc, curves): each need's
+    /// logged value, except that a need the file gives a curve is re-read from
+    /// its logged input through that curve, 1 / (1 + exp(-slope (x - centre))).
+    /// A non-finite input keeps the logged value. The one copy of this rule:
+    /// the learner's scorer and its pick update and the replay test call it.
+    template <class Values, class Inputs>
+    [[nodiscard]] std::array<double, Choice::K> CurveNeeds(const std::vector<BuildCurve>& curves,
+                                                           const Values& value, const Inputs& input)
+    {
+        std::array<double, Choice::K> n{};
+        for (std::size_t k = 0; k < Choice::K; ++k) n[k] = static_cast<double>(value[k]);
+        for (const auto& c : curves) {
+            if (c.need >= Choice::K) continue;
+            const double x = static_cast<double>(input[c.need]);
+            if (!std::isfinite(x)) continue;
+            n[c.need] = 1.0 / (1.0 + std::exp(-c.slope * (x - c.centre)));
+        }
+        return n;
+    }
 
     [[nodiscard]] Mapped MapToBuild(const Document& doc, const MapOptions& opt = {});
 
