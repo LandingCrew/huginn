@@ -199,6 +199,11 @@ namespace Huginn::Core::SlotAlloc
             /// copy, and the rows just under the cut -- the likeliest draws --
             /// are the ones that just left a key and are still held there.
             std::vector<std::uint32_t> heldForms;
+            /// ...and their display names (0.24.6). SlotLocker's post-lock
+            /// dedup is by NAME (core/DedupRules.h): a locked key showing
+            /// another form of the drawn row's name clears the wildcard just
+            /// the same, so a row named like a lock's item is not drawn either.
+            std::vector<std::string> heldNames;
             /// Keys a slot lock holds on this page, bit j for key j. The seat's
             /// displaced row never moves onto one (RehomeFor): ApplyLocks keeps
             /// the locked item there, whatever row the allocation put on it,
@@ -406,6 +411,7 @@ namespace Huginn::Core::SlotAlloc
                 m_out.memory = in.memory;
                 m_out.generationMatches = in.generationMatches;
                 m_state.assign(in.slots.size(), SlotState{});
+                MarkShadowed();
             }
 
             Output Run();
@@ -489,6 +495,54 @@ namespace Huginn::Core::SlotAlloc
 
             void Note(Event e) { m_out.events.push_back(e); }
 
+            // --- one owner per dedup key (0.24.6) ----------------------------
+            // A seat, a last placement, a home claim and a departure name an
+            // item by its dedup key, so a key must name ONE row. Two rows with
+            // one key made every "the row with this key" lookup take whichever
+            // came first while the fill could place the other: a key the page
+            // showed read as free, and pages churned with nothing moving
+            // (perpetual HoldGaveWay, A->B->A; R9's verifier, on synthetic
+            // pages). The game's list never has two (CandidateFilters drops a
+            // second candidate of a key as `duplicate`, and a Remembrance row
+            // is added only for a form no ranked row has; docs/architecture/
+            // 5-slots.md); this makes the allocation unambiguous whatever its
+            // caller hands it. The key's row is the first ranked row with it in
+            // list order (the scorer's rank order, so its best), else the first
+            // remembered-only row; every other row with the key is SHADOWED:
+            // no pass places it, finds it or draws it, as if it were not in
+            // the list. Key 0 names nothing (an empty seat) and shadows nothing.
+            void MarkShadowed()
+            {
+                const auto& cands = m_in.candidates;
+                m_shadowed.assign(cands.size(), false);
+                std::set<std::uint64_t> seen;
+                for (const bool remembered : { false, true }) {
+                    for (std::size_t i = 0; i < cands.size(); ++i) {
+                        const auto& c = cands[i];
+                        if (c.isRememberedOnly != remembered || c.dedupKey == 0) continue;
+                        if (!seen.insert(c.dedupKey).second) m_shadowed[i] = true;
+                    }
+                }
+            }
+
+            [[nodiscard]] bool Shadowed(std::uint32_t i) const noexcept
+            {
+                return i < m_shadowed.size() && m_shadowed[i];
+            }
+
+            /// The one row `key` names (see MarkShadowed), or kNone. With
+            /// `rankedOnly`, kNone when that row is a remembered-only one.
+            [[nodiscard]] std::uint32_t OwnerOf(std::uint64_t key, bool rankedOnly) const
+            {
+                if (key == 0) return kNone;
+                const auto& cands = m_in.candidates;
+                for (std::uint32_t i = 0; i < cands.size(); ++i) {
+                    if (cands[i].dedupKey != key || Shadowed(i)) continue;
+                    return rankedOnly && cands[i].isRememberedOnly ? kNone : i;
+                }
+                return kNone;
+            }
+
             void Recount()
             {
                 if (!m_cap.active) return;
@@ -568,7 +622,8 @@ namespace Huginn::Core::SlotAlloc
             /// scorer sorts the WHOLE list since R7 (past a top-10 prefix the
             /// first match was not the best one).
             ///
-            /// Checks, in order: rows only a Remembrance hold may place;
+            /// Checks, in order: rows only a Remembrance hold may place, and
+            /// rows another of their dedup key shadows (MarkShadowed);
             /// anything already shown, by formID and by NAME (two enchanted
             /// copies with different formIDs and one name); the slot's class;
             /// and, under skipEquipped, both the candidate's own isEquipped
@@ -587,7 +642,7 @@ namespace Huginn::Core::SlotAlloc
                 const auto& cands = m_in.candidates;
                 for (std::uint32_t i = 0; i < cands.size(); ++i) {
                     const auto& c = cands[i];
-                    if (c.isRememberedOnly) continue;
+                    if (c.isRememberedOnly || Shadowed(i)) continue;
                     if (ids.contains(c.formID)) continue;
                     if (names.contains(c.name)) continue;
                     if (!MaskMatches(c.matchMask, slot)) continue;
@@ -673,6 +728,7 @@ namespace Huginn::Core::SlotAlloc
             std::array<std::size_t, kMaxSlots> m_order{};
             std::set<std::uint32_t> m_ids;
             std::set<std::string_view> m_names;
+            std::vector<bool> m_shadowed;   // MarkShadowed: a row whose dedup key an earlier row owns
         };
 
         // ---------------------------------------------------------------------
@@ -774,7 +830,11 @@ namespace Huginn::Core::SlotAlloc
             const auto& ovs = m_in.overrides;
             for (std::uint32_t o = 0; o < ovs.size(); ++o) {
                 const auto& ov = ovs[o];
-                if (m_ids.contains(ov.formID)) continue;
+                // One item per form, and one per NAME (0.24.6): two forms with
+                // one display name read as the same item to the player, so a
+                // second override of a name already placed waits, as a second
+                // override of its form does.
+                if (m_ids.contains(ov.formID) || m_names.contains(ov.name)) continue;
 
                 // If the item is ALREADY on this page, the override marks that
                 // slot -- label and pulse on the key the player already knows
@@ -820,7 +880,7 @@ namespace Huginn::Core::SlotAlloc
             // PASS 1b: the first empty slot that accepts the category.
             for (std::uint32_t o = 0; o < ovs.size(); ++o) {
                 const auto& ov = ovs[o];
-                if (m_ids.contains(ov.formID)) continue;
+                if (m_ids.contains(ov.formID) || m_names.contains(ov.name)) continue;
                 bool placed = false;
                 bool sawAcceptingSlot = false;
                 for (std::size_t k = 0; k < priorityCount; ++k) {
@@ -862,10 +922,12 @@ namespace Huginn::Core::SlotAlloc
                     if (!entry.active || !slots[j].remembrance) continue;
                     if (m_ids.contains(entry.formID)) continue;
 
-                    // The best-scoring stack of a form owned twice.
+                    // The best-scoring stack of a form owned twice (never a
+                    // row another of its key shadows).
                     std::uint32_t found = kNone;
                     for (std::uint32_t i = 0; i < m_in.candidates.size(); ++i) {
                         const auto& c = m_in.candidates[i];
+                        if (Shadowed(i)) continue;
                         if (c.formID == entry.formID &&
                             (found == kNone || m_p.RawGreater(m_p.Raw(c), m_p.Raw(m_in.candidates[found])))) {
                             found = i;
@@ -876,6 +938,11 @@ namespace Huginn::Core::SlotAlloc
                         continue;
                     }
                     const auto& fc = m_in.candidates[found];
+                    // A name the page already shows (an override's, or another
+                    // hold's item of another form with the same name): the
+                    // player cannot tell the two apart, so this hold waits, as
+                    // one whose form is shown does (0.24.6).
+                    if (m_names.contains(fc.name)) continue;
                     auto fits = [&](std::size_t k) {
                         return slots[k].regular || MaskMatches(fc.matchMask, slots[k]);
                     };
@@ -943,6 +1010,12 @@ namespace Huginn::Core::SlotAlloc
             std::size_t tentativeCount = 0;
             std::set<std::uint32_t> excludedIDs = m_ids;
             std::set<std::string_view> excludedNames = m_names;
+            // What the page will show if every tentative holder stays: what
+            // the overrides and holds placed, plus each holder accepted so
+            // far. A displaced owner standing as a guest is judged against
+            // this, not against the exclusion (which holds the guest itself).
+            std::set<std::uint32_t> shownIDs = m_ids;
+            std::set<std::string_view> shownNames = m_names;
 
             // Phase A: which seat owners are still candidates, and still
             // allowed in their seat? An item the slot has given up -- now
@@ -955,17 +1028,25 @@ namespace Huginn::Core::SlotAlloc
                 const std::size_t j = m_order[k];
                 if (j >= slotCount) continue;
                 if (!m_state[j].IsEmpty() || seats[j] == 0) continue;
-                std::uint32_t owner = kNone;
-                for (std::uint32_t i = 0; i < cands.size(); ++i) {
-                    if (!cands[i].isRememberedOnly && cands[i].dedupKey == seats[j]) { owner = i; break; }
-                }
-                if (owner == kNone || m_ids.contains(cands[owner].formID) || m_names.contains(cands[owner].name)) {
+                const std::uint32_t owner = OwnerOf(seats[j], /*rankedOnly=*/true);
+                // Against every owner already held too, not only what the
+                // overrides and holds placed (0.24.6): two seats whose owners
+                // share a form (two stacks) or a NAME (two enchanted copies)
+                // were both held, and the page showed one name twice -- the
+                // fill's own name dedup never saw them (R10's synthetic seeds
+                // 409, 459). The owner the fill would serve first keeps its
+                // seat; the other is an ordinary row again, and the name
+                // dedup keeps it off this page.
+                if (owner == kNone || excludedIDs.contains(cands[owner].formID) ||
+                    excludedNames.contains(cands[owner].name)) {
                     continue;
                 }
                 if (!SlotAccepts(slots[j], SlotState{ Kind::Normal, owner, false })) continue;
                 tentative[tentativeCount++] = { j, owner };
                 excludedIDs.insert(cands[owner].formID);
                 excludedNames.insert(cands[owner].name);
+                shownIDs.insert(cands[owner].formID);
+                shownNames.insert(cands[owner].name);
             }
 
             // Owners whose seat an override (or a remembered item) is sitting
@@ -982,13 +1063,10 @@ namespace Huginn::Core::SlotAlloc
             for (std::size_t j = 0; j < slotCount; ++j) {
                 if (!m_state[j].IsPinned() || seats[j] == 0) continue;
                 if (KeyOf(m_state[j]) == seats[j]) continue;
-                for (std::uint32_t i = 0; i < cands.size(); ++i) {
-                    if (cands[i].dedupKey == seats[j]) {
-                        excludedIDs.insert(cands[i].formID);
-                        excludedNames.insert(cands[i].name);
-                        displacedOwners.insert(cands[i].formID);
-                        break;
-                    }
+                if (const std::uint32_t i = OwnerOf(seats[j], /*rankedOnly=*/false); i != kNone) {
+                    excludedIDs.insert(cands[i].formID);
+                    excludedNames.insert(cands[i].name);
+                    displacedOwners.insert(cands[i].formID);
                 }
             }
 
@@ -1002,6 +1080,11 @@ namespace Huginn::Core::SlotAlloc
             // items, and are in the excluded sets: a guest is judged against
             // what is SHOWN, not against the exclusion (Raw Crab Meat waiting
             // for an override on its home key, LoreRim 2026-10-06 21:07:58).
+            // What is shown includes the holders accepted before it (0.24.6):
+            // checked against the overrides and holds alone, a guest sharing
+            // a NAME or a FORM with a seat owner held in Phase A stood beside
+            // it -- [Twin] [override] [Twin], or one form on two keys when
+            // the two were stacks.
             for (std::size_t k = 0; k < priorityCount; ++k) {
                 const std::size_t j = m_order[k];
                 if (j >= slotCount || !m_state[j].IsEmpty() || placed[j] == 0) continue;
@@ -1010,14 +1093,11 @@ namespace Huginn::Core::SlotAlloc
                     taken = taken || tentative[t].slot == j;
                 }
                 if (taken) continue;
-                std::uint32_t guest = kNone;
-                for (std::uint32_t i = 0; i < cands.size(); ++i) {
-                    if (!cands[i].isRememberedOnly && cands[i].dedupKey == placed[j]) { guest = i; break; }
-                }
+                const std::uint32_t guest = OwnerOf(placed[j], /*rankedOnly=*/true);
                 if (guest == kNone) continue;
                 const auto& g = cands[guest];
                 if (displacedOwners.contains(g.formID)) {
-                    if (m_ids.contains(g.formID) || m_names.contains(g.name)) continue;
+                    if (shownIDs.contains(g.formID) || shownNames.contains(g.name)) continue;
                 } else if (excludedIDs.contains(g.formID) || excludedNames.contains(g.name)) {
                     continue;
                 }
@@ -1025,6 +1105,8 @@ namespace Huginn::Core::SlotAlloc
                 tentative[tentativeCount++] = { j, guest };
                 excludedIDs.insert(g.formID);
                 excludedNames.insert(g.name);
+                shownIDs.insert(g.formID);
+                shownNames.insert(g.name);
             }
 
             // One slot-priority order for owners and guests.
@@ -1118,6 +1200,13 @@ namespace Huginn::Core::SlotAlloc
                         // seat is somewhere else and not its to give up. An
                         // owner an override displaced stays out of the
                         // challengers even so (code review of #179).
+                        // A loser sharing a displaced owner's form keeps it
+                        // excluded (displacedOwners is by form); one sharing
+                        // only its NAME erases the name, but the displaced
+                        // owner's form stays in excludedIDs and FindBest
+                        // skips a row on either, so it does not come back
+                        // as a challenger. The fill reads m_ids/m_names,
+                        // not these sets (verification of #232).
                         if (!displacedOwners.contains(it.formID)) {
                             excludedIDs.erase(it.formID);
                             excludedNames.erase(it.name);
@@ -1570,17 +1659,25 @@ namespace Huginn::Core::SlotAlloc
                 w.pin = PinFate::Refused;
                 return;
             }
-            const auto& c = m_in.candidates[wi.pinned];
+            // A row another of its key shadows stands for that key's row (the
+            // one the rest of the allocation knows the item by).
+            std::uint32_t pinned = wi.pinned;
+            if (Shadowed(pinned)) pinned = OwnerOf(m_in.candidates[pinned].dedupKey, /*rankedOnly=*/false);
+            if (pinned == kNone) {
+                w.pin = PinFate::Refused;
+                return;
+            }
+            const auto& c = m_in.candidates[pinned];
             if (!m_state[w.seat].IsEmpty() || m_ids.contains(c.formID) || m_names.contains(c.name)) {
                 w.pin = PinFate::SeatBusy;
                 return;
             }
-            const SlotState s{ Kind::Wildcard, wi.pinned, false };
+            const SlotState s{ Kind::Wildcard, pinned, false };
             if (c.isRememberedOnly || !SlotAccepts(m_in.slots[w.seat], s)) {
                 w.pin = PinFate::Refused;
                 return;
             }
-            Place(w.seat, Kind::Wildcard, wi.pinned);
+            Place(w.seat, Kind::Wildcard, pinned);
             Assign(c.formID, c.name);
             w.pin = PinFate::Placed;
         }
@@ -1656,10 +1753,7 @@ namespace Huginn::Core::SlotAlloc
             const std::uint64_t key = m_out.memory.seats[w.seat];
             if (key == 0) return;
             const auto& cands = m_in.candidates;
-            std::uint32_t d = kNone;
-            for (std::uint32_t i = 0; i < cands.size(); ++i) {
-                if (!cands[i].isRememberedOnly && cands[i].dedupKey == key) { d = i; break; }
-            }
+            const std::uint32_t d = OwnerOf(key, /*rankedOnly=*/true);
             if (d == kNone || m_ids.contains(cands[d].formID) || m_names.contains(cands[d].name)) return;
             const std::size_t to = RehomeFor(d);
             if (to == npos) return;
@@ -1674,7 +1768,8 @@ namespace Huginn::Core::SlotAlloc
         // (WildcardManager), on a finished page whose seat shows a ranked row
         // or nothing: the pool is every ranked row the page does not show
         // (by formID and by name, as the fill dedups) that the seat takes,
-        // less what a slot lock holds (WildcardIn::heldForms). Each weighs
+        // less what a slot lock holds (WildcardIn::heldForms, and since 0.24.6
+        // heldNames: the post-lock dedup compares names). Each weighs
         // rel x sd against the row the wildcard puts off the page: the seat's
         // occupant, or the weaker row whose key the occupant moves to
         // (RehomeFor) (core/WildcardPick.h). The roll comes up with P(roll)
@@ -1716,6 +1811,7 @@ namespace Huginn::Core::SlotAlloc
                 shownNames.insert(*v.name);
             }
             const auto& held = wi.heldForms;
+            const auto& heldNames = wi.heldNames;
 
             const auto& seat = m_in.slots[w.seat];
             std::vector<std::uint32_t> rows;
@@ -1724,9 +1820,10 @@ namespace Huginn::Core::SlotAlloc
             std::vector<double> weights;
             for (std::uint32_t i = 0; i < m_in.candidates.size(); ++i) {
                 const auto& c = m_in.candidates[i];
-                if (c.isRememberedOnly || !std::isfinite(c.score)) continue;
+                if (c.isRememberedOnly || Shadowed(i) || !std::isfinite(c.score)) continue;
                 if (shownIDs.contains(c.formID) || shownNames.contains(c.name)) continue;
                 if (std::find(held.begin(), held.end(), c.formID) != held.end()) continue;
+                if (std::find(heldNames.begin(), heldNames.end(), c.name) != heldNames.end()) continue;
                 if (!SlotAccepts(seat, SlotState{ Kind::Normal, i, false })) continue;
                 const double rel = Core::Wildcard::Relevance(c.score, muCut);
                 rows.push_back(i);

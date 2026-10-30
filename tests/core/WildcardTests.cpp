@@ -963,3 +963,86 @@ TEST_CASE("wildcard gate: expiry reaches every page, and a reset starts a fresh 
     CHECK_FALSE(g.Plan(kMain, 109 * kSec, UseAll()).roll);
     CHECK(g.Plan(kMain, 110 * kSec, UseAll()).roll);
 }
+
+// -----------------------------------------------------------------------------
+// 0.24.6: a wildcard counts only once the page shows it
+// -----------------------------------------------------------------------------
+
+TEST_CASE("wildcard roll: a row named like an item a slot lock holds is not drawn (the post-lock dedup compares names)")
+{
+    // A lock on some key holds a form named "R10" that is not row 10 (two
+    // enchanted copies of one weapon): SlotLocker's post-lock dedup clears
+    // by name (core/DedupRules.h), so a drawn row 10 would be cleared from
+    // the seat -- drawn, cached and counted, never seen (R10's verifier).
+    auto in = Page(MainPage(), Ranked(12, 0.5));
+    in.wildcard.roll = true;
+    in.wildcard.uRoll = 0.0;
+    in.wildcard.heldNames = { "R10" };
+    for (int k = 0; k < 40; ++k) {
+        in.wildcard.uDraw = (k + 0.5) / 40.0;
+        const auto out = Allocate(in);
+        REQUIRE(out.wildcard.drawn != SA::kNone);
+        CHECK(out.wildcard.pool == 3u);   // rows 9, 11, 12
+        CHECK(in.candidates[out.wildcard.drawn].formID != 10u);
+    }
+    // Without the held name, row 10 is in the pool.
+    in.wildcard.heldNames.clear();
+    in.wildcard.uDraw = 0.5;
+    CHECK(Allocate(in).wildcard.pool == 4u);
+}
+
+TEST_CASE("wildcard roll: a row another of its dedup key shadows is never drawn")
+{
+    // Row 9's key on a second row (another name): one owner per key
+    // (Engine::MarkShadowed), so the copy is not in the pool -- its own
+    // row is.
+    auto in = Page(MainPage(), Ranked(10, 0.5));
+    auto copy = Row(9, 0.5, 0.9);
+    copy.name = "R9 copy";
+    in.candidates.push_back(copy);
+    in.wildcard.roll = true;
+    in.wildcard.uRoll = 0.0;
+    for (int k = 0; k < 40; ++k) {
+        in.wildcard.uDraw = (k + 0.5) / 40.0;
+        const auto out = Allocate(in);
+        REQUIRE(out.wildcard.drawn != SA::kNone);
+        CHECK(out.wildcard.pool == 2u);   // rows 9 and 10, not the copy
+        CHECK(out.wildcard.drawn != 10u);
+    }
+}
+
+TEST_CASE("wildcard gate: a draw the slot locks did not show counts for nothing, and the roll waits")
+{
+    // The page's seat after ApplyLocks: the drawn stack as the wildcard, or not.
+    CHECK(W::DrawnShown(true, 0x1008, 3, 0x1008, 3));
+    CHECK_FALSE(W::DrawnShown(false, 0x1008, 3, 0x1008, 3));   // the lock kept the old item (a Normal row)
+    CHECK_FALSE(W::DrawnShown(true, 0x1008, 0, 0x1008, 3));    // another stack of the form
+    CHECK_FALSE(W::DrawnShown(true, 0x2000, 3, 0x1008, 3));    // another item
+    CHECK_FALSE(W::DrawnShown(false, 0, 0, 0x1008, 3));        // the post-lock dedup cleared the seat
+    CHECK_FALSE(W::DrawnShown(true, 0, 0, 0, 0));              // nothing drawn
+
+    auto g = Fresh();
+    REQUIRE(g.Plan(kMain, 60 * kSec, UseAll()).roll);
+    auto hidden = Drew(0x1008);
+    hidden.drawnShown = false;
+    CHECK(g.Commit(0, hidden, 60 * kSec) == W::CommitFate::NotShown);
+    // Nothing cached (no cooldown on a key that shows something else) ...
+    REQUIRE(g.Page(0) != nullptr);
+    CHECK_FALSE(g.Page(0)->Active());
+    CHECK(g.Page(0)->formID == 0u);
+    // ... and the window is not spent: the next run rolls again.
+    const auto plan = g.Plan(kMain, 61 * kSec, UseAll());
+    CHECK(plan.roll);
+    CHECK(plan.pinForm == 0u);
+    // Shown on that run, it is cached with its own propensity.
+    CHECK(g.Commit(0, Drew(0x2000, 0.4), 61 * kSec) == W::CommitFate::Cached);
+    CHECK(g.Page(0)->formID == 0x2000u);
+    CHECK(g.Page(0)->propensity == doctest::Approx(0.4));
+    // A pinned wildcard is untouched by the flag (nothing was drawn).
+    W::CommitIn pinned;
+    pinned.pinFound = true;
+    pinned.pin = SA::PinFate::Placed;
+    pinned.drawnShown = false;
+    CHECK(g.Commit(0, pinned, 62 * kSec) == W::CommitFate::None);
+    CHECK(g.Page(0)->formID == 0x2000u);
+}

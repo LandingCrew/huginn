@@ -1421,7 +1421,9 @@ press in the heartbeat against the R8 session.
       the last 3 passes on that seed. It counts direct reversals only, not
       longer cycles or visible A→B→A bounces (the verifier's adversarial run,
       3,000 worlds x 30 passes with the class cap forced, found neither with
-      unique keys).
+      unique keys). 0.24.6: a variant keeps duplicate dedup keys and names
+      (a 12-form pool, 518 of 600 worlds with a shared key) and settles on
+      both hold paths, no swap-back (see the closed item below).
       The same worlds under per-pass sampling (Thompson, ruled out in doc 9)
       give 3,523 swap-backs (735 give-ways under the rule), so the test sees
       one when there is one.
@@ -1483,16 +1485,25 @@ press in the heartbeat against the R8 session.
   either way); slot captures (Debug `--capture-slots`) do not record the
   beliefs, so a capture from a choice-ranked session replays with the
   fixed margin.
-- Open (allocator, predates R9): two candidates with ONE dedup key on a
-  page. Seating and the hold find a key's owner by the first match
-  (`SlotAllocCore.h`, the `seats[j]` lookups), so a key already taken can
-  read as free again and the page can churn with nothing moving -- the R9
-  verifier's synthetic worlds (shared keys from a 40-form pool) left a few
-  pages unsettled and one logged the same `HoldGaveWay` every pass, on both
-  the rule and the fixed margin (worse on the margin); with unique keys all
-  of it vanished. Not checked: whether the pipeline can hand the allocator
-  two rows with one `GetDeduplicationKey()` in game. Check that first; fix
-  only if it can.
+- [x] **Closed in 0.24.6 (`sweep-allocator`): two candidates with ONE dedup
+  key on a page.** Seating and the hold found a key's owner by the first
+  match (the `seats[j]` lookups), so a key already taken could read as free
+  and the page churn with nothing moving -- the R9 verifier's synthetic
+  worlds, on both the rule and the fixed margin. The pipeline cannot hand
+  the allocator two such rows today: `CandidateFilters` step 6 drops a
+  second candidate of a key as `duplicate` (two plain stacks of one weapon
+  form with no `ExtraUniqueID`), and the Remembrance rows added after the
+  ranking are only for a form no ranked row has, once per form
+  (`PipelineCoordinator::ScoreCandidates`). Tempered or enchanted stacks with
+  their own uniqueID are different keys of one form (one per page by the
+  formID dedup); two forms of one name, one per page by the name dedup; a
+  spell and a scroll of one effect, different keys. The core gives every key
+  one row anyway (`Engine::MarkShadowed` / `OwnerOf`: the first ranked row
+  with the key; the rest are never placed, found or drawn), so no caller can
+  bring the churn back. Host-tested: the R9 property test with duplicate keys
+  and names settles on both paths (fails without the fix: some worlds stay
+  unsettled, how many depends on how the fix is taken out), a named case, and the golden test's page invariant (no shadowed
+  row shown).
 
 ### R10. Wildcards by uncertainty
 
@@ -1553,6 +1564,38 @@ wildcard picks against the soak's 8 of 333.
         `[Wildcard]` lines, it comes up on key 8. It has no special boost:
         every never-picked carried item shares b's prior sd, so it competes on
         how close its score is to the page (open question in the PR).
+- [x] **Closed in 0.24.6 (`sweep-allocator`), from R10's verifier:**
+      - *A wildcard counted though the locker hid it.* `WildcardManager::Commit`
+        ran before `SlotLocker::ApplyLocks`, so a draw the locker did not show
+        was cached, logged (`[Wildcard] Page P key K`) and counted in
+        `rolled=`. R10 already skipped the roll while key 8's lock held and
+        kept lock-held forms out of the pool; the post-lock dedup compares
+        NAMES, so a row named like a lock's item of another form was still
+        drawn and cleared. Now the pool also leaves out lock-held names
+        (`WildcardIn::heldNames`), and `Commit` runs after `ApplyLocks` and
+        counts a draw only if the seat shows it (`Core::Wildcard::DrawnShown`;
+        else `CommitFate::NotShown`: not cached, logged or counted, the roll
+        waits). The `[Soak]` field order is unchanged.
+      - *Two ordinary rows of one name on a page* (synthetic seeds 409 and
+        459, both arithmetics). The code means one per name (the fill, the
+        draw and the post-lock dedup all dedup by name: the player cannot
+        tell two forms of one name apart); the slot hold's owners were the
+        gap, and the override and Remembrance passes checked forms only. All
+        check names now; the golden page invariant checks every row (one
+        wildcard, on its key; no form, name or shadowed row twice). The
+        PR's verifier found one more: a guest (an item an override pushed out
+        of its seat, held where it stands) was checked against the overrides
+        and holds only, not against the seat owners already held, so a page
+        could read [Twin] [override] [Twin], or one form on two keys for two
+        stacks (predates 0.24.6). Guests now check against every holder
+        accepted before them too; a named adversarial test and 2000 built
+        synthetic worlds pin it.
+      - **In game (you), on the rewrite-r8 session:** no key shows the same
+        name as another (two enchanted copies, or a potion and a hold of its
+        twin); a `[Wildcard] Page P key K` line is always followed by that item
+        on key K (the debug log's `drew '...' but the slot locks did not show
+        it` line, if any, names one that was not, and no `[Wildcard]` info line
+        or `rolled=` count goes with it).
 
 ### R11. Console, telemetry, docs; retire the classifiers
 

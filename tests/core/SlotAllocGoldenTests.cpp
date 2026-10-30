@@ -93,32 +93,47 @@ namespace
         Coverage cov;
     };
 
-    /// R10: what any page must be, whichever path made it -- at most one
-    /// wildcard, and only on the page's wildcard key (SeatOf); no form shown
-    /// twice; and no other key showing the wildcard's name (the pin and the
-    /// draw dedup by form and by name). Empty when it holds, else what broke.
-    /// (Two ordinary rows of one name can share a page -- synthetic seeds 409,
-    /// 459: two Normal "Twin" rows -- in the old and the new arithmetic alike,
-    /// before R10 too; that is not the wildcard's rule to judge.)
+    /// What any page must be, whichever path made it, on EVERY row (0.24.6;
+    /// R10 checked names for the wildcard only): at most one wildcard, and
+    /// only on the page's wildcard key (SeatOf); no form shown twice; no name
+    /// shown twice -- two forms of one display name read as one item to the
+    /// player, and SlotLocker's post-lock dedup compares names
+    /// (core/DedupRules.h). Until 0.24.6 two ordinary rows of one name could
+    /// share a page (synthetic seeds 409 and 459: two Normal "Twin" rows, both
+    /// seat owners the slot hold kept), in the old and the new arithmetic
+    /// alike. And no row shown that another row of its dedup key shadows
+    /// (Engine::MarkShadowed). Empty when it holds, else what broke.
     std::string PageInvariant(const SA::Input& in, const SA::Output& out)
     {
         const auto page = SA::PageOf(in, out);
         const std::size_t seat = SA::SeatOf(in.slots);
         std::size_t wildcards = 0;
         std::set<std::uint32_t> forms;
+        std::set<std::string> names;
         for (std::size_t i = 0; i < page.size(); ++i) {
             const auto& p = page[i];
             if (p.kind == SA::Kind::Empty) continue;
             if (p.kind == SA::Kind::Wildcard) {
                 ++wildcards;
                 if (i != seat) return std::format("wildcard on key {} (its key is {})", i, seat);
-                for (std::size_t j = 0; j < page.size(); ++j) {
-                    if (j != i && page[j].kind != SA::Kind::Empty && page[j].name == p.name) {
-                        return std::format("the wildcard's name '{}' is also on key {}", p.name, j);
+            }
+            if (!forms.insert(p.formID).second) return std::format("form {:08X} shown twice", p.formID);
+            if (!names.insert(p.name).second) {
+                return std::format("name '{}' shown twice (key {}: {})", p.name, i, Describe(p));
+            }
+            const auto& s = out.slots[i];
+            if (s.kind != SA::Kind::Override && s.src < in.candidates.size()) {
+                const auto& me = in.candidates[s.src];
+                for (std::uint32_t r = 0; r < in.candidates.size() && me.dedupKey != 0; ++r) {
+                    const auto& c = in.candidates[r];
+                    if (r == s.src || c.dedupKey != me.dedupKey) continue;
+                    const bool shadows = c.isRememberedOnly == me.isRememberedOnly ? r < s.src
+                                                                                   : !c.isRememberedOnly;
+                    if (shadows) {
+                        return std::format("key {} shows row {}, which row {} of its dedup key shadows", i, s.src, r);
                     }
                 }
             }
-            if (!forms.insert(p.formID).second) return std::format("form {:08X} shown twice", p.formID);
         }
         if (wildcards > 1) return std::format("{} wildcards", wildcards);
         // A drawn wildcard is never a form a slot lock holds; a row the
@@ -483,6 +498,104 @@ TEST_CASE("slot golden: old and new arithmetic differ only at float-rounding bou
     for (const auto& n : acc.notes) MESSAGE(n);
     MESSAGE("synthetic (any settings): ", passes, " passes, ", acc.identical, " identical, ", acc.differing,
         " differing, ", acc.withDisagreement, " with a comparison answered differently; coverage:", acc.cov.Report());
+    CHECK(acc.unexplained == 0);
+    CHECK(acc.badPages == 0);
+}
+
+TEST_CASE("slot golden: a displaced owner standing as a guest never doubles a name or form (synthetic)")
+{
+    // 0.24.6: worlds built to reach a state the generator above never did --
+    // a pinned override sitting in a seat whose owner stands as a guest on
+    // another key, while a third key's seat owner shares the guest's display
+    // name (enchanted twins) or its form (a second stack). Before the fix
+    // the slot hold kept both, and the page showed the name or the form
+    // twice; PageInvariant catches either.
+    PolicyComparison acc;
+    std::size_t reached = 0;   // worlds where the override stood in the guest's seat
+    constexpr std::uint32_t kPot = 0x0B000001u;
+    for (std::uint32_t seed = 1; seed <= 2000; ++seed) {
+        SyntheticGenerator gen(0x9000u + seed, SyntheticSpec{ .formPool = 10 });
+        SA::Input in;
+        in.nowNs = 5'000'000'000'000LL;
+        in.settings = gen.RandomSettings();
+        const int n = gen.Int(3, 8);
+        in.slots.resize(static_cast<std::size_t>(n));
+        for (auto& s : in.slots) {
+            s.classIndex = kRegular;
+            s.regular = true;
+            s.skipEquipped = false;
+            s.remembrance = gen.Chance(50);
+            s.priority = static_cast<std::int8_t>(gen.Int(-1, 3));
+        }
+        // Ranked rows with unique dedup keys, a third of them named "Twin".
+        std::set<std::uint64_t> keys;
+        const int rows = gen.Int(n, n + 6);
+        while (static_cast<int>(in.candidates.size()) < rows) {
+            auto c = gen.RandomCandidate();
+            if (!keys.insert(c.dedupKey).second) continue;
+            if (gen.Chance(33)) c.name = "Twin";
+            c.utility = static_cast<float>(gen.Int(50, 3000)) * 1e-3f;
+            c.score = Huginn::Core::BridgeScore(c.utility);
+            in.candidates.push_back(std::move(c));
+        }
+        std::stable_sort(in.candidates.begin(), in.candidates.end(),
+            [](const SA::CandidateRec& a, const SA::CandidateRec& b) { return a.utility > b.utility; });
+
+        // Every key seated by a distinct row; the override sits in key k's
+        // seat, its owner X stands as a guest on key g (unseated), and key h's
+        // owner is made X's twin: its name, or a second stack of its form.
+        std::vector<std::size_t> perm(in.candidates.size());
+        for (std::size_t i = 0; i < perm.size(); ++i) perm[i] = i;
+        for (std::size_t i = perm.size(); i > 1; --i) {
+            std::swap(perm[i - 1], perm[static_cast<std::size_t>(gen.Int(0, static_cast<int>(i) - 1))]);
+        }
+        const auto k = static_cast<std::size_t>(gen.Int(0, n - 1));
+        auto g = static_cast<std::size_t>(gen.Int(0, n - 2));
+        if (g >= k) ++g;
+        std::size_t h = k;
+        while (h == k || h == g) h = static_cast<std::size_t>(gen.Int(0, n - 1));
+        auto& x = in.candidates[perm[k]];
+        auto& twin = in.candidates[perm[h]];
+        twin.name = x.name;
+        if (gen.Chance(50)) {
+            const auto uid = static_cast<std::uint16_t>(x.uniqueID + 7);
+            const std::uint64_t key = (static_cast<std::uint64_t>(uid) << 32) | x.formID;
+            if (!keys.contains(key)) {
+                twin.formID = x.formID;
+                twin.uniqueID = uid;
+                twin.dedupKey = key;
+                twin.matchMask = x.matchMask;
+                twin.capClass = x.capClass;
+            }
+        }
+        for (std::size_t j = 0; j < static_cast<std::size_t>(n); ++j) {
+            in.memory.seats[j] = in.candidates[perm[j]].dedupKey;
+            in.memory.lastPlaced[j] = in.memory.seats[j];
+        }
+        in.memory.seats[g] = 0;
+        in.memory.lastPlaced[g] = x.dedupKey;
+        in.memory.lastPlaced[k] = kPot;
+
+        SA::OverrideRec o;
+        o.formID = kPot;
+        o.dedupKey = kPot;
+        o.name = "Pot";
+        o.category = 0;
+        o.pinnedToSlot = true;
+        o.matchMask = 1u << kRegular;
+        in.slots[k].overrideAccept = 1;
+        in.overridesActive = true;
+        in.overrides = { o };
+
+        const auto out = CompareOnInput(in, acc, std::format("guest seed {}", seed));
+        const auto page = SA::PageOf(in, out);
+        reached += page[k].kind == SA::Kind::Override ? 1 : 0;
+    }
+    for (const auto& note : acc.notes) MESSAGE(note);
+    MESSAGE("guest worlds: 2000, override in the guest's seat in ", reached, "; bad pages ", acc.badPages);
+    // The 1e-3 utility grid puts some pairs exactly on the 1.5x margin, where
+    // the old float product rounds: rounding boundaries, as in the exotic set.
+    CHECK(reached > 1500);
     CHECK(acc.unexplained == 0);
     CHECK(acc.badPages == 0);
 }

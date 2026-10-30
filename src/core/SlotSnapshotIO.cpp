@@ -318,6 +318,7 @@ namespace Huginn::Core::SlotAlloc
             out += '\n';
         }
         if (in.wildcard.heldKeys != 0) out += std::format("WKEYS {:x}\n", in.wildcard.heldKeys);
+        for (const auto& name : in.wildcard.heldNames) out += std::format("WHNAME {}\n", EscapeName(name));
         for (const auto& o : in.overrides) {
             out += std::format("OVR {:x} {} {:x} {} {} {} {} {} {:x} {} {}\n", o.formID, o.uniqueID, o.dedupKey,
                 o.condition, o.category, Bit(o.pinnedToSlot), Bit(o.isEquipped), Bit(o.playerEquipped), o.matchMask,
@@ -531,6 +532,8 @@ namespace Huginn::Core::SlotAlloc
                 while (!tk.Done() && tk.ok) in.wildcard.heldForms.push_back(tk.Int<std::uint32_t>(16));
             } else if (tag == "WKEYS") {
                 in.wildcard.heldKeys = tk.Int<std::uint32_t>(16);
+            } else if (tag == "WHNAME") {
+                in.wildcard.heldNames.push_back(tk.Name());
             } else if (tag == "KEPT") {
                 while (!tk.Done() && tk.ok) cur.keptOff.push_back(tk.Int<std::uint32_t>(16));
             } else if (tag == "EVENTS") {

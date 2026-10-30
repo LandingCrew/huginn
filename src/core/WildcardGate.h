@@ -10,8 +10,10 @@
 //
 //   Plan(page, now, fate)    before the page's allocation: the cached wildcard
 //                            to pin on the seat, or a roll, or nothing.
-//   Commit(page, in, now)    after it: a drawn wildcard is cached; a pinned one
-//                            the seat refused is dropped; a roll that drew
+//   Commit(page, in, now)    after it and the slot locks: a drawn wildcard the
+//                            page shows is cached (one the locks hid counts
+//                            for nothing, the roll waits); a pinned one the
+//                            seat refused is dropped; a roll that drew
 //                            nothing is spent.
 //   UpdateExpiry(now)        every tick: cooldowns lapse on every page.
 //
@@ -125,6 +127,10 @@ namespace Huginn::Core::Wildcard
         std::uint32_t drawnForm = 0;    // the row it drew onto the seat, 0 = none
         std::uint16_t drawnUniqueID = 0;
         double propensity = 0.0;        // WildcardOut::Propensity()
+        /// 0.24.6: the drawn row is what the page SHOWS on the seat after the
+        /// slot locks (SlotLocker::ApplyLocks). False when the locker kept or
+        /// cleared it anyway; the draw then counts for nothing (NotShown).
+        bool drawnShown = true;
     };
 
     enum class CommitFate : std::uint8_t
@@ -133,7 +139,19 @@ namespace Huginn::Core::Wildcard
         Refused,    // the pinned wildcard was refused by its key: dropped, refractory restarted
         Cached,     // a drawn wildcard is cached for the cooldown
         RollSpent,  // the roll was evaluated and drew nothing: the refractory restarts
+        NotShown,   // 0.24.6: a row was drawn but the slot locks did not show it: nothing cached, the window stays open
     };
+
+    /// 0.24.6: does the page show the drawn row on the wildcard key after the
+    /// slot locks (SlotLocker::ApplyLocks)? Only as the wildcard, and only
+    /// that stack: a lock that kept the key's old item, a post-lock dedup
+    /// that cleared it, or a dedup refill that put another row there leaves
+    /// the player with no wildcard to see (CommitIn::drawnShown).
+    [[nodiscard]] constexpr bool DrawnShown(bool seatShowsWildcard, std::uint32_t shownForm,
+        std::uint16_t shownUniqueID, std::uint32_t drawnForm, std::uint16_t drawnUniqueID) noexcept
+    {
+        return seatShowsWildcard && drawnForm != 0 && shownForm == drawnForm && shownUniqueID == drawnUniqueID;
+    }
 
     template <std::size_t N>
     class Gate
@@ -230,6 +248,13 @@ namespace Huginn::Core::Wildcard
                 cache.Clear();
                 cache.endedAtNs = nowNs;
                 return CommitFate::Refused;
+            }
+            if (in.drawnForm != 0 && !in.drawnShown) {
+                // Never seen, so never a wildcard: not cached (no cooldown on
+                // a key that shows something else), not logged or counted,
+                // and the roll is not spent -- as a run whose seat a lock
+                // held, it waits for a later run in the same window.
+                return CommitFate::NotShown;
             }
             if (in.drawnForm != 0) {
                 cache.formID = in.drawnForm;

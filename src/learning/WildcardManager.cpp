@@ -88,7 +88,7 @@ namespace Huginn::Scoring
         return req;
     }
 
-    void WildcardManager::Commit(const WildcardPage& page, const Slot::WildcardResult& result)
+    void WildcardManager::Commit(const WildcardPage& page, const Slot::WildcardResult& result, bool drawnShown)
     {
         const auto& w = result.core;
         const RE::FormID before = GetWildcard(page.index);
@@ -97,12 +97,16 @@ namespace Huginn::Scoring
             .pin = w.pin,
             .rollAsked = w.rollAsked,
             .propensity = w.Propensity(),
+            .drawnShown = drawnShown,
         };
         if (result.drawn) {
             in.drawnForm = result.drawn->GetFormID();
             in.drawnUniqueID = result.drawn->GetUniqueID();
         }
         const auto fate = m_gate.Commit(page.index, in, NowNs());
+
+        std::uint64_t* notShown = page.index < m_notShownLogged.size() ? &m_notShownLogged[page.index] : nullptr;
+        if (notShown && fate != Core::Wildcard::CommitFate::NotShown) *notShown = 0;
 
         switch (fate) {
         case Core::Wildcard::CommitFate::Refused:
@@ -115,6 +119,22 @@ namespace Huginn::Scoring
                 page.index, w.pRoll, w.pool, m_gate.settings.refractorySec);
 #endif
             return;
+        case Core::Wildcard::CommitFate::NotShown:
+        {
+            // Rare: the draw already leaves out what a lock holds (by form and
+            // by name), so only a lock taken or kept in ApplyLocks itself gets
+            // here. The roll is not spent, so while that lock stands every run
+            // in the window can draw the same row again: logged once per page
+            // and draw (a transition), not per run.
+            const std::uint64_t drew = (static_cast<std::uint64_t>(in.drawnForm) << 16) | in.drawnUniqueID;
+            if (notShown) {
+                if (*notShown == drew) return;
+                *notShown = drew;
+            }
+            logger::debug("[Wildcard] Page {} key {}: drew '{}' but the slot locks did not show it - not kept, "
+                "the roll waits"sv, page.index, w.seat + 1, result.drawn ? result.drawn->GetName() : std::string_view{});
+            return;
+        }
         case Core::Wildcard::CommitFate::Cached:
             break;
         default:
@@ -176,6 +196,7 @@ namespace Huginn::Scoring
     void WildcardManager::Reset()
     {
         m_gate.Reset(NowNs());
+        m_notShownLogged.fill(0);
     }
 
     std::mt19937& WildcardManager::GetRNG()

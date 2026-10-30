@@ -1140,6 +1140,7 @@ namespace Huginn::Slot
                 .previousFormID = slot.previousFormID,
                 .hadContent = slot.hadContent,
                 .frozen = slot.isLocked && slot.frozen,
+                .name = slot.assignment.name,
             };
         }
         return snapshot;

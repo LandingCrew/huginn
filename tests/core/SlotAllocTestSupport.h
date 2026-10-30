@@ -339,7 +339,12 @@ namespace Huginn::Test
                     SA::OverrideRec o;
                     o.formID = 0x0A000000u + static_cast<std::uint32_t>(Int(1, m_spec.formPool));
                     o.dedupKey = o.formID;
-                    o.name = std::format("Item{:x}", o.formID);
+                    // Now and then a "Twin" (every eighth form, with no draw
+                    // of the generator's own, so every later input stays as
+                    // it was): an override sharing a display name with ranked
+                    // rows of other forms, for the name dedup of the override
+                    // passes (0.24.6), which PageInvariant then guards too.
+                    o.name = (o.formID & 7u) == 0 ? std::string("Twin") : std::format("Item{:x}", o.formID);
                     o.condition = static_cast<std::uint8_t>(Int(1, 6));
                     o.category = static_cast<std::uint8_t>(Int(0, 3));
                     o.pinnedToSlot = Chance(30);
@@ -371,6 +376,9 @@ namespace Huginn::Test
                 if (in.wildcard.uDraw < 0.3 && in.candidates.size() > 2) {
                     in.wildcard.heldForms = { in.candidates[1].formID };
                     in.wildcard.heldKeys = 1u << 6;
+                    // 0.24.6: and a name a lock holds (another form's, the
+                    // post-lock dedup compares names), still with no draw.
+                    in.wildcard.heldNames = { in.candidates[2].name };
                 }
             }
             return in;
