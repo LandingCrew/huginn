@@ -115,9 +115,10 @@ namespace Huginn::Update
        * fHeadingAxisDeadzone:Controls for the right (core/LapHoldInputs.h;
        * 0.15 when a setting cannot be read). Called at kDataLoaded, at every
        * kNewGame / kPostLoadGame, and by DoUpdate every 60 s. Logs the values
-       * at info when they change. Main thread (the message handler and the
-       * update loop; serialized by a mutex); the values reach ProcessEvent
-       * through atomics.
+       * at info when they change. Runs on the message handler's thread and on
+       * whichever thread runs the update tick (a game job thread in gameplay;
+       * see THREADS in UpdateLoop.cpp); serialized by a mutex. The values reach
+       * ProcessEvent through atomics.
        */
       void SyncStickDeadzones(std::string_view why);
 

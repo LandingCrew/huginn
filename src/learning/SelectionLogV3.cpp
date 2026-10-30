@@ -1357,8 +1357,10 @@ namespace Huginn::Learning::SelectionLogV3
 
         // The open menus that block gameplay input, by the game's own flags,
         // their names sorted and joined; empty when none does. Update tick
-        // only (the main thread, where the UI mutates its menu map; the same
-        // thread the IsMenuOpen calls of this tick rely on).
+        // only, which in gameplay runs on a game job thread, not the main
+        // thread where the UI mutates its menu map (THREADS in UpdateLoop.cpp:
+        // no job tick overlapped a main-thread zone in the traces); the same
+        // read the IsMenuOpen calls of this tick already make.
         std::string BlockingMenus(RE::UI* ui)
         {
             if (!ui) return {};
