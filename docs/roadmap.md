@@ -1247,8 +1247,14 @@ changed in the same PR, and the shipped INI loses the dead keys.
         `ResolveLoadedLearner`, and moves the save/load callback registration
         (`SaveCharacterRecord`, `LoadCharacterRecord`,
         `ResetPendingCharacter`, called from BanditSerializer's SKSE
-        callbacks under its unique ID `'QCNO'`) out of BanditSerializer;
-        nothing of the decision changes. 0.24.19: the fit
+        callbacks under its unique ID `'QCNO'`) out of BanditSerializer.
+        Nothing of the decision changes, but the reset sites must then
+        tick before the reset (or under the learner's lock): today the old
+        learner's `Clear` ticks first; without it, a save taken between
+        `ResetChoiceLearning` and the site's tick would pair the reset
+        learning with the pre-reset clock, and a fresh session loading the
+        pre-reset save then that one would keep memory and lose the
+        reset. 0.24.19: the fit
         tools read 0.24 logs for that refit (tools/fit/README.md): the v2
         log's rows the old floors dropped (written 0.24.0-0.24.18 with an
         all-zero breakdown) are skipped and no longer written, and a fit of

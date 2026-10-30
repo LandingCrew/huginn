@@ -19,8 +19,14 @@
 // outlives the old learner: R12 deletes its two tick calls and moves the
 // save/load callback registration (SaveCharacterRecord, LoadCharacterRecord,
 // ResetPendingCharacter, called from BanditSerializer's SKSE callbacks under
-// its unique ID 'QCNO') out of BanditSerializer; nothing of the clock or the
-// decision changes.
+// its unique ID 'QCNO') out of BanditSerializer. Nothing of the decision
+// changes, but the reset sites must then tick BEFORE the reset (or under the
+// learner's lock): today the old learner's Clear ticks first, so a save taken
+// between ResetChoiceLearning and the site's own tick already carries a
+// clock past the save before the reset. Without that Clear, such a save
+// would pair the reset learning with the old clock, and a fresh session that
+// loaded the pre-reset save and then that one would keep memory and lose
+// the reset.
 //
 // What ticks is a table (kEvents), so the host tests read the same list the
 // plugin calls through (Note). The rule: a change to what the next save
@@ -30,13 +36,19 @@
 // as "not ahead" (the bug above again). Settings (a hot reload) are not
 // learning, and the play clock's passing is not either: the forget sweep's
 // erasures (b entries past their life, discovery boosts run out) re-occur on
-// their own -- each entry's age (play time since chosen, or since the gain)
-// travels with every save, so whichever learning a load keeps, its next sweep
-// (at most a minute of play away) forgets the same ones. Nothing the player
-// taught is lost by not ticking them.
+// their own. A save made after a sweep can carry the clock of one made before
+// it, so a load of the earlier then the later save keeps memory, and memory's
+// entries keep memory's ages (the earlier save's), not the later save's: they
+// are not forgotten at the next sweep, but once they age past their life,
+// which can be later by up to the play between the two saves. Nothing the
+// player taught is lost by not ticking them.
 //
-// Threads: the update thread, the container-event thread and the console tick
-// it; the game thread reads it at a save and sets it at a load. One atomic.
+// Threads: the update thread (picks, onsets; the equip bus), the
+// container-event thread, the console and the dMenu reset (a mod event, any
+// thread) tick it; the game thread reads it at a save and sets it at a load.
+// One atomic. Note is the only tick: ChoiceLearner calls through it at every
+// site; the old learner ticks only in Update and Clear (its ForgetFaded and
+// load imports do not).
 // Pure: standard library only, host-tested in tests/core/LearningClockTests.cpp.
 
 #include "core/ChoiceCosave.h"   // LoadDecision
@@ -133,7 +145,8 @@ namespace Huginn::Core::LearningClock
     [[nodiscard]] constexpr bool Ticks(Event e) noexcept { return kEvents[static_cast<std::size_t>(e)].ticks; }
     [[nodiscard]] constexpr const char* EventName(Event e) noexcept { return kEvents[static_cast<std::size_t>(e)].name; }
 
-    /// Every learning change calls through here. Ticks `clock` if the event
+    /// Every tick goes through here (ChoiceLearner calls it at every learning
+    /// site; the old learner in Update and Clear). Ticks `clock` if the event
     /// does (a null clock: a learner built without one, the Debug suite's).
     /// Returns whether it ticked.
     inline bool Note(Clock* clock, Event e) noexcept

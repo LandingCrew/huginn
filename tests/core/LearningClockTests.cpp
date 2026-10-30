@@ -191,6 +191,8 @@ TEST_CASE("learning clock: a forget sweep that forgets b entries and expires boo
     CHECK(r.expired == 0);
     CHECK(r.forgotten == 0);
     const Save before{ kHero, clock.Get() };
+    auto keptDiscovery = discovery;   // what memory holds after loading `before`
+    auto keptB = b;
 
     // A day of play on: both boosts ran out (~8.2 h) and both b entries are
     // past their life (8 h + 2 h ln 2, a 1 h knee). The sweep erased them all
@@ -205,12 +207,21 @@ TEST_CASE("learning clock: a forget sweep that forgets b entries and expires boo
 
     // So a save after the sweep is not ahead of one before it: a fresh
     // session that loads the earlier save and then the later one keeps
-    // memory, which forgets the same entries at its next sweep (their ages
-    // travel with the save).
+    // memory, with memory's ages (the earlier save's), not the later save's.
+    // The kept entries are not forgotten at the next sweep; they forget once
+    // they age past their life, up to the play between the two saves later.
+    // Nothing the player taught is lost.
     Session two;
     CHECK(two.Load(before).why == LoadWhy::FirstLoad);
     two.RunLoadSteps();
     CHECK(two.Load(after).decision == LoadDecision::Reload);
+    CHECK(two.clock.Get() == taught);
+    r = Sweep(two.clock, keptDiscovery, keptB, 1.0 * kHour + 60.0);
+    CHECK(r.expired == 0);
+    CHECK(r.forgotten == 0);
+    r = Sweep(two.clock, keptDiscovery, keptB, 24.0 * kHour);
+    CHECK(r.expired == 2);
+    CHECK(r.forgotten == 2);
     CHECK(two.clock.Get() == taught);
 }
 
