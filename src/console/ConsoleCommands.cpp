@@ -176,7 +176,7 @@ namespace Huginn::Console
          // 3. Reset all stateful pipeline subsystems (shared with InitializeGameSystems)
          ResetPipelineSubsystems();
 
-         auto msg = std::format("Full reset complete (Learner: {} items, all subsystems reset)",
+         auto msg = std::format("Full reset complete (old learner: {} items, all subsystems reset)",
             learnerItems);
          Print(msg.c_str());
          logger::info("[Console] {}"sv, msg);
@@ -339,9 +339,9 @@ namespace Huginn::Console
          logger::info("[Console] hg status: {}"sv, line);
       }
 
-      // Feature contextual bandit
+      // The old learner: D2's input, not the ranking's model
       if (g_featureBanditLearner) {
-      auto msg = std::format("Learner: {} items, {} total trains, {} forgotten, {:.1f}h of play",
+      auto msg = std::format("Old learner (D2 input): {} items, {} total trains, {} forgotten, {:.1f}h of play",
         g_featureBanditLearner->GetItemCount(), g_featureBanditLearner->GetTotalTrainCount(),
         g_featureBanditLearner->GetForgottenTotal(), g_featureBanditLearner->GetPlaySeconds() / 3600.0);
       Print(msg.c_str());
@@ -713,8 +713,8 @@ namespace Huginn::Console
    // authors write effect overrides from it), with the effect catalog's view
    // and the slot class derived from it.
 
-   // Shared by the three dumps below: open <SKSE log dir>/<fileName>, or say
-   // why not on the console and return false.
+   // Shared by hg dump theta, hg dump weights and hg dump races: open
+   // <SKSE log dir>/<fileName>, or say why not on the console and return false.
    static bool OpenDumpFile(std::string_view fileName, std::ofstream& out,
                             std::filesystem::path& filePath)
    {
@@ -764,7 +764,6 @@ namespace Huginn::Console
    //
    // R11: `kind` is the effect catalog's form kind and `class` its facets
    // (core/CapFacets.h); the old classifiers no longer describe items here.
-   // `subclass` is kept, empty ("-"), so the column order holds.
    static void Cmd_DumpWeights(std::string_view /*arg*/)
    {
       if (!g_featureBanditLearner) {
@@ -785,13 +784,13 @@ namespace Huginn::Console
          totalTrains);
 
 
-      out << "formID,plugin,name,kind,class,subclass,trainCount,confidence,minutesSinceChosen,retention,weightNorm";
+      out << "formID,plugin,name,kind,class,trainCount,confidence,minutesSinceChosen,retention,weightNorm";
       for (const char* feature : kFeatureNames) out << ',' << feature;
       out << '\n';
 
       size_t unresolved = 0;
       for (const auto& entry : entries) {
-         std::string_view kind = "unresolved"sv, cls = "-"sv, sub = "-"sv;
+         std::string_view kind = "unresolved"sv, cls = "-"sv;
          std::string clsOwned;  // for class strings built at runtime
          auto* form = RE::TESForm::LookupByID(entry.formID);
          const char* name = form ? form->GetName() : nullptr;
@@ -817,11 +816,11 @@ namespace Huginn::Console
          float norm = 0.0f;
          for (const float w : entry.weights) norm += w * w;
 
-         out << std::format("{:08X},{},{},{},{},{},{:.2f},{:.3f},{},{:.3f},{:.4f}",
+         out << std::format("{:08X},{},{},{},{},{:.2f},{:.3f},{},{:.3f},{:.4f}",
             entry.formID,
             CsvQuote(PluginOf(form)),
             CsvQuote(name ? name : ""),
-            kind, cls, sub,
+            kind, cls,
             entry.trainCount,
             g_featureBanditLearner->GetConfidence(entry.formID),
             entry.minutesSinceChosen,

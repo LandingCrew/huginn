@@ -128,9 +128,9 @@ buffer" does not match what is there: the buffers hold 10 events or 5 seconds.
 The other constraint is the feature vector. `StateFeatures` is 18 floats and
 carries **no trend or velocity feature** — vitals, combat/sneak flags, normalized
 enemy distance, a 7-way target-type one-hot, four equipment flags, and a bias
-term. It is **APPEND-ONLY**: `ToArray()` order is the cosave wire order and
-`BanditSerializer` migrates saved weights positionally
-(`StateFeatures.h:61`). Adding a velocity feature is therefore a cosave-format
+term. It is **APPEND-ONLY**: `ToArray()` order is the cosave wire order, and
+`BanditSerializer` skips a saved record whose feature count differs
+(`StateFeatures.h:62`). Adding a velocity feature is therefore a cosave-format
 change, which puts it in the same bucket as the parked Addendum #15/#16 — not
 landable during an active soak run.
 

@@ -47,7 +47,7 @@ namespace Huginn::Wheeler
 
         // Subtext position defaults (pixels relative to entry center)
         inline constexpr float SUBTEXT_OFFSET_X = 0.0f;
-        inline constexpr float SUBTEXT_OFFSET_Y = 20.0f;
+        inline constexpr float SUBTEXT_OFFSET_Y = 90.0f;
     }
 
     // =============================================================================

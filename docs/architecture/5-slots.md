@@ -246,14 +246,14 @@ breaking) and the display path (auto-focus, subtexts).
 ### Override Rules
 
 Priorities are fixed constants (`src/override/OverrideConditions.h:20`).
-Thresholds are runtime settings; the table gives the **code default** and, where
-it differs, the **shipped INI value**.
+Thresholds are runtime settings; the table gives the default (the code default
+and the shipped INI value are the same).
 
-| Priority | Condition | Category | Activation threshold (code / shipped) | Hysteresis gap | Item surfaced | INI toggle |
+| Priority | Condition | Category | Activation threshold | Hysteresis gap | Item surfaced | INI toggle |
 |---|---|---|---|---|---|---|
-| 100 | **CriticalHealth** | HP | HP < 10% / **35%** | +15% | Best health potion | `bEnableCriticalHealth` |
-| 70 | **CriticalMagicka** | MP | MP < 10% / **35%** | +15% | Best magicka potion | `bEnableCriticalMagicka` |
-| 60 | **CriticalStamina** | SP | SP < 10% / **35%** | +15% | Best stamina potion | `bEnableCriticalStamina` |
+| 100 | **CriticalHealth** | HP | HP < 35% | +15% | Best health potion | `bEnableCriticalHealth` |
+| 70 | **CriticalMagicka** | MP | MP < 35% | +15% | Best magicka potion | `bEnableCriticalMagicka` |
+| 60 | **CriticalStamina** | SP | SP < 35% | +15% | Best stamina potion | `bEnableCriticalStamina` |
 | 50 | **Drowning** | Other | Underwater with no waterbreathing buff (boolean, not threshold-based) | n/a | Waterbreathing **potion** | `bEnableDrowning` |
 | 40 | **LowAmmo** | Other | Bow/crossbow equipped and ammo < 10 (absolute count) | +15 | Best arrow/bolt in inventory | `bEnableLowAmmo` |
 | 35 | **WeaponCharge** | Other | Enchanted weapon equipped and charge < 25% | +5% | Best **filled** soul gem | `bEnableWeaponCharge` |
@@ -820,7 +820,7 @@ change at all.
   [Locked] --matching override >= break pri-->  [Unlocked]
   [Locked] --OnItemUsed(formID)-->              [Unlocked]
 
-  Lock duration:      3000 ms code default, 1000 ms in the shipped INI
+  Lock duration:      3000 ms (fLockDurationMs)
   Min before break:   500 ms (fMinLockDurationMs)
   Override bypass:    priority >= 50 (iImmediateBreakPriority)
   Sticky activation:  10000 ms (ACTIVATION_LOCK_MS, src/slot/SlotLocker.h:188)
@@ -1330,8 +1330,7 @@ flags included, so the displayed page's wildcard leaked onto the other wheels.
 
 - Once drawn, a page's wildcard stays `fCooldownSeconds` (30 s default).
 - After it expires (or the seat refuses it, or a roll draws nothing), that
-  page waits `fRefractorySeconds` before rolling again (code default 5 s; the
-  shipped INI sets 60 s).
+  page waits `fRefractorySeconds` before rolling again (60 s default).
 - Combat (0.23.40, unchanged): none placed, every page's dropped at onset, the
   refractory restarted on every page when it ends.
 - `UpdateExpiry()` returns `true` if any page's wildcard lapsed, and the caller
@@ -1439,15 +1438,15 @@ fDistanceBucketHysteresis = 0.1 ; Distance band moves only this fraction past a 
 ```ini
 [Overrides]
 bEnableCriticalHealth = true
-fCriticalHealthThreshold = 0.35   ; Shipped; code default 0.10
+fCriticalHealthThreshold = 0.35   ; Activates below 35%
 fCriticalHealthHysteresis = 0.15  ; RELEASE GAP: deactivates at 0.35 + 0.15 = 50%
 
 bEnableCriticalMagicka = true
-fCriticalMagickaThreshold = 0.35  ; Code default 0.10
+fCriticalMagickaThreshold = 0.35
 fCriticalMagickaHysteresis = 0.15
 
 bEnableCriticalStamina = true
-fCriticalStaminaThreshold = 0.35  ; Code default 0.10
+fCriticalStaminaThreshold = 0.35
 fCriticalStaminaHysteresis = 0.15
 
 bAllowImpurePotions = true        ; Allow potions with side effects (skooma, etc.)
@@ -1481,7 +1480,7 @@ fBaseProbability = 0.165         ; P(roll) with nothing uncertain near the page
 fMaxProbability = 0.5            ; P(roll) with an unknown item at the page's edge
 fUniformShare = 0.1              ; the draw's uniform share (every row keeps share/N)
 fCooldownSeconds = 30            ; How long a page's wildcard stays once drawn
-fRefractorySeconds = 60          ; Shipped; code default 5. The window: one roll per window, a failed roll restarts it
+fRefractorySeconds = 60          ; The window: one roll per window, a failed roll restarts it
 ```
 
 ### [Keybindings] (page cycling)

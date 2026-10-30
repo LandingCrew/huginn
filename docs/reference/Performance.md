@@ -205,13 +205,13 @@ steadiness, and all three are configurable.
 A slot that receives new content is held for a duration, so the player has time
 to act on a recommendation whose triggering context has already passed.
 
-| Setting | Code default | Shipped `Huginn.ini` |
-|---|---|---|
-| `fLockDurationMs` | 3000 | **1000** |
-| `fMinLockDurationMs` | 500 | 500 |
-| `bLockOnFill` | true | true |
-| `bOverridesBreakLock` | true | true |
-| `iImmediateBreakPriority` | 50 | 50 |
+| Setting | Default (code and shipped `Huginn.ini`) |
+|---|---|
+| `fLockDurationMs` | 3000 |
+| `fMinLockDurationMs` | 500 |
+| `bLockOnFill` | true |
+| `bOverridesBreakLock` | true |
+| `iImmediateBreakPriority` | 50 |
 
 A post-activation lock (`LockSlotForActivation`) uses a longer 10 s hold so a
 just-used item stays visible even after it is consumed; `OnItemUsed` will not
@@ -219,11 +219,12 @@ break it. `SlotLocker::Update` returns true when any lock expired, and the calle
 forces a pipeline run so the freed slot refills without waiting for an unrelated
 state change.
 
-> **Measurement note.** With `fLockDurationMs = 1000`, `ceil(remaining / 1000)`
-> only ever yields 1, so the lock-timer subtext never counts down. Any attempt to
-> measure the 3 → 2 → 1 transitions needs the value raised to ~4000 first. This
-> is why the #14 lock-label measurements are recorded as weak evidence — locks
-> were live for only ~44 s of the 15-minute capture that produced them.
+> **Measurement note.** The #14 lock-label measurements ran with the INI then
+> shipping `fLockDurationMs = 1000`, where `ceil(remaining / 1000)` only ever
+> yields 1, so the lock-timer subtext never counted down. That is why they are
+> recorded as weak evidence: locks were live for only ~44 s of the 15-minute
+> capture that produced them. Measuring the 3 → 2 → 1 transitions needs a
+> duration of ~4000.
 
 ### Override hysteresis (`src/override/OverrideConfig.h`, `[Overrides]`)
 
@@ -232,9 +233,9 @@ and no override may clear before `minOverrideDurationMs` has elapsed.
 
 | Condition | Activation threshold | Hysteresis gap | Effective deactivation |
 |---|---|---|---|
-| Critical health | 0.10 | 0.15 | 0.25 |
-| Critical magicka | 0.10 | 0.15 | 0.25 |
-| Critical stamina | 0.10 | 0.15 | 0.25 |
+| Critical health | 0.35 | 0.15 | 0.50 |
+| Critical magicka | 0.35 | 0.15 | 0.50 |
+| Critical stamina | 0.35 | 0.15 | 0.50 |
 | Weapon charge | 0.25 | 0.05 | 0.30 |
 | Low ammo | 10 (absolute count) | 15 | 25 |
 
@@ -259,7 +260,7 @@ and a wildcard is drawn by relevance × sd from what the page does not show
 | `fMaxProbability` | 0.5 | P(roll) per window with an unknown item at the page's edge |
 | `fUniformShare` | 0.1 | Share of the draw that ignores the weights (uniform over the pool) |
 | `fCooldownSeconds` | 30 | How long a wildcard stays on its key |
-| `fRefractorySeconds` | 60 (INI) / 5 (code default) | The window: one roll per window, and a failed roll restarts it |
+| `fRefractorySeconds` | 60 | The window: one roll per window, and a failed roll restarts it |
 
 There is **no session cap**. Since v0.19.6 the cache is **per page**: each page
 owns its wildcard, its cooldown and its refractory timer, and records the page

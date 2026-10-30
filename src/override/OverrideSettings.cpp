@@ -127,6 +127,12 @@ namespace Huginn::Override
         enableCriticalMagicka = Defaults::ENABLE_CRITICAL_MAGICKA;
         enableCriticalStamina = Defaults::ENABLE_CRITICAL_STAMINA;
         enablePoisoned = Defaults::ENABLE_POISONED;
+        healthSpellFallback = Defaults::HEALTH_SPELL_FALLBACK;
+        magickaSpellFallback = Defaults::MAGICKA_SPELL_FALLBACK;
+        staminaSpellFallback = Defaults::STAMINA_SPELL_FALLBACK;
+        pinHealthToSlot = Defaults::PIN_HEALTH_TO_SLOT;
+        pinMagickaToSlot = Defaults::PIN_MAGICKA_TO_SLOT;
+        pinStaminaToSlot = Defaults::PIN_STAMINA_TO_SLOT;
         allowImpurePotions = Defaults::ALLOW_IMPURE_POTIONS;
 
         logger::info("[OverrideSettings] Reset to defaults"sv);

@@ -80,11 +80,6 @@ namespace Huginn::Config
    // Target: < 0.1ms per update check
    inline constexpr float UPDATE_INTERVAL_MS = 100.0f;
 
-   // Wildcard cooldown: How long a wildcard spell persists before a new one can be selected
-   // Higher = more stable recommendations, Lower = more variety
-   // Recommended: 30-60 seconds
-   inline constexpr float WILDCARD_COOLDOWN_SECONDS = 30.0f;
-
    // Thresholds (still compile-time; not in INI)
    inline constexpr float WEAPON_CHARGE_LOW_THRESHOLD = 0.2f;  // 20% - low charge warning
 

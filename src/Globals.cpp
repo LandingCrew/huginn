@@ -10,6 +10,8 @@
 #include "learning/SelectionLogV3.h"
 #include "pipeline/PipelineCoordinator.h"
 #include "learning/legacy/LegacyScorer.h"   // g_legacyScorer's destructor
+#include "core/WildcardGate.h"   // GateSettings: the [Wildcards] clocks' defaults
+#include "core/WildcardPick.h"   // Params: the [Wildcards] odds' defaults
 
 #include <algorithm>
 #include <filesystem>
@@ -268,27 +270,24 @@ Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {
   return config;
 }
 
-void LoadWildcardConfigFromINI(Scoring::WildcardManager& wildcardMgr) {
-  CSimpleIniA ini;
-  if (LoadIniFile(ini, GetMainIniPath(), "WildcardConfig"sv)) {
-    LoadWildcardConfigFromINI(wildcardMgr, ini);
-  }
-}
-
 void LoadWildcardConfigFromINI(Scoring::WildcardManager& wildcardMgr, const CSimpleIniA& ini) {
   const char* section = "Wildcards";
+  // A missing key takes the core structs' default (the shipped Huginn.ini's
+  // value); an empty INI therefore loads the defaults (dMenu Reset to Defaults).
+  constexpr Core::Wildcard::Params odds{};
+  constexpr Core::Wildcard::GateSettings clocks{};
 
   wildcardMgr.SetBaseProbability(static_cast<float>(
-    ini.GetDoubleValue(section, "fBaseProbability", 0.165)));
+    ini.GetDoubleValue(section, "fBaseProbability", odds.baseRoll)));
   wildcardMgr.SetMaxProbability(static_cast<float>(
-    ini.GetDoubleValue(section, "fMaxProbability", 0.5)));
+    ini.GetDoubleValue(section, "fMaxProbability", odds.maxRoll)));
   // R10: the random term's share of the draw (core/WildcardPick.h).
   wildcardMgr.SetUniformShare(static_cast<float>(
-    ini.GetDoubleValue(section, "fUniformShare", 0.1)));
+    ini.GetDoubleValue(section, "fUniformShare", odds.uniformShare)));
   wildcardMgr.SetCooldown(static_cast<float>(
-    ini.GetDoubleValue(section, "fCooldownSeconds", 30.0)));
+    ini.GetDoubleValue(section, "fCooldownSeconds", clocks.cooldownSec)));
   wildcardMgr.SetRefractoryPeriod(static_cast<float>(
-    ini.GetDoubleValue(section, "fRefractorySeconds", 5.0)));
+    ini.GetDoubleValue(section, "fRefractorySeconds", clocks.refractorySec)));
 
   logger::info("[WildcardConfig] roll {:.3f}..{:.2f} (base..max), uniform share {:.2f}, cooldown={:.0f}s, "
     "refractory={:.0f}s",

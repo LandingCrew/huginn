@@ -125,9 +125,6 @@ void LoadCandidateConfigFromINI();
 
 /// @brief Load [Wildcards] section settings from an already-parsed INI into the WildcardManager.
 void LoadWildcardConfigFromINI(Huginn::Scoring::WildcardManager& wildcardMgr, const CSimpleIniA& ini);
-/// @brief Convenience overload: parse Huginn.ini, then load [Wildcards].
-/// @note Called during both kNewGame and kPostLoadGame events, after UtilityScorer is created.
-void LoadWildcardConfigFromINI(Huginn::Scoring::WildcardManager& wildcardMgr);
 
 /// @brief Load [SlotLocker] section settings from an already-parsed INI.
 [[nodiscard]] Huginn::Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini);

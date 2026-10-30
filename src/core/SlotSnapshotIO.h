@@ -12,8 +12,8 @@
 // SLOT SNAPSHOTS: one allocation's input and the page it produced, as text
 // =============================================================================
 // The golden test's record (R7). The game writes one per allocation while a
-// Debug build captures (SlotSnapshot.h: test mode with iCaptureSlotsSec, or
-// `hg slots capture`); tests/core/fixtures/slots/ holds files of them, and
+// Debug build captures (SlotSnapshot.h: test mode with iCaptureSlotsSec);
+// tests/core/fixtures/slots/ holds files of them, and
 // SlotAllocGoldenTests.cpp replays each input through the core and checks the
 // page against the recorded one.
 //

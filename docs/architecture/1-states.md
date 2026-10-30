@@ -1091,9 +1091,11 @@ in `ToArray()` order — which is also the cosave wire order:
 | 17 | `bias` | Always 1.0 (intercept) |
 
 `NUM_FEATURES = 18`, asserted inside `ToArray()`. The layout is **append-only**:
-`BanditSerializer` migrates saved `BNDW` weights positionally, so a new feature
-goes at the end and a retired feature keeps its slot fed with a constant 0.
-Reordering silently reassigns every player's learned weights.
+the order is the `BNDW` wire order, so a new feature goes at the end and a
+retired feature keeps its slot fed with a constant 0. A changed count makes
+`BanditSerializer` skip the saved record (no migration since 0.24.8: the old
+learner starts empty); reordering at the same count silently reassigns every
+player's learned weights.
 
 Note that index 5 and indices 6-12 can describe *different actors*: distance comes
 from the closest enemy, the one-hot from the crosshair/combat primary. That is
@@ -1363,7 +1365,7 @@ source of TargetSource::Crosshair. -->
 | **Pipeline Skip** | Two-tier: sensor dirty flag + hash comparison, with unhashed-state bypasses | Implemented | ✅ Complete |
 | **State Space** | 48,384 hashed states (18× reduction from the un-reduced 870,912) | Skip gate + potion discrimination only | ✅ Complete |
 | **Memory Usage** | ~6 KB (hand-computed) | Within the 10 KB budget | ✅ Complete |
-| **Learning Persistence** | SKSE cosave, `BNDW` records, positional feature migration | Per-character persistence | ✅ Complete |
+| **Learning Persistence** | SKSE cosave, `BNDW` records (v4 at the compiled feature count only) | Per-character persistence | ✅ Complete |
 | **Pipeline State Cache** | Caches scored candidates per cycle; timestamp refreshed even on a skip | External equip attribution | ✅ Complete |
 | **Feature Learning** | `ChoiceLearner` (θ over need × effect columns, b per item) is the live learner; `FeatureBanditLearner` (18-float linear model) runs only as D2's input | No tabular fallback remains | ✅ Complete |
 

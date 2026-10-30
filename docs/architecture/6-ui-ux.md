@@ -1013,10 +1013,6 @@ fOffsetX = 0                     ; subtext X offset from entry center (px)
 fOffsetY = 90                    ; subtext Y offset from entry center (px)
 ```
 
-The shipped INI sets `fOffsetY = 90`; the compile-time default in
-`WheelerDefaults::SUBTEXT_OFFSET_Y` is `20`, which is what applies if the key is
-absent.
-
 ---
 
 ## ImGui Debug Widgets

@@ -80,7 +80,7 @@ Each phase lists what it builds and what it may prune. A phase only prunes what 
 | Duplicate stacks share a FormID (`PipelineStateCache.h:120-124`) | One row per item |
 | Wildcard logs only base/max (`SelectionLog.cpp:379-382`) | Log each shown wildcard's propensity |
 
-Unsettled: whether the update loop ticks inside menus. `ExternalEquipLearner.cpp:103` skips an external pick when the pipeline cache is older than `fExternalEquipTimeWindow` (500 ms in the shipped `configs/Huginn.ini:663`; 2000 ms is only the code default). It measures the cache's age, not the pick's, so a long menu session may drop menu picks.
+Unsettled: whether the update loop ticks inside menus. `ExternalEquipLearner.cpp:144` skips an external pick when the pipeline cache is older than `fExternalEquipTimeWindow` (500 ms, `configs/Huginn.ini:877`). It measures the cache's age, not the pick's, so a long menu session may drop menu picks.
 
 **As built (R4, 0.23.15).** Schema: [9-selection-log-v3.md](9-selection-log-v3.md). Where it differs from the table above:
 - **A new file, not a new version of the old one.** `Huginn_Selections_v3.jsonl` (64 MiB rotation, never deleted) beside the unchanged v2 log, which R5's cheap test still reads. Four line types: `head` (the name lists every id indexes), `cap` (content-addressed, once per file segment -- this is the "index the replay can rebuild" option, and it also settles the dynamic-FormID problem), `ctx` (a logged context: needs, page, rows) and `dec` (a decision referring to its context). The format is pure code (`core/DecisionLog`), pinned by a golden file the replay test decodes.

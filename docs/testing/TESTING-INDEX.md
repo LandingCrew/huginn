@@ -432,7 +432,7 @@ The 20 suites, in run order:
 | `RunWeaponRegistryTests()` | Weapon registry against real inventory |
 | `RunMultiplicativeScoringTests()` | Test 1 only: zero context gates utility (the context rules' healing weight at full health; D2's input). Tests 2-5 checked arithmetic on their own constants and called no Huginn code (deleted in 0.24.5); Test 6 went with the rank scaling in R8.4 |
 | `RunRegressionTests()` | See below |
-| `RunCosaveTests()` | 4 tests: `FeatureBanditLearner` export/import round-trip, empty round-trip, import clears existing data, feature-count migration (pad / truncate / equal / reject) |
+| `RunCosaveTests()` | 4 tests: `FeatureBanditLearner` export/import round-trip, empty round-trip, import clears existing data, BNDW header accept/skip (only v4 at the compiled feature count loads) and v4 decode (round-trip / short-blob reject) |
 | `RunStateFeaturesTests()` | 8 tests: default state, low-health combat, one-hot correctness across all 7 target types, distance normalisation, `ToArray` round-trip, normalisation bounds, no-enemy fallback, vital clamping |
 | `RunFeatureBanditLearnerTests()` | Feature-based learner: cold start, convergence, weight interpretability, regularisation, clamping, generalisation, item independence, `Clear()`, passed-over updates |
 | `RunOverrideNamespaceTests()` | `Huginn_Overrides.ini` section namespacing (`[Spell:...]` / `[Item:...]`) |
@@ -490,7 +490,7 @@ Recorded in [../roadmap.md](../roadmap.md) under *Follow-ups*.
    goes (the context rules and their in-game tests with it).
 
 2. *(Resolved.)* The cosave decode negative test used to log a real-looking
-   `[E] DecodeV2EntryBlob: byteLen 83 != stride 84`. The "length mismatch must
+   `[E] DecodeV2EntryBlob: byteLen 83 != stride 84` (now `DecodeEntryBlob`). The "length mismatch must
    reject the decode" block now passes `unitTest=true`, so the rejection logs
    at info and names itself a test; it no longer counts as a failure line for
    the harness (section 1a).
