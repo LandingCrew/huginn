@@ -163,7 +163,7 @@ A few things to note:
 * **Weapons count as damage.** A `DamageAny` slot can serve you a sword. If you want attack magic only there, use `DamageMagic`.
 * **Held items are skipped.** Every slot leaves out what you are already holding (`bSkipEquipped`, on by default), which is what makes a weapon key show your *other* weapon.
 * **Magic Wands and Staves are ranged.** They match `WeaponsRanged`, not the spell classifications.
-* **The names have short forms.** `damage`, `healing`, `buffs`, `melee`, `destruction`, `drinks`, `any` and so on all work, and case doesn't matter.
+* **The names have short forms.** `damage`, `healing`, `buffs`, `melee`, `destruction`, `narcotics`, `any` and so on all work, and case doesn't matter.
 
 #### Keybindings
 

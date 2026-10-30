@@ -188,7 +188,7 @@ A few things to note:
 [*][b]Weapons count as damage.[/b] A [font=Courier New]DamageAny[/font] slot can serve you a sword. If you want attack magic only there, use [font=Courier New]DamageMagic[/font].[/*]
 [*][b]Held items are skipped.[/b] Every slot leaves out what you are already holding ([font=Courier New]bSkipEquipped[/font], on by default), which is what makes a weapon key show your [i]other[/i] weapon.[/*]
 [*][b]Magic wands and staves are ranged.[/b] They match [font=Courier New]WeaponsRanged[/font], not the spell classifications.[/*]
-[*][b]The names have short forms.[/b] [font=Courier New]damage[/font], [font=Courier New]healing[/font], [font=Courier New]buffs[/font], [font=Courier New]melee[/font], [font=Courier New]destruction[/font], [font=Courier New]drinks[/font], [font=Courier New]any[/font] and so on all work, and case doesn't matter.[/*]
+[*][b]The names have short forms.[/b] [font=Courier New]damage[/font], [font=Courier New]healing[/font], [font=Courier New]buffs[/font], [font=Courier New]melee[/font], [font=Courier New]destruction[/font], [font=Courier New]narcotics[/font], [font=Courier New]any[/font] and so on all work, and case doesn't matter.[/*]
 [/list]
 
 [b][color=#cc9933]Keybindings[/color][/b]
