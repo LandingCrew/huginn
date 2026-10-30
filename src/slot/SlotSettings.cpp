@@ -19,15 +19,6 @@ namespace Huginn::Slot
     static_assert(SLOT_CLASSIFICATION_COUNT == 24,
         "SlotClassification changed — update ParseClassification and ClassificationToIniString");
 
-    void SlotSettings::LoadFromFile(const std::filesystem::path& iniPath)
-    {
-        CSimpleIniA ini;
-        if (LoadIniFile(ini, iniPath, "SlotSettings"sv)) {
-            SKSE::log::info("[SlotSettings] Loading from: {}"sv, iniPath.string());
-            LoadFromIni(ini);
-        }
-    }
-
     void SlotSettings::LoadFromIni(const CSimpleIniA& ini)
     {
         // Read page count

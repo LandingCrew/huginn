@@ -120,9 +120,8 @@ namespace Huginn::UI
             return instance;
         }
 
-        void LoadFromFile(const std::filesystem::path& iniPath);
+        // Over the dMenu descriptor's defaults (Settings::LoadDMenuIni).
         void LoadFromIni(const CSimpleIniA& ini);
-        void ResetToDefaults();
 
         /// Produce an immutable snapshot of all widget settings.
         [[nodiscard]] IntuitionConfig BuildConfig() const;

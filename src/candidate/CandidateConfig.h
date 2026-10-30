@@ -121,12 +121,6 @@ namespace Huginn::Candidate
         // METHODS
         // =============================================================================
 
-        /// Reset all settings to defaults
-        void ResetToDefaults()
-        {
-            *this = CandidateConfig{};
-        }
-
         // Future: Load from INI file
         // static CandidateConfig LoadFromINI(const char* path);
         // void SaveToINI(const char* path) const;

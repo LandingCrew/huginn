@@ -1,6 +1,5 @@
 #include "IntuitionMenu.h"
 
-#include "Globals.h"  // GetDMenuIniPath
 #include "IntuitionSettings.h"
 #include "HudVisibilityManager.h"
 #include "slot/SlotAssignment.h"
@@ -560,17 +559,6 @@ namespace Huginn::UI
     }
 
     // ─── Hot Reload ─────────────────────────────────────────
-
-    void IntuitionMenu::ReapplySettings()
-    {
-        // Re-read INI on calling thread (file I/O is thread-safe), then delegate.
-        // MUST use GetDMenuIniPath(): dMenu owns [Widget] and the main Huginn.ini
-        // no longer defines it, so reading the main INI here would silently reset
-        // every widget setting to its compile-time default.
-        auto& settings = IntuitionSettings::GetSingleton();
-        settings.LoadFromFile(GetDMenuIniPath());
-        ReapplySettings(settings.BuildConfig());
-    }
 
     void IntuitionMenu::ReapplySettings(const IntuitionConfig& config)
     {

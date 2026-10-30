@@ -68,7 +68,7 @@ namespace Huginn::Slot
         // INITIALIZATION (Legacy - for backwards compatibility)
         // =========================================================================
 
-        /// Initialize from SlotSettings (call after SlotSettings::LoadFromFile)
+        /// Initialize from SlotSettings (call after SlotSettings::LoadFromIni)
         /// This is optional - allocation methods can work without initialization
         /// by reading directly from SlotSettings.
         void Initialize();

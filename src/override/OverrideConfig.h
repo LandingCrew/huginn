@@ -89,12 +89,9 @@ namespace Huginn::Override
             return instance;
         }
 
-        // Load settings from INI file
-        void LoadFromFile(const std::filesystem::path& iniPath);
+        // Load [Overrides] from the parsed main INI (Settings::LoadMainIni, over
+        // the shipped Huginn.ini, whose values are the defaults)
         void LoadFromIni(const CSimpleIniA& ini);
-
-        // Reset to defaults
-        void ResetToDefaults();
 
         // =========================================================================
         // CRITICAL HEALTH OVERRIDE

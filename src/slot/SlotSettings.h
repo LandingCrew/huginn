@@ -57,11 +57,15 @@ namespace Huginn::Slot
             return instance;
         }
 
-        /// Load settings from INI file
-        void LoadFromFile(const std::filesystem::path& iniPath);
+        /// Load the page layout and the [SlotLocker] keys read here from the
+        /// parsed main INI (Settings::LoadMainIni, over the shipped Huginn.ini,
+        /// whose layout -- its [Pages] -- is the default).
         void LoadFromIni(const CSimpleIniA& ini);
 
-        /// Reset to default configuration
+        /// The state before the first load (the constructor): one page of the
+        /// compiled-in PAGE0_SLOTS. Not the shipped defaults -- those are the
+        /// shipped Huginn.ini, which every load reads under the player's file,
+        /// and which dMenu's Reset to Defaults loads.
         void ResetToDefaults();
 
         /// Get page count
@@ -225,7 +229,7 @@ namespace Huginn::Slot
         }
 
         /// Monotonic generation counter — bumped on every config change
-        /// (LoadFromFile / ResetToDefaults). Consumers can cache config copies
+        /// (LoadFromIni / ResetToDefaults). Consumers can cache config copies
         /// and cheaply detect staleness without re-copying every access.
         [[nodiscard]] uint32_t GetGeneration() const noexcept
         {

@@ -92,7 +92,10 @@ target_include_directories(
    PRIVATE
       "${CMAKE_CURRENT_BINARY_DIR}/src"
       "${SOURCE_DIR}"
+      # huginn/ShippedFiles.h (root CMakeLists.txt, cmake/EmbedShipped.cmake)
+      "${HUGINN_GENERATED_DIR}"
 )
+add_dependencies("${PROJECT_NAME}" huginn_shipped_files)
 
 target_compile_definitions(
    "${PROJECT_NAME}"

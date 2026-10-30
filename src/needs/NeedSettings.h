@@ -39,7 +39,6 @@ namespace Huginn::Needs
       }
 
       void LoadFromIni(const CSimpleIniA& ini);
-      void ResetToDefaults();
 
       /// R8.3: the bootstrap's curves, applied over the INI from now on.
       void SetBootstrapCurves(const std::vector<Core::Bootstrap::BuildCurve>& curves);

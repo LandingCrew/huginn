@@ -93,12 +93,9 @@ namespace Huginn::Wheeler
             return instance;
         }
 
-        // Load settings from INI file
-        void LoadFromFile(const std::filesystem::path& iniPath);
+        // Load [Wheeler]/[Subtexts] from the parsed main INI (Settings::LoadMainIni,
+        // over the shipped Huginn.ini, whose values are the defaults)
         void LoadFromIni(const CSimpleIniA& ini);
-
-        // Reset to defaults
-        void ResetToDefaults();
 
         // Returns the int32_t position value to pass to Wheeler API
         // 0 = First, -1 = Last (append), N = specific index

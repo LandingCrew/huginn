@@ -21,11 +21,13 @@ namespace Huginn::Settings
     /// Ownership (exclusive — nothing is defined in both files):
     /// - dMenu INI: [Widget], [Debug]
     /// - Main Huginn.ini: [Keybindings] + every other section
+    /// Each is read over its shipped defaults (settings/ShippedDefaults.h): a
+    /// key the file leaves out reads the shipped value.
     ///
     /// Graceful degradation:
-    /// - If dMenu not installed: no events fire; [Widget]/[Debug] take compile-time
-    ///   defaults (configuring the widget UI requires dMenu), everything else
-    ///   loads from Huginn.ini as normal
+    /// - If dMenu not installed: no events fire; [Widget]/[Debug] take the dMenu
+    ///   descriptor's defaults (configuring the widget UI requires dMenu),
+    ///   everything else loads from Huginn.ini as normal
     /// - If dMenu installed but no JSON: Huginn panel doesn't appear, same as above
     /// - If dMenu installed with JSON: full hot-reload via dMenu UI
     class SettingsReloader : public RE::BSTEventSink<SKSE::ModCallbackEvent>
@@ -93,8 +95,12 @@ namespace Huginn::Settings
         /// Handle button callbacks (Reset Learned Weights, Reset Defaults, Reload INI)
         void HandleButtonCallback(std::string_view buttonId);
 
-        /// Reset all settings to compile-time defaults.
-        /// Wraps itself in UpdateHandler::RunExclusive like ReloadAllSettings.
+        /// Reset every setting to the shipped defaults (Reset to Defaults):
+        /// writes the shipped Huginn.ini (and dMenu's INI, at the descriptor's
+        /// defaults, when it exists) over the player's, keeping each old file as
+        /// <name>.<stamp>.bak, then loads the shipped layers alone. Learned data is not
+        /// touched. Wraps itself in UpdateHandler::RunExclusive like
+        /// ReloadAllSettings (the file writes happen before, outside the lock).
         void ResetAllToDefaults();
 
         /// Reload implementation. REQUIRES: update mutex held (RunExclusive).
@@ -102,6 +108,13 @@ namespace Huginn::Settings
 
         /// Reset implementation. REQUIRES: update mutex held (RunExclusive).
         void ResetAllToDefaultsExclusive();
+
+        /// Load every settings class from the parsed INIs (Phase 1), then
+        /// ApplySideEffects (Phase 2). Shared by reload and reset, so the two
+        /// cannot load different sets of settings. REQUIRES: update mutex held.
+        /// @param resetToDefaults Reset to Defaults: also rebuild the Wheeler
+        ///   wheels at sWheelPosition and clear the widget's hide latch.
+        void ApplyIni(const CSimpleIniA& mainIni, const CSimpleIniA& dMenuIni, bool resetToDefaults);
 
         /// The inputs Wheeler wheel *creation* actually depends on: the wheel
         /// position and, per page, the name + slot count. Everything else Wheeler
@@ -120,14 +133,14 @@ namespace Huginn::Settings
 
         /// Apply side effects after settings have been reloaded/reset
         /// (scorer config, allocator, locker, wheels, widget).
-        /// @param mainIni      When non-null, the already-parsed main INI is reused
-        ///   for the wildcard + slot-locker loads (parse-once reload path). When
-        ///   null (reset-to-defaults path), those two loaders parse Huginn.ini
-        ///   themselves, preserving the prior behavior.
+        /// @param mainIni      The already-parsed main INI (the player's over the
+        ///   shipped one, or the shipped one alone on a reset), reused for the
+        ///   wildcard, slot-locker and choice-learner loads.
         /// @param beforeLayout Wheel layout captured before the reload/reset; the
-        ///   Wheeler rebuild is skipped when the post-reload layout matches it.
-        void ApplySideEffects(const CSimpleIniA* mainIni, const WheelLayout& beforeLayout,
-                              bool wasEnabled);
+        ///   Wheeler rebuild is skipped when the post-reload layout matches it
+        ///   (never on a reset).
+        void ApplySideEffects(const CSimpleIniA& mainIni, const WheelLayout& beforeLayout,
+                              bool wasEnabled, bool resetToDefaults);
 
         /// Registration state (atomic for thread safety)
         std::atomic<bool> m_registered{false};

@@ -5,14 +5,6 @@
 
 namespace Huginn::Learning
 {
-    void LearningSettings::LoadFromFile(const std::filesystem::path& iniPath)
-    {
-        CSimpleIniA ini;
-        if (LoadIniFile(ini, iniPath, "LearningSettings"sv)) {
-            LoadFromIni(ini);
-        }
-    }
-
     void LearningSettings::LoadFromIni(const CSimpleIniA& ini)
     {
         const char* section = "Learning";
@@ -47,15 +39,6 @@ namespace Huginn::Learning
         } else {
             logger::info("[LearningSettings] Useful life: off (nothing fades or is forgotten)"sv);
         }
-    }
-
-    void LearningSettings::ResetToDefaults()
-    {
-        learnFromExternalEquips = LearningDefaults::LEARN_FROM_EXTERNAL_EQUIPS;
-        externalEquipTimeWindow = LearningDefaults::EXTERNAL_EQUIP_TIME_WINDOW;
-        memory = MemoryLife{};
-
-        logger::info("[LearningSettings] Reset to defaults"sv);
     }
 
     LearningConfig LearningSettings::BuildConfig() const

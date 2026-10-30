@@ -4,14 +4,6 @@
 
 namespace Huginn::Scoring
 {
-    void ScorerSettings::LoadFromFile(const std::filesystem::path& iniPath)
-    {
-        CSimpleIniA ini;
-        if (LoadIniFile(ini, iniPath, "ScorerSettings"sv)) {
-            LoadFromIni(ini);
-        }
-    }
-
     void ScorerSettings::LoadFromIni(const CSimpleIniA& ini)
     {
         // =====================================================================
@@ -73,39 +65,6 @@ namespace Huginn::Scoring
             favoritesBoostMax,
             minimumUtility, minimumContextWeight, coldStartUCBBoost, topNCandidates,
             refreshPriorSec);
-    }
-
-    void ScorerSettings::ResetToDefaults()
-    {
-        lambdaMin = ScorerDefaults::LAMBDA_MIN;
-        lambdaMax = ScorerDefaults::LAMBDA_MAX;
-        explorationWeight = ScorerDefaults::EXPLORATION_WEIGHT;
-
-        bowArrowBonus = ScorerDefaults::BOW_ARROW_BONUS;
-        crossbowBoltBonus = ScorerDefaults::CROSSBOW_BOLT_BONUS;
-        meleeDefensiveBonus = ScorerDefaults::MELEE_DEFENSIVE_BONUS;
-        silverUndeadBonus = ScorerDefaults::SILVER_UNDEAD_BONUS;
-        fortifySchoolBonus = ScorerDefaults::FORTIFY_SCHOOL_BONUS;
-        staffLowMagickaBonus = ScorerDefaults::STAFF_LOW_MAGICKA_BONUS;
-        twoHandedDefensiveBonus = ScorerDefaults::TWO_HANDED_DEFENSIVE_BONUS;
-
-        combatStartWindow = ScorerDefaults::COMBAT_START_WINDOW;
-        regenPotionCombatStartMult = ScorerDefaults::REGEN_POTION_COMBAT_START_MULT;
-        flatRestoreLowResourceMult = ScorerDefaults::FLAT_RESTORE_LOW_RESOURCE_MULT;
-
-        minimumUtility = ScorerDefaults::MINIMUM_UTILITY;
-        minimumContextWeight = ScorerDefaults::MINIMUM_CONTEXT_WEIGHT;
-        coldStartUCBBoost = ScorerDefaults::COLD_START_UCB_BOOST;
-
-        topNCandidates = ScorerDefaults::TOP_N_CANDIDATES;
-
-        refreshPriorSec = ScorerDefaults::REFRESH_PRIOR_SEC;
-        State::StateManager::GetSingleton().SetRefreshPriorSec(refreshPriorSec);
-
-        favoritesMode = FavoritesMode::Boost;
-        favoritesBoostMax = ScorerDefaults::FAVORITES_BOOST_MAX;
-
-        logger::info("[ScorerSettings] Reset to defaults"sv);
     }
 
     ScorerConfig ScorerSettings::BuildConfig() const

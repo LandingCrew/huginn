@@ -110,26 +110,31 @@ void ResetPipelineSubsystems();
 /// through here so a console reload can't silently reset them by reading the
 /// wrong file. [Keybindings] is NOT here — it belongs to the main INI.
 /// @note The main-INI fallback is inert for these sections: Huginn.ini does not
-/// define [Widget] or [Debug], so with dMenu absent they take compile-time
-/// defaults. Configuring the widget UI requires dMenu.
+/// define [Widget] or [Debug], so with dMenu absent they take the dMenu
+/// descriptor's defaults (Settings::LoadDMenuIni). Configuring the widget UI
+/// requires dMenu.
 [[nodiscard]] std::filesystem::path GetDMenuIniPath();
 
-// LoadIniFile is declared in IniLoad.h (included above) — the shared parse front
-// door used by every settings loader.
+/// @brief dMenu's own INI for Huginn, whether or not it exists
+/// (Data/SKSE/Plugins/dmenu/customSettings/ini/Huginn.ini). Readers use
+/// GetDMenuIniPath(); this is for the one writer, Reset to Defaults.
+[[nodiscard]] std::filesystem::path GetDMenuOwnIniPath();
+
+// Settings INIs are parsed through Settings::LoadMainIni / LoadDMenuIni
+// (settings/ShippedDefaults.h): the shipped file, then the player's over it.
+// LoadIniFile (IniLoad.h) is for the other files (Huginn_Overrides.ini, the
+// test harness's INI).
 
 /// @brief Load [Candidates] section settings from an already-parsed INI into g_candidateConfig.
 void LoadCandidateConfigFromINI(const CSimpleIniA& ini);
-/// @brief Convenience overload: parse Huginn.ini, then load [Candidates].
-/// @note Called during both kNewGame and kPostLoadGame events.
-void LoadCandidateConfigFromINI();
 
 /// @brief Load [Wildcards] section settings from an already-parsed INI into the WildcardManager.
 void LoadWildcardConfigFromINI(Huginn::Scoring::WildcardManager& wildcardMgr, const CSimpleIniA& ini);
 
 /// @brief Load [SlotLocker] section settings from an already-parsed INI.
 [[nodiscard]] Huginn::Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini);
-/// @brief Convenience overload: parse Huginn.ini, then load [SlotLocker].
-/// @note Called during kNewGame, kPostLoadGame, and hg reload.
+/// @brief Convenience overload: parse the main INI (Settings::LoadMainIni), then load [SlotLocker].
+/// @note Called by ResetPipelineSubsystems (game load, hg reset all).
 [[nodiscard]] Huginn::Slot::SlotLockConfig LoadSlotLockerConfigFromINI();
 
 // =============================================================================

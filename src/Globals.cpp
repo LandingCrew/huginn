@@ -13,6 +13,7 @@
 #include "core/WildcardGate.h"   // GateSettings: the [Wildcards] clocks' defaults
 #include "core/WildcardPick.h"   // Params: the [Wildcards] odds' defaults
 #include "core/ChallengerRule.h"   // the combat upsert confidence range (0.24.13)
+#include "settings/ShippedDefaults.h"   // LoadMainIni: the shipped Huginn.ini under the player's
 
 #include <algorithm>
 #include <filesystem>
@@ -144,8 +145,12 @@ std::filesystem::path GetMainIniPath() {
   return std::filesystem::path("Data/SKSE/Plugins/Huginn.ini");
 }
 
+std::filesystem::path GetDMenuOwnIniPath() {
+  return std::filesystem::path("Data/SKSE/Plugins/dmenu/customSettings/ini/Huginn.ini");
+}
+
 std::filesystem::path GetDMenuIniPath() {
-  const auto dmenuIniPath = std::filesystem::path("Data/SKSE/Plugins/dmenu/customSettings/ini/Huginn.ini");
+  const auto dmenuIniPath = GetDMenuOwnIniPath();
 
   try {
     if (std::filesystem::exists(dmenuIniPath)) {
@@ -180,13 +185,6 @@ bool LoadIniFile(CSimpleIniA& out, const std::filesystem::path& path, std::strin
   return true;
 }
 
-void LoadCandidateConfigFromINI() {
-  CSimpleIniA ini;
-  if (LoadIniFile(ini, GetMainIniPath(), "CandidateConfig"sv)) {
-    LoadCandidateConfigFromINI(ini);
-  }
-}
-
 void LoadCandidateConfigFromINI(const CSimpleIniA& ini) {
   const char* section = "Candidates";
 
@@ -216,11 +214,11 @@ void LoadCandidateConfigFromINI(const CSimpleIniA& ini) {
 }
 
 Slot::SlotLockConfig LoadSlotLockerConfigFromINI() {
+  // The shipped Huginn.ini with the player's over it: a key the player's file
+  // leaves out (or no file at all) reads the shipped value.
   CSimpleIniA ini;
-  if (LoadIniFile(ini, GetMainIniPath(), "SlotLockerConfig"sv)) {
-    return LoadSlotLockerConfigFromINI(ini);
-  }
-  return Slot::SlotLockConfig{};  // defaults
+  Settings::LoadMainIni(ini, "SlotLockerConfig"sv);
+  return LoadSlotLockerConfigFromINI(ini);
 }
 
 Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {
@@ -282,8 +280,10 @@ Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {
 
 void LoadWildcardConfigFromINI(Scoring::WildcardManager& wildcardMgr, const CSimpleIniA& ini) {
   const char* section = "Wildcards";
-  // A missing key takes the core structs' default (the shipped Huginn.ini's
-  // value); an empty INI therefore loads the defaults (dMenu Reset to Defaults).
+  // `ini` is the main INI over the shipped Huginn.ini (Settings::LoadMainIni),
+  // or the shipped file alone on dMenu's Reset to Defaults, so these keys are
+  // always there. The core structs' defaults (equal to the shipped values)
+  // apply only to a key in neither file.
   constexpr Core::Wildcard::Params odds{};
   constexpr Core::Wildcard::GateSettings clocks{};
 
