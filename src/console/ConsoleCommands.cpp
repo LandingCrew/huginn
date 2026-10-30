@@ -338,7 +338,7 @@ namespace Huginn::Console
          Print(line.c_str());
          logger::info("[Console] hg status: {}"sv, line);
       }
-      // 0.24.12: the discovery boost (core/DiscoveryBoost.h).
+      // 0.24.14: the discovery boost (core/DiscoveryBoost.h).
       if (g_choiceLearner) {
          const auto ds = g_choiceLearner->GetDiscoveryStats();
          const auto p = g_choiceLearner->GetSettings().discovery;
@@ -569,7 +569,7 @@ namespace Huginn::Console
          PrintAndLog(std::format("{:08X} '{}': no b entry (prior: mu 0, sd {:.2f})", formID, name,
             std::sqrt(Core::Choice::kPriorVarB)));
       }
-      // 0.24.12: newly gained? (the wildcard draw reads b's variance x m)
+      // 0.24.14: newly gained? (the wildcard draw reads b's variance x m)
       if (const auto [mult, age] = g_choiceLearner->DiscoveryOf(formID); age >= 0.0) {
          PrintAndLog(std::format("  discovery boost: gained {:.0f} min of play ago, b's variance x{:.2f} in the "
                                  "wildcard draw{}", age / 60.0, mult,

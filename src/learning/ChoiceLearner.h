@@ -31,7 +31,7 @@
 //   seeded from the file's items under [Learning] sBootstrapBias.
 //   kappa and the feature weights: the file's, fixed (format v1 gives them no
 //   precision, so there is no belief to update).
-//   The discovery boost (0.24.12, core/DiscoveryBoost.h): the forms this
+//   The discovery boost (0.24.14, core/DiscoveryBoost.h): the forms this
 //   character has held or known, and the newly gained ones with the play
 //   second they came; the snapshot hands the boosts to the wildcard draw
 //   (b's variance x m(age) there only). Cosave record DISC.
@@ -76,7 +76,7 @@ namespace Huginn::Learning
         double favoriteLifeMult = 2.0;       // [Favorites] fFavoriteLifeMult (Boost mode)
         bool legacyLearnFeature = true;      // [Scoring] bLegacyLearnFeature (R8.3: live, hot-reloaded)
         Core::Discovery::Params discovery;   // [Learning] bDiscoveryBoost, fDiscoveryBoostVarMult,
-                                             // fDiscoveryBoostHalfLifeSec (0.24.12, hot-reloaded)
+                                             // fDiscoveryBoostHalfLifeSec (0.24.14, hot-reloaded)
 
         static ChoiceSettings FromIni(const CSimpleIniA& ini);
     };
@@ -175,7 +175,7 @@ namespace Huginn::Learning
         /// life, and end the discovery boosts that have run out.
         std::size_t MaybeForgetFaded();
 
-        // ---- the discovery boost (core/DiscoveryBoost.h, 0.24.12) -------------
+        // ---- the discovery boost (core/DiscoveryBoost.h, 0.24.14) -------------
         // Runs whether or not the model is ready (its record is the
         // character's, not the model's); only the snapshot reads the boosts.
         /// A form the player just gained (`via`: "inventory" or "spell", for

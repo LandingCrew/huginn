@@ -200,9 +200,9 @@ The new model (R8.2, 0.23.56, in shadow then; it ranks since R8.3, 0.24.0):
   (which calls it with the same arithmetic) and shared with b.
 - `Sha256.h`: the bootstrap's digest for the v3 head.
 - `ChoiceCosave.*`: the cosave records THTA (theta by stable key), BIAS (b
-  per item) and DISC (the discovery boost's sets, 0.24.12) as byte blobs, and
+  per item) and DISC (the discovery boost's sets, 0.24.14) as byte blobs, and
   the load's merge of THTA onto the bootstrap.
-- `DiscoveryBoost.h` (0.24.12): a newly gained spell or item reads b's
+- `DiscoveryBoost.h` (0.24.14): a newly gained spell or item reads b's
   variance x m(age) in the wildcard draw only (m decays by a half-life of
   play, ends at the first pick); the tracker of what the character has held
   (present at a load: never boosted) and what it gained since.

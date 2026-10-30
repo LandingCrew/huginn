@@ -657,7 +657,7 @@ namespace Huginn::Learning
     }
 
     // =========================================================================
-    // THE DISCOVERY BOOST (0.24.12, core/DiscoveryBoost.h)
+    // THE DISCOVERY BOOST (0.24.14, core/DiscoveryBoost.h)
     // =========================================================================
     Core::Discovery::Tracker::Gain ChoiceLearner::OnGained(std::uint32_t form, const char* via)
     {

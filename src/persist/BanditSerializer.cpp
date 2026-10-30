@@ -349,7 +349,7 @@ namespace Huginn::Persist
       s_loadedCharacterID.reset();
       s_loadedClock.reset();
       ResetPendingChoice();
-      // 0.24.12: no discovery-boost gains until the load's prime (Main.cpp
+      // 0.24.14: no discovery-boost gains until the load's prime (Main.cpp
       // step 6c): nothing this load restores may count as newly gained.
       if (g_choiceLearner) g_choiceLearner->SuspendDiscovery();
       logger::debug("[Cosave] Revert: learner kept until the load decides"sv);

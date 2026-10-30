@@ -7,7 +7,7 @@
 namespace Huginn::Persist
 {
    // =========================================================================
-   // SKSE Cosave -- the choice learner (R8.3): THTA and BIAS; DISC (0.24.12)
+   // SKSE Cosave -- the choice learner (R8.3): THTA and BIAS; DISC (0.24.14)
    // =========================================================================
    // Written and read inside BanditSerializer's callbacks (one SKSE unique ID
    // per plugin), beside HCID and BNDW. The byte formats are the pure codec's

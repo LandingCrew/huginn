@@ -127,7 +127,7 @@ namespace Huginn::Slot
             c.tieBreak = sc.TieBreakDps();
             // R10: the score's sd for the wildcard draw (core/WildcardPick.h);
             // none in the fallback ranking (no posterior: the draw is uniform).
-            // 0.24.12: with b's variance x the discovery boost for a newly
+            // 0.24.14: with b's variance x the discovery boost for a newly
             // gained item (core/DiscoveryBoost.h; 1 for every other row).
             c.sd = sc.fallbackRanked ? 0.0 : std::sqrt(std::max(sc.choice.WildcardVar(), 0.0));
             c.isRememberedOnly = sc.isRememberedOnly;

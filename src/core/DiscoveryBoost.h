@@ -1,7 +1,7 @@
 #pragma once
 
 // =============================================================================
-// DISCOVERY BOOST (0.24.12) -- a newly gained item starts more uncertain
+// DISCOVERY BOOST (0.24.14) -- a newly gained item starts more uncertain
 // =============================================================================
 // R10's wildcard key draws an off-page row by relevance x sd
 // (core/WildcardPick.h). A spell learned or an item found during play has no

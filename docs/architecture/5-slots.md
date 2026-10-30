@@ -1328,8 +1328,8 @@ ran down (b back at its prior N(0, 0.25)), pairings with little evidence
 spells and items (below) -- all through sd; and only those close enough to the
 page to matter, through rel.
 
-**The discovery boost (0.24.12).** A newly learned spell has no b, so up to
-0.24.11 its sd carried b's prior sd (0.5) -- the same as each of the hundreds
+**The discovery boost (0.24.14).** A newly learned spell has no b, so up to
+0.24.13 its sd carried b's prior sd (0.5) -- the same as each of the hundreds
 of items the character carries and has never picked, so nothing set it apart.
 Now an item the player newly GAINS during play draws with b's variance
 multiplied by

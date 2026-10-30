@@ -413,7 +413,7 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
         }
         Persist::ResolveLoadedChoice(*g_choiceLearner, loadDecision, g_activeCharacterID.load(std::memory_order_relaxed));
 
-        // 0.24.12: the discovery boost (core/DiscoveryBoost.h). After the
+        // 0.24.14: the discovery boost (core/DiscoveryBoost.h). After the
         // cosave's DISC is applied (ResolveLoadedChoice): what this load holds
         // -- the inventory and the spells, read at step 3 -- is seen, never
         // boosted, and gains count from here (SKSE's revert suspended them).

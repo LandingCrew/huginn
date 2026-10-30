@@ -709,7 +709,7 @@ Scoring::ScoredCandidateList PipelineCoordinator::RankOnChoice(PipelineContext& 
         p.needMu = ls.needMu;
         p.b = extras[i].bMu;
         p.bVar = extras[i].bVar;
-        // 0.24.12: a newly gained item's boost, for the wildcard draw only
+        // 0.24.14: a newly gained item's boost, for the wildcard draw only
         // (SlotSnapshot reads WildcardVar; core/DiscoveryBoost.h says why not
         // the score's variance).
         p.discovery = snap->DiscoveryMult(sc.GetFormID(), run->playNow);

@@ -709,7 +709,7 @@ void OnUpdate(float deltaSeconds)
 
     UpdateSubsystems(deltaSeconds, deltaMs);
     MaintainRegistries(player, now);
-    // 0.24.12: spells the reconcile just added in play -> the discovery boost
+    // 0.24.14: spells the reconcile just added in play -> the discovery boost
     // (before this tick's pipeline, which then reads the boost).
     Learning::Discovery::ForwardLearnedSpells();
 

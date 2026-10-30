@@ -33,7 +33,7 @@
 // favourite bit (without it a favourite's battery would run at 1x until its
 // next pick).
 //
-// DISC, version 1 (the discovery boost, core/DiscoveryBoost.h; 0.24.12):
+// DISC, version 1 (the discovery boost, core/DiscoveryBoost.h; 0.24.14):
 //   u32 version
 //   u32 seenCount
 //   seenCount x u32 formID                    the forms this character has held or known

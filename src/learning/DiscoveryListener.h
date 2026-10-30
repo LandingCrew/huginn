@@ -6,7 +6,7 @@
 namespace Huginn::Learning::Discovery
 {
     // =========================================================================
-    // THE DISCOVERY BOOST'S GAME SIDE (0.24.12; the rule is core/DiscoveryBoost.h)
+    // THE DISCOVERY BOOST'S GAME SIDE (0.24.14; the rule is core/DiscoveryBoost.h)
     // =========================================================================
     // Three sources feed ChoiceLearner's tracker:
     //

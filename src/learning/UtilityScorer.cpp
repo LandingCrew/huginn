@@ -138,7 +138,7 @@ namespace Huginn::Scoring
                 scored.score, std::sqrt(std::max(p.var, 0.0)),
                 terms, p.needMu, p.b, p.lnLearnMult, p.utilMissing != 0.0 ? " um" : "",
                 p.covered > 0.0 ? fmt::format(" covered={:.2f}", p.covered) : std::string{},
-                // 0.24.12: newly gained -- the wildcard draw reads sd_w (core/DiscoveryBoost.h)
+                // 0.24.14: newly gained -- the wildcard draw reads sd_w (core/DiscoveryBoost.h)
                 p.discovery > 1.0 ? fmt::format(" new x{:.2f} sd_w={:.3f}", p.discovery,
                                         std::sqrt(std::max(p.WildcardVar(), 0.0)))
                                   : std::string{},

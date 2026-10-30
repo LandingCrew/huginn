@@ -1,4 +1,4 @@
-// Host tests for the discovery boost (0.24.12, core/DiscoveryBoost.h) and its
+// Host tests for the discovery boost (0.24.14, core/DiscoveryBoost.h) and its
 // cosave record DISC (core/ChoiceCosave.h): the multiplier and its decay, the
 // expiry, the draw variance and what it does to the wildcard weight, the
 // tracker's rules (present at load: never boosted; a form seen once is never

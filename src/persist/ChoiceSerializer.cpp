@@ -17,7 +17,7 @@ namespace Huginn::Persist
    static std::optional<CC::ThetaRecord> s_pendingTheta;
    static std::optional<std::vector<Learning::ChoiceLearner::BEntry>> s_pendingBias;
    static std::size_t s_biasUnresolved = 0;
-   // 0.24.12: DISC, FormIDs resolved to this session's load order.
+   // 0.24.14: DISC, FormIDs resolved to this session's load order.
    static std::optional<Core::Discovery::Saved> s_pendingDiscovery;
 
    // Fallback mode (no bootstrap, or an invalid one): the records the load
@@ -50,7 +50,7 @@ namespace Huginn::Persist
       s_pendingDiscovery.reset();
    }
 
-   // DISC (0.24.12): the discovery boost's sets, written whether or not the
+   // DISC (0.24.14): the discovery boost's sets, written whether or not the
    // model is ready (the record is the character's: what it has held).
    static void SaveDiscovery(SKSE::SerializationInterface* a_intfc)
    {
@@ -252,7 +252,7 @@ namespace Huginn::Persist
             learner.ImportDiscovery(*disc);
          } else {
             learner.ClearDiscovery();
-            logger::info("[Cosave] No DISC in this save (older than 0.24.12, or unreadable): the discovery boost's "
+            logger::info("[Cosave] No DISC in this save (older than 0.24.14, or unreadable): the discovery boost's "
                          "seen set starts from what the character holds"sv);
          }
          return;

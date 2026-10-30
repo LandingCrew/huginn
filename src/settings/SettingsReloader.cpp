@@ -398,7 +398,7 @@ namespace Huginn::Settings
         }
         // R8.2: the new learner's keys ([Learning] sBootstrapBias and
         // fThetaProcessNoise, [Scoring] fCoveredPrior and bLegacyLearnFeature,
-        // [Favorites] fFavoriteLifeMult; 0.24.12: bDiscoveryBoost,
+        // [Favorites] fFavoriteLifeMult; 0.24.14: bDiscoveryBoost,
         // fDiscoveryBoostVarMult, fDiscoveryBoostHalfLifeSec, live at the next
         // pipeline run) and its battery. sBootstrapBias and
         // fCoveredPrior take effect at the next load or `hg reset all`.

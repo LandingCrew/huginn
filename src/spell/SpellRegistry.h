@@ -68,7 +68,7 @@ namespace Huginn::Spell
       // Clears the newly-learned queue too.
       void ForgetLearnedTimes();
 
-      // 0.24.12: the spells added since the last call, with LearnedAt's
+      // 0.24.14: the spells added since the last call, with LearnedAt's
       // meaning (learned in play, not brought by a load or a rebuild): the
       // discovery boost's spell source (UpdateLoop -> ChoiceLearner::OnGained).
       [[nodiscard]] std::vector<RE::FormID> TakeNewlyLearned();

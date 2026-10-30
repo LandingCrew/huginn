@@ -113,7 +113,7 @@ namespace Huginn::Scoring
             double needMu = 0.0;       // the need terms' part of mu
             double b = 0.0;            // b as read now (the battery applied)
             double bVar = 0.0;         // b's variance as read now (part of var)
-            // 0.24.12: the discovery boost's multiplier on b's variance, for
+            // 0.24.14: the discovery boost's multiplier on b's variance, for
             // the wildcard draw ONLY (core/DiscoveryBoost.h: a newly gained
             // item; 1 otherwise). var, the challenger rule and the log read
             // the unboosted posterior.
