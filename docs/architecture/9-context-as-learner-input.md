@@ -1,7 +1,7 @@
 # Rethinking context vs. learner
 
-**Status:** proposal from a design discussion, 2026-10-07. Nothing here is built.
-Several points still need to be challenged before any of it is scheduled.
+**Status:** design of record, 2026-10-07; built in R8.2-R11 (0.23.56-0.24.4). What was
+built, and where it departs from this page, is in [9-implementation-map.md](9-implementation-map.md).
 
 ## Summary
 
@@ -12,6 +12,8 @@ Stop multiplying a hand-tuned context scalar by a per-item learner. Instead, rul
 - **What stays hand-written:** sensors, response curves, effect extraction, overrides. What stops being hand-tuned: the weights.
 
 ## How it works today
+
+"Today" means the engine at 0.23.x (2026-10-07), which R8.3 replaced; the file:line citations below are to that version (the old score is now `src/learning/legacy/LegacyScorer.cpp`, `ComputeUtility` at :218).
 
 The score is a product of five factors, and only the first two are what the architecture diagrams show (`UtilityScorer::ComputeUtility`, `src/learning/UtilityScorer.cpp:440`).
 
@@ -179,7 +181,7 @@ The process-noise level cannot be fitted from the soak log (11.4 play-hours, no 
 Learning on effects rather than FormIDs handles both catches without special code.
 
 1. **A higher tier should supersede a lower one.** Restore Health (Fair) has the same effect as (Faint), so it inherits everything learned about healing the moment it's picked up. Nothing has to be unlearned.
-2. **The greediest potion isn't always best.** Add a feature for how far the item overshoots the need (e.g. magnitude minus missing health). A player who saves big potions for big gaps drives that weight negative, so "smallest that covers" is learned from behaviour. Today the scorer hard-codes it with `POTION_TIER_STEP` (`ScorerConfig.h:28`, applied at `UtilityScorer.cpp:332`).
+2. **The greediest potion isn't always best.** Add a feature for how far the item overshoots the need (e.g. magnitude minus missing health). A player who saves big potions for big gaps drives that weight negative, so "smallest that covers" is learned from behaviour. Today the scorer hard-codes it with `POTION_TIER_STEP` (`ScorerConfig.h:28`, applied at `UtilityScorer.cpp:332`; pruned in R8.4, the overshoot_* cross-features carry it now, `core/CrossFeatures.h`).
 
 What's left is bᵢ: a strong per-item habit could hold onto (Faint). Keeping bᵢ small and letting the battery fade it is the answer; check it in replay.
 
@@ -345,9 +347,9 @@ Open points:
   - **Depends on decision 4:** the update rule must keep a variance per weight (the recommended simple online logistic step with a diagonal variance does; a plain gradient step does not). Today's engine has no error bars, so this is a new-system feature.
   - **The slot class cap (formerly the need cap) stays a ratio for now;** a Bayesian version ("how likely does the player want a second item for this need?") is more involved.
   - Supersedes the three derivation options recorded earlier the same day: this is option 1, with option 2 (cost of a move) as its next step and option 3 (replay) as the check.
-- [ ] **The slot manager assumes a positive multiplicative score.** The hold margin (×1.5 challenger ratio), the slot class cap (×0.5, ×0.25), `fMinimumUtility` and the override thresholds are all ratios or floors on today's utility. An additive θ·need·cap + bᵢ can be zero or negative. Decide whether the slot manager works on exp(score) (the choice model's odds) or every one of those is re-derived. **Recommended: likelihoods**, with the hold margin as the Bayesian confidence rule above; the need cap and the floor follow once that is built.
+- [x] **The slot manager assumes a positive multiplicative score.** *(Settled: the slot manager works on scores, i.e. exp(score) as odds; the class cap is additive since R7 (`SlotClassCap.h`), and the hold is the challenger rule (R9).)* The hold margin (×1.5 challenger ratio), the slot class cap (×0.5, ×0.25), `fMinimumUtility` and the override thresholds are all ratios or floors on today's utility. An additive θ·need·cap + bᵢ can be zero or negative. Decide whether the slot manager works on exp(score) (the choice model's odds) or every one of those is re-derived. **Recommended: likelihoods**, with the hold margin as the Bayesian confidence rule above; the need cap and the floor follow once that is built.
 - [x] **Weapons need a capability vector too.** The extractor reads MagicEffect data, which covers spells, potions, scrolls and enchantments. A plain weapon has none, so its cap(i) is empty and bᵢ carries everything -- the soak's concentration (Soul Sword, 16% of trains) under a new name. **Decided (the user, 2026-10-07): yes** -- expand the registries / state manager to read weapons (type, hand, damage, speed, reach, enchantment) and armour (slot, rating, weight class, enchantment), behind the effect-view dump below.
-- [ ] **Derive the minimum utility; do not set it** (the user, 2026-10-07: "should be derived, not something we should set"). Today `fMinimumUtility` (0.1) drops anything under it (`UtilityScorer.cpp:127`), and at least four always-on baselines exist only to clear it -- `weightWeapon`, `weightSpell`, `weightBuffPotion`/`weightBuffCombat`, `weightSoulGem` (`ContextRuleEngine.cpp:455-492`) -- plus `fColdStartUCBBoost`. One hand-set floor, five hand-set workarounds. Three ways to derive it, cheapest first:
+- [x] **Derive the minimum utility; do not set it** *(Settled differently: since R8.3 the floors drop nothing from the ranking; they decide only which rows get D2's feature.)* (the user, 2026-10-07: "should be derived, not something we should set"). Today `fMinimumUtility` (0.1) drops anything under it (`UtilityScorer.cpp:127`), and at least four always-on baselines exist only to clear it -- `weightWeapon`, `weightSpell`, `weightBuffPotion`/`weightBuffCombat`, `weightSoulGem` (`ContextRuleEngine.cpp:455-492`) -- plus `fColdStartUCBBoost`. One hand-set floor, five hand-set workarounds. Three ways to derive it, cheapest first:
   1. **The noise floor** (today's formula): the utility of an item with no context reason and no training, `baseRelevance × (1 + λmin × prior)`. It moves with the other parameters instead of drifting out of sync, and a category it keeps out has a sensor gap, not a threshold problem. The baselines then retire one by one as their sensors arrive.
   2. **Replay**: bin shown items by utility, measure the pick rate per bin, put the floor where it reaches ~0. Answers "when is a blank key better than the 9th-best item?" from play, and checks where (1) lands.
   3. **The outside option** (this model): the choice model gets a "nothing on the page" alternative -- no press, or a menu pick -- with its own learned score, fit from menu picks (goal 1's count). Show an item when it beats the outside option. (Superseded 2026-10-08: the outside option is "nothing pressed", recorded when a need expires; a menu pick is a choice from the held items off the page at a learned cost κ. Under a logit any item beats a blank key, so a floor needs a measured cost per shown item; theory page, P9 and P11.)

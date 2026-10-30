@@ -32,7 +32,9 @@ namespace Huginn::Needs
       // The bench by its workbench keyword (StateManager::BenchKindOf), not
       // the old engine's CraftSkillForWorkstation, which reads every
       // create-object bench (forge, cooking pot and spit, smelter, tanning
-      // rack) as smithing and still feeds scoring that way (frozen).
+      // rack) as smithing. That mapping still feeds the no_workstation hard
+      // gate and the skip gate's workstation flag (and D2's rules), kept so
+      // the gate drops exactly what the old weight zeroed.
       int WorkstationOf(const State::NeedSensorState& n)
       {
          return Core::Needs::NeedWorkstation(static_cast<Core::Needs::BenchKind>(n.bench));

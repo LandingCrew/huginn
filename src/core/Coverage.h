@@ -5,7 +5,8 @@
 // =============================================================================
 // Doc 11 (section 2.3, step 3): one runtime cross-feature, logged on every
 // selection log v3 row, saying how much of item i's effect is already running
-// on the player. LOGGING ONLY until R8 gives it a weight (theta_covered).
+// on the player. Logged from 0.23.46; since R8.3 (0.24.0) the choice score
+// weighs it with theta_covered (core/ChoiceScore.h).
 //
 //   covered(i) = max over the specific columns j of cap(i) of
 //                min(1, active_j / cap_j(i)) * left(r_j)

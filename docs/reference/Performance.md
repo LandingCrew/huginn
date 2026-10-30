@@ -1,6 +1,6 @@
 # Performance and Timing
 
-> **R11 (0.24.4):** the budgets below were measured on the old engine. Since R8.3 the hand-tuned engine (context weights × the bandit's learning score × multipliers) no longer ranks: every candidate is ranked on the choice score μ (θ over need × effect columns, b per item; doc 9, [9-implementation-map.md](../architecture/9-implementation-map.md)), and the old engine runs only for the D2 feature `ln learn mult` (`[Scoring] bLegacyLearnFeature`, confined by `tools/prune/r8_check.py`); the scoring zone is `Pipeline::RankOnChoice` (plus `Pipeline::ScoreShadow` for the v3 rows), and the legacy pass runs behind `bLegacyLearnFeature`.
+> **R11 (0.24.4):** the budgets below were measured on the old engine. Since R8.3 the hand-tuned engine (context weights × the bandit's learning score × multipliers) no longer ranks: every candidate is ranked on the choice score μ (θ over need × effect columns, b per item; doc 9, [9-implementation-map.md](../architecture/9-implementation-map.md)), and the old engine runs only for the D2 feature `ln learn mult` (`[Scoring] bLegacyLearnFeature`, confined by `tools/prune/r8_check.py`); the scoring zone is `Pipeline::RankOnChoice` (plus `Pipeline::LogChoiceRows`, named `ScoreShadow` before R8.3, for the v3 rows), and the legacy pass runs behind `bLegacyLearnFeature`.
 
 **Applies to v0.19.x.** Code claims verified against `src/` on 2026-08-29; the
 measurements are from the captures named below and nowhere else.
@@ -8,7 +8,7 @@ measurements are from the captures named below and nowhere else.
 > **Related documentation**
 > - [../profiling/tracy-traces.md](../profiling/tracy-traces.md) — the capture log. Every number here traces back to an entry there or to the roadmap items that cite one.
 > - [../roadmap.md](../roadmap.md) — "Tier 3 — hot-path perf" carries the current ranking and the 2026-08-26 figures.
-> - [../roadmap-archive.md](../roadmap-archive.md) — the archived O1 and #14 entries: what shipped, what was dropped, and why.
+> - `docs/roadmap-archive.md` (removed in dd73d24; `git show dd73d24^:docs/roadmap-archive.md`) — the archived O1 and #14 entries: what shipped, what was dropped, and why.
 > - [../refactor/wheeler-push-spikes.md](../refactor/wheeler-push-spikes.md) — the Wheeler push analysis whose ranking premise the long capture overturned.
 > - [../architecture/0-pipeline.md](../architecture/0-pipeline.md) — the pipeline these zones measure.
 > - [../testing/performance-profiling-guide.md](../testing/performance-profiling-guide.md) — how to build with Tracy and take a capture.
@@ -30,7 +30,7 @@ Four rules, in the order they bite:
    **3.23–3.87 ms** MTPC across short captures of 31–66 pushes. The 44:40
    capture of 2026-08-26, with **874 pushes**, puts the same zone at **986 µs**.
    There was never a 3.6 ms frame spike to fix; there was a small sample. See
-   the archived #14 entry in [../roadmap-archive.md](../roadmap-archive.md).
+   the archived #14 entry in `docs/roadmap-archive.md` (removed in dd73d24; `git show dd73d24^:docs/roadmap-archive.md`).
 2. **Per-tick pollers need length for the opposite reason.** They fire ~10 Hz,
    so their *totals* are what matter, and a short run under-reports them
    relative to the spiky zones. The 2026-08-23/24 captures ranked the display
@@ -83,7 +83,7 @@ session context and save size, are in
 | 2026-07-25 (`99cbb48`) | ~17:29 | `Display::Wheeler` 2.54 ms × 176; `Inventory::DeltaScan` 685 µs × 1,118 = 766 ms | Same small-sample problem on the push. The DeltaScan figure survives as a *large-inventory* data point — the hoarder worst case |
 | 2026-07-24 (`4791318`) | ~11:17 | `Inventory::DeltaScan` 161.3 µs × 157 | Tiny test save (3 items / 0 spells / 2 weapons) — this zone scales with inventory size |
 | 2026-06-13 (`slot-cleanup`) | ~13.8 min | `WeaponRegistry::Refresh` 1.25 ms × 736 = 918 ms, the #1 cost | This is the **before** side of O1, which shipped. The zone no longer walks the inventory at 2 Hz |
-| 2026-02-28 (v0.13.x) | ~30 s | `ScoreCandidates` 16.49 ms, `Display::Wheeler` 5.25 ms | Thirty seconds. Recorded in [../refactor/performance-optimizations.md](../refactor/performance-optimizations.md); treat as archaeology |
+| 2026-02-28 (v0.13.x) | ~30 s | `ScoreCandidates` 16.49 ms, `Display::Wheeler` 5.25 ms | Thirty seconds. Recorded in `docs/refactor/performance-optimizations.md` (removed in 326f720); treat as archaeology |
 
 ---
 
@@ -289,9 +289,10 @@ Verified against the headers named.
 
 | Data | Structure | Where | Why |
 |---|---|---|---|
-| Per-item learning state | `std::unordered_map<FormID, ItemLearningData>` | `FeatureBanditLearner.h` | Sparse — most items are never trained. Weights, train count and last-update timestamp are **colocated in one struct**: one hash lookup per candidate, not three parallel maps |
-| Feature vector | `std::array<float, 18>` | `StateFeatures.h` | Fixed size, stack allocated, append-only wire order |
-| Wildcard state | `std::array<PageWildcards, MAX_PAGES>` | `WildcardManager.h` | Fixed, per-page; each holds `std::array<WildcardSlot, MAX_SLOTS_PER_PAGE>` |
+| Choice learner state | `Core::Choice::Model` (theta, per slot) and `std::unordered_map<std::uint32_t, Core::Choice::BBelief>` (b, per item) | `ChoiceLearner.h` | The live learner: a fixed model plus a sparse per-item map, one hash lookup per candidate |
+| Per-item learning state (the old learner, D2's input) | `std::unordered_map<FormID, ItemLearningData>` | `FeatureBanditLearner.h` | Sparse — most items are never trained. Weights, train count and last-update timestamp are **colocated in one struct**: one hash lookup per candidate, not three parallel maps |
+| Feature vector (the old learner, D2's input) | `std::array<float, 18>` | `StateFeatures.h` | Fixed size, stack allocated, append-only wire order |
+| Wildcard state | `Core::Wildcard::Gate<MAX_PAGES>` | `WildcardManager.h`, `core/WildcardGate.h` | Fixed, per-page: `std::array<PageCache, N> m_pages`, one cached wildcard per page (R10) |
 | Lock state | `std::array<LockedSlot, MAX_SLOTS_PER_PAGE>` | `SlotLocker.h` | Small, contiguous, snapshot-copyable under one lock acquisition |
 | Damage / healing history | `EventRingBuffer<T, 10>` | `StateTypes.h` | Fixed-size circular buffer, so the whole state copies out cheaply under a shared lock |
 | Delta-scan scratch | three reused `std::unordered_map<FormID, int32_t>` | `ItemRegistry.h` | `m_scanCounts` / `m_scanFilledCounts` / `m_scanSoulLevels` are members, cleared not reallocated — the scan itself is allocation-free |
@@ -544,8 +545,8 @@ none has been needed.
 | [../testing/performance-profiling-guide.md](../testing/performance-profiling-guide.md) | How to build with Tracy and take a capture |
 | [../playtest/LongPlaySoak.md](../playtest/LongPlaySoak.md) | Long-play soak protocol and the `[Soak]` heartbeat |
 | [../refactor/wheeler-push-spikes.md](../refactor/wheeler-push-spikes.md) | Wheeler push analysis (its P1 was dropped; P2–P3 landed) |
-| [../refactor/performance-optimizations.md](../refactor/performance-optimizations.md) | The 2026-02 optimization pass — archaeology, from a 30-second capture |
-| [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) | `hg status`, `hg recs`, `hg reload` and the rest |
+| `docs/refactor/performance-optimizations.md` (removed in 326f720; `git show 326f720^:docs/refactor/performance-optimizations.md`) | The 2026-02 optimization pass — archaeology, from a 30-second capture |
+| [Console commands](../../CLAUDE.md#console-commands) | `hg status`, `hg recs`, `hg reload` and the rest |
 
 > **The learner** is a linear contextual bandit — `FeatureBanditLearner`,
 > serialized by `BanditSerializer` into the `BNDW` cosave record.

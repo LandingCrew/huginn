@@ -1,7 +1,8 @@
 # Huginn Performance Profiling Guide
 
-**Applies to:** v0.19.x (verified against v0.19.10)
-**Last verified:** 2026-08-29
+**Applies to:** v0.19.x (verified against v0.19.10); the zone table refreshed for 0.24.5
+(names checked against `src/`, cited by file)
+**Last verified:** 2026-08-29 (zone table: 2026-10-30)
 **Status:** Current — every command below was checked against `CMakePresets.json`,
 `CMakeLists.txt` and `src/`.
 
@@ -253,29 +254,33 @@ actually look at:
 
 | Zone | Source | What it wraps |
 |---|---|---|
-| `OnUpdate` | `src/UpdateLoop.cpp:465` | The whole ~100 ms tick |
-| `Update::Subsystems` | `src/UpdateLoop.cpp:193` | Per-tick subsystem updates |
-| `Update::Registries` | `src/UpdateLoop.cpp:249` | Registry reconcile/refresh block |
-| `Update::PipelineCheck` | `src/UpdateLoop.cpp:388` | Skip decision |
-| `RunPipeline` | `src/pipeline/PipelineCoordinator.cpp:74` | Pipeline past the dirty-flag skip |
-| `Pipeline::GatherState` | `PipelineCoordinator.cpp:138` | State snapshot |
-| `Pipeline::ScoreCandidates` | `PipelineCoordinator.cpp:301` | Candidate generation + utility scoring |
-| `Pipeline::AllocateAndLock` | `PipelineCoordinator.cpp:407` | Slot allocation + locks |
-| `Pipeline::PushDisplay` | `PipelineCoordinator.cpp:488` | Hand-off to display backends |
-| `Display::Wheeler` | `src/display/WheelerBackend.cpp:33` | Wheeler push |
-| `Display::Intuition` | `src/display/IntuitionBackend.cpp:19` | Scaleform widget push |
-| `StateManager::Update` | `src/state/StateManager.cpp:77` | Interval-gated poll dispatch |
-| `PollPlayerMagicEffects` | `src/state/StateManager_MagicEffects.cpp:71` | Per-tick active-effect scan |
-| `PollTargets` | `src/state/StateManager_Targets.cpp:98` | Per-tick target scan |
+| `OnUpdate` | `src/UpdateLoop.cpp` | The whole ~100 ms tick |
+| `Update::Subsystems` | `src/UpdateLoop.cpp` | Per-tick subsystem updates |
+| `Update::Registries` | `src/UpdateLoop.cpp` | Registry reconcile/refresh block |
+| `Update::PipelineCheck` | `src/UpdateLoop.cpp` | Skip decision |
+| `RunPipeline` | `src/pipeline/PipelineCoordinator.cpp` | Pipeline past the dirty-flag skip |
+| `Pipeline::GatherState` | `PipelineCoordinator.cpp` | State snapshot |
+| `Pipeline::ScoreCandidates` | `PipelineCoordinator.cpp` | Candidate generation, filters, the D2 legacy pass and `RankOnChoice` |
+| `Pipeline::RankOnChoice` | `PipelineCoordinator.cpp` | The choice score mu per candidate (R8.3) |
+| `Pipeline::CaptureEligible` | `PipelineCoordinator.cpp` | The v3 log's eligible rows (and `::Dropped`, the filtered ones) |
+| `Pipeline::AllocateAndLock` | `PipelineCoordinator.cpp` | Slot allocation + locks |
+| `Pipeline::LogChoiceRows` | `PipelineCoordinator.cpp` | The v3 rows' mu / sd / lm (named `ScoreShadow` before R8.3) |
+| `Pipeline::UpdateCaches` | `PipelineCoordinator.cpp` | `LogChoiceRows`, then the pipeline state cache (external equip attribution) |
+| `Pipeline::PushDisplay` | `PipelineCoordinator.cpp` | Hand-off to display backends |
+| `Display::Wheeler` | `src/display/WheelerBackend.cpp` | Wheeler push |
+| `Display::Intuition` | `src/display/IntuitionBackend.cpp` | Scaleform widget push |
+| `StateManager::Update` | `src/state/StateManager.cpp` | Interval-gated poll dispatch |
+| `PollPlayerMagicEffects` | `src/state/StateManager_MagicEffects.cpp` | Per-tick active-effect scan |
+| `PollTargets` | `src/state/StateManager_Targets.cpp` | Per-tick target scan |
 | `PollPlayerVitals`, `PollPlayerEquipment`, `PollPlayerPosition`, `PollWorldObjects`, `PollPlayerSurvival`, `PollPlayerResistances`, `PollHealthTracking`, `PollMagickaTracking`, `PollStaminaTracking` | `src/state/StateManager_*.cpp` | The remaining sensors |
 | `Inventory::DeltaScan` | `src/UpdateLoop.cpp:281` | Consumption-detector inventory snapshot |
 | `SpellRegistry::Reconcile`, `ItemRegistry::Reconcile`, `ScrollRegistry::Reconcile` | `src/UpdateLoop.cpp` | Registry reconciles |
 | `WeaponRegistry::Refresh`, `::RefreshCharges`, `::ReconcileWeapons` | `src/UpdateLoop.cpp`, `src/weapon/WeaponRegistry.cpp` | Weapon registry work |
 
-**`StateManager::PollAll()` has no zone.** It is the force-everything path
-(startup, `hg refresh`), not the steady-state one; `StateManager::Update` is what
-runs every tick. Older docs that gave a `PollAll()` budget were describing a zone
-that does not exist.
+**There is no force-everything poll zone.** `StateManager::ForceUpdate` (startup,
+`hg refresh`) is not the steady-state path; `StateManager::Update` is what runs
+every tick. Older docs that gave a `PollAll()` budget were describing a zone that
+never existed (`PollAll` itself had no caller and went in 0.24.5).
 
 ### Skip-rate arithmetic
 

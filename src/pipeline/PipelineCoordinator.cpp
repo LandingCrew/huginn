@@ -421,8 +421,8 @@ namespace
     }
 
     /// cap(i)'s attributes and the runtime cross-features of one catalog
-    /// entry for a stack (as the selection log v3 and R8.2's shadow read
-    /// them).
+    /// entry for a stack: what the choice score ranks on (R8.3) and the
+    /// selection log v3 records.
     Core::Choice::Attr AttrOf(const Core::Choice::Model& model, const Effect::CatalogEntry& entry,
         const State::PlayerActorState& player, const StackFacts& sf)
     {

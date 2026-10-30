@@ -64,11 +64,11 @@ namespace Huginn::Pipeline
         // sensor began firing at all; before that the gap was invisible.
         bool underwaterActive = false;
         // Nor is standing at a crafting station (#63/#65). Same shape as the two
-        // above, and the one that actually reaches a player: the workstation
-        // weights are the ONLY thing fortify gear and fortify potions score on,
-        // so while this was missing the whole workstation context could only
-        // surface when some unrelated dimension happened to move at the same
-        // moment.
+        // above, and the one that reaches a player: fortify gear and fortify
+        // potions rank on the workstation_* needs (and pass the no_workstation
+        // gate) only while a bench is up, so without this the workstation
+        // context could only surface when some unrelated dimension happened to
+        // move at the same moment.
         bool workstationActive = false;
         // Each vital's zone against its override's thresholds
         // (Core::OverrideZone; 2 bits each: health, magicka, stamina). Compared

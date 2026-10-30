@@ -1,7 +1,8 @@
 # Huginn Slot Architecture
 
 This document describes the multi-page slot system — classification, allocation,
-locking, overrides and wildcards — as implemented in **v0.19.x**.
+locking, overrides and wildcards — as implemented in **v0.19.x, updated for R7-R11
+(v0.24.4) where noted**.
 
 > **Related documentation:**
 > - [0-pipeline.md](0-pipeline.md) - Overall pipeline flow including slot allocation
@@ -26,8 +27,8 @@ locking, overrides and wildcards — as implemented in **v0.19.x**.
 
 Owning code: `src/slot/` (allocation, locking, classification, settings),
 `src/override/` (override evaluation), and `src/learning/WildcardManager.{h,cpp}`
-(exploration picks — it lives under `learning/` because a wildcard is an
-exploration action of the bandit, not a slot-layout concern).
+(exploration picks — it lives under `learning/` because it draws wildcards by
+the choice model's uncertainty, relevance x sd (R10), not by slot layout).
 
 ---
 
@@ -194,8 +195,8 @@ are three distinct type systems.
 | Type | Meaning | Notes |
 |------|---------|-------|
 | **Empty** | Slot has no content | Slot hidden in UI |
-| **Normal** | Standard utility-based assignment | Most common |
-| **Override** | Forced by an override condition | Stamped with `kOverrideUtility = 1000.0f`, a cosmetic marker — consumers test `AssignmentType::Override`, never the utility value |
+| **Normal** | Standard score-based assignment (mu) | Most common |
+| **Override** | Forced by an override condition | Stamped with `Core::kPinnedScore`, the +inf sentinel (`SlotAllocator.cpp`) — consumers test `AssignmentType::Override`, never the score |
 | **Wildcard** | Exploration pick | Distinct styling in the widget |
 | **Remembered** | What pressing this slot took off ([Remembrance](#remembrance)) | Not ranked; labelled "Swap Back". Seating and dedup treat it like an override (`IsPinned()`) |
 
@@ -394,7 +395,7 @@ else about a call is still a pure function of its inputs.
 
 ```
    scored candidates            active overrides
-  (sorted by utility)        (sorted by priority)
+   (sorted by score)         (sorted by priority)
            |                          |
            v                          v
   +-------------------------------------------------+
@@ -465,7 +466,7 @@ even that fails, one of three things happens:
 ### Pass 2 — normal fill
 
 For every still-empty slot in priority order, `FindBestCandidate()`
-(`src/slot/SlotAllocator.cpp:575`) scans the utility-sorted candidate list and
+(`src/slot/SlotAllocator.cpp:575`) scans the score-sorted candidate list and
 returns the first candidate that:
 
 1. is not already assigned **by FormID**, and
@@ -489,8 +490,9 @@ duplicate.
 One strong slot class could take the whole page: a hungry character at an
 alchemy lab got eight foods on eight keys and none of the craft gear
 (2026-10-05). On a **Regular** key, the first `iClassFreeSlots` items of one
-class on the page (3) compete at full utility; each one past that competes at
-x`fClassRepeatDiscount` (0.5), then x0.25, and so on. Keys with a job are never
+class on the page (3) compete at full score; each one past that competes at
++ ln `fClassRepeatDiscount` (x0.5 on exp(score)), then + 2 ln d (x0.25), and so on
+(additive on the score since R7, `SlotClassCap.h`). Keys with a job are never
 capped, and overrides and Remembrance holds are never moved for it, though they
 count towards their class.
 
@@ -504,12 +506,12 @@ column for `tools/replay`.
   FoodAny), so seven foods on a page never had more than three in one class.
 - **Placement only.** `FindBestCandidate` weighs a Regular key's choice by the
   cap (`src/slot/SlotClassCap.h`); ranking, the learner and the selection log keep
-  every item's true utility, so learning never sees an item as worse because a
+  every item's true score, so learning never sees an item as worse because a
   sibling took a key first.
 - **The hold uses it too** (Pass 1c), or a crowd that formed before the cap
   applied would stay. Every held item is counted before any is judged, and a
-  held item's factor is its rank by utility within its class -- the weakest of
-  four held weapons holds at x0.5, the other three at full. The item being
+  held item's term is its rank by score within its class -- the weakest of
+  four held weapons holds at + ln d (x0.5 on exp(score)), the other three at full. The item being
   judged leaves the count while its challenger is found, so a challenger of
   the same class is weighed as the holder was. Counted slot by slot instead,
   a challenger for a high-priority slot could not see the holders further
@@ -914,7 +916,7 @@ the keys, and they lock again when it returns. Changing
 `fCombatLockDurationMs` mid-fight affects locks taken after the change.
 
 **Wildcards in combat** (0.23.40; `Core::DecideCombatOnset`, `LockForFill`,
-`CombatSweepLocks`, `WildcardMayBePlaced`). A wildcard is an exploration pick,
+`CombatSweepLocks`, `StepWildcardsForCombat`). A wildcard is an exploration pick,
 and under the freeze it held its key all fight: a mage's never-equipped Iron
 Dagger, rolled at 08:55:51, was converted at onset (08:56:04) and combat-locked
 again when it came back (08:57:50, 2026-10-12). Now a key whose lock holds a
@@ -1158,7 +1160,7 @@ whose only wildcard-enabled key is its top one, or a one-key page, has none.
 `[SlotSettings] Page N '...': K slots, wildcard key S` names it at load;
 `SlotAllocator::GetWildcardSeat(page)` is the same rule.
 
-**Placed, not swapped.** Until R8.4 a wildcard was swapped up into a rank
+**Placed, not swapped.** Until R10 (0.24.3) a wildcard was swapped up into a rank
 position, and the slot hold and the fill carried special cases for the swapped
 row (it scored low by design, so the hold had to exempt it; the class-capped
 fill had to keep its position). Both special cases are gone. The allocation
@@ -1308,9 +1310,10 @@ See [6-ui-ux.md](6-ui-ux.md) for the display side. The slot-relevant parts:
 - **Feedback.** Every Wheeler activation is a player selection
   (`SelectionTracker::Select`, `EquipSource::Wheeler`, wired in `src/Main.cpp`).
   Once it confirms -- a consumable's count drops, an equip is still worn 3 s
-  later -- the learner gets one reward, `EQUIP_REWARD` (+8.0) or
-  `CONSUME_REWARD` (+5.0). A pick off the player's own wheel is noted as player
-  input instead, so the equip that follows counts as an outside selection.
+  later -- the pick goes to `ChoiceLearner::OnPick` (through the v3 decision and
+  `ChoiceSubscriber`), and to the old learner's choice target for D2. A pick off
+  the player's own wheel is noted as player input instead, so the equip that
+  follows counts as an outside selection.
 - Opening and closing a wheel without acting carries **no penalty** — there is
   no skip-penalty path in the code.
 
@@ -1356,7 +1359,7 @@ fChallengerMinGap = 0           ; A minimum lead on top, in score units (0 = con
 fChallengerMargin = 0.5         ; The fixed margin, only when the ranking carries no beliefs (0.5 = 50%)
 bReturnToHomeKey = true         ; A returning item takes back the key it left (home keys)
 fHomeKeyMemorySec = 60          ; ...if it left within this long; 0-600, 0 = off
-iClassFreeSlots = 3             ; Class cap: items of one slot class on Regular keys at full utility (1-10)
+iClassFreeSlots = 3             ; Class cap: items of one slot class on Regular keys at full score (1-10)
 fClassRepeatDiscount = 0.5      ; ...and x this for each one past them; 1.0 = off
 fRemembranceDurationMs = 15000  ; Remembrance hold length; 0 = off everywhere
 fRemembranceMismatchDurationMs = 5000  ; ...on a key whose class it does not fit
@@ -1493,8 +1496,9 @@ Wheeler Callback Thread
 - [1-states.md](1-states.md) - State models for override detection
 - [2-classifiers.md](2-classifiers.md) - The old classifiers (since R11 an input to the D2 feature only)
 - [3-candidate-filtering.md](3-candidate-filtering.md) - What reaches the allocator
-- [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) - Learning system (EquipEventBus, reward signals)
+- [9-implementation-map.md](9-implementation-map.md) - The live learner (ChoiceLearner) and the choice score
+- [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) - The old learner, D2's input (EquipEventBus, reward signals)
 - [6-ui-ux.md](6-ui-ux.md) - Intuition widget and Wheeler display
 - [7-dmenu-integration.md](7-dmenu-integration.md) - dMenu-owned settings
 - [8-future-work.md](8-future-work.md) - Planned work
-- [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) - `hg page`, `hg unlock`, `hg reload`
+- [Console commands](../../CLAUDE.md#console-commands) - `hg page`, `hg unlock`, `hg reload`

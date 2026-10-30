@@ -42,7 +42,7 @@ No... Why [i]Huginn[/i]? Oh, that's because [url=https://en.wikipedia.org/wiki/H
 [*][b]Multi-page slots[/b] — organize recommendations by role (up to 10 pages, 10 slots each)[/*]
 [*][b]Swap back[/b] — press a key that swaps what is in your hand (or your arrows), and what it replaced waits under that same key for 15 seconds; press again to swap back[/*]
 [*][b]Workstation awareness[/b] — Fortify Smithing at forges, Fortify Enchanting at enchanters[/*]
-[*][b]INI-configurable[/b] — context weights, scoring, slot layout, keybindings, display mode[/*]
+[*][b]INI-configurable[/b] — need curves, slot layout, keybindings, display mode[/*]
 [/list]
 
 [line]

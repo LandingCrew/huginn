@@ -170,7 +170,7 @@ the need vector reads it as `loadout_quarterstaff` instead of
 (`learning/SelectionLogV3*`) builds the records and writes the lines on a
 background thread. Schema: docs/architecture/9-selection-log-v3.md.
 
-The new model, in shadow (R8.2, 0.23.56; the old engine still ranks):
+The new model (R8.2, 0.23.56, in shadow then; it ranks since R8.3, 0.24.0):
 
 - `MiniJson.*`: a strict JSON reader in MiniRegex's pattern (vcpkg.json has
   no JSON library and this folder is standard library only). Numbers parse with

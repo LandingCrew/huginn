@@ -6,7 +6,7 @@
 > - [0-pipeline.md](0-pipeline.md) - Overall pipeline flow
 > - [3-candidate-filtering.md](3-candidate-filtering.md) - What happens to a classified form next
 > - [5-slots.md](5-slots.md) - Slot classification and allocation
-> - [reviews/magic-classification.md](../reviews/magic-classification.md) - Magic classification review
+> - Magic classification review: `docs/reviews/magic-classification.md`, removed in 326f720 (`git show 326f720^:docs/reviews/magic-classification.md`)
 
 ## Overview
 
@@ -326,8 +326,8 @@ enum class ItemTag : uint32_t
 
 **What it answers:** "What less-common effects does this item have?"
 
-Overflow tags that didn't fit in the 32-bit primary `ItemTag`. Used for poison
-modifiers, ravage effects, weakness elements, and soul gem capacities.
+Overflow tags that didn't fit in the 32-bit primary `ItemTag`. Used for the poison
+Lingering modifier and soul gem capacities.
 
 `src/learning/item/ItemData.h:179`
 
@@ -339,18 +339,7 @@ enum class ItemTagExt : uint16_t
     // Poison modifiers
     Lingering           = 1 << 0,   // Damage over time modifier
 
-    // Weakness effects (check 'element' field for which)
-    WeaknessElement     = 1 << 1,   // Weakness to Fire/Frost/Shock/Magic/Poison
-
-    // Ravage effects (instant damage to MAX attribute)
-    RavageHealth        = 1 << 2,
-    RavageMagicka       = 1 << 3,
-    RavageStamina       = 1 << 4,
-
-    // Damage regen effects
-    DamageHealthRegen   = 1 << 5,
-    DamageMagickaRegen  = 1 << 6,
-    DamageStaminaRegen  = 1 << 7,
+    // Bits 1-7 (weakness, ravage, regen drain) went in 0.24.5: no reader.
 
     // Soul gem capacities
     SoulGemPetty        = 1 << 8,
@@ -362,17 +351,11 @@ enum class ItemTagExt : uint16_t
 };
 ```
 
-*(Deleted in R11.)* `ItemData::HasHarmfulSideEffects()` read the ravage /
+*(Deleted in R11; the bits it read went in 0.24.5.)* `ItemData::HasHarmfulSideEffects()` read the ravage /
 damage-regen / weakness bits alongside `isHostile` and the primary damage tags —
 Skooma carries `DamageHealth` beside `RestoreStamina` without the hostile flag,
 and emergency overrides only surface pure potions. The override finders now ask
 the effect catalog's self_harm, intoxication and hostile facets (`Core::Facets::HasSideEffect`).
-
-> **Not currently set by the classifier:** the `Ravage*` and `Damage*Regen`
-> bits are declared and *read* (by `HasHarmfulSideEffects`), but
-> `PopulateItemTags` never sets them.
-> <!-- UNVERIFIED: no writer for ItemTagExt::Ravage*/Damage*Regen found anywhere
->      in src/. Either dead bits or a genuine detection gap — reported, not fixed. -->
 
 ### Item Grouped Tag Fields
 

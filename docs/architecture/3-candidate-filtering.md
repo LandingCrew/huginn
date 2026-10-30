@@ -541,16 +541,21 @@ It is called on `kPostLoadGame`/`kNewGame` (`src/Main.cpp:221`) and again on
 > it is printed once at load, hundreds of lines above the `FindSoulGem` /
 > `WEAPON EMPTY` lines that name the override without naming its control.
 
-### 8.2 `[Scoring]` — thresholds that do apply
+### 8.2 `[Scoring]` — thresholds
 
 ```ini
 [Scoring]
-fMinimumUtility = 0.1                ; below this, dropped from results
-fMinimumContextWeight = 0.05         ; below this, skipped before scoring (favorites exempt)
-fColdStartUCBBoost = 0.2             ; context floor for untried items
-iTopNCandidates = 10
+fMinimumUtility = 0.1                ; the old utility floor (D2 feature / fallback only)
+fMinimumContextWeight = 0.05         ; the old context floor, favorites exempt (D2 feature / fallback only)
+fColdStartUCBBoost = 0.2             ; the old context floor for untried items (D2 feature / fallback only)
+iTopNCandidates = 10                 ; the old floors' top N (D2 feature / fallback only)
 fRefreshPriorSec = 5.0               ; the active-buff filters' refresh window (§2.8), 0-120, 0 = off
 ```
+
+The first four are the old engine's floors (`learning/legacy/LegacyLearnFeature.h`). They
+decide which rows get D2's `ln learn mult` feature (a row under them reads "util missing")
+and set the floor of the fallback ranking used when `Huginn_Bootstrap.json` is missing or
+invalid. Nothing is dropped from the live ranking (since R8.3). `fRefreshPriorSec` is live.
 
 Loaded by `ScorerSettings` (`src/learning/ScorerSettings.cpp`), which is hot-reloadable;
 `fRefreshPriorSec` is pushed into `StateManager` on every load.
@@ -559,12 +564,15 @@ Loaded by `ScorerSettings` (`src/learning/ScorerSettings.cpp`), which is hot-rel
 
 ```ini
 sFavoritesMode = Boost               ; Boost / Off / Suppress (Suppress: a filter, §2.7)
-fFavoritesBoostMin = 1.3
-fFavoritesBoostMax = 2.5
+fFavoritesBoostMax = 2.5             ; the old utility's favourites multiplier
+fFavoriteLifeMult = 2.0              ; Boost: a favourite's b fades this many times slower, 1-100
 ```
 
-In Boost mode favorites are ranked by utility each update; the strongest gets `Max`, the
-weakest `Min`, linear in between, and a single favorite gets `Max`.
+`fFavoritesBoostMax` is a uniform multiplier in the old utility
+(`ScorerConfig::FavoritesMultiplier`): it reaches D2's floors and the fallback ranking only.
+Boost's live effect is `fFavoriteLifeMult` (read by `ChoiceLearner`, `ChoiceLearner.cpp:105`):
+under Boost, what the choice learner learned about a favourite (its b entry) keeps its
+useful life `fFavoriteLifeMult` times longer.
 
 ### 8.4 `[Overrides]`
 
@@ -693,7 +701,7 @@ There is no automated test suite in the repository; these are in-game checks
 - [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) — Contextual bandit learning implementation
 - [5-slots.md](5-slots.md) — Slot classification and overrides
 - [../reference/candidate-system.md](../reference/candidate-system.md) — Candidate system reference
-- [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) — `hg recs`, `hg reload`
+- [Console commands](../../CLAUDE.md#console-commands) — `hg recs`, `hg reload`
 - `src/candidate/CandidateGenerator.cpp` — Gathering from the registries
 - `src/candidate/CandidateFilters.cpp` — All hard filters
 - `src/candidate/CandidateTypes.h` — `SourceType`, `CandidateVariant`, dedup key

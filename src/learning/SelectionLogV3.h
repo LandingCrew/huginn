@@ -9,10 +9,12 @@
 // shown and an explicit outcome -- key, wheel, menu or nothing. Format:
 // core/DecisionLog.h; schema: docs/architecture/9-selection-log-v3.md.
 //
-// LOGGING ONLY. Nothing here is read by scoring, the candidates, the slots,
-// the frozen learner or the soak telemetry, and nothing here opens either
-// pipeline skip gate. The old Huginn_Selections.jsonl (v2) is written as
-// before.
+// Not only logging since R8.3: each confirmed decision goes to the live
+// learner (ChoiceSubscriber::Ingest -> ChoiceLearner::OnPick), and a wildcard
+// pick to the soak counter (SoakMetrics::RecordWildcardPicked). Nothing here
+// is read by scoring, the candidates or the slots, and nothing here opens
+// either pipeline skip gate. The old Huginn_Selections.jsonl (v2) is written
+// as before.
 //
 // Where the parts come from:
 //   - every update tick (Tick): the latest need vector (needs/NeedMonitor),

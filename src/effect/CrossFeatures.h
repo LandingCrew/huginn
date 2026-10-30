@@ -8,9 +8,10 @@
 // core/CrossFeatures.h (host-tested); this file only gathers its inputs from
 // the StateManager's player snapshot and the inventory stack.
 //
-// R2 wires them as far as `hg cap` (nothing reads them for scoring). The
-// selection log (R4) and the scorer (R8) will call Compute per tick for the
-// candidates they hold; the implementation map's Phase 1 names this file.
+// Since R8.3 (0.24.0) they are attributes of the choice score: the pipeline
+// (PipelineCoordinator::AttrOf -> Core::Choice::MakeAttr) and the selection
+// log v3 call ComputeRuntimeFeatures for the candidates they hold; `hg cap`
+// and `hg theta <FormID>` show them.
 // =============================================================================
 
 #include "effect/EffectCatalog.h"

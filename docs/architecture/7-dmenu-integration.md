@@ -1,6 +1,6 @@
 # dMenu Integration
 
-> **R11 (0.24.4):** the "Reset Learned Weights" button returns θ to the bootstrap and clears b (and the old learner, D2's input), as `hg reset weights`; its text says so since R11. The `[Scoring]` and `[ContextWeights]` keys the panels expose are D2's inputs only (the hand-tuned engine (context weights × the bandit's learning score × multipliers) no longer ranks: every candidate is ranked on the choice score μ (θ over need × effect columns, b per item; doc 9, [9-implementation-map.md](9-implementation-map.md)), and the old engine runs only for the D2 feature `ln learn mult` (`[Scoring] bLegacyLearnFeature`, confined by `tools/prune/r8_check.py`)).
+> **R11 (0.24.4):** the "Reset Learned Weights" button returns θ to the bootstrap and clears b (and the old learner, D2's input), as `hg reset weights`; its text says so since R11. The `[Scoring]` and `[ContextWeights]` sections in the ownership table (main INI, re-read by `hg reload` / the Reload INI button) are D2's inputs only; the panels themselves expose `[Widget]` and `[Debug]` (the hand-tuned engine (context weights × the bandit's learning score × multipliers) no longer ranks: every candidate is ranked on the choice score μ (θ over need × effect columns, b per item; doc 9, [9-implementation-map.md](9-implementation-map.md)), and the old engine runs only for the D2 feature `ln learn mult` (`[Scoring] bLegacyLearnFeature`, confined by `tools/prune/r8_check.py`)).
 
 How Huginn integrates with [dMenu](https://www.nexusmods.com/skyrimspecialedition/mods/97221)
 for in-game settings management, and what a settings reload actually does.
@@ -18,7 +18,7 @@ for in-game settings management, and what a settings reload actually does.
 > - [0-pipeline.md](0-pipeline.md) — recommendation pipeline (the reload serializes against its update loop)
 > - [5-slots.md](5-slots.md) — slot system (page layout comes from the main INI)
 > - [6-ui-ux.md](6-ui-ux.md) — Intuition widget and Wheeler integration
-> - [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) — `hg reload`, `hg rebuild`, `hg reset weights`
+> - [Console commands](../../CLAUDE.md#console-commands) — `hg reload`, `hg rebuild`, `hg reset weights`
 
 ---
 
