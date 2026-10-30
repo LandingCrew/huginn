@@ -124,7 +124,6 @@ namespace Huginn::Scoring
         [[nodiscard]] bool UpdateExpiry();
 
         // Configuration ([Wildcards], Globals.cpp LoadWildcardConfigFromINI)
-        void SetEnabled(bool enabled) { m_gate.settings.enabled = enabled; }
         void SetBaseProbability(float probability) { m_params.baseRoll = std::clamp(probability, 0.0f, 1.0f); }
         void SetMaxProbability(float probability) { m_params.maxRoll = std::clamp(probability, 0.0f, 1.0f); }
         void SetUniformShare(float share) { m_params.uniformShare = std::clamp(share, 0.0f, 1.0f); }

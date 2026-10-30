@@ -320,7 +320,7 @@ namespace Huginn::Effect
             std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), lastAtOnce);
         p.reset();
 
-        std::thread([this, read, readMs, t0]() {
+        std::thread([this, read, readMs]() {
             Huginn_SET_THREAD("Huginn effect catalog");
             try {
                 Huginn_ZONE_NAMED("EffectCatalog::Map (worker)");
@@ -338,7 +338,6 @@ namespace Huginn::Effect
                 pops_ = std::move(result.pops);
                 tally_ = result.tally;
                 const auto t2 = std::chrono::steady_clock::now();
-                buildMs_ = std::chrono::duration<double, std::milli>(t2 - t0).count();
                 const std::size_t effects = read->effects.size();
                 ready_.store(true, std::memory_order_release);
                 LogBudgetHits("the build"sv);

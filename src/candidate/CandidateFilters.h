@@ -93,6 +93,10 @@ namespace Huginn::Candidate
          * @param stats        Output statistics (reset then populated)
          * @param heldAside    A Remembrance hold's own item that affordability
          *                     or a hard gate dropped, set aside for the hold
+         * @param subjects     Index-aligned with output: the catalog subject the
+         *                     filters looked up for each survivor (spells,
+         *                     items, scrolls; a default Subject, known false,
+         *                     for the rest), so the pipeline need not look again
          */
         void ApplyAllFilters(
             std::vector<CandidateVariant>& gatherBuffer,
@@ -103,7 +107,8 @@ namespace Huginn::Candidate
             FilterStats& stats,
             std::span<const RE::FormID> heldIDs = {},
             std::vector<CandidateVariant>* heldAside = nullptr,
-            std::vector<Core::Filter::Dropped>* dropped = nullptr   // 0.23.46: each drop and its reason (v3 log)
+            std::vector<Core::Filter::Dropped>* dropped = nullptr,  // 0.23.46: each drop and its reason (v3 log)
+            std::vector<Core::Facets::Subject>* subjects = nullptr
         );
 
         // =========================================================================
@@ -129,7 +134,8 @@ namespace Huginn::Candidate
             const CandidateVariant& candidate,
             const State::PlayerActorState& player,
             float currentMagicka,
-            const Core::Gate::Inputs& gates
+            const Core::Gate::Inputs& gates,
+            Core::Facets::Subject& subject   // out: the catalog lookup, for the arms that read it
         ) const;
 
         // Helper (R11): an item whose resist facets (core/CapFacets.h) the

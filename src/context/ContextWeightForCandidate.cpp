@@ -23,11 +23,17 @@ namespace Huginn::Context
                 // a follower near, and a heal only for a follower's wound --
                 // never the caster's own health or armour.
                 const bool targetsOthers = HasTagExt(c.tagsExt, SpellTagExt::TargetsOthers);
-                // R8.1 (0.23.55): unreachable in a pipeline run. The
-                // no_follower filter (CandidateFilters) drops these first, on
-                // the same Core::Gate::NoFollower; followerPresent is
-                // Context::FollowerNear, the fact the filter reads. Kept for
-                // the legacy feature path until PR 2.
+                // R8.1 (0.23.55): the no_follower filter (CandidateFilters)
+                // runs the same Core::Gate::NoFollower on the same fact
+                // (followerPresent is Context::FollowerNear). Since R11 its
+                // "for someone else" is the effect catalog's TargetsOthers
+                // facet (core/CapFacets.h), not this classifier tag, and the
+                // two differ: a regen aimed at another has the facet and not
+                // the tag; a heal riding with a hostile effect has the tag
+                // and not the facet; and with the catalog not Ready (or no
+                // entry for the form) there is no facet at all. A spell the
+                // filter passes can reach this zero, which then decides only
+                // whether the D2 floors keep the row.
                 if (Core::Gate::NoFollower(targetsOthers, weights.followerPresent)) {
                     return 0.0f;
                 }
@@ -361,8 +367,8 @@ namespace Huginn::Context
             else if constexpr (std::is_same_v<T, Candidate::ScrollCandidate>) {
                 // A scroll for someone else: as the spell arm above.
                 const bool targetsOthers = HasTagExt(c.tagsExt, Scroll::ScrollTagExt::TargetsOthers);
-                // R8.1: unreachable in a pipeline run (the no_follower filter,
-                // the same Core::Gate::NoFollower).
+                // R8.1: as the spell arm -- the no_follower filter's gate,
+                // but since R11 on the catalog's facet, not this tag.
                 if (Core::Gate::NoFollower(targetsOthers, weights.followerPresent)) {
                     return 0.0f;
                 }

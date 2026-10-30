@@ -195,7 +195,7 @@ PROBES = [
     ('R11: SlotClassifier no longer asks the facets (REQUIRED)', 'src/slot/SlotClassifier.cpp',
      'return Core::Facets::Matches(SubjectOf(candidate), classification);', '        return false;', 'replace'),
     ('R11: the filters no longer read the facets (REQUIRED)', 'src/candidate/CandidateFilters.cpp',
-     'const auto subject = Effect::SubjectOf(candidate);', '        const Core::Facets::Subject subject{};', 'replace'),
+     'subject = Effect::SubjectOf(candidate);', '            subject = Core::Facets::Subject{};', 'replace'),
     ('R11: a third soul gem line (budget)', 'src/candidate/CandidateGenerator.cpp',
      'if (item.data.type != Item::ItemType::SoulGem) return;',
      '            if (item.data.type == Item::ItemType::HealthPotion) return;', 'after'),

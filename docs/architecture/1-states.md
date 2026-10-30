@@ -282,7 +282,6 @@ graph TB
 | `hasFortifyRestoration` | `bool` | Fortify Restoration school (v0.8.x) | 100ms |
 | `hasFortifyAlteration` | `bool` | Fortify Alteration school (v0.8.x) | 100ms |
 | `hasFortifyIllusion` | `bool` | Fortify Illusion school (v0.8.x) | 100ms |
-| `hasFortifyEnchanting` | `bool` | Fortify Enchanting (v0.8.x) — not a school, same pattern | 100ms |
 
 **Poll Method:** `PollPlayerMagicEffects()` at 100ms interval (combined with effects)
 
@@ -297,7 +296,6 @@ active, spells of that school get a correlation bonus in scoring (see
 | `rightHandSpell`, `leftHandSpell` | `RE::FormID` | Equipped spell form IDs (0=none) | 100ms |
 | `equippedShield` | `RE::FormID` | Shield form ID | 100ms |
 | `weaponChargePercent` | `float` | 0.0-1.0 charge | 100ms |
-| `weaponChargeMax` | `float` | Max charge value | 100ms |
 | `hasEnchantedWeapon` | `bool` | Equipped weapon has enchantment (staves count) | 100ms |
 | `arrowCount`, `boltCount` | `std::int32_t` | Ammo count | 100ms |
 | `hasBowEquipped` | `bool` | Bow equipped | 100ms |

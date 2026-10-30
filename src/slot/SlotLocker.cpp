@@ -787,29 +787,6 @@ namespace Huginn::Slot
     // MANUAL LOCK CONTROL
     // =========================================================================
 
-    void SlotLocker::LockSlot(size_t slotIndex, float durationMs)
-    {
-        if (slotIndex >= MAX_SLOTS) {
-            spdlog::warn("[SlotLocker] LockSlot: index {} out of range", slotIndex);
-            return;
-        }
-
-        std::lock_guard<std::mutex> lock(m_mutex);
-        auto& slot = m_lockedSlots[slotIndex];
-        slot.remainingMs = durationMs;
-        slot.totalDurationMs = durationMs;
-        slot.isLocked = true;
-        slot.isActivationLock = false;
-        slot.combatLock = false;
-        slot.frozen = false;
-        slot.lockedAt = std::chrono::steady_clock::now();
-        slot.minAgeWakeDone = false;
-        slot.settling = false;
-        slot.lockNextFill = false;
-
-        spdlog::debug("[SlotLocker] Slot {} manually locked for {:.0f}ms", slotIndex, durationMs);
-    }
-
     void SlotLocker::LockSlotForActivation(size_t slotIndex)
     {
         if (slotIndex >= MAX_SLOTS) {

@@ -6,6 +6,7 @@
 // floors kept another candidate of its dedup key (type, uid, form) and not it,
 // the FIRST kept one's.
 
+#include "core/ChoiceLive.h"
 #include "learning/legacy/LegacyLearnFeature.h"
 
 #include <doctest/doctest.h>
@@ -18,6 +19,12 @@ namespace
 {
     namespace L = Huginn::Scoring::Legacy;
     using Huginn::Core::DecisionLog::Floor;
+
+    // The D2 feature off a row, as PipelineCoordinator::RankOnChoice reads it.
+    Huginn::Core::Choice::LegacyValues Feature(const L::Row& r, bool enabled)
+    {
+        return Huginn::Core::Choice::LegacyFeature(enabled, r.Scored(), static_cast<double>(r.lnLearnMult));
+    }
 
     L::Row Kept(int scoredIndex, float lm, Floor f = Floor::pass)
     {
@@ -74,11 +81,11 @@ TEST_CASE("legacy rows: a dropped candidate reads the first kept row of its dedu
     CHECK(L::KeptIndexAt(rowOf, rows, 2, 3) == 1);
     CHECK(L::KeptIndexAt(rowOf, rows, 5, 3) == -1);
     // The D2 feature the score reads off those rows (switch on, then off)
-    CHECK(L::Feature(L::RowAt(rowOf, rows, 0), true).lnLearnMult == 1.0);
-    CHECK(L::Feature(L::RowAt(rowOf, rows, 0), true).utilMissing == 0.0);
-    CHECK(L::Feature(L::RowAt(rowOf, rows, 5), true).utilMissing == 1.0);
-    CHECK(L::Feature(L::RowAt(rowOf, rows, 0), false).lnLearnMult == 0.0);
-    CHECK(L::Feature(L::RowAt(rowOf, rows, 0), false).utilMissing == 1.0);
+    CHECK(Feature(L::RowAt(rowOf, rows, 0), true).lnLearnMult == 1.0);
+    CHECK(Feature(L::RowAt(rowOf, rows, 0), true).utilMissing == 0.0);
+    CHECK(Feature(L::RowAt(rowOf, rows, 5), true).utilMissing == 1.0);
+    CHECK(Feature(L::RowAt(rowOf, rows, 0), false).lnLearnMult == 0.0);
+    CHECK(Feature(L::RowAt(rowOf, rows, 0), false).utilMissing == 1.0);
 }
 
 TEST_CASE("legacy rows: short or missing rows read as an empty Row")

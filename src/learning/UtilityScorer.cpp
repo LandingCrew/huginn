@@ -11,7 +11,6 @@ namespace Huginn::Scoring
     UtilityScorer::UtilityScorer(const ScorerConfig& config)
         : m_config(config)
     {
-        m_wildcardMgr.SetEnabled(true);  // Always enabled by default
     }
 
     // R8.4: the legacy pass, the old per-candidate score and the members it
@@ -63,7 +62,7 @@ namespace Huginn::Scoring
 
     void UtilityScorer::LogTopCandidates(
         const ScoredCandidateList& ranked, size_t count, bool detail, bool force, bool fallback,
-        double outsideU0) const
+        double outsideU0, RecsFloors floors) const
     {
         size_t numToLog = std::min(count, ranked.size());
 
@@ -91,17 +90,25 @@ namespace Huginn::Scoring
 
         // R8.3: the ranking is the choice score mu. Each line: mu (and sd),
         // the three largest theta[need][col] n a terms (the first is the
-        // explanation), b, and the D2 legacy feature (lm = ln learn mult on a
-        // row the old floors kept, "um" when they did not). R8.4: no old
+        // explanation), b, and the D2 legacy feature as the live score read
+        // it (lm = ln learn mult; "um" when it reads util missing: a row the
+        // old floors dropped under engine A, every row under engine B). The
+        // header names the engine; the note at the end of a line says what
+        // the floors did to the row, when they ran: under engine A to the
+        // live lm, under engine B (D2 in shadow) to shadow A's. R8.4: no old
         // utility on these lines; with `detail` (hg recs), the inputs lm was
         // computed from on a kept row (ctx, λ, learn and its parts). The
         // fallback ranking (no bootstrap) prints the old line, flagged.
         // R11 (map Phase 9): the header carries the outside option u0 of the
         // run (the "nothing pressed" utility the page competes with), and
         // `hg theta <FormID>` lists every term of one item.
-        logger::info("[Recs] === Top {}/{} candidates | {}{} ==="sv, numToLog, ranked.size(),
+        logger::info("[Recs] === Top {}/{} candidates | {}{}{} ==="sv, numToLog, ranked.size(),
             fallback ? "FALLBACK: s = ln u, u = ctx*(1+λ*learn)*mults"
                      : "mu = Σ θ·n·cap + b + w·lm (+ recent, covered); terms need×col",
+            fallback                       ? ""
+            : floors == RecsFloors::live   ? " | engine A: lm live"
+            : floors == RecsFloors::shadow ? " | engine B: lm 0 by design, D2 in shadow"
+                                           : " | no legacy pass: lm 0 on every row",
             !fallback && std::isfinite(outsideU0) ? fmt::format(" | outside u0={:+.3f}", outsideU0) : std::string{});
 
         for (size_t i = 0; i < numToLog; ++i) {
@@ -119,9 +126,13 @@ namespace Huginn::Scoring
                     ci < Core::Effect::kColumnCount ? Core::Effect::kColumns[ci].id : std::string_view("?"), t.value);
             }
             if (terms.empty()) terms = "learned";
-            const std::string legacy = !scored.legacyScored ? std::string(" | lm: under the old floors")
-                                     : detail               ? fmt::format(" | {} from {}", p.utilMissing != 0.0 ? "shadow A's lm" : "lm", bd.ToDetailString())
-                                                            : std::string{};
+            // What the old floors did to this row, when they ran at all.
+            std::string legacy;
+            if (floors != RecsFloors::none) {
+                const char* const whose = floors == RecsFloors::live ? "lm" : "shadow A's lm";
+                if (!scored.legacyScored) legacy = fmt::format(" | {}: under the old floors", whose);
+                else if (detail) legacy = fmt::format(" | {} from {}", whose, bd.ToDetailString());
+            }
 
             if (fallback) {
                 logger::info("[Recs] {}. {} ({}) s={:+.3f} u={:.3f} | {}{}"sv,

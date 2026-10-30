@@ -147,7 +147,7 @@ namespace Huginn::State
    }
 
    // =============================================================================
-   // DISTANCE THRESHOLDS - Melee/Close/Mid/Ranged distance thresholds
+   // DISTANCE THRESHOLDS - melee range and the evaluator's distance buckets
    // =============================================================================
    // NOTE: Named DistanceThresholds (not DistanceBucket) to avoid collision with
    // the DistanceBucket enum in GameState.h
@@ -159,37 +159,8 @@ namespace Huginn::State
       // Units: Skyrim distance units
       inline constexpr float MELEE_MAX = 256.0f;
 
-      // Close range lower bound
-      // Why 256.0f: Starts where melee ends (no gap)
-      // Units: Skyrim distance units
-      inline constexpr float CLOSE_MIN = 256.0f;
-
-      // Close range upper bound
-      // Why 512.0f: Close combat range for spells/bows (still clearly visible)
-      // Matches StateEvaluator::DistanceBucket::Close upper bound
-      // Units: Skyrim distance units
-      inline constexpr float CLOSE_MAX = 512.0f;
-
-      // Mid range lower bound
-      // Why 512.0f: Starts where close ends (no gap)
-      // Units: Skyrim distance units
-      inline constexpr float MID_MIN = 512.0f;
-
-      // Mid range upper bound
-      // Why 2048.0f: Mid-range combat for ranged spells/bows
-      // Matches StateEvaluator::DistanceBucket::Mid upper bound
-      // Units: Skyrim distance units
-      inline constexpr float MID_MAX = 2048.0f;
-
-      // Ranged distance lower bound
-      // Why 2048.0f: Starts where mid ends (extreme range)
-      // Matches StateEvaluator::DistanceBucket::Ranged lower bound
-      // Units: Skyrim distance units
-      inline constexpr float RANGED_MIN = 2048.0f;
-
       // === 3-bucket evaluator scheme (GameState DistanceBucket) ===
-      // Melee ≤ 256 < Mid ≤ 768 < Ranged. Distinct from the 4-bucket
-      // target-tracking scheme above — the two schemes coexist; do not conflate.
+      // Melee ≤ 256 < Mid ≤ 768 < Ranged.
       // TargetCollection::ClosestEnemyDistanceBucket buckets with these, for
       // GameState::distance and the pipeline-skip digest alike.
       // Units: Skyrim distance units (squared variants for sqrt-free comparison)
@@ -237,21 +208,6 @@ namespace Huginn::State
       // Used for execute/finishing move recommendations
       // Units: percentage (0.15 = 15%)
       inline constexpr float TARGET_CRITICAL = 0.15f;
-
-      // Target health "Very Low" threshold
-      // Why 0.30f: Target is wounded - good for finishing spells
-      // Units: percentage (0.30 = 30%)
-      inline constexpr float TARGET_VERY_LOW = 0.30f;
-
-      // Target health "Low" threshold
-      // Why 0.50f: Target is weakened - opportunity for aggressive spells
-      // Units: percentage (0.50 = 50%)
-      inline constexpr float TARGET_LOW = 0.50f;
-
-      // Target magicka/stamina "Low" threshold
-      // Why 0.30f: Target is low on resources - opportunity for drain spells
-      // Units: percentage (0.30 = 30%)
-      inline constexpr float TARGET_RESOURCE_LOW = 0.30f;
    }
 
    // =============================================================================
@@ -315,16 +271,6 @@ namespace Huginn::State
       // Without cell-specific data, we assume interiors are moderately lit
       // Units: percentage (0.0 = pitch black, 1.0 = full daylight)
       inline constexpr float INTERIOR_DEFAULT = 0.5f;
-
-      // Daytime start hour
-      // Why 6.0f: 6am - start of daytime lighting calculations
-      // Units: hours (0.0-24.0 in-game time)
-      inline constexpr float DAYTIME_START = 6.0f;
-
-      // Daytime end hour
-      // Why 18.0f: 6pm - end of daytime lighting calculations
-      // Units: hours (0.0-24.0 in-game time)
-      inline constexpr float DAYTIME_END = 18.0f;
 
       // Noon hour (peak daylight)
       // Why 12.0f: 12pm - peak light level calculation reference
@@ -801,10 +747,6 @@ namespace Huginn::State
       // Low warmth (vulnerable to cold)
       // Why 50.0f: Below 50 warmth provides minimal cold protection
       inline constexpr float LOW = 50.0f;
-
-      // Moderate warmth (some protection)
-      // Why 100.0f: 100+ warmth provides decent cold resistance
-      inline constexpr float MODERATE = 100.0f;
 
       // High warmth (well protected)
       // Why 200.0f: 200+ warmth provides strong cold resistance

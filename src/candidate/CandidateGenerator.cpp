@@ -131,9 +131,11 @@ namespace Huginn::Candidate
         const Core::Gate::Inputs& gates,
         std::span<const RE::FormID> heldIDs,
         std::vector<CandidateVariant>* heldAside,
-        std::vector<Core::Filter::Dropped>* dropped)
+        std::vector<Core::Filter::Dropped>* dropped,
+        std::vector<Core::Facets::Subject>* subjects)
     {
         if (dropped) dropped->clear();
+        if (subjects) subjects->clear();
         if (!m_initialized) {
             logger::warn("CandidateGenerator::GenerateCandidates called before Initialize()");
             return {};
@@ -173,7 +175,7 @@ namespace Huginn::Candidate
         {
             Huginn_ZONE_NAMED("Candidates::Filter");
             m_filters->ApplyAllFilters(m_gatherBuffer, output, player, currentMagicka, gates, m_stats.filterStats,
-                heldIDs, heldAside, dropped);
+                heldIDs, heldAside, dropped, subjects);
         }
 
         // Calculate generation time

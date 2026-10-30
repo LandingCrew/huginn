@@ -505,12 +505,6 @@ namespace Huginn::State
 #ifdef _DEBUG
             logger::trace("[StateManager] --> Detected FORTIFY ILLUSION (mag: {})", magnitude);
 #endif
-          } else if (primaryAV == RE::ActorValue::kEnchanting) {
-            newBuffs.hasFortifyEnchanting = true;
-            isFortifySchoolEffect = true;
-#ifdef _DEBUG
-            logger::trace("[StateManager] --> Detected FORTIFY ENCHANTING (mag: {})", magnitude);
-#endif
           }
           // LORERIM PowerModifier variants (AV 144-148 for schools)
           else if (primaryAV == RE::ActorValue::kDestructionPowerModifier) {

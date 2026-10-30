@@ -273,8 +273,8 @@ REQUIRED += [
      'R11: SlotClassifier answers from core/CapFacets.h over the effect catalog'),
     ('src/slot/SlotClassifier.cpp', r'return\s+Core::Facets::Classify\(\s*SubjectOf\(candidate\)\);',
      'R11: the class (class cap, v2 log, dump) from core/CapFacets.h'),
-    ('src/candidate/CandidateFilters.cpp', r'const auto subject = Effect::SubjectOf\(candidate\);\s*const auto f = subject\.facets;',
-     'R11: the filters read the candidate\'s facets'),
+    ('src/candidate/CandidateFilters.cpp', r'subject = Effect::SubjectOf\(candidate\);\s*\}\s*const auto f = subject\.facets;',
+     'R11: the filters read the candidate\'s facets (0.24.21: in the arms that read them)'),
     ('src/override/OverrideManager.cpp', r'Effect::FacetsOfForm\(sd\.formID\)\.facets\.Has\(restore\)',
      'R11: the restore-spell fallback reads the restore facet'),
     ('src/override/OverrideManager.cpp', r'return\s+Core::Facets::HasSideEffect\(ff\.facets\);',
@@ -284,8 +284,10 @@ REQUIRED += [
      'R11: a restore potion ranks on its restore row, not the costliest effect\'s magnitude'),
     ('src/candidate/CandidateFilters.cpp', r'if \(!Core::Facets::ResistJudgeable\(facets\)\) return false;',
      'R11: a hostile or damaging spell (an elemental cloak\'s resist rider) is never resist-filtered'),
-    ('src/pipeline/PipelineCoordinator.cpp', r'sc\.subject = Effect::SubjectOf\(sc\.candidate\);\s*sc\.hasSubject = true;',
-     'R11: every ranked row carries its facets for the slot code'),
+    ('src/pipeline/PipelineCoordinator.cpp',
+     r'sc\.subject = filterSubjects\[sc\.runRow\];\s*\}\s*else \{\s*sc\.subject = Effect::SubjectOf\(sc\.candidate\);\s*\}\s*'
+     r'sc\.hasSubject = true;',
+     'R11: every ranked row carries its facets for the slot code (0.24.21: the filters\' lookup when it found one)'),
 ]
 # Searched for those keys by name: a missing one is a violation (a move would hide a key).
 REQUIRED_INI = ['configs/Huginn.ini', 'Data/SKSE/Plugins/dmenu/customSettings/Huginn.json']
@@ -440,13 +442,16 @@ COMMENT = r'^\s*//'
 BUDGET = {
     # The live pipeline (PipelineCoordinator): the legacy pass and everything it reads off it.
     # 0.24.20: 60: the favourites flag written onto OldScore is a LEGACY line (`.old.<member>`).
-    'src/pipeline/PipelineCoordinator.cpp': (60, [
+    # 0.24.21: 62: the [Recs] lm note's floors flag, and the weights latch read split in two.
+    'src/pipeline/PipelineCoordinator.cpp': (62, [
         COMMENT,
         # CaptureEligible's floor cross-check (the one read of lg.floor)
         r'^\s*if \(static_cast<uint8_t>\(lg\.floor\) != row\.old\.floor\) \+\+floorMismatch;$',
         # the pass (or its skip with the switch off), and the switch
         r'^\s*ctx\.legacy = Scoring::Legacy::LegacyPass\(',
         r'^\s*ctx\.legacy\.Skip\(candidates\.size\(\)\);$',
+        # 0.24.21: whether the floors ran, for the [Recs] lines' lm note (log text only)
+        r'^\s*ctx\.recsFloors = !ctx\.legacy\.ran\s+\? Scoring::RecsFloors::none$',
         r'^\s*const bool legacyOn = Scoring::Legacy::Enabled\(\);$',
         # 0.24.17: the D2 shadow's switch (B live, the choice score ranking)
         r'^\s*const bool shadowOn = !legacyOn && ctx\.choiceLive && Scoring::Legacy::ShadowEnabled\(\);$',
@@ -454,7 +459,10 @@ BUDGET = {
         r'^\s*ctx\.scoredCandidates = ctx\.legacy\.FallbackRanking\(\);$',
         # the old learner's weights-changed latch: a trained pick moves lm, so the run re-scores
         r'^\s*Scoring::Legacy::ClearWeightsChanged\(\);$',
-        r'^\s*return Scoring::Legacy::WeightsChanged\(\) \|\|$',
+        # 0.24.21: only while a run reads the old learner (A live, D2 in shadow, the fallback)
+        r'^\s*const bool oldLearnerRead = Scoring::Legacy::Enabled\(\) \|\| Scoring::Legacy::ShadowEnabled\(\) \|\| '
+        r'!choiceLive;$',
+        r'^\s*return \(oldLearnerRead && Scoring::Legacy::WeightsChanged\(\)\) \|\|$',
         # RankOnChoice: the D2 feature per candidate, and the kept row's old parts copied for
         # the v2 log (they rank nothing)
         # 0.24.17: the D2 shadow. Engine A's values exist in this file only under legacyShadow*
@@ -573,10 +581,10 @@ BUDGET = {
     # lines log lm's inputs (hg recs detail) and the fallback's line.
     'src/learning/UtilityScorer.h': (0, None, 'the live scorer: no old engine'),
     'src/learning/UtilityScorer.cpp': (7, [
-        r'^\s*const std::string legacy = !scored\.legacyScored \? std::string\(" \| lm: under the old floors"\)$',
+        # 0.24.21: the lm note, only when the floors ran (RecsFloors), naming whose lm it is
+        r'^\s*if \(!scored\.legacyScored\) legacy = fmt::format\(" \| \{\}: under the old floors", whose\);$',
         r'^\s*const auto& bd = scored\.breakdown;$',
-        r'^\s*: detail\s+\? fmt::format\(" \| \{\} from \{\}", p\.utilMissing != 0\.0 \? "shadow A\'s lm" : "lm", '
-        r'bd\.ToDetailString\(\)\)$',
+        r'^\s*else if \(detail\) legacy = fmt::format\(" \| \{\} from \{\}", whose, bd\.ToDetailString\(\)\);$',
         r'^\s*scored\.score, scored\.utility,$',
         r'^\s*detail \? bd\.ToDetailString\(\) : bd\.ToCompactString\(\),$',
         r'^\s*scored\.isColdStartBoosted \? " \[COLD\]" : ""\);$',

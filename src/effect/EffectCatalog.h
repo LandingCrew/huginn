@@ -171,7 +171,6 @@ namespace Huginn::Effect
         }
         [[nodiscard]] std::size_t Size() const noexcept { return entries_.size(); }
         [[nodiscard]] std::size_t FormsRead() const noexcept { return formsRead_; }
-        [[nodiscard]] double BuildMs() const noexcept { return buildMs_; }
 
     private:
         EffectCatalog();
@@ -195,7 +194,6 @@ namespace Huginn::Effect
         Core::Effect::OverrideTable overrides_;
         Core::Effect::RowTally tally_;
         std::size_t formsRead_ = 0;
-        double buildMs_ = 0.0;
         std::atomic<bool> ready_{ false };
         std::atomic<bool> failed_{ false };
         bool built_ = false;

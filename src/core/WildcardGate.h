@@ -64,7 +64,6 @@ namespace Huginn::Core::Wildcard
     /// The [Wildcards] clocks (the odds are Params, core/WildcardPick.h).
     struct GateSettings
     {
-        bool enabled = true;
         double cooldownSec = 30.0;      // fCooldownSeconds: how long a wildcard stays
         double refractorySec = 60.0;    // fRefractorySeconds: the window between wildcards
     };
@@ -180,7 +179,7 @@ namespace Huginn::Core::Wildcard
         [[nodiscard]] PlanOut Plan(const GatePage& page, std::int64_t nowNs, Fate&& fate)
         {
             PlanOut r;
-            if (!settings.enabled || page.index >= N) return r;
+            if (page.index >= N) return r;
             auto& cache = m_pages[page.index];
 
             // A reshape drops the wildcard: it was rolled for a key that may

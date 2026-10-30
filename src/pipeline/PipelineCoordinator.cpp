@@ -312,7 +312,18 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
 
 bool PipelineCoordinator::LearnerWeightsChanged() noexcept
 {
-    return Scoring::Legacy::WeightsChanged() ||
+    // The old learner's latch counts only while a run reads that learner:
+    // engine A live (bLegacyLearnFeature), D2 in shadow (bShadowLegacy beside
+    // a live choice score) or the fallback ranking (no bootstrap) -- the
+    // same test as ScoreCandidates' runLegacy. Under engine B with no shadow
+    // a pick it trains on moves nothing a run computes, so it forces no run.
+    // The latch stays raised until the next run's commit point (CheckHashSkip
+    // clears both learners' latches whatever the switches), and a switch
+    // turned on by hot reload marks the page dirty, so that run reads the
+    // old learner as it stands and clears the latch with it.
+    const bool choiceLive = g_choiceLearner && g_choiceLearner->Ready();
+    const bool oldLearnerRead = Scoring::Legacy::Enabled() || Scoring::Legacy::ShadowEnabled() || !choiceLive;
+    return (oldLearnerRead && Scoring::Legacy::WeightsChanged()) ||
            (g_choiceLearner && g_choiceLearner->WeightsChanged());
 }
 
@@ -467,8 +478,11 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     // used to skip Suppress favourites by.
     const auto gates = Context::HardGateInputs(ctx.playerState, ctx.targets, ctx.worldState,
         g_utilityScorer->GetConfig().favoritesMode == Scoring::FavoritesMode::Suppress);
+    // The filters' catalog lookups, one per survivor (index-aligned with
+    // `candidates`), handed on to the ranked rows below.
+    std::vector<Core::Facets::Subject> filterSubjects;
     auto candidates = candidateGen.GenerateCandidates(ctx.playerState, ctx.currentMagicka, gates,
-        heldIDs, &heldAside, &ctx.filtered);
+        heldIDs, &heldAside, &ctx.filtered, &filterSubjects);
 
     // Read once for the tick: the wildcard key's plan and the allocation in
     // AllocateAndLock must agree on it.
@@ -516,6 +530,10 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     else {
         ctx.legacy.Skip(candidates.size());
     }
+    // [Recs]: what the floors were this run (UtilityScorer::LogTopCandidates).
+    ctx.recsFloors = !ctx.legacy.ran              ? Scoring::RecsFloors::none
+                   : legacyOn || !ctx.choiceLive ? Scoring::RecsFloors::live
+                                                  : Scoring::RecsFloors::shadow;
 
     if (ctx.choiceLive) {
         ctx.scoredCandidates = RankOnChoice(ctx, candidates);
@@ -568,9 +586,19 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
 
     // R11: what the effect catalog says of each row (core/CapFacets.h), once
     // per run, for the slot classes, the class cap, the label and the display
-    // (they used to read the old classifiers' tags off the candidate).
+    // (they used to read the old classifiers' tags off the candidate). A
+    // ranked row takes the filters' lookup when it found a catalog entry
+    // (the catalog is immutable once Ready, so it is the same answer); the
+    // rest look now: the arms that never read it (weapons, ammo, apparel,
+    // torches), a form the catalog did not know or a catalog not yet Ready
+    // at the filter (it may be by now), and the rows the ranking did not make.
     for (auto& sc : ctx.scoredCandidates) {
-        sc.subject = Effect::SubjectOf(sc.candidate);
+        if (sc.runRow < filterSubjects.size() && filterSubjects[sc.runRow].known) {
+            sc.subject = filterSubjects[sc.runRow];
+        }
+        else {
+            sc.subject = Effect::SubjectOf(sc.candidate);
+        }
         sc.hasSubject = true;
     }
 
@@ -897,7 +925,6 @@ void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
             const auto& ls = ctx.choiceScores[ci];
             row.shadowMu = static_cast<float>(ls.s.mu);
             row.shadowSd = static_cast<float>(ls.s.Sd());
-            row.shadowLogit = static_cast<float>(ls.s.mu);
             row.exNeed = ls.s.Learned() ? DL::kExLearned : ls.s.exNeed;
             row.exCol = ls.s.Learned() ? static_cast<int16_t>(-1) : ls.s.exCol;
         }
@@ -1304,9 +1331,9 @@ void PipelineCoordinator::ShadowLegacyPages(PipelineContext& ctx)
 // -----------------------------------------------------------------------------
 // The ranking ran in ScoreCandidates (RankOnChoice); CaptureEligible copied
 // its mu, sd and explanation onto the eligible rows. After the allocation the
-// page adds, for the v3 log, what a pick's choice set reads (the learner's
-// view, fitlib.build's): the slot feature of the key a row landed on, and
-// kappa off the page (core/ChoiceLive.h AfterAllocation). With the R6
+// page adds, for the v3 log's mu, the slot feature of the key a row landed on
+// (core/ChoiceLive.h AfterAllocation). kappa off the page is not logged: the
+// learner prices it on a pick's choice set (core/ChoiceUpdate.h). With the R6
 // bootstrap (no slot weights) the logged mu is the ranked mu. Also the
 // opportunity counter: a need's onset with an answering item on this page
 // grows its variances.
@@ -1337,7 +1364,6 @@ void PipelineCoordinator::LogChoiceRows(PipelineContext& ctx)
         const bool offPage = slot < 0;
         const auto logged = C::AfterAllocation(model, ctx.choiceScores[i].s.mu, offPage, slot);
         e.shadowMu = static_cast<float>(logged.mu);
-        e.shadowLogit = static_cast<float>(logged.logit);
         if (!offPage) page.push_back(ctx.choiceAttrs[i]);
     }
 
@@ -1501,7 +1527,7 @@ void PipelineCoordinator::LogRecommendations(PipelineContext& ctx)
                                  : std::numeric_limits<double>::quiet_NaN();
     if (size_t dumpN = m_recDumpRequest.exchange(0, std::memory_order_relaxed); dumpN > 0) {
         g_utilityScorer->LogTopCandidates(ctx.scoredCandidates, dumpN,
-            /*detail=*/true, /*force=*/true, /*fallback=*/!ctx.choiceLive, outsideU0);
+            /*detail=*/true, /*force=*/true, /*fallback=*/!ctx.choiceLive, outsideU0, ctx.recsFloors);
 
         // Label with the tick's snapshot page, not a live re-read, so the dump
         // matches the assignments it prints.
@@ -1526,7 +1552,7 @@ void PipelineCoordinator::LogRecommendations(PipelineContext& ctx)
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(ctx.now - m_lastRecLog);
     if (elapsed.count() >= 5000) {
         g_utilityScorer->LogTopCandidates(ctx.scoredCandidates, 5,
-            /*detail=*/verbosity >= 2, /*force=*/false, /*fallback=*/!ctx.choiceLive, outsideU0);
+            /*detail=*/verbosity >= 2, /*force=*/false, /*fallback=*/!ctx.choiceLive, outsideU0, ctx.recsFloors);
         m_lastRecLog = ctx.now;
     }
 }
