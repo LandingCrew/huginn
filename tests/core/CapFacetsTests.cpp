@@ -120,7 +120,7 @@ TEST_CASE("cap facets: one facet per column family the consumers read")
              Case{ Col::cure_disease, F::CureDisease }, Case{ Col::vision, F::Vision }, Case{ Col::utility, F::Utility },
              Case{ Col::movement, F::Movement }, Case{ Col::utility_water_breathing, F::Waterbreathing },
              Case{ Col::survival_warmth, F::Warming }, Case{ Col::survival_intoxication, F::Intoxicating },
-             Case{ Col::self_harm, F::SelfHarm } }) {
+             Case{ Col::self_harm, F::SelfHarm }, Case{ Col::alcohol, F::Alcohol } }) {
         INFO("column " << Effect::kColumns[static_cast<std::size_t>(c.col)].id);
         const auto s = Facets::FromCap(CapOf({ c.col }), Kind::Potion);
         CHECK(s.Has(c.facet));
@@ -132,15 +132,20 @@ TEST_CASE("cap facets: one facet per column family the consumers read")
     CHECK(Facets::Names(Facets::FromCap(CapOf({ Col::restore_health, Col::hostile }), Kind::Spell)) == "RestoreHealth|Hostile");
 }
 
-TEST_CASE("cap facets: a drink's cost is not raw food's Weak Stomach")
+TEST_CASE("cap facets: Alcohol is the alcohol column, never a side effect (0.24.9)")
 {
-    // Mead (LoreRim): self_harm set directly (Inebriation / Damage Stamina Regeneration).
-    auto mead = Facets::FromCap(CapOf({ Col::self_harm, Col::survival, Col::survival_hunger }), Kind::Food);
-    CHECK(mead.Has(F::DrinkCost));
-    // Raw food: Weak Stomach drains stamina, self_harm_stamina.
+    // Mead (LoreRim): its column, beside the Inebriation side effect.
+    auto mead = Facets::FromCap(CapOf({ Col::self_harm, Col::survival, Col::survival_hunger, Col::alcohol }), Kind::Food);
+    CHECK(mead.Has(F::Alcohol));
+    // The side effects alone are no drink: R11's reading (self_harm with no
+    // vital drain) took a paralysing cheese; Weak Stomach is raw food.
+    CHECK_FALSE(Facets::FromCap(CapOf({ Col::self_harm, Col::survival, Col::survival_hunger }), Kind::Food).Has(F::Alcohol));
     auto raw = Facets::FromCap(CapOf({ Col::self_harm, Col::self_harm_stamina, Col::survival_hunger }), Kind::Food);
     CHECK(raw.Has(F::SelfHarm));
-    CHECK_FALSE(raw.Has(F::DrinkCost));
+    CHECK_FALSE(raw.Has(F::Alcohol));
+    // Nor is intoxication by itself (Simonrim's Skooma has its drug keywords too).
+    CHECK_FALSE(Facets::FromCap(CapOf({ Col::survival_intoxication }), Kind::Food).Has(F::Alcohol));
+    CHECK(Facets::Names(mead) == "SelfHarm|Alcohol");
 }
 
 // =============================================================================
@@ -260,14 +265,39 @@ TEST_CASE("slot classes from cap: potions, poisons and food")
     CHECK_FALSE(In(bread, SlotClassification::AlcoholAny));
     CHECK(Facets::Classify(bread) == SlotClassification::HealingAny);
 
-    const auto mead = Subj(S::Item, Kind::Food, { Col::self_harm, Col::survival, Col::survival_thirst });
+    const auto mead = Subj(S::Item, Kind::Food, { Col::self_harm, Col::survival, Col::survival_thirst, Col::alcohol });
     CHECK(In(mead, SlotClassification::AlcoholAny));
-    CHECK(In(mead, SlotClassification::FoodAny));   // R11: FoodAny takes every food, alcohol included
+    CHECK_FALSE(In(mead, SlotClassification::FoodAny));   // 0.24.9: alcohol is not food (R11 took it)
+    CHECK_FALSE(In(mead, SlotClassification::PotionsAny));
     CHECK(Facets::Classify(mead) == SlotClassification::AlcoholAny);
+
+    // A healing drink keeps its effect class, and still stays off the food keys.
+    const auto healingAle = Subj(S::Item, Kind::Food, { Col::restore, Col::restore_health, Col::alcohol });
+    CHECK(In(healingAle, SlotClassification::HealingAny));
+    CHECK(In(healingAle, SlotClassification::AlcoholAny));
+    CHECK_FALSE(In(healingAle, SlotClassification::FoodAny));
+
+    // A Skooma the load order makes a potion: alcohol and a potion (LoreRim's Skoomas).
+    const auto skoomaPotion = Subj(S::Item, Kind::Potion, { Col::restore, Col::restore_stamina, Col::alcohol });
+    CHECK(In(skoomaPotion, SlotClassification::AlcoholAny));
+    CHECK(In(skoomaPotion, SlotClassification::PotionsAny));
+    CHECK_FALSE(In(skoomaPotion, SlotClassification::FoodAny));
+
+    // A food whose cost is a paralysis (R11's stray, Rendil's Screaming Cheese): food, no drink.
+    const auto cheese = Subj(S::Item, Kind::Food, { Col::self_harm, Col::survival, Col::survival_hunger });
+    CHECK_FALSE(In(cheese, SlotClassification::AlcoholAny));
+    CHECK(In(cheese, SlotClassification::FoodAny));
 
     const auto raw = Subj(S::Item, Kind::Food, { Col::self_harm, Col::self_harm_stamina, Col::survival_hunger });
     CHECK_FALSE(In(raw, SlotClassification::AlcoholAny));
     CHECK(Facets::Classify(raw) == SlotClassification::FoodAny);
+
+    // No catalog entry: the source type decides, and no effect class (so never AlcoholAny).
+    Facets::Subject unknownFood;
+    unknownFood.source = S::Item;
+    unknownFood.kind = Kind::Food;
+    CHECK(In(unknownFood, SlotClassification::FoodAny));
+    CHECK_FALSE(In(unknownFood, SlotClassification::AlcoholAny));
 
     const auto gem = Subj(S::Item, Kind::SoulGem, {});
     CHECK(Facets::Classify(gem) == SlotClassification::Regular);
@@ -344,7 +374,7 @@ TEST_CASE("slot classes from cap: every class has a matching subject and Regular
         Subj(S::Spell, Kind::Spell, { Col::fortify_vital }),
         Subj(S::Spell, Kind::Spell, { Col::summon }),
         Subj(S::Spell, Kind::Spell, { Col::vision, Col::vision_light }),
-        Subj(S::Item, Kind::Food, { Col::survival_intoxication }),
+        Subj(S::Item, Kind::Food, { Col::survival_intoxication, Col::alcohol }),
         Subj(S::Item, Kind::Food, { Col::survival_hunger }),
         Subj(S::Item, Kind::Potion, { Col::restore_magicka }),
         Subj(S::Scroll, Kind::Scroll, { Col::influence_fear }),
@@ -487,6 +517,13 @@ TEST_CASE("cap facets on real items: vanilla+")
     CHECK(Facets::Matches(honey, SlotClassification::FoodAny));
     CHECK_FALSE(Facets::Matches(honey, SlotClassification::AlcoholAny));
 
+    // Vanilla tags no drink: the drawback MGEF Skyrim.esm 10C645 is its mark.
+    const auto bloodwine = fx.Of(0x03003535, Kind::Food);      // Argonian Bloodwine
+    CHECK(bloodwine.facets.Has(F::Alcohol));
+    CHECK(Facets::Matches(bloodwine, SlotClassification::AlcoholAny));
+    CHECK_FALSE(Facets::Matches(bloodwine, SlotClassification::FoodAny));
+    CHECK(Facets::Classify(bloodwine) == SlotClassification::DefensiveAny);   // its Resist Poison first
+
     const auto stew = fx.Of(0x000F4314, Kind::Food);           // Beef Stew: fortify stamina
     CHECK(Facets::Matches(stew, SlotClassification::BuffsAny));
     CHECK(Facets::Matches(stew, SlotClassification::FoodAny));
@@ -495,15 +532,23 @@ TEST_CASE("cap facets on real items: vanilla+")
 TEST_CASE("cap facets on real items: Simonrim and LoreRim drinks, poisons, scrolls")
 {
     const Fixture sr("simonrim");
-    const auto skooma = sr.Of(0x0003F4BD, Kind::Food);         // Double-Distilled Skooma
+    const auto skooma = sr.Of(0x0003F4BD, Kind::Food);         // Double-Distilled Skooma: MAG_FoodTypeDrugs
     CHECK(skooma.facets.Has(F::Intoxicating));
+    CHECK(skooma.facets.Has(F::Alcohol));
     CHECK(Facets::Matches(skooma, SlotClassification::AlcoholAny));
+    CHECK_FALSE(Facets::Matches(skooma, SlotClassification::FoodAny));
     CHECK(Facets::Classify(skooma) == SlotClassification::BuffsAny);   // its Fortify Stamina comes first
+    const auto redwater = sr.Of(0x0201391D, Kind::Food);       // Redwater Skooma
+    CHECK(Facets::Matches(redwater, SlotClassification::AlcoholAny));
 
     const Fixture lr("lorerim");
-    const auto mead = lr.Of(0x00107A8A, Kind::Food);           // Mead with Juniper Berry
-    CHECK(mead.facets.Has(F::DrinkCost));
+    const auto mead = lr.Of(0x00107A8A, Kind::Food);           // Mead with Juniper Berry: every mark
+    CHECK(mead.facets.Has(F::Alcohol));
     CHECK(Facets::Matches(mead, SlotClassification::AlcoholAny));
+    CHECK_FALSE(Facets::Matches(mead, SlotClassification::FoodAny));
+    const auto sap = lr.Of(0x000AED90, Kind::Potion);          // Sleeping Tree Sap: OCF_AlchDrug, a potion
+    CHECK(Facets::Matches(sap, SlotClassification::AlcoholAny));
+    CHECK(Facets::Matches(sap, SlotClassification::PotionsAny));
 
     const auto snout = lr.Of(0x000669A4, Kind::Food);          // Raw Mammoth Snout: Weak Stomach
     CHECK(snout.facets.Has(F::SelfHarm));

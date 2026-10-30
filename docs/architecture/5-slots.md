@@ -129,8 +129,8 @@ columns), what changed against the classifier version, and why.
 | **ScrollsAny** / **SpellsAny** | any scroll / any spell | -- | unchanged |
 | **Spells&lt;School&gt;** | the candidate's school (form fact) | -- | unchanged (spells and scrolls) |
 | **WeaponsAny** / **WeaponsMelee** / **WeaponsRanged** | -- | -- | from the weapon's type (bow, crossbow, staff = ranged; blades, axes, maces, daggers = melee), the same split the weapon tag encoded |
-| **FoodAny** | -- | kind Food | **now takes every food, alcohol included** (it excluded alcohol before; no food leaves a food key) |
-| **AlcoholAny** | -- | food that intoxicates (survival_intoxication) or carries a cost that is not a vital drain (DrinkCost: an ale's Damage Stamina Regeneration, LoreRim's Inebriation) | the catalog has no alcohol column, so this is the nearest reading; known strays: food whose cost is a paralysis or a weakness (raw fish, M'aiq's Broth). Raw food's Weak Stomach (a stamina drain) does not count |
+| **FoodAny** | -- | kind Food, and not Alcohol | R11 (0.24.4) took every food, alcohol included; **0.24.9 takes alcohol out again**, now that cap(i) has an `alcohol` column (the user, 2026-10-30: alcohol is a hybrid of food, potion and poison, not food for a food key). Rendil's Screaming Cheese and raw fish with a paralysis, which the old AlcoholAny reading took, are food again |
+| **AlcoholAny** | -- | Alcohol: the `alcohol` column (0.24.9), any consumable kind | read from the records' alcohol and drug marks (effects.csv `alcohol`, `core/EffectMapper.h` IsAlcohol: OCF's and LoreRim - Food Tweaks' item keywords, Requiem's and BOOB's effect keywords, the vanilla drink drawback MGEF Skyrim.esm 10C645), no longer guessed from side effects (R11 read food that intoxicates or costs something other than a vital drain, with the cheese and raw fish as strays). On LoreRim's 2026-10-10 dump: the 56 drinks and Balmora Blue (food), and the five Skoomas and Sleeping Tree Sap, which the load order makes potions: those match PotionsAny too. Drugs count, as the old classifier had it (ale, mead, wine, skooma) |
 | **AmmoAny** / **ApparelAny** | -- | ammo / apparel candidates | unchanged |
 | **Regular** | everything | everything | unchanged |
 
@@ -143,7 +143,8 @@ score reads only b for such an item too.
 **The overlaps, reviewed.** They remain, on purpose: a class is a filter on a
 key, not a partition of the items. DamageAny takes weapons and poisons
 (an "anything that hurts" key); HealingAny and PotionsAny both take a health
-potion; FoodAny and AlcoholAny both take ale. A layout that wants disjoint keys
+potion; PotionsAny and AlcoholAny both take a Skooma potion. FoodAny and
+AlcoholAny no longer overlap (0.24.9). A layout that wants disjoint keys
 names the narrower class (DamageMagic, PoisonsAny, AlcoholAny). What matters is
 that each class now means its effects, so a player can predict it from what an
 item does, and that the slot classes, the filters and the override finders read
@@ -152,11 +153,12 @@ the same facets and cannot disagree.
 **Classify()** (the class cap's group, the v2 log's and the dump's class) walks
 `core/CapFacets.h`'s `kClassPriority`, most specific first: HealingAny,
 DamageMagic, PoisonsAny, DamageAny, DefensiveAny, BuffsAny, SummonsAny,
-Utility, AlcoholAny (R11: before FoodAny, which takes alcohol too now), FoodAny,
+Utility, AlcoholAny (before PotionsAny, which takes a Skooma potion too), FoodAny,
 PotionsAny, ScrollsAny, the weapon classes, AmmoAny, ApparelAny, the school
 classes, SpellsAny, then Regular. A weapon classifies as DamageAny, as before
 (the class cap groups all weapons there); the class cap still groups all food
-(source type Food) as FoodAny.
+(source type Food) as FoodAny, drink included: that grouping is the page's
+variety on Regular keys, not a food key, and 0.24.9 leaves it as it was.
 
 ### Regular (Unrestricted)
 

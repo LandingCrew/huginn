@@ -103,7 +103,7 @@ contexts per segment and clears both at a head.
 | `launch` | string | UTC start of the game launch, `YYYYMMDD-HHMMSS` |
 | `list` | string | modlist folder (`LoreRim-5`, `simonrim-essentails`...) |
 | `build` | string | `"<version> (<git sha>)"` |
-| `cols` | string[243] | effect columns of `9-data/effects.csv`, in order (`cap.c` indexes it) |
+| `cols` | string[244] | effect columns of `9-data/effects.csv`, in order (`cap.c` indexes it). 243 before 0.24.9 added `alcohol` after `kind_light`, which moved every later column's index: a reader maps a cap by the head's own `cols` (tools/fit/v3load.py, tools/replay) |
 | `needs` | string[97] | needs of `9-data/needs.csv`, in order (`ctx.need`, `ctx.in`, `dec.open`, `dec.ep.i` index it) |
 | `cross` | string[8] | the runtime cross-features, in order (`row.x` indexes it). 7 before 0.23.46 (no `covered`) |
 | `kinds` | string[10] | catalog kinds: `Spell Scroll Potion Poison Food Weapon Ammo Armor SoulGem Light` (`row.kind`) |
@@ -809,7 +809,7 @@ pipeline run; a held row never gathered costs one learner lookup and a
 20-entry recency scan per context.
 
 What bounds it:
-- **Caps once per segment**, content-addressed: the 243-column vectors are
+- **Caps once per segment**, content-addressed: the 244-column vectors (243 before 0.24.9) are
   written once and referenced by id (the first context of a segment carries
   them all).
 - **Sparse everything**: caps, needs, inputs and cross-features list their

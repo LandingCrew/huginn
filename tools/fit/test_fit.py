@@ -236,6 +236,53 @@ class NewAndUnknownKeys(TempWork):
         self.assertNotIn('char', decs[0])
 
 
+class AlcoholColumn(TempWork):
+    """0.24.9 added the alcohol column after kind_light: every later column's index moved
+    by one. The C++ encoder's golden session as 0.24.8 wrote it (243 columns) and as this
+    build writes it (244) hold the same caps; v3load maps both by the head's names, alone
+    and in one load (a rotated file across the update)."""
+    DEC = HERE.parents[1] / 'tests' / 'core' / 'fixtures' / 'decisions'
+
+    @staticmethod
+    def named_caps(D):
+        out = []
+        for key in sorted(D['ctxs']):
+            for row in D['ctxs'][key]['rows']:
+                c = row[common.CAP]
+                out.append(None if c is None or c < 0 else sorted((D['cols'][j], v) for j, v in D['caps'][c]))
+        return out
+
+    def test_old_and_new_golden_read_the_same(self):
+        old = v3load.load([self.DEC / 'synthetic_v3_0.24.8.jsonl'])
+        new = v3load.load([self.DEC / 'synthetic_v3.jsonl'])
+        self.assertEqual(old['heads'][0]['ncols'], 243)
+        self.assertEqual(new['heads'][0]['ncols'], 244)
+        self.assertNotIn('alcohol', old['cols'])
+        self.assertEqual(new['cols'].index('alcohol'), new['cols'].index('kind_light') + 1)
+        caps = self.named_caps(old)
+        self.assertEqual(caps, self.named_caps(new))
+        # the session's caps reach past the inserted column (school_*, weapon and armour stats)
+        moved = {n for c in caps if c for n, _ in c} & set(new['cols'][new['cols'].index('alcohol') + 1:])
+        self.assertTrue(moved)
+
+    def test_one_load_across_the_update(self):
+        old = (self.DEC / 'synthetic_v3_0.24.8.jsonl').read_text(encoding='utf-8')
+
+        def relaunch(r):             # the older launch, so the two are not one launch twice
+            if 'launch' in r:
+                r['launch'] = '20261009-110000'
+        D = v3load.load([self.write('old.jsonl', edit_lines(old, relaunch)), self.DEC / 'synthetic_v3.jsonl'])
+        self.assertEqual(len(D['cols']), 244)          # the union by name: alcohol appended once
+        self.assertEqual(D['stats']['dup_ctx'], 2)      # each file's own second segment, nothing across
+        by_launch = {}
+        for (launch, cid), ctx in D['ctxs'].items():
+            for row in ctx['rows']:
+                c = row[common.CAP]
+                by_launch.setdefault(launch, []).append(
+                    None if c is None or c < 0 else sorted((D['cols'][j], v) for j, v in D['caps'][c]))
+        self.assertEqual(by_launch['20261009-110000'], by_launch['20261009-120000'])
+
+
 class OldEngineColumns(TempWork):
     """0.23.53: the old engine's score parts and the favourites hotkey (row columns est..hk),
     the favorite bit, ctx.old and dec.rid. A row that carries none of the columns -- every row
