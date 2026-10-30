@@ -10,6 +10,7 @@
 #include "../slot/WildcardKey.h"
 #include "core/WildcardGate.h"   // the per-page cache and clocks (host-tested)
 #include <algorithm>  // std::clamp below
+#include <array>
 #include <cstdint>
 #include <random>
 
@@ -157,6 +158,11 @@ namespace Huginn::Scoring
 
         Core::Wildcard::Params m_params{};
         Gate m_gate;
+
+        /// The draw the last NotShown on each page named ((form << 16) | uid,
+        /// 0 = none), so a lock that keeps hiding it logs once per window, not
+        /// once per run. Cleared by any other fate on the page and by Reset.
+        std::array<std::uint64_t, Slot::MAX_PAGES> m_notShownLogged{};
 
         // Random number generator (update thread only)
         std::mt19937& GetRNG();

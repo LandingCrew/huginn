@@ -1582,7 +1582,14 @@ wildcard picks against the soak's 8 of 333.
         tell two forms of one name apart); the slot hold's owners were the
         gap, and the override and Remembrance passes checked forms only. All
         check names now; the golden page invariant checks every row (one
-        wildcard, on its key; no form, name or shadowed row twice).
+        wildcard, on its key; no form, name or shadowed row twice). The
+        PR's verifier found one more: a guest (an item an override pushed out
+        of its seat, held where it stands) was checked against the overrides
+        and holds only, not against the seat owners already held, so a page
+        could read [Twin] [override] [Twin], or one form on two keys for two
+        stacks (predates 0.24.6). Guests now check against every holder
+        accepted before them too; a named adversarial test and 2000 built
+        synthetic worlds pin it.
       - **In game (you), on the rewrite-r8 session:** no key shows the same
         name as another (two enchanted copies, or a potion and a hold of its
         twin); a `[Wildcard] Page P key K` line is always followed by that item

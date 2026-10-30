@@ -452,3 +452,58 @@ TEST_CASE("slot adversarial: an override or a Remembrance hold never shows a nam
         return e.kind == SA::EventKind::OverridePlaced || e.kind == SA::EventKind::OverrideFallback;
     }));
 }
+
+TEST_CASE("slot adversarial: a displaced owner standing as a guest never shares a name or form with a held owner")
+{
+    // Keys 0, 1, 2 (priority 2, 1, 0). A seated on key 0, B on key 1, and a
+    // pinned override (accepted on key 1 only) sits in B's seat, so B stood
+    // as a guest on key 2. A and B share a display name: until 0.24.6 the
+    // guest was checked only against what the override placed, and the page
+    // read [Twin] [Pot] [Twin]. Variant 1: B is a second stack of A's form,
+    // and the page showed one form on two keys. Now A keeps its seat, B waits
+    // off the page, and key 2 goes to the next row (C3).
+    for (int variant = 0; variant < 2; ++variant) {
+        CAPTURE(variant);
+        auto a = Cand(1, 0.9f);
+        a.name = "Twin";
+        auto b = Cand(2, 0.8f);
+        b.name = "Twin";
+        if (variant == 1) {
+            b.formID = 1;
+            b.uniqueID = 1;
+            b.dedupKey = (1ull << 32) | 1;
+        }
+        auto in = Page({ Regular(2), Regular(1), Regular(0) }, { a, b, Cand(3, 0.5f) });
+        SA::OverrideRec o;
+        o.formID = 9;
+        o.dedupKey = 9;
+        o.name = "Pot";
+        o.category = 0;
+        o.pinnedToSlot = true;
+        o.matchMask = 1u << kRegular;
+        in.slots[1].overrideAccept = 1;
+        in.overridesActive = true;
+        in.overrides = { o };
+        in.memory.seats = { a.dedupKey, b.dedupKey, 0 };
+        in.memory.lastPlaced = { 3, 9, b.dedupKey };
+        CHECK(Both(in) == std::vector<std::uint32_t>{ 1, 9, 3 });
+        const auto page = SA::PageOf(in, Allocate(in));
+        CHECK(page[0].uniqueID == 0);
+        CHECK(page[1].kind == SA::Kind::Override);
+        int twins = 0;
+        for (const auto& p : page) twins += p.name == "Twin" ? 1 : 0;
+        CHECK(twins == 1);
+        // A guest sharing nothing with the held owners still stands where it
+        // is (the guest hold itself is unchanged).
+        auto c = in;
+        c.candidates[1].name = "Other";
+        if (variant == 1) {
+            c.candidates[1].formID = 2;
+            c.candidates[1].uniqueID = 0;
+            c.candidates[1].dedupKey = 2;
+            c.memory.seats[1] = 2;
+            c.memory.lastPlaced[2] = 2;
+        }
+        CHECK(Both(c) == std::vector<std::uint32_t>{ 1, 9, 2 });
+    }
+}

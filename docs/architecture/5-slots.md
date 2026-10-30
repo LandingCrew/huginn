@@ -649,15 +649,24 @@ property test's worlds with duplicate keys and names kept settle on both paths
 **One name per page (0.24.6).** Every pass that puts an item on a key checks
 the form and the display name against what the page already shows: the fill
 and the draw did, and since 0.24.6 the override passes, the Remembrance pass
-and the slot hold's owners do too. Two forms of one name read as one item to
+and the slot hold's owners and guests do too. Two forms of one name read as one item to
 the player, and `SlotLocker`'s post-lock dedup clears one of them by name
 anyway (`core/DedupRules.h`). The hold was the gap: it checked its seat owners
 only against what the overrides and holds had placed, so two seated forms
 named alike (R10's synthetic seeds 409 and 459, two Normal "Twin" rows) were
 both held. Now the owner the fill would serve first keeps its seat and the
-other is an ordinary row, which the name dedup keeps off the page. The golden
-test's page invariant checks every row: at most one wildcard, only on its key,
-no form twice, no name twice, no shadowed row.
+other is an ordinary row, which the name dedup keeps off the page. A guest (an
+item standing on another key because an override sits in its seat) was the
+second gap: it was checked against the overrides and holds only, not against
+the seat owners the hold had already kept, so a page could read [Twin]
+[override] [Twin], or show one form on two keys when the guest was a second
+stack of a held owner. A guest is now checked against what the page will show:
+the overrides, the holds and every holder accepted before it; one that shares
+a form or a name with them waits off the page. The golden test's page
+invariant checks every row: at most one wildcard, only on its key, no form
+twice, no name twice, no shadowed row; besides the generator's sequences, it
+runs on 2000 worlds built to reach the guest case (an override pinned in a
+seat whose owner stands as a guest, a third seat's owner its twin).
 
 **Pass 3 resolves chains, not swaps.** A departure shifts a run of items up by
 one, so putting them back starts at the bottom: the last item drops into the

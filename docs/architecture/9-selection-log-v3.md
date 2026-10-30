@@ -401,10 +401,14 @@ the probability that this window shows that FormID on the wildcard key, given
 the state on the run that rolled; its complement for the window, 1 − P(roll),
 is the chance the window showed no wildcard (not logged: a window without one
 writes nothing). An inverse-propensity reader weights a wildcard pick by 1 /
-`wp` per window, not per pipeline run. One known leak: a tick abandoned by a
-page race after its roll (the page changed mid-tick, about never in play)
-leaves the window open, and the next run rolls again, so with page races the
-true chance per window runs a little above `wp`. Before 0.24.3: P(its slot rolled a
+`wp` per window, not per pipeline run. Two known leaks, both leaving the
+window open so the next run rolls again with fresh uniforms: a tick abandoned
+by a page race after its roll (the page changed mid-tick, about never in
+play), and, from 0.24.6, a draw the slot locks did not show (CommitFate::NotShown
+in core/WildcardGate.h: a lock taken or kept inside SlotLocker::ApplyLocks
+holds the wildcard key, or the post-lock dedup cleared the drawn row because a
+lock shows its form or name on another key; the draw is not cached, logged or
+counted). With either, the true chance per window runs a little above `wp`. Before 0.24.3: P(its slot rolled a
 wildcard) × (the entries of its FormID in the pool) / (the pool it was drawn
 from), given the earlier rolls of the same pass, the pool holding one entry
 per candidate row of the top row's type; those rolls retried on every run, so

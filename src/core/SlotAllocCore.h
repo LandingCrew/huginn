@@ -1010,6 +1010,12 @@ namespace Huginn::Core::SlotAlloc
             std::size_t tentativeCount = 0;
             std::set<std::uint32_t> excludedIDs = m_ids;
             std::set<std::string_view> excludedNames = m_names;
+            // What the page will show if every tentative holder stays: what
+            // the overrides and holds placed, plus each holder accepted so
+            // far. A displaced owner standing as a guest is judged against
+            // this, not against the exclusion (which holds the guest itself).
+            std::set<std::uint32_t> shownIDs = m_ids;
+            std::set<std::string_view> shownNames = m_names;
 
             // Phase A: which seat owners are still candidates, and still
             // allowed in their seat? An item the slot has given up -- now
@@ -1039,6 +1045,8 @@ namespace Huginn::Core::SlotAlloc
                 tentative[tentativeCount++] = { j, owner };
                 excludedIDs.insert(cands[owner].formID);
                 excludedNames.insert(cands[owner].name);
+                shownIDs.insert(cands[owner].formID);
+                shownNames.insert(cands[owner].name);
             }
 
             // Owners whose seat an override (or a remembered item) is sitting
@@ -1072,6 +1080,11 @@ namespace Huginn::Core::SlotAlloc
             // items, and are in the excluded sets: a guest is judged against
             // what is SHOWN, not against the exclusion (Raw Crab Meat waiting
             // for an override on its home key, LoreRim 2026-10-06 21:07:58).
+            // What is shown includes the holders accepted before it (0.24.6):
+            // checked against the overrides and holds alone, a guest sharing
+            // a NAME or a FORM with a seat owner held in Phase A stood beside
+            // it -- [Twin] [override] [Twin], or one form on two keys when
+            // the two were stacks.
             for (std::size_t k = 0; k < priorityCount; ++k) {
                 const std::size_t j = m_order[k];
                 if (j >= slotCount || !m_state[j].IsEmpty() || placed[j] == 0) continue;
@@ -1084,7 +1097,7 @@ namespace Huginn::Core::SlotAlloc
                 if (guest == kNone) continue;
                 const auto& g = cands[guest];
                 if (displacedOwners.contains(g.formID)) {
-                    if (m_ids.contains(g.formID) || m_names.contains(g.name)) continue;
+                    if (shownIDs.contains(g.formID) || shownNames.contains(g.name)) continue;
                 } else if (excludedIDs.contains(g.formID) || excludedNames.contains(g.name)) {
                     continue;
                 }
@@ -1092,6 +1105,8 @@ namespace Huginn::Core::SlotAlloc
                 tentative[tentativeCount++] = { j, guest };
                 excludedIDs.insert(g.formID);
                 excludedNames.insert(g.name);
+                shownIDs.insert(g.formID);
+                shownNames.insert(g.name);
             }
 
             // One slot-priority order for owners and guests.
