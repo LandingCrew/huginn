@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <span>
 
 namespace Huginn::Core::Effect
 {
@@ -322,6 +323,62 @@ namespace Huginn::Core::Effect
             case Kind::SoulGem: return Get(cap, Col::soulgem_capacity) > 0.0f;
             default: return false;
         }
+    }
+
+    // The alcohol column's marks (effects.csv `alcohol`; 0.24.9). Evidence: the
+    // LoreRim dump of 2026-10-10 and the live load order (houseCARL).
+    namespace
+    {
+        // Item keywords. OCF_AlchDrinkAlcohol (OCF, distributed by KID) tags 35
+        // of LoreRim's 56 drinks; the Alcohol* family (LoreRim - Food
+        // Tweaks.esp) 55 of them, the mods' drinks OCF misses included.
+        // OCF_AlchDrug / OCF_AlchDrugSkooma: the Skoomas and Sleeping Tree Sap.
+        // MAG_FoodTypeDrugs: Simonrim's (Gourmet) Skoomas. VendorItemAlcohol,
+        // CACO_IsAlcohol, VendorItemSkooma: the old ItemClassifier's tier 1
+        // (CACO); none in LoreRim.
+        constexpr std::array<std::string_view, 12> kAlcoholItemKeywords{
+            "OCF_AlchDrinkAlcohol", "AlcoholWine", "AlcoholMead", "AlcoholSpirit", "AlcoholGrain",
+            "AlcoholRectifiedSpirit", "OCF_AlchDrug", "OCF_AlchDrugSkooma", "MAG_FoodTypeDrugs",
+            "VendorItemAlcohol", "CACO_IsAlcohol", "VendorItemSkooma",
+        };
+        // Effect (MGEF) keywords. Feat_KW_Alcohol (Requiem - Special Feats.esp):
+        // the "Alcohol" effect on all 56 LoreRim drinks; BOOB_AlcoholBadEffect
+        // (BOOB - Requiem.esp): their Inebriation, and Balmora Blue's. The
+        // MAG_ ones are the old classifier's tier 1b (Simonrim's Apothecary /
+        // Gourmet): MAG_FoodItemDrugs is on Simonrim's Skooma effects.
+        constexpr std::array<std::string_view, 5> kAlcoholEffectKeywords{
+            "Feat_KW_Alcohol", "BOOB_AlcoholBadEffect", "MAG_DrinkAlcoholFortify", "MAG_DrinkAlcoholDamage",
+            "MAG_FoodItemDrugs",
+        };
+        // The drink drawback: Skyrim.esm 10C645, vanilla FoodDamageStaminaRate
+        // ("Damage Stamina Regeneration"), LoreRim's REQ_Alcohol_DamageRegeneration
+        // ("Inebriation"). Vanilla tags no drink, so this is its one mark; in
+        // the LoreRim load order its 57 carriers are the 56 drinks and Balmora
+        // Blue (houseCARL's carrier walk, 2026-10-30).
+        constexpr std::string_view kDrinkDrawbackPlugin = "skyrim.esm";
+        constexpr std::uint32_t kDrinkDrawbackLocal = 0x10C645;
+
+        bool AnyOf(const std::vector<std::string>& kws, std::span<const std::string_view> marks) noexcept
+        {
+            return std::any_of(kws.begin(), kws.end(), [&](const std::string& k) {
+                return std::find(marks.begin(), marks.end(), std::string_view(k)) != marks.end();
+            });
+        }
+    }
+
+    bool IsAlcohol(const ItemRecord& it, const EffectTable& effects)
+    {
+        if (it.kind != Kind::Potion && it.kind != Kind::Poison && it.kind != Kind::Food) return false;
+        if (AnyOf(it.keywords, kAlcoholItemKeywords)) return true;
+        for (const auto& row : it.effects) {
+            if (row.effect >= effects.size()) continue;
+            const auto& m = effects[row.effect];
+            if (AnyOf(m.keywords, kAlcoholEffectKeywords)) return true;
+            if (OverrideTable::LocalId(m.formId) == kDrinkDrawbackLocal && Lower(m.plugin) == kDrinkDrawbackPlugin) {
+                return true;
+            }
+        }
+        return false;
     }
 
     School SchoolFromName(std::string_view s) noexcept
@@ -877,6 +934,7 @@ namespace Huginn::Core::Effect
             case Kind::Light: fix(Col::kind_light, 1.0f); break;
             default: break;
         }
+        if (IsAlcohol(it, effects)) fix(Col::alcohol, 1.0f);
         m.consumable = it.kind == Kind::Potion || it.kind == Kind::Poison || it.kind == Kind::Food ||
                        it.kind == Kind::Scroll || it.kind == Kind::Ammo || it.kind == Kind::SoulGem;
         if (m.consumable) fix(Col::consumable, 1.0f);

@@ -800,6 +800,85 @@ TEST_CASE("effect mapper: weapon, ammo, armour, soul gem and light features")
     CHECK_FALSE(DescribesItem(r.caps[4], Kind::Weapon));  // an unenchanted staff says nothing
 }
 
+TEST_CASE("effect mapper: the alcohol column, each mark and what is not one (0.24.9)")
+{
+    World w;
+    auto restore = Mgef(kArchValueModifier, "Health", "Restore Health");
+    restore.keywords = { "MagicAlchRestoreHealth" };
+    const auto heal = w.Add(restore);
+    auto featAlcohol = Mgef(kArchDualValueModifier, "DamageResist", "Alcohol");
+    featAlcohol.keywords = { "Feat_KW_Alcohol" };
+    const auto feat = w.Add(featAlcohol);
+    auto boob = Mgef(kArchValueModifier, "StaminaRateMult", "Inebriation", kFlagDetrimental);
+    boob.keywords = { "BOOB_AlcoholBadEffect" };
+    const auto inebriation = w.Add(boob);
+    auto drugs = Mgef(kArchValueModifier, "Stamina", "Skooma");
+    drugs.keywords = { "MAG_FoodItemDrugs" };
+    const auto skoomaFx = w.Add(drugs);
+    // The vanilla drink drawback, as vanilla has it: no alcohol keyword at all.
+    auto drawback = Mgef(kArchValueModifier, "StaminaRateMult", "Damage Stamina Regeneration", kFlagDetrimental);
+    drawback.formId = 0x0010C645;
+    drawback.plugin = "Skyrim.esm";
+    drawback.keywords = { "MagicAlchHarmful" };
+    const auto vanillaDrawback = w.Add(drawback);
+    // The same local id from another plugin, and a light plugin's ...645: not it.
+    auto elsewhere = drawback;
+    elsewhere.plugin = "Other.esp";
+    const auto otherPlugin = w.Add(elsewhere);
+    auto light = drawback;
+    light.formId = 0xFE10C645;
+    const auto lightId = w.Add(light);
+    // MagicAlchHarmful alone (poisoned cheese, Rendil's Screaming Cheese's paralysis): no mark.
+    auto paralysis = Mgef(kArchParalysis, "Paralysis", "Paralysis", kFlagDetrimental);
+    paralysis.keywords = { "MagicAlchHarmful" };
+    const auto paralyse = w.Add(paralysis);
+
+    auto food = [&](std::string name, std::vector<std::string> kws, std::vector<std::uint32_t> fx) -> std::size_t {
+        auto& it = w.Item(Kind::Food, std::move(name));
+        it.keywords = std::move(kws);
+        for (const auto e : fx) World::Fx(it, e, 10, 60);
+        return w.items.size() - 1;
+    };
+    const auto ocf = food("Ale (OCF)", { "VendorItemFood", "OCF_AlchDrinkAlcohol" }, { heal });
+    const auto tweaks = food("Snowberry Mead", { "VendorItemFood", "AlcoholMead" }, { heal });
+    const auto featOnly = food("Brass Brandy", { "VendorItemFood" }, { feat, heal });
+    const auto boobOnly = food("Balmora Blue", { "VendorItemFood" }, { heal, inebriation });
+    const auto gourmet = food("Skooma (Simonrim)", { "MAG_FoodTypeDrugs" }, { heal });
+    const auto gourmetFx = food("Skooma (effect)", {}, { skoomaFx });
+    const auto vanilla = food("Argonian Bloodwine", { "VendorItemFood" }, { heal, vanillaDrawback });
+    const auto caco = food("Mead (CACO)", { "CACO_IsAlcohol" }, { heal });
+    const auto bread = food("Bread", { "VendorItemFood", "OCF_AlchFood_Bread" }, { heal });
+    const auto rawFish = food("Raw Salmon", { "OCF_AlchFood_FishRaw", "VendorItemFoodRaw" }, { heal, paralyse });
+    const auto notThisOne = food("Other ...645", {}, { heal, otherPlugin });
+    const auto notLight = food("Light ...645", {}, { heal, lightId });
+    // A Skooma the load order makes a potion (OCF_AlchDrug), and a weapon wearing a drink keyword.
+    auto& potion = w.Item(Kind::Potion, "Skooma (LoreRim)");
+    potion.keywords = { "OCF_AlchDrug", "OCF_AlchDrugSkooma" };
+    World::Fx(potion, heal, 10, 0);
+    const std::size_t skoomaPotion = w.items.size() - 1;
+    auto& club = w.Item(Kind::Weapon, "Bottle Club");
+    club.weaponType = 4;
+    club.damage = 5;
+    club.keywords = { "OCF_AlchDrinkAlcohol" };
+    const std::size_t weapon = w.items.size() - 1;
+
+    const auto r = w.Build();
+    for (const auto i : { ocf, tweaks, featOnly, boobOnly, gourmet, gourmetFx, vanilla, caco, skoomaPotion }) {
+        INFO(w.items[i].name);
+        CHECK(CapOf(r, i, Col::alcohol) == 1.0f);
+        CHECK(IsAlcohol(w.items[i], w.effects));
+    }
+    for (const auto i : { bread, rawFish, notThisOne, notLight, weapon }) {
+        INFO(w.items[i].name);
+        CHECK(CapOf(r, i, Col::alcohol) == 0.0f);
+        CHECK_FALSE(IsAlcohol(w.items[i], w.effects));
+    }
+    // The column is an item feature beside the kind, never an effect.
+    CHECK(CapOf(r, ocf, Col::kind_food) == 1.0f);
+    CHECK_FALSE(IsEffect(Col::alcohol));
+    CHECK(ValueRuleName(Col::alcohol) == "P");
+}
+
 TEST_CASE("effect mapper: populations and the cap's text form")
 {
     Populations p;

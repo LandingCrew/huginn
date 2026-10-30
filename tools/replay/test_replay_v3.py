@@ -39,6 +39,9 @@ GOLDEN_0_23_52 = REPO / "tests" / "core" / "fixtures" / "decisions" / "synthetic
 # The golden file as 0.23.55 wrote it: before the shadow model's columns
 # (mu, sd, lm, um, ex) and the head's "bootstrap" (0.23.56, R8.2).
 GOLDEN_0_23_55 = REPO / "tests" / "core" / "fixtures" / "decisions" / "synthetic_v3_0.23.55.jsonl"
+# The golden file as 0.24.8 wrote it: 243 columns, before 0.24.9 added alcohol
+# after kind_light (every later column's index moved by one).
+GOLDEN_0_24_8 = REPO / "tests" / "core" / "fixtures" / "decisions" / "synthetic_v3_0.24.8.jsonl"
 OLD_KEYS = ("est", "a", "n", "ucb", "rec", "prior", "cw", "fl", "wu", "hk")
 SHADOW_KEYS = ("mu", "sd", "lm", "um", "ex")
 
@@ -69,7 +72,8 @@ class GoldenFile(unittest.TestCase):
     def test_head(self):
         h = self.decs[0]["head"]
         self.assertEqual(h["v"], 3)
-        self.assertEqual(len(h["cols"]), 243)
+        self.assertEqual(len(h["cols"]), 244)   # 243 until 0.24.9 added alcohol
+        self.assertEqual(h["cols"].index("alcohol"), h["cols"].index("kind_light") + 1)
         self.assertEqual(len(h["needs"]), 97)  # 96 until 0.23.51 added loadout_quarterstaff; 94 until 0.23.50 added time_to_edge and edge_approach; 93 until 0.23.30 added combat_regen_ok
         self.assertEqual(h["cross"][4], "stack_count")
         # 0.23.46: covered at the end of cross, two row columns, the filter names.
@@ -285,6 +289,23 @@ class GoldenFile(unittest.TestCase):
         # the others carry none
         for i in (1, 2, 4, 5):
             self.assertEqual(tuple(rows[i][k] for k in SHADOW_KEYS), (None,) * 5, i)
+
+
+class GoldenFile0_24_8(unittest.TestCase):
+    """The same session as 0.24.8 wrote it (243 columns, no alcohol): its caps
+    use the old indices of every column after kind_light, and decode by the
+    head's own names to the same caps as this build's file."""
+
+    def test_same_caps_by_name(self):
+        old = replay.load_v3([GOLDEN_0_24_8])
+        new = replay.load_v3([GOLDEN])
+        self.assertEqual(len(old[0]["head"]["cols"]), 243)
+        self.assertNotIn("alcohol", old[0]["head"]["cols"])
+        caps = lambda decs: [r["cap"] for d in decs for r in d["rows"] + [d["chosen"] or {}] if "cap" in r]
+        self.assertEqual(caps(old), caps(new))
+        moved = {k for c in caps(new) if c for k in c} & set(new[0]["head"]["cols"][new[0]["head"]["cols"].index("alcohol") + 1:])
+        self.assertTrue(moved)   # the session's caps reach past the inserted column
+        self.assertEqual([d["out"] for d in old], [d["out"] for d in new])
 
 
 class GoldenFile0_23_55(unittest.TestCase):

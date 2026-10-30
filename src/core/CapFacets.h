@@ -83,9 +83,7 @@ namespace Huginn::Core::Facets
         Warming,           // survival_warmth
         Intoxicating,      // survival_intoxication
         SelfHarm,          // the self_harm family (a consumable's cost to its user)
-        DrinkCost,         // self_harm set directly, with no self_harm_health / _magicka / _stamina: the
-                           // cost is not a vital drain (alcohol's Damage Stamina Regeneration, LoreRim's
-                           // Inebriation, Skooma's Slow); raw food's Weak Stomach is self_harm_stamina
+        Alcohol,           // alcohol: an alcoholic drink or a drug (0.24.9; core/EffectMapper.h IsAlcohol)
         _Count
     };
     inline constexpr std::size_t kFacetCount = static_cast<std::size_t>(F::_Count);
@@ -96,7 +94,7 @@ namespace Huginn::Core::Facets
         "Damage", "Hostile", "Fortify", "Regen", "Stealth", "Invisibility", "Muffle", "ArmorBuff", "Ward", "Defense",
         "Resist", "ResistFire", "ResistFrost", "ResistShock", "ResistPoison", "ResistMagic", "Summon", "Cure",
         "CurePoison", "CureDisease", "Vision", "Utility", "Movement", "Waterbreathing", "Warming",
-        "Intoxicating", "SelfHarm", "DrinkCost",
+        "Intoxicating", "SelfHarm", "Alcohol",
     };
 
     /// A set of facets.
@@ -167,8 +165,7 @@ namespace Huginn::Core::Facets
         add(F::Warming, has(Col::survival_warmth));
         add(F::Intoxicating, has(Col::survival_intoxication));
         add(F::SelfHarm, has(Col::self_harm));
-        add(F::DrinkCost, has(Col::self_harm) && !has(Col::self_harm_health) && !has(Col::self_harm_magicka) &&
-                              !has(Col::self_harm_stamina));
+        add(F::Alcohol, has(Col::alcohol));
         return s;
     }
 
@@ -210,18 +207,17 @@ namespace Huginn::Core::Facets
         bool ranged = false;   // a weapon: bow, crossbow or staff (the weapon's type, a form fact)
     };
 
-    /// Alcohol, as near as cap(i) reads it: food that intoxicates
-    /// (survival_intoxication: Skooma, drugs) or carries a side effect that is
-    /// not a vital drain (DrinkCost: an ale's or mead's Damage Stamina
-    /// Regeneration, LoreRim's Inebriation). The catalog has no alcohol column
-    /// (the old ItemClassifier read alcohol keywords and names). Known
-    /// strays: food whose cost is a paralysis or a weakness (raw fish's
-    /// paralysis, M'aiq's Broth), which effects.csv also sets on self_harm
-    /// directly. Raw food's Weak Stomach (self_harm_stamina) does not count.
+    /// Alcohol: the `alcohol` column (0.24.9; effects.csv, EffectMapper.h
+    /// IsAlcohol), an alcoholic drink or a drug of any consumable kind: the
+    /// food drinks, LoreRim's Balmora Blue, and the Skoomas and Sleeping Tree
+    /// Sap the load order makes potions. Before 0.24.9 it was guessed from the
+    /// side effects (food that intoxicates or costs something other than a
+    /// vital drain), which also took Rendil's Screaming Cheese and raw fish
+    /// with a paralysis. The user (2026-10-30): alcohol is a hybrid of food,
+    /// potion and poison, and is not food for the food keys (FoodAny).
     [[nodiscard]] constexpr bool Alcoholic(const Subject& s) noexcept
     {
-        return s.kind == Effect::Kind::Food &&
-               (s.facets.Has(F::Intoxicating) || s.facets.Has(F::DrinkCost));
+        return s.facets.Has(F::Alcohol);
     }
 
     /// Whether the resist-redundancy filter may judge an item: it gives its
@@ -312,7 +308,7 @@ namespace Huginn::Core::Facets
                     case C::PotionsAny:
                         return s.kind == K::Potion || poison;
                     case C::FoodAny:
-                        return s.kind == K::Food;
+                        return s.kind == K::Food && !Alcoholic(s);   // 0.24.9: alcohol is not food
                     case C::AlcoholAny:
                         return Alcoholic(s);
                     default:
@@ -350,7 +346,7 @@ namespace Huginn::Core::Facets
         Slot::SlotClassification::BuffsAny,
         Slot::SlotClassification::SummonsAny,
         Slot::SlotClassification::Utility,
-        Slot::SlotClassification::AlcoholAny,     // R11: before FoodAny, which takes alcohol too now
+        Slot::SlotClassification::AlcoholAny,     // before PotionsAny, which takes a Skooma potion too
         Slot::SlotClassification::FoodAny,
         Slot::SlotClassification::PotionsAny,
         Slot::SlotClassification::ScrollsAny,

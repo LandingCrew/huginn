@@ -1,7 +1,7 @@
 #pragma once
 
 // =============================================================================
-// EFFECT MAPPER -- plain item records -> cap(i), the 243 effect columns
+// EFFECT MAPPER -- plain item records -> cap(i), the 244 effect columns
 // =============================================================================
 // Doc 9's extractor rules (effects.csv `how`), in three steps:
 //
@@ -124,6 +124,16 @@ namespace Huginn::Core::Effect
     /// column for anything magic; for a plain weapon or ammo its damage stat;
     /// for a light, being a light.
     [[nodiscard]] bool DescribesItem(const Cap& cap, Kind kind) noexcept;
+
+    /// The `alcohol` item feature (effects.csv; 0.24.9): a potion, poison or
+    /// food that is an alcoholic drink or a drug. Marks, any one of them: an
+    /// alcohol or drug item keyword (OCF, LoreRim - Food Tweaks' Alcohol*,
+    /// Simonrim's MAG_FoodTypeDrugs, CACO's), an effect whose MGEF carries an
+    /// alcohol keyword (Requiem's Feat_KW_Alcohol, BOOB's
+    /// BOOB_AlcoholBadEffect, Simonrim's MAG_ ones), or the drink drawback
+    /// MGEF Skyrim.esm 10C645, vanilla's only mark. MagicAlchHarmful is not
+    /// one: poisoned food and Rendil's Screaming Cheese carry it too.
+    [[nodiscard]] bool IsAlcohol(const ItemRecord& item, const EffectTable& effects);
 
     /// The column's value rule from effects.csv's `how`: "Amount", "Level",
     /// "P", "PD", "PG", "PGD", "PArea", "Hunger" or "Thirst" (graded ones grade

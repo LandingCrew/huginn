@@ -9,6 +9,7 @@
 // the allocation), the blob caps the plugin checks before a read, and the
 // CriticalHealth label (display/NeedReason.h).
 
+#include "core/Bootstrap.h"
 #include "core/ChoiceCosave.h"
 #include "core/ChoiceLive.h"
 #include "core/ChoiceScore.h"
@@ -221,6 +222,34 @@ TEST_CASE("cosave merge: a key saved twice keeps the last value; an empty save k
     CHECK(none.empty());
     CHECK(rep.fromFile == 2);
     CHECK(rep.unknown == 0);
+}
+
+TEST_CASE("cosave merge: a save from before the alcohol column (0.24.8) keeps its weights; the new column takes the file's")
+{
+    // THTA is keyed by name (Bootstrap::StableKey), never by position: inserting
+    // alcohol after kind_light moved every later column's index, not its key.
+    using Bootstrap::StableKey;
+    const std::string_view need = Needs::kNeeds[0].id;
+    std::vector<std::uint64_t> buildKeys;
+    std::vector<CC::ThetaEntry> saved;   // what a 0.24.8 save holds: every column but alcohol
+    for (std::size_t j = 0; j < C::J; ++j) {
+        const auto key = StableKey("theta", need, Effect::kColumns[j].id);
+        buildKeys.push_back(key);
+        if (Effect::kColumns[j].id != "alcohol") saved.push_back(CC::ThetaEntry{ key, 0.25 + 0.001 * j, 0.5 });
+    }
+    CC::MergeReport rep;
+    const auto merged = CC::MergeTheta(buildKeys, saved, rep);
+    CHECK(rep.applied == C::J - 1);
+    CHECK(rep.fromFile == 1);    // alcohol: the bootstrap's value (the prior: the file has no such column)
+    CHECK(rep.unknown == 0);
+    REQUIRE(merged.size() == C::J - 1);
+    const auto alcoholKey = StableKey("theta", need, "alcohol");
+    CHECK(std::none_of(merged.begin(), merged.end(), [&](const CC::ThetaEntry& e) { return e.key == alcoholKey; }));
+    // school_alteration moved from index 192 to 193; its saved weight still lands on it.
+    const auto school = StableKey("theta", need, "school_alteration");
+    const auto at = std::find_if(merged.begin(), merged.end(), [&](const CC::ThetaEntry& e) { return e.key == school; });
+    REQUIRE(at != merged.end());
+    CHECK(at->mu == doctest::Approx(0.25 + 0.001 * static_cast<double>(Effect::Index(Effect::Col::school_alteration))));
 }
 
 // ---------------------------------------------------------------------------

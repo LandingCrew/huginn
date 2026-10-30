@@ -8,8 +8,9 @@
 // change: run the tests, copy <build>/tests/synthetic_v3.actual.jsonl over the
 // fixture, and update the Python test's expectations. Before a deliberate
 // format change, keep the old golden file beside it under the version that
-// wrote it (synthetic_v3_0.23.52.jsonl: before 0.23.53's old-engine columns),
-// so the readers keep reading it.
+// wrote it (synthetic_v3_0.23.52.jsonl: before 0.23.53's old-engine columns;
+// synthetic_v3_0.24.8.jsonl: 243 columns, before 0.24.9's alcohol moved every
+// column after kind_light), so the readers keep reading it.
 
 #include "core/DecisionLog.h"
 #include "core/NeedIds.h"

@@ -199,7 +199,7 @@ while the filters stand.
   (`StateManager_MagicEffects.cpp:121,371,617`), paired with a **negative**
   starting θ on Restore. That is exactly the pattern redundancy needs, built
   for one family.
-- **Effects (243):** cap(i) describes the item, never the player. The one
+- **Effects (244):** cap(i) describes the item, never the player. The one
   runtime cross-feature that reads the player's active effects is
   `school_fortified` (`effects.csv:202`; `effect/CrossFeatures.cpp:44`).
 - **R8 plan:** "hard zeros to `CandidateFilters` first"
