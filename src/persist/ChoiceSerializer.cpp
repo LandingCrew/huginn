@@ -31,15 +31,21 @@ namespace Huginn::Persist
    // is fixed for the session (LoadBootstrap runs once). A reset empties them
    // (ResetChoiceLearning, 0.24.18), from the console and the dMenu button;
    // a ModCallbackEvent may come on any thread, hence the mutex.
-   // s_carriedResetSinceLoad: a reset since the last load decision. A reload
-   // of the same character keeps the carried records only then (CarryLoaded);
-   // otherwise it takes the save's. Set by ResetCarried, cleared by every
-   // decision but a failed load. NOT cleared on revert: SKSE reverts before
-   // every load, so the bit would be gone before the reload could read it.
+   // s_carriedResetHolds: a reset since the carried records last came from a
+   // save (a replace) or a new game. A reload of the same character keeps the
+   // carried records only then (CarryLoaded); otherwise it takes the save's.
+   // Set by ResetCarried, cleared by a new game and a replace only (0.24.23):
+   // the reset ticked the learning clock past the saves memory had reached, so
+   // every load of one of those is a reload and must keep the emptied records,
+   // not only the first (until 0.24.22 every decision but a failed load
+   // cleared it, so a second load of a pre-reset save brought its learning
+   // back). A save ahead of memory is a replace, as the ready model takes it.
+   // NOT cleared on revert: SKSE reverts before every load, so the bit would
+   // be gone before the reload could read it.
    static std::mutex s_carriedMutex;
    static std::optional<CC::ThetaRecord> s_carriedTheta;
    static std::optional<CC::BiasRecord> s_carriedBias;
-   static bool s_carriedResetSinceLoad = false;
+   static bool s_carriedResetHolds = false;
 
    const char* LoadDecisionName(LoadDecision d) noexcept
    {
@@ -63,19 +69,21 @@ namespace Huginn::Persist
       }
       // Fallback mode: no theta or b lives in memory, but the saves write the
       // carried records back. Without this the reset would not reach them,
-      // and the learning from before it would return with the bootstrap. The
-      // next reload of the same character keeps the emptied records
-      // (CarryLoaded reads the reset bit this sets), as it keeps a reset model.
+      // and the learning from before it would return with the bootstrap.
+      // Every reload of the same character keeps the emptied records until a
+      // new game or a replace (CarryLoaded reads the reset bit this sets), as
+      // the ready path keeps a reset model.
       std::size_t thetaWas = 0, biasWas = 0;
       {
          std::lock_guard lock(s_carriedMutex);
          thetaWas = s_carriedTheta ? s_carriedTheta->entries.size() : 0;
          biasWas = s_carriedBias ? s_carriedBias->entries.size() : 0;
-         CC::ResetCarried(s_carriedTheta, s_carriedBias, s_carriedResetSinceLoad);
+         CC::ResetCarried(s_carriedTheta, s_carriedBias, s_carriedResetHolds);
       }
       logger::info("[Cosave] Reset with the choice model off (no usable bootstrap): the THTA / BIAS carried from "
                    "the load dropped ({} theta entries, {} b entries); this session's saves write theta unmoved and "
-                   "b empty"sv,
+                   "b empty, and reloads of this character keep them so, until a new game or a later save / another "
+                   "character is loaded"sv,
          thetaWas, biasWas);
       return "choice model off (no usable bootstrap): the save's theta and b dropped";
    }
@@ -311,10 +319,11 @@ namespace Huginn::Persist
          // Fallback mode: nothing to apply them to. The carried records
          // follow the load's decision (core/ChoiceCosave.h CarryLoaded): this
          // save's records for a load, none for a new game, unchanged for a
-         // failed load. A reload of the same character keeps them only after
-         // a reset, so the reset holds; otherwise it takes the save's, since
-         // the carried records do not learn while the learning clock,
-         // which calls the load a reload, runs on.
+         // failed load. A reload of the same character keeps them after a
+         // reset, every time until a new game or a replace, so the reset
+         // holds; otherwise it takes the save's, since the carried records do
+         // not learn while the learning clock, which calls the load a reload,
+         // runs on.
          std::optional<CC::BiasRecord> savedBias;
          if (bias) {
             CC::BiasRecord rec;
@@ -325,11 +334,11 @@ namespace Huginn::Persist
             }
             savedBias = std::move(rec);
          }
-         const auto carry = CC::CarryLoaded(decision, s_carriedTheta, s_carriedBias, s_carriedResetSinceLoad,
+         const auto carry = CC::CarryLoaded(decision, s_carriedTheta, s_carriedBias, s_carriedResetHolds,
             std::move(theta), std::move(savedBias));
          const char* source = decision == LoadDecision::Failed ? "the carried records, unchanged"
                               : decision == LoadDecision::NewGame ? "nothing"
-                              : carry.keptCarried ? "the carried records, kept (reset since the last load)"
+                              : carry.keptCarried ? "the carried records, kept (reset, no new game or replace since)"
                                                   : "this save's records";
          logger::warn("[Cosave] Choice model off (no usable bootstrap): {}, THTA / BIAS not applied; this session's "
                       "saves write back {}: THTA {} / BIAS {} ({} theta entries, {} b entries{})"sv,
@@ -346,7 +355,7 @@ namespace Huginn::Persist
       // nothing is carried, and a reset never sets the bit.
       s_carriedTheta.reset();
       s_carriedBias.reset();
-      s_carriedResetSinceLoad = false;
+      s_carriedResetHolds = false;
       carriedLock.unlock();
       switch (decision) {
       case LoadDecision::Failed:

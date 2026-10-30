@@ -56,11 +56,13 @@ namespace Huginn::Persist
    //                      records this save holds are kept and every save
    //                      this session makes writes them back unchanged, so
    //                      a session without the bootstrap loses no learning.
-   //                      A reset empties them (ResetChoiceLearning). The
-   //                      next reload of the same character keeps the
+   //                      A reset empties them (ResetChoiceLearning). Every
+   //                      reload of the same character after it keeps the
    //                      emptied ones, b's dynamic forms from the save, so
-   //                      the reset holds; a reload with no reset since the
-   //                      last load takes the save's records, as a load (the
+   //                      the reset holds, until a new game or a replace (a
+   //                      later save, another character; 0.24.23, before it
+   //                      only the first load after the reset); a reload with
+   //                      no reset takes the save's records, as a load (the
    //                      carried ones never learn, while the clock that
    //                      calls it a reload runs on). core/ChoiceCosave.h
    //                      CarryLoaded.
@@ -91,9 +93,9 @@ namespace Huginn::Persist
    /// sBootstrapBias seed. With the model off (no bootstrap) there is no theta
    /// to reset, so the records carried from the load are emptied instead
    /// (core/ChoiceCosave.h ResetCarried, 0.24.18): the saves stop writing the
-   /// learning from before the reset, and the next reload of the same
-   /// character keeps them emptied (the reset bit, CarryLoaded). Returns what
-   /// was done, for the player's message.
+   /// learning from before the reset, and every reload of the same character
+   /// keeps them emptied until a new game or a replace (the reset bit,
+   /// CarryLoaded). Returns what was done, for the player's message.
    [[nodiscard]] const char* ResetChoiceLearning(uint64_t characterID);
 
    /// kPostLoadGame / kNewGame, once the learner exists and its bootstrap

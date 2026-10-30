@@ -288,31 +288,33 @@ namespace Huginn::Core::ChoiceCosave
         return out;
     }
 
-    void ResetCarried(std::optional<ThetaRecord>& theta, std::optional<BiasRecord>& bias, bool& resetSinceLoad)
+    void ResetCarried(std::optional<ThetaRecord>& theta, std::optional<BiasRecord>& bias, bool& resetHolds)
     {
         if (theta) {
             theta->entries.clear();
             theta->dropped = 0;
         }
         bias = BiasRecord{};
-        resetSinceLoad = true;
+        resetHolds = true;
     }
 
     CarryReport CarryLoaded(LoadDecision decision, std::optional<ThetaRecord>& carriedTheta,
-        std::optional<BiasRecord>& carriedBias, bool& resetSinceLoad, std::optional<ThetaRecord> savedTheta,
+        std::optional<BiasRecord>& carriedBias, bool& resetHolds, std::optional<ThetaRecord> savedTheta,
         std::optional<BiasRecord> savedBias)
     {
-        // A failed load restored nothing: the carried records and the reset bit
-        // stay as they were, so a reset before it still holds at a reload.
-        if (decision == LoadDecision::Failed) return {};
-        const bool reset = std::exchange(resetSinceLoad, false);
         switch (decision) {
+        case LoadDecision::Failed:
+            // Nothing was restored: the carried records and the reset bit stay
+            // as they were, so a reset before it still holds at a reload.
+            return {};
         case LoadDecision::NewGame:
+            resetHolds = false;
             carriedTheta.reset();
             carriedBias.reset();
             return {};
         case LoadDecision::Reload: {
-            if (!reset) break;   // as a load: the save's records
+            // The bit stays set (0.24.23): every reload after a reset keeps it.
+            if (!resetHolds) break;   // as a load: the save's records
             CarryReport rep{ .keptCarried = true };
             if (!carriedBias || !savedBias) return rep;
             auto dynamic = [](std::uint32_t form) { return (form >> 24) == 0xFF; };
@@ -325,8 +327,8 @@ namespace Huginn::Core::ChoiceCosave
             }
             return rep;
         }
-        case LoadDecision::Failed:   // returned above
         case LoadDecision::Replace:
+            resetHolds = false;   // the save's records adopted: the reset's hold ends
             break;
         }
         carriedTheta = std::move(savedTheta);
