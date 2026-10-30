@@ -10,17 +10,20 @@
 // live path") run the same code:
 //
 //   - the D2 legacy feature's values under [Scoring] bLegacyLearnFeature
-//     (LegacyFeature; learning/legacy/LegacyLearnFeature.h's Feature() calls it);
+//     (LegacyFeature; PipelineCoordinator::RankOnChoice calls it on each row's
+//     learning/legacy/LegacyLearnFeature.h Row, for the live score and for
+//     engine A's shadow);
 //   - the ranking pass (ScoreForRanking): the greedy upgrade gate at the summon
 //     limit, then each row's mu, variance, the three largest theta n a terms
 //     (the explanation is the first) and its need part;
 //   - what the allocation adds for the log (AfterAllocation): the slot feature
-//     of the key a row landed on, and kappa off the page.
+//     of the key a row landed on. The v3 log takes its mu; its logit (kappa
+//     off the page) has no log column and only the host tests read it.
 //
 // Positions: format v1's `slot 0..7` features weigh WHERE a row sits on the
 // page, which is the allocation's output, so the ranking cannot read them
-// (it would rank on its own result). They enter only the logged mu and logit,
-// after the allocation. The R6 bootstrap (D2) weighs none of them, so the
+// (it would rank on its own result). They enter only after the allocation:
+// the logged mu, and the learner's logit over a pick's choice set. The R6 bootstrap (D2) weighs none of them, so the
 // ranked mu and the logged mu are the same number; ChoiceLearner warns once
 // at load when a file does weigh them.
 //

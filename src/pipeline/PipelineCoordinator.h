@@ -6,6 +6,7 @@
 #include "state/WorldState.h"
 #include "state/StateTypes.h"
 #include "learning/ScoredCandidate.h"
+#include "learning/UtilityScorer.h"   // Scoring::RecsFloors (the [Recs] lines' lm note)
 #include "learning/PipelineStateCache.h"   // EligibleRow (R4, the selection log v3)
 #include "learning/legacy/LegacyRun.h"   // Legacy::Run (R8.4: the pipeline's one handle on the D2 feature)
 #include "core/ChoiceLive.h"                      // the ranking pass's rows (R8.3)
@@ -154,6 +155,10 @@ namespace Huginn::Pipeline
         // live score reads the D2 feature: engine A live), read once in
         // ScoreCandidates so a hot reload cannot split a run.
         bool legacyLive = false;
+        // What the old floors were this run, for the [Recs] lines' lm note
+        // (none: no legacy pass; live: engine A or the fallback; shadow: D2
+        // beside engine B).
+        Scoring::RecsFloors recsFloors = Scoring::RecsFloors::none;
         // 0.24.17: the D2 engine in shadow (core/LegacyShadowPass.h): engine
         // A's mu, ranks and stateless page keys, index-aligned with the
         // candidates (and so with `eligible`). Ran when B is live, the choice
@@ -221,6 +226,7 @@ namespace Huginn::Pipeline
             legacyLive = false;
             legacyShadow.Clear();
             legacyShadowAllocInput = {};
+            recsFloors = Scoring::RecsFloors::none;
             haveAllocInput = false;
             pageRunRows.clear();
             choiceLive = false;
@@ -339,7 +345,9 @@ namespace Huginn::Pipeline
 
         /// The fifth latch (see NeedsForcedRun): the learner was rewarded since
         /// the last committed run, so the ranking has moved even though no
-        /// sensor did. Out of line so this header need not pull in Globals.h.
+        /// sensor did (the old learner only while a run reads it: engine A
+        /// live, D2 in shadow, or the fallback). Out of line so this header
+        /// need not pull in Globals.h.
         /// Non-consuming — BOTH skip gates ask, and only the run itself clears
         /// it, in CheckHashSkip's commit path.
         [[nodiscard]] static bool LearnerWeightsChanged() noexcept;

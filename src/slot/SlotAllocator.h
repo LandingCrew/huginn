@@ -1,7 +1,6 @@
 #pragma once
 
 #include "SlotConfig.h"
-#include "SlotClassCap.h"
 #include "SlotAssignment.h"
 #include "SlotClassifier.h"
 #include "SlotSettings.h"
@@ -168,9 +167,6 @@ namespace Huginn::Slot
         /// keys its per-page cache on it, so a layout reload that moves the
         /// seat drops the cached wildcard.
         [[nodiscard]] size_t GetWildcardSeat(size_t pageIndex) const;
-
-        /// Get configuration for a specific slot in current page (returns copy)
-        [[nodiscard]] SlotConfig GetSlotConfig(size_t slotIndex) const;
 
         /// True when the slot is unrestricted (SlotClassification::Regular).
         /// Any page, not only the current one; out of range reads as regular.

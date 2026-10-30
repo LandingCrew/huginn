@@ -16,9 +16,16 @@
 //     followerPresent, the fortify<Craft> weights and darknessWeight from the
 //     same three facts (FollowerNear, StationCraft, DarknessApplies), and
 //     the old context weight's zero arms read those.
-// So the filter drops exactly the items the old context weight zeroed (the
-// INI weights aside: a weight configured to 0 still zeroes in the old engine
-// without the filter dropping the item; the shipped weights are all > 0).
+// For no_workstation, not_dark and favorite_suppressed the filter drops
+// exactly the items the old context weight zeroed (the INI weights aside: a
+// weight configured to 0 still zeroes in the old engine without the filter
+// dropping the item; the shipped weights are all > 0). For no_follower the
+// two sides share the predicate and the follower fact but not the "for
+// someone else" input: since R11 the filter reads the effect catalog's
+// TargetsOthers facet (core/CapFacets.h), the old weight the classifiers'
+// TargetsOthers tag. The two differ on some spells, and the facet is empty
+// while the catalog is not Ready, so some rows the old weight zeroes pass
+// the filter (there the zero decides only whether the D2 floors keep them).
 //
 // Pure: standard library only (src/core/README.md).
 // =============================================================================

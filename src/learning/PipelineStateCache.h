@@ -111,12 +111,11 @@ namespace Huginn::Learning
             int8_t utilMissing = -1;
             /// 0.23.56 (R8.2): the choice model (R8.3: the ranking's; mu from
             /// PipelineCoordinator::RankOnChoice, the page's part added by
-            /// LogChoiceRows): mu, its sd, the logit (mu - kappa off the
-            /// allocated page) and the explanation (need, column; -1 learned,
-            /// -2 none).
+            /// LogChoiceRows: the slot feature of the key it landed on): mu,
+            /// its sd and the explanation (need, column; -1 learned, -2 none).
+            /// No logit: kappa is the learner's, applied to a pick's choice set.
             float shadowMu = std::numeric_limits<float>::quiet_NaN();
             float shadowSd = std::numeric_limits<float>::quiet_NaN();
-            float shadowLogit = std::numeric_limits<float>::quiet_NaN();
             int16_t exNeed = Core::DecisionLog::kExNone;
             int16_t exCol = -1;
             /// 0.24.17: the D2 engine in shadow (PipelineCoordinator::

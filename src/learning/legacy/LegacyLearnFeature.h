@@ -48,7 +48,6 @@
 // learner on every row) where a variant without the old scorer passes the gate.
 // =============================================================================
 
-#include "core/ChoiceLive.h"
 #include "core/OldScore.h"
 #include "Profiling.h"
 
@@ -91,26 +90,14 @@ namespace Huginn::Scoring::Legacy
         return static_cast<float>(std::log(std::max(m, 1e-6)));
     }
 
-    /// The feature as the new score reads it: the row's values with the switch
-    /// on; 0 and 1 with it off.
-    struct Value
-    {
-        double lnLearnMult = 0.0;
-        double utilMissing = 1.0;
-    };
-    [[nodiscard]] inline Value Feature(const Row& r, bool enabled) noexcept
-    {
-        // The one rule (core/ChoiceLive.h), shared with the replay test. A
-        // kept row has utilMissing false by construction (FloorPass's keep).
-        const auto v = Core::Choice::LegacyFeature(enabled, r.Scored(), static_cast<double>(r.lnLearnMult));
-        return Value{ v.lnLearnMult, v.utilMissing };
-    }
+    // The feature the score reads off a Row is Core::Choice::LegacyFeature
+    // (core/ChoiceLive.h) on Scored() and lnLearnMult, which the pipeline
+    // calls directly (PipelineCoordinator::RankOnChoice).
 
     struct PassResult
     {
         float maxUtilitySeen = 0.0f;   // for the pass's "0 candidates passed" warning
         std::size_t coldStartCount = 0;
-        bool coldStartRan = false;
     };
 
     // -------------------------------------------------------------------------
@@ -191,7 +178,6 @@ namespace Huginn::Scoring::Legacy
         // context weight, e.g. a favorited weapon). The fallback self-heals as UCB decays.
         if (scored.size() < p.topNCandidates && p.coldStartUCBBoost > 0.0f) {
             Huginn_ZONE_NAMED("Score::ColdStart");
-            res.coldStartRan = true;
             // Dedup against already-scored candidates by linear scan — this branch
             // only runs when scored.size() < topNCandidates (<10), so a scan beats
             // allocating a hash set every cold-start tick.

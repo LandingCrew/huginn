@@ -5,11 +5,21 @@
 #include "ScoredCandidate.h"
 #include "WildcardManager.h"
 
+#include <cstdint>
 #include <limits>
 #include <vector>
 
 namespace Huginn::Scoring
 {
+    /// What the old floors were in a run, for the [Recs] lines' lm note
+    /// (PipelineCoordinator::ScoreCandidates sets it per run).
+    enum class RecsFloors : std::uint8_t
+    {
+        none,     // no legacy pass ran (engine B, no shadow): lm 0 / um on every row
+        live,     // engine A (or the fallback): the floors decide which rows the live lm reads
+        shadow,   // engine B with D2 in shadow: lm 0 / um on every row; the floors ran for A only
+    };
+
     // =============================================================================
     // UTILITY SCORER -- the live scorer's duties (R8.4: OFF the D2 allowlist)
     // =============================================================================
@@ -71,9 +81,12 @@ namespace Huginn::Scoring
         // built by the legacy module, learning/legacy/LegacyRun.h).
         // outsideU0 (R11): the run's outside option u0 (outcomes "three"),
         // printed in the header; NaN when the model has none.
+        // floors: what the old floors were this run (the engine in the
+        // header; each line's lm note says what they did to that row).
         void LogTopCandidates(const ScoredCandidateList& ranked, size_t count = 5,
             bool detail = false, bool force = false, bool fallback = false,
-            double outsideU0 = std::numeric_limits<double>::quiet_NaN()) const;
+            double outsideU0 = std::numeric_limits<double>::quiet_NaN(),
+            RecsFloors floors = RecsFloors::none) const;
 
     private:
         ScorerConfig m_config;

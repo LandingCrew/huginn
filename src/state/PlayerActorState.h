@@ -230,7 +230,6 @@ namespace Huginn::State
     bool hasFortifyRestoration = false;
     bool hasFortifyAlteration = false;
     bool hasFortifyIllusion = false;
-    bool hasFortifyEnchanting = false;   // Not a school, but same pattern
 
 #ifdef _DEBUG
     void LogDifferences(const ActorBuffs& other, std::string_view prefix = "") const {
@@ -307,9 +306,6 @@ namespace Huginn::State
       if (hasFortifyIllusion != other.hasFortifyIllusion) {
         logger::trace("  {}.hasFortifyIllusion changed: {} -> {}", prefix, other.hasFortifyIllusion, hasFortifyIllusion);
       }
-      if (hasFortifyEnchanting != other.hasFortifyEnchanting) {
-        logger::trace("  {}.hasFortifyEnchanting changed: {} -> {}", prefix, other.hasFortifyEnchanting, hasFortifyEnchanting);
-      }
     }
 #endif
 
@@ -339,8 +335,7 @@ namespace Huginn::State
                    hasFortifyConjuration == other.hasFortifyConjuration &&
                    hasFortifyRestoration == other.hasFortifyRestoration &&
                    hasFortifyAlteration == other.hasFortifyAlteration &&
-                   hasFortifyIllusion == other.hasFortifyIllusion &&
-                   hasFortifyEnchanting == other.hasFortifyEnchanting;
+                   hasFortifyIllusion == other.hasFortifyIllusion;
 
 #ifdef _DEBUG
       if (!equal) {
@@ -449,7 +444,6 @@ namespace Huginn::State
     bool hasCrossbowEquipped = false;
     bool hasTorchEquipped = false;
     RE::FormID equippedTorchFormID = 0;  // the torch in the left hand, 0 if none
-    float weaponChargeMax = 0.0f;
     std::int32_t boltCount = DefaultState::NO_ARROWS;  // see arrowCount
     RE::FormID equippedAmmoFormID = 0;  // FormID of equipped arrow/bolt (name looked up at display time)
     float equippedAmmoDamage = 0.0f;  // Base damage of equipped ammo (for bow total damage calc)
@@ -547,7 +541,6 @@ namespace Huginn::State
              hasCrossbowEquipped == other.hasCrossbowEquipped &&
              hasTorchEquipped == other.hasTorchEquipped &&
              equippedTorchFormID == other.equippedTorchFormID &&
-             std::abs(weaponChargeMax - other.weaponChargeMax) < Epsilon::WEAPON_CHARGE &&
              boltCount == other.boltCount &&
              equippedAmmoFormID == other.equippedAmmoFormID &&
              std::abs(equippedAmmoDamage - other.equippedAmmoDamage) < 0.1f &&

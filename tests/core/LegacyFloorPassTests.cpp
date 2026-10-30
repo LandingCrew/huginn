@@ -15,6 +15,7 @@
 // Header-only and host-compilable: FloorPass is a template over the candidate
 // and scored types (src/Profiling.h's zones are no-ops without Tracy).
 
+#include "core/ChoiceLive.h"
 #include "learning/legacy/LegacyLearnFeature.h"
 
 #include <doctest/doctest.h>
@@ -31,6 +32,12 @@ namespace
 {
     using Huginn::Core::DecisionLog::Floor;
     namespace L = Huginn::Scoring::Legacy;
+
+    // The D2 feature off a row, as PipelineCoordinator::RankOnChoice reads it.
+    Huginn::Core::Choice::LegacyValues Feature(const L::Row& r, bool enabled)
+    {
+        return Huginn::Core::Choice::LegacyFeature(enabled, r.Scored(), static_cast<double>(r.lnLearnMult));
+    }
 
     struct Metrics
     {
@@ -196,7 +203,7 @@ TEST_CASE("legacy floor pass: the moved loop builds R8.1's list bit for bit, and
 {
     std::mt19937 rng(20261029);
     std::uniform_real_distribution<float> u01(0.0f, 1.0f);
-    std::size_t pools = 0, coldRuns = 0, coldRows = 0, rowsChecked = 0;
+    std::size_t pools = 0, coldRows = 0, rowsChecked = 0;
     for (int trial = 0; trial < 3000; ++trial) {
         Config c;
         c.minimumContextWeight = 0.02f + 0.1f * u01(rng);
@@ -240,7 +247,6 @@ TEST_CASE("legacy floor pass: the moved loop builds R8.1's list bit for bit, and
         const L::FloorParams p{ c.minimumContextWeight, c.minimumUtility, c.topNCandidates, c.coldStartUCBBoost };
         const auto res = L::FloorPass(pool, p, h, got, &rows);
         ++pools;
-        coldRuns += res.coldStartRan ? 1 : 0;
         coldRows += res.coldStartCount;
         REQUIRE(got.size() == expect.size());
         for (std::size_t i = 0; i < got.size(); ++i) {
@@ -277,8 +283,8 @@ TEST_CASE("legacy floor pass: the moved loop builds R8.1's list bit for bit, and
         }
         CHECK(std::all_of(taken.begin(), taken.end(), [](bool t) { return t; }));
     }
-    MESSAGE("floor pass: " << pools << " pools, " << rowsChecked << " candidates, cold start in " << coldRuns
-                           << " (" << coldRows << " rows rescued)");
+    MESSAGE("floor pass: " << pools << " pools, " << rowsChecked << " candidates, " << coldRows
+                           << " rows rescued by the cold start");
     CHECK(coldRows > 0);
 }
 
@@ -290,12 +296,12 @@ TEST_CASE("legacy feature: ln learn mult, util missing and the switch")
     L::Row pass{ Floor::pass, 0.75f, false };
     L::Row cold{ Floor::cold, 0.25f, false };
     L::Row ctx{ Floor::ctx, 0.0f, true };
-    CHECK(L::Feature(pass, true).lnLearnMult == 0.75);
-    CHECK(L::Feature(pass, true).utilMissing == 0.0);
-    CHECK(L::Feature(cold, true).lnLearnMult == 0.25);
-    CHECK(L::Feature(ctx, true).lnLearnMult == 0.0);
-    CHECK(L::Feature(ctx, true).utilMissing == 1.0);
+    CHECK(Feature(pass, true).lnLearnMult == 0.75);
+    CHECK(Feature(pass, true).utilMissing == 0.0);
+    CHECK(Feature(cold, true).lnLearnMult == 0.25);
+    CHECK(Feature(ctx, true).lnLearnMult == 0.0);
+    CHECK(Feature(ctx, true).utilMissing == 1.0);
     // off: 0 and 1 on every row (plain theta + b + recent)
-    CHECK(L::Feature(pass, false).lnLearnMult == 0.0);
-    CHECK(L::Feature(pass, false).utilMissing == 1.0);
+    CHECK(Feature(pass, false).lnLearnMult == 0.0);
+    CHECK(Feature(pass, false).utilMissing == 1.0);
 }

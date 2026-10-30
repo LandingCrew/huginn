@@ -8,8 +8,10 @@
 // (CandidateFilters' hard gates through HardGateInputs, the pipeline's skip
 // gate) reads these facts without including the legacy context rules, which
 // R8 keeps for D2 only (tools/prune/r8_check.py). The rules include this file
-// and read the same functions, so a gate drops exactly what the old context
-// weight zeroed.
+// and read the same functions, so the gates and the old context weight's zero
+// arms see the same facts (no_follower's "for someone else" excepted: since
+// R11 the filter reads the catalog facet, the weight the classifier tag;
+// core/HardGates.h).
 // =============================================================================
 
 #include "apparel/ApparelData.h"   // Apparel::CraftSkill (#65)
@@ -79,9 +81,9 @@ namespace Huginn::Context
     }
 
     /// R8.1 (0.23.55): the facts the hard gates in CandidateFilters read, from
-    /// the same state and the same three functions the legacy context rules read, so a
-    /// gate drops exactly what the old context weight zeroed. Never from a
-    /// context weight map: the filters run before scoring.
+    /// the same state and the same three functions the legacy context rules
+    /// read (how far a gate and the old weight's zero agree: core/HardGates.h).
+    /// Never from a context weight map: the filters run before scoring.
     [[nodiscard]] inline Core::Gate::Inputs HardGateInputs(const State::PlayerActorState& player,
         const State::TargetCollection& targets, const State::WorldState& world, bool suppressFavorites) noexcept
     {

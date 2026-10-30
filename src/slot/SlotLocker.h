@@ -304,9 +304,6 @@ namespace Huginn::Slot
         // MANUAL LOCK CONTROL
         // =========================================================================
 
-        /// Lock a specific slot for a duration
-        void LockSlot(size_t slotIndex, float durationMs);
-
         /// Lock a slot after activation (Sticky post-activation policy)
         /// Uses a longer duration (10s) so the activated item stays visible
         void LockSlotForActivation(size_t slotIndex);

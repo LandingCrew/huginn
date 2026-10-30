@@ -19,10 +19,12 @@ namespace Huginn::Candidate
     // =========================================================================
     // Map Phase 6 item 1. Each test is a Core::Gate predicate (core/HardGates.h)
     // on facts Context::HardGateInputs read from the state, the same facts
-    // the legacy context rules raise the old weights by, so a gate drops
-    // exactly what the old context weight zeroed (its 0 arms) and what the
-    // Suppress skip in UtilityScorer used to skip. Run in the visitor after
-    // full vitals and before the active-buff filters.
+    // the legacy context rules raise the old weights by, so a gate drops what
+    // the old context weight zeroed (its 0 arms; no_follower since R11 on the
+    // catalog's TargetsOthers facet, not the classifier tag the weight reads:
+    // core/HardGates.h) and what the Suppress skip in UtilityScorer used to
+    // skip. Run in the visitor after full vitals and before the active-buff
+    // filters.
     // =========================================================================
     namespace
     {
@@ -77,7 +79,8 @@ namespace Huginn::Candidate
         const CandidateVariant& candidate,
         const State::PlayerActorState& player,
         float currentMagicka,
-        const Core::Gate::Inputs& gates) const
+        const Core::Gate::Inputs& gates,
+        Core::Facets::Subject& subject) const
     {
         const auto policy = m_config.uncastableSpellPolicy;
         const bool checkBuffs = m_config.filterActiveBuffs;
@@ -86,8 +89,12 @@ namespace Huginn::Candidate
         // R11: what the effect catalog says the candidate does (core/CapFacets.h),
         // in place of the old classifiers' tags and types. No catalog entry: no
         // facet, so no effect filter drops it (the affordability, equipped and
-        // hard-gate tests still run).
-        const auto subject = Effect::SubjectOf(candidate);
+        // hard-gate tests still run). Looked up only for the arms that read
+        // it (spell, item, scroll); the caller hands it on with the survivor.
+        if (std::holds_alternative<SpellCandidate>(candidate) || std::holds_alternative<ItemCandidate>(candidate) ||
+            std::holds_alternative<ScrollCandidate>(candidate)) {
+            subject = Effect::SubjectOf(candidate);
+        }
         const auto f = subject.facets;
         using F = Core::Facets::F;
         const bool isFood = subject.kind == Core::Effect::Kind::Food;
@@ -292,10 +299,12 @@ namespace Huginn::Candidate
         FilterStats& stats,
         std::span<const RE::FormID> heldIDs,
         std::vector<CandidateVariant>* heldAside,
-        std::vector<Core::Filter::Dropped>* dropped)
+        std::vector<Core::Filter::Dropped>* dropped,
+        std::vector<Core::Facets::Subject>* subjects)
     {
         stats.Reset();
         if (dropped) dropped->clear();
+        if (subjects) subjects->clear();
         // 0.23.46: every drop, with its reason, for the selection log v3 only.
         const auto recordDrop = [dropped](const CandidateVariant& c, Core::Filter::Reason reason) {
             if (!dropped) return;
@@ -343,9 +352,10 @@ namespace Huginn::Candidate
 
             // 1-5. Consolidated visitor: affordability, equipped, full vitals,
             //       the hard gates, active buff. One std::visit dispatch.
+            Core::Facets::Subject subject;   // the visitor's catalog lookup, kept with a survivor
             {
                 using R = Core::Filter::Reason;
-                const auto result = RunVisitorFilters(c, player, currentMagicka, gates);
+                const auto result = RunVisitorFilters(c, player, currentMagicka, gates, subject);
                 if (result) {
                     recordDrop(c, *result);   // before the hold's aside list may move it
                     // A Remembrance hold's own item, set aside rather than
@@ -435,6 +445,7 @@ namespace Huginn::Candidate
             // Passed all filters — move into output (single move per survivor)
             if (isWeapon) ++weaponsPassed;
             output.push_back(std::move(c));
+            if (subjects) subjects->push_back(subject);
         }
 
         // Limit output size if configured
@@ -445,6 +456,7 @@ namespace Huginn::Candidate
                 recordDrop(output[i], Core::Filter::Reason::truncated);
             }
             output.resize(m_config.maxCandidatesAfterFilter);
+            if (subjects) subjects->resize(output.size());
             // Recount weapons only if truncation happened (rare path)
             size_t weaponsAfter = 0;
             for (const auto& c : output) {

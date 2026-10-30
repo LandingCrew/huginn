@@ -124,7 +124,8 @@ namespace Huginn::Candidate
             const Core::Gate::Inputs& gates,
             std::span<const RE::FormID> heldIDs = {},
             std::vector<CandidateVariant>* heldAside = nullptr,
-            std::vector<Core::Filter::Dropped>* dropped = nullptr   // 0.23.46: what the filters dropped, and why (v3 log)
+            std::vector<Core::Filter::Dropped>* dropped = nullptr,  // 0.23.46: what the filters dropped, and why (v3 log)
+            std::vector<Core::Facets::Subject>* subjects = nullptr  // index-aligned with the result (ApplyAllFilters)
         );
 
         /**

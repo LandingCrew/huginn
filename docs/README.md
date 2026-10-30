@@ -103,7 +103,7 @@ R6 (the offline fit, [roadmap](roadmap.md) R6) found that no variant without the
 
 - **The selection log v3** ([9-selection-log-v3.md](architecture/9-selection-log-v3.md)): one decision per pick or need episode, every eligible candidate a row (its cap, cross-features, covered, μ, sd, b, the D2 feature, the filter that dropped it), the need vector, the page as shown. The offline fit (`tools/fit`) and the replay (`tools/replay`) read it.
 - **`[Soak]`** every 5 minutes ([playtest/LongPlaySoak.md](playtest/LongPlaySoak.md)): equips and accepts, slot churn and its causes, the goals (reach-ins, presses), the reach split, the choice learner's counts, rates (pipeline runs, wildcard share, Wheeler pushes, wildcards rolled / relevant / picked), churn per press, and since R11 **θ drift**: weights whose mean moved, the mean and largest |μ - μ_boot| and where, the mean ln(σ² / σ²_boot), b's spread, θ_covered.
-- **`[Recs]`** (`hg recs`): the top of the ranking, each with μ, sd, its three largest terms, b and the D2 feature; the header carries the outside option u0.
+- **`[Recs]`** (`hg recs`): the top of the ranking, each with μ, sd, its three largest terms, b and the D2 feature (and, when the old floors ran, what they did to the row: the live lm under engine A, shadow A's under engine B); the header carries the engine and the outside option u0.
 
 ## Settings management
 

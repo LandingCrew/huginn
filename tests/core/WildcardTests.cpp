@@ -775,7 +775,7 @@ namespace
     Gate Fresh(double cooldown = 30.0, double refractory = 60.0)
     {
         Gate g;
-        g.settings = { true, cooldown, refractory };
+        g.settings = { cooldown, refractory };
         g.Reset(0);
         return g;
     }
@@ -867,9 +867,6 @@ TEST_CASE("wildcard gate: only the displayed page rolls; an off-screen page pins
     CHECK(plan.pinForm == 0u);
     CHECK_FALSE(g.Plan({ .index = 9, .slotCount = 8, .seat = 7 }, 5 * kSec, UseAll()).roll);
     CHECK(g.Commit(9, Drew(1), 5 * kSec) == W::CommitFate::None);
-    // Disabled: nothing.
-    g.settings.enabled = false;
-    CHECK(g.Plan(kMain, 6 * kSec, UseAll()).pinForm == 0u);
 }
 
 TEST_CASE("wildcard gate: combat drops every page's wildcard and places none; its end restarts every refractory")

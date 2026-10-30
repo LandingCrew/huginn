@@ -228,16 +228,6 @@ namespace Huginn::Slot
                slots[slotIndex].classification == SlotClassification::Regular;
     }
 
-    SlotConfig SlotAllocator::GetSlotConfig(size_t slotIndex) const
-    {
-        const auto configs = GetSlotConfigs();
-        if (slotIndex >= configs.size()) {
-            SKSE::log::warn("[SlotAllocator] GetSlotConfig: slot {} out of range", slotIndex);
-            return SlotConfig{};
-        }
-        return configs[slotIndex];
-    }
-
     std::vector<SlotConfig> SlotAllocator::GetSlotConfigs() const
     {
         auto snap = GetConfigSnapshot();
