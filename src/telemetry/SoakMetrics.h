@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <deque>
 #include <mutex>
+#include "core/ChallengerRule.h"
 #include "core/ReachLog.h"
 #include "core/SlotScoreMath.h"
 #include <optional>
@@ -236,12 +237,26 @@ namespace Huginn::Telemetry
         return PressAgeBand::Over30s;
     }
 
+    // R9: a slot that goes back to what it showed before the item it now
+    // replaces, and that item had been there less than this: A -> B -> A
+    // inside the window. The juggling the user named (2026-10-10; trace-04:
+    // 63 such bounces in 11.6 combat minutes, 47 in 65.6 out of combat, at
+    // 10 s). The challenger rule's promise is none from the hold on fixed
+    // beliefs; what remains comes from inputs that moved, or other routes.
+    inline constexpr float SLOT_BOUNCE_SEC = 10.0f;
+
     struct SlotChangeEvent
     {
         std::size_t slotIndex = 0;
         SlotChange cause = SlotChange::Unheld;
         ChallengerRatio ratio = ChallengerRatio::NotApplicable;
         float tenureSec = -1.0f;   // how long the replaced item was shown; < 0 = the slot was empty
+        // R9: for the same changes as `ratio` (Expired, Unheld): Delta over
+        // the pair's sigma_Delta (Count = not applicable), and whether the
+        // change was at or under the challenger rule's line.
+        Core::Challenger::DeltaSdBucket dsd = Core::Challenger::DeltaSdBucket::Count;
+        bool underLine = false;
+        bool bounce = false;       // A -> B -> A within SLOT_BOUNCE_SEC (any cause but a page switch)
     };
 
     // =========================================================================
@@ -414,6 +429,12 @@ namespace Huginn::Telemetry
         static constexpr int64_t SLOT_CHURN_BURST_MS = 5000;
         std::array<std::atomic<uint32_t>, static_cast<std::size_t>(SlotChange::Count)> m_slotChanges{};
         std::array<std::atomic<uint32_t>, static_cast<std::size_t>(ChallengerRatio::Count)> m_challengerRatios{};
+        // R9 (window): Delta / sigma_Delta buckets, changes under the rule's
+        // line, and bounces (all of them, and those the hold's causes made).
+        std::array<std::atomic<uint32_t>, static_cast<std::size_t>(Core::Challenger::DeltaSdBucket::Count)> m_deltaSd{};
+        std::atomic<uint32_t> m_underLine{0};
+        std::atomic<uint32_t> m_bounces{0};
+        std::atomic<uint32_t> m_bouncesHold{0};
         std::mutex m_churnMutex;
         std::array<std::deque<int64_t>, SLOT_CHURN_SLOTS> m_recentChanges;  // steady_clock ticks, per slot
         uint32_t m_churnPeak = 0;       // guarded by m_churnMutex

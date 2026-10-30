@@ -380,7 +380,18 @@ namespace Huginn::Core::Choice
     // clear downgrade near 1. Recasting a_out's own source is a refresh:
     // covered 1 * left(r_out), as Coverage::Covered reads it.
 
+    /// The same over the tick's two variance columns alone (W, Ws): what R9's
+    /// challenger rule keeps per run (core/ChoiceBeliefs.h).
+    [[nodiscard]] inline double DeltaVar(const std::array<double, J>& wTheta, const std::array<double, J>& wStrength,
+                                         const Attr& i, const Attr& o, double bVarI, double bVarO) noexcept;
+
     [[nodiscard]] inline double DeltaVar(const Tick& t, const Attr& i, const Attr& o, double bVarI, double bVarO) noexcept
+    {
+        return DeltaVar(t.W, t.Ws, i, o, bVarI, bVarO);
+    }
+
+    [[nodiscard]] inline double DeltaVar(const std::array<double, J>& wTheta, const std::array<double, J>& wStrength,
+                                         const Attr& i, const Attr& o, double bVarI, double bVarO) noexcept
     {
         double v = bVarI + bVarO;
         auto block = [&](const std::vector<SparseCol>& x, const std::vector<SparseCol>& y, const std::array<double, J>& W) {
@@ -407,8 +418,8 @@ namespace Huginn::Core::Choice
                 v += d * d * W[j];
             }
         };
-        block(i.a, o.a, t.W);
-        block(i.s, o.s, t.Ws);
+        block(i.a, o.a, wTheta);
+        block(i.s, o.s, wStrength);
         return v;
     }
 

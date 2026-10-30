@@ -2,6 +2,8 @@
 #include "override/OverrideConditions.h"
 #include "SlotClassifier.h"
 #include "core/CombatLock.h"
+#include "core/ChallengerRule.h"
+#include "core/ChoiceBeliefs.h"
 #include "core/CombatUpsert.h"
 #include "core/DedupRules.h"
 #include "core/HeldRefresh.h"
@@ -663,23 +665,49 @@ namespace Huginn::Slot
                 // On scores (any sign): the incumbent's is empty when it is
                 // no longer a candidate -- no score value stands for "gone".
                 auto ratio = Telemetry::ChallengerRatio::NotApplicable;
+                auto dsd = Core::Challenger::DeltaSdBucket::Count;
+                bool underLine = false;
                 std::optional<Core::SlotScore> incumbentScore;
+                std::optional<double> sigmaDelta;
                 if (!scored.empty() &&
                     (cause == Telemetry::SlotChange::Expired || cause == Telemetry::SlotChange::Unheld)) {
+                    const Scoring::ScoredCandidate* incumbentRow = nullptr;
+                    const Scoring::ScoredCandidate* shownRow = nullptr;
                     for (const auto& sc : scored) {
-                        if (sc.GetFormID() == slot.shownFormID && sc.GetUniqueID() == slot.shownUniqueID) {
-                            incumbentScore = sc.SlotScore();
-                            break;
+                        if (!incumbentRow && sc.GetFormID() == slot.shownFormID && sc.GetUniqueID() == slot.shownUniqueID) {
+                            incumbentRow = &sc;
+                        }
+                        if (!shownRow && sc.GetFormID() == shown.formID && sc.GetUniqueID() == shown.uniqueID) {
+                            shownRow = &sc;
                         }
                     }
+                    if (incumbentRow) {
+                        incumbentScore = incumbentRow->SlotScore();
+                    }
                     ratio = Telemetry::BucketChallengerRatio(shown.score, incumbentScore);
+                    // R9: sigma_Delta of the pair, read from this run's
+                    // beliefs (both rows of one table, as the hold read it).
+                    if (incumbentRow && shownRow && incumbentRow->choice.beliefs &&
+                        incumbentRow->choice.beliefs == shownRow->choice.beliefs) {
+                        const double sd = Core::Challenger::SigmaDelta(incumbentRow->choice.beliefs->DeltaVar(
+                            shownRow->choice.beliefRow, incumbentRow->choice.beliefRow));
+                        if (sd == sd) sigmaDelta = sd;
+                    }
+                    dsd = Core::Challenger::BucketDeltaSd(shown.score, incumbentScore, sigmaDelta);
+                    underLine = Core::Challenger::UnderLine(shown.score, incumbentScore, sigmaDelta,
+                        run.challengerMinGap, run.challengerZ);
                 }
                 // Tenure: how long the item being replaced was on the slot.
                 float tenureSec = -1.0f;
                 if (!slot.shownEmpty && slot.shownSince != std::chrono::steady_clock::time_point{}) {
                     tenureSec = std::chrono::duration<float>(runNow - slot.shownSince).count();
                 }
-                changes[changeCount++] = { i, cause, ratio, tenureSec };
+                // R9: a bounce -- the slot goes back to what it showed before
+                // the item now leaving, which had been there under 10 s.
+                const bool bounce = cause != Telemetry::SlotChange::Page && !nowEmpty && !slot.prevName.empty() &&
+                                    shown.name == slot.prevName && tenureSec >= 0.0f &&
+                                    tenureSec < Telemetry::SLOT_BOUNCE_SEC;
+                changes[changeCount++] = { i, cause, ratio, tenureSec, dsd, underLine, bounce };
 
                 const std::string_view from = slot.shownEmpty ? std::string_view{} : std::string_view{ slot.shownName };
                 const std::string_view to = nowEmpty ? std::string_view{} : std::string_view{ shown.name };
@@ -691,11 +719,15 @@ namespace Huginn::Slot
                         i, from, to, Telemetry::SlotChangeName(cause), shown.score);
                 } else {
                     // The difference is the log of the old ratio: exp() of it
-                    // is always positive, whatever the scores' signs.
+                    // is always positive, whatever the scores' signs. R9: and
+                    // in sigma_Delta units, with the rule's verdict.
                     const double delta = shown.score - *incumbentScore;
-                    spdlog::debug("[SlotChurn] Slot {}: '{}' -> '{}' ({}, s={:+.3f} vs {:+.3f}, {:+.3f} = x{:.2f})",
+                    spdlog::debug("[SlotChurn] Slot {}: '{}' -> '{}' ({}, s={:+.3f} vs {:+.3f}, {:+.3f} = x{:.2f}{})",
                         i, from, to, Telemetry::SlotChangeName(cause), shown.score, *incumbentScore, delta,
-                        std::exp(delta));
+                        std::exp(delta),
+                        sigmaDelta ? std::format(", sd {:.3f} = {:.2f} sd{}", *sigmaDelta,
+                                         *sigmaDelta > 0.0 ? delta / *sigmaDelta : 0.0, underLine ? ", under the line" : "")
+                                   : std::string{});
                 }
             }
             // The key's age restarts on what the player can SEE change -- a
