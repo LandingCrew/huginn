@@ -149,7 +149,9 @@ namespace Huginn::Pipeline
         Scoring::Legacy::Run legacy;
 
 
-        /// Reset all fields for reuse, preserving allocated container capacity.
+        /// Reset all fields for reuse, preserving allocated container capacity
+        /// (except the legacy pass's: since R8.4 the pass returns a fresh Run
+        /// that the pipeline move-assigns each run, a few small vectors).
         void Reset()
         {
             deltaMs = 0.0f;

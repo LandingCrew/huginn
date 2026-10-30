@@ -24,7 +24,17 @@ learner's learning score on the rows the old floors pass. So two lists:
               them is how utility would rank or display again, whatever the symbols are called.
           The utility -> rank-score bridge (RankOnUtility, BridgeScore, DisplayUtility) is
           LEGACY too, so utility cannot rank outside the fallback in the legacy module and the
-          slot harness that states scores as utilities.
+          slot harness that states scores as utilities. A few words are LEGACY in one file only
+          (FILE_PATTERNS): a bare `utility` / `breakdown` in ScoredCandidate.h's code, and
+          `Suppress` in PipelineCoordinator.cpp. A file that ranks or does slot math live
+          (ScoredCandidate.h, SlotScoreMath.h, UtilityScorer, PipelineCoordinator) is never
+          allowed whole: it is a patterned budget.
+  STALE   phrases that describe a pruned behaviour as live (the display reason derived from the
+          context weights), in code and comments, two lines at a time.
+
+What the check is: a guard against ACCIDENTAL reintroduction, by name and by plain member read.
+It does not try to defeat a deliberate evasion (a structured binding, a macro, a new accessor
+written outside ScoredCandidate.h to hide a read).
 
 Exits 1 and prints every hit on a violation; 0 otherwise. Standard library only.
 
@@ -113,6 +123,18 @@ PRUNED_SCOPED = [
     ('Suppress', 'src/learning/UtilityScorer.*', 'the scorer\'s Suppress branches (now a filter)'),
 ]
 PRUNED_INI_KEYS = ['sPotionTierPreference', 'fFavoritesBoostMin']
+# Phrases that describe a pruned behaviour as live (comments included): (name, regex, why).
+STALE = [
+    # Present tense only ("is derived / comes from"): the history notes that say what R8.3 and
+    # R8.4 replaced ("the reason derived off the weight map ... is gone") stay.
+    ('reason from weights', r'\breason\b[^.;]{0,80}?\b(?:is|are)\s+(?:derived|computed|taken)\b[^.;]{0,80}?'
+                            r'\bfrom\s+the\s+(?:scorer\'?s\s+|old\s+)?context\s+weights?\b'
+                            r'|\breason\b[^.;]{0,40}?\bcomes\s+from\s+the\s+(?:scorer\'?s\s+|old\s+)?context\s+weights?\b',
+     'the display reason came from the old context weights (DominantReason); since R8.3 it comes '
+     'from the page\'s explanations (PipelineCoordinator::UpdateContextReason)'),
+]
+# Searched for those keys by name: a missing one is a violation (a move would hide a key).
+REQUIRED_INI = ['configs/Huginn.ini', 'Data/SKSE/Plugins/dmenu/customSettings/Huginn.json']
 
 # ---------------------------------------------------------------------------------------------
 # LEGACY: kept for D2, allowed only in these files.
@@ -125,7 +147,7 @@ LEGACY = [
     # the old utility, its floors and the cold start
     'ComputeAdaptiveLambda', 'ComputeUtility', 'ScoreCandidateInternal', 'ExplainCandidate',
     'LegacyPass', 'FloorPass',
-    'minimumUtility', 'minimumContextWeight', 'coldStartUCBBoost',
+    'minimumUtility', 'minimumContextWeight', 'coldStartUCBBoost', 'isColdStartBoosted',
     'fMinimumUtility', 'fMinimumContextWeight', 'fColdStartUCBBoost',
     # the context rules (the floors' input; a binary gate on which rows get the feature)
     'ContextRuleEngine', 'EvaluateRules', 'ContextWeightMap', 'WeightForCandidate', 'IsHardContextGated',
@@ -150,10 +172,27 @@ LEGACY_CPP_PATTERNS = {
     'legacy include': r'#\s*include\s+"learning/legacy/',
     'ctx.legacy': r'\bctx\.legacy\b',
     'legacy.<member>': r'\blegacy\.(?:ran|rows|rowOf|kept|weights|Skip|Clear|ResolveRows)\b',
-    '.utility': r'(?:\.|->)\s*utility\b',
-    '.breakdown': r'(?:\.|->)\s*breakdown\b',
-    'breakdown part': r'(?:\.|->)\s*(?:contextWeight|rewardEstimate|learningScore|recencyBoost|correlationBonus'
+    # `.`, `->` and `::` (a qualified name, e.g. a pointer to member); `Col::utility` is the
+    # effect column enum (core/EffectColumns.h), not the old utility.
+    '.utility': r'(?:\.|->|(?<!\bCol)::)\s*utility\b',
+    '.breakdown': r'(?:\.|->|::)\s*breakdown\b',
+    'breakdown part': r'(?:\.|->|::)\s*(?:contextWeight|rewardEstimate|learningScore|recencyBoost|correlationBonus'
                       r'|potionMultiplier|favoritesMultiplier|ToCompactString|ToDetailString)\b',
+}
+
+# Patterns that make a LEGACY line in one file only: words too common to tag everywhere.
+FILE_PATTERNS = {
+    # Inside ScoredCandidate a bare `utility` (or `breakdown`) is a read of the old utility: an
+    # accessor or comparator written on it. Code only (before any `//`): the comments name it.
+    'src/learning/ScoredCandidate.h': {
+        'bare utility': r'^(?:(?!//).)*\b(?:utility|breakdown)\b',
+    },
+    # R8.1 made the scorer's Suppress skips the favorite_suppressed filter. The pipeline reads
+    # FavoritesMode::Suppress once, for that filter's input (HardGateInputs); a second read
+    # would be a skip put back.
+    'src/pipeline/PipelineCoordinator.cpp': {
+        'Suppress': r'\bSuppress\b',
+    },
 }
 
 ALLOW = [
@@ -183,11 +222,10 @@ ALLOW = [
     ('src/context/ContextWeightSettings.*', 'settings loader: [ContextWeights]'),
     ('tests/core/LegacyFloorPassTests.cpp', 'the host test of the moved floor loop (bit for bit)'),
     ('tests/core/LegacyRunTests.cpp', 'the host test of the legacy module\'s row resolution'),
-    # The definitions of the old utility's fields and of the bridge.
-    ('src/learning/ScoredCandidate.h', 'the old utility\'s fields (utility, breakdown) and RankOnUtility\'s definition'),
-    # The R7 slot math states slot scores as utilities through the bridge: the definitions, the
-    # golden snapshot format (utility tokens), the Debug capture harness and the host slot tests.
-    ('src/core/SlotScoreMath.h', 'the bridge: BridgeScore / DisplayUtility\'s definitions'),
+    # The R7 slot math states slot scores as utilities through the bridge: the golden snapshot
+    # format (utility tokens), the Debug capture harness and the host slot tests. The bridge's
+    # definitions (core/SlotScoreMath.h) and ScoredCandidate.h hold live ranking code (RanksBefore,
+    # operator<, SlotScore()), so they are patterned budgets below, not whole-file allows.
     ('src/core/SlotSnapshotIO.*', 'the R7 golden snapshot format: utility tokens bridged on load'),
     ('src/slot/SlotCapture.cpp', 'the R7 capture harness (Debug, test mode): synthetic scores as utilities'),
     ('tests/core/SlotScoreMathTests.cpp', 'the bridge\'s host test'),
@@ -203,7 +241,7 @@ ALLOW = [
 COMMENT = r'^\s*//'
 BUDGET = {
     # The live pipeline (PipelineCoordinator): the legacy pass and everything it reads off it.
-    'src/pipeline/PipelineCoordinator.cpp': (20, [
+    'src/pipeline/PipelineCoordinator.cpp': (24, [
         COMMENT,
         # the pass (or its skip with the switch off), and the switch
         r'^\s*ctx\.legacy = Scoring::Legacy::LegacyPass\(',
@@ -221,6 +259,12 @@ BUDGET = {
         r'^\s*if \(const auto\* L = ctx\.legacy\.KeptFor\(i\)\) \{$',
         r'^\s*sc\.utility = L->utility;$',
         r'^\s*sc\.breakdown = L->breakdown;$',
+        r'^\s*sc\.isColdStartBoosted = L->isColdStartBoosted;$',
+        # the favourites mode for the favorite_suppressed filter's input (HardGateInputs): the
+        # one read of Suppress (R8.1's skips are that filter now)
+        r'^\s*g_utilityScorer->GetConfig\(\)\.favoritesMode == Scoring::FavoritesMode::Suppress\);$',
+        # the Debug widget's cold-start count
+        r'^\s*if \(sc\.isColdStartBoosted\) \+\+coldStartCount;$',
         # the v3 log: the OldScore capture, the shadow rows' D2 feature, the v2 row's utility
         r'^\s*const Scoring::Legacy::OldScoreCapture capture\(ctx\.legacy, ',
         r'^\s*const bool haveLegacy = ctx\.legacy\.ran && ctx\.legacy\.rows\.size\(\) == candidates\.size\(\) &&$',
@@ -228,7 +272,7 @@ BUDGET = {
         r'^\s*const auto lg = ctx\.legacy\.RowFor\(ci\);$',
         r'^\s*row\.utility = it->second->utility;$',
     ], 'the legacy pass, the switch, the fallback, the weights latch, the D2 feature per candidate, '
-       'the v2 / v3 log copies'),
+       'the v2 / v3 log copies, the Suppress filter input, the Debug widget cold-start count'),
     'src/pipeline/PipelineCoordinator.h': (6, [
         COMMENT,
         r'^\s*#include "learning/legacy/LegacyRun\.h"',
@@ -252,17 +296,40 @@ BUDGET = {
     # The live scorer that ranks (sort, wildcards, envelopes): no old engine, but its [Recs]
     # lines log lm's inputs (hg recs detail) and the fallback's line.
     'src/learning/UtilityScorer.h': (0, None, 'the live scorer: no old engine'),
-    'src/learning/UtilityScorer.cpp': (4, [
+    'src/learning/UtilityScorer.cpp': (6, [
         r'^\s*const auto& bd = scored\.breakdown;$',
         r'^\s*: detail\s+\? fmt::format\(" \| lm from \{\}", bd\.ToDetailString\(\)\)$',
         r'^\s*scored\.score, scored\.utility,$',
         r'^\s*detail \? bd\.ToDetailString\(\) : bd\.ToCompactString\(\),$',
+        r'^\s*scored\.isColdStartBoosted \? " \[COLD\]" : ""\);$',
     ], 'the live scorer: only [Recs] lines log the old parts (lm\'s inputs; the fallback line)'),
     # The v2 selection log's cached rows (PipelineStateCache feeds SelectionLog.cpp).
-    'src/learning/PipelineStateCache.h': (2, [
+    'src/learning/PipelineStateCache.h': (4, [
         r'^\s*\.utility = sc\.utility,$',
         r'^\s*\.breakdown = sc\.breakdown,$',
+        r'^\s*bool isColdStartBoosted = false;$',
+        r'^\s*\.isColdStartBoosted = sc\.isColdStartBoosted,$',
     ], 'the v2 selection log\'s cached rows'),
+    # The Debug widget's cold-start badge (reads the legacy pass's flag; ranks nothing).
+    'src/ui/UtilityScorerDebugWidget.cpp': (1, [r'^\s*if \(candidate\.isColdStartBoosted\) \{$'],
+                                            'the Debug widget cold-start badge'),
+    # ScoredCandidate holds live ranking code (operator<, SlotScore()), so it is budgeted, not
+    # allowed: only the old utility's fields, the cold-start flag and RankOnUtility (the bridge
+    # for the fallback and the slot harness). A bare `utility` in its code is tagged (FILE_PATTERNS).
+    'src/learning/ScoredCandidate.h': (9, [
+        COMMENT,
+        r'^\s*float utility = 0\.0f;$',
+        r'^\s*ScoreBreakdown breakdown;\s+// ',
+        r'^\s*bool isColdStartBoosted = false;\s+// ',
+        r'^\s*void RankOnUtility\(float u\) noexcept \{$',
+        r'^\s*utility = u;$',
+        r'^\s*score = Core::BridgeScore\(u\);$',
+    ], 'the old utility fields, the cold-start flag and RankOnUtility (the bridge of the fallback)'),
+    # The R7 slot math (RanksBefore, BucketLogRatio) is live: only the bridge's two definitions.
+    'src/core/SlotScoreMath.h': (2, [
+        r'^\s*\[\[nodiscard\]\] inline SlotScore BridgeScore\(float utility\) noexcept$',
+        r'^\s*\[\[nodiscard\]\] inline float DisplayUtility\(SlotScore score\) noexcept$',
+    ], 'the bridge: the BridgeScore / DisplayUtility definitions'),
     # The R7 Debug slot capture: the golden snapshot's utility token.
     'src/slot/SlotSnapshot.cpp': (1, [r'^\s*c\.utility = sc\.utility;'],
                                   'the R7 Debug slot capture: the golden snapshot\'s utility token'),
@@ -309,8 +376,10 @@ def load_tree():
 
 def load_ini():
     """The shipped INI, its templates and the dMenu JSON (None: missing)."""
-    files = sorted(p.relative_to(REPO).as_posix() for p in (REPO / 'configs').rglob('*.ini')) + [
-        'Data/SKSE/Plugins/dmenu/customSettings/Huginn.json']
+    # The shipped INI and the dMenu JSON by name, so a move or rename fails the check; the
+    # templates and the other INIs by glob.
+    files = sorted({p.relative_to(REPO).as_posix() for p in (REPO / 'configs').rglob('*.ini')}
+                   | set(REQUIRED_INI))
     out = {}
     for f in files:
         p = REPO / f
@@ -355,7 +424,10 @@ def check(tree, ini, verbose=False, out=print):
     ini_hits = []
     for f, text in ini.items():
         if text is None:
-            out(f'  (missing {f})')
+            # A moved or renamed file would let a pruned key back in unseen: a violation.
+            out(f'PRUNED INI keys: missing {f} (the check cannot read it)')
+            bad += 1
+            bad_paths.append(f)
             continue
         for i, line in enumerate(text.splitlines(), 1):
             for k in PRUNED_INI_KEYS:
@@ -371,6 +443,29 @@ def check(tree, ini, verbose=False, out=print):
         out(f'PRUNED INI keys: 0 hits ({", ".join(PRUNED_INI_KEYS)} in {len(ini)} files: '
             f'configs/**/*.ini and the dMenu JSON)')
 
+    # --- STALE: comments that describe a pruned behaviour (two lines at a time, so a sentence
+    # wrapped over a line break is still seen) ---
+    stale = []
+    stale_rx = [(name, re.compile(p, re.IGNORECASE), why) for name, p, why in STALE]
+    for path, text in tree.items():
+        lines = text.splitlines()
+        seen = set()
+        for i in range(len(lines)):
+            pair = lines[i] + ' ' + re.sub(r'^\s*(?://+|#+|\*+)?\s*', '', lines[i + 1]) if i + 1 < len(lines) \
+                else lines[i]
+            for name, prx, why in stale_rx:
+                if prx.search(pair) and (name, i) not in seen and (name, i - 1) not in seen:
+                    seen.add((name, i))
+                    stale.append((path, i + 1, name, why, lines[i]))
+    if stale:
+        out(f'STALE: {len(stale)} comment(s) describe a pruned behaviour:')
+        for path, i, name, why, line in stale:
+            out(f'  {path}:{i}: [{name}: {why}] {line.strip()[:160]}')
+        bad += len(stale)
+        bad_paths += [s[0] for s in stale]
+    else:
+        out(f'STALE: 0 hits ({len(STALE)} phrase(s))')
+
     # --- LEGACY ---
     rx_words = word_rx(LEGACY)
     rx_cpp_words = word_rx(LEGACY_CPP)
@@ -378,11 +473,13 @@ def check(tree, ini, verbose=False, out=print):
     per_file = defaultdict(list)
     for path, text in tree.items():
         cpp = matches(path, CPP_ROOTS, CPP_GLOBS)
+        file_pats = [(name, re.compile(p)) for name, p in FILE_PATTERNS.get(path, {}).items()]
         for i, line in enumerate(text.splitlines(), 1):
             tags = [m.group(0) for m in rx_words.finditer(line)]
             if cpp:
                 tags += [m.group(0) for m in rx_cpp_words.finditer(line)]
                 tags += [name for name, prx in rx_pats if prx.search(line)]
+            tags += [name for name, prx in file_pats if prx.search(line)]
             if tags:
                 per_file[path].append((path, i, sorted(set(tags)), line))
     violations = []

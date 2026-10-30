@@ -129,7 +129,7 @@ namespace Huginn::Scoring::Legacy
             static auto s_lastWarnTime = std::chrono::steady_clock::time_point{};
             auto now = std::chrono::steady_clock::now();
             if (std::chrono::duration_cast<std::chrono::seconds>(now - s_lastWarnTime).count() >= 5) {
-                logger::debug("[UtilityScorer] Legacy pass: 0/{} candidates passed minimumUtility={:.2f} "
+                logger::debug("[LegacyScorer] Legacy pass: 0/{} candidates passed minimumUtility={:.2f} "
                     "(max utility seen: {:.4f}, baseRelevance: {:.4f}); no row gets ln learn mult"sv,
                     candidates.size(), m_config.minimumUtility,
                     maxUtilitySeen, weights.baseRelevanceWeight);
@@ -142,7 +142,7 @@ namespace Huginn::Scoring::Legacy
             static auto s_lastColdStartLog = std::chrono::steady_clock::time_point{};
             auto now = std::chrono::steady_clock::now();
             if (std::chrono::duration_cast<std::chrono::seconds>(now - s_lastColdStartLog).count() >= 5) {
-                logger::debug("[UtilityScorer] Legacy pass cold start: {} candidates boosted via UCB context floor ({:.2f})"sv,
+                logger::debug("[LegacyScorer] Legacy pass cold start: {} candidates boosted via UCB context floor ({:.2f})"sv,
                     pass.coldStartCount, m_config.coldStartUCBBoost);
                 s_lastColdStartLog = now;
             }

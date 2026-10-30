@@ -146,7 +146,8 @@ namespace Huginn::Candidate
 
         // Gather candidates from all registries into the persistent buffer.
         // No relevance metadata is stamped here: the per-tick display reason is
-        // derived by the pipeline from the scorer's context weights (#10).
+        // derived by the pipeline from the explanations of what the page shows
+        // (R8.3, PipelineCoordinator::UpdateContextReason).
         // One Tracy zone per source: Pipeline::ScoreCandidates went from ~180 us
         // to ~4.8 ms per call (Debug, 2026-09-19 -> 2026-10-03) and the gather,
         // filter and scoring halves were all inside one zone.

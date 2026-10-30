@@ -21,8 +21,37 @@ PC = 'src/pipeline/PipelineCoordinator.cpp'
 US = 'src/learning/UtilityScorer.cpp'
 IM = 'src/ui/IntuitionMenu.cpp'
 FALLBACK = 'ctx.scoredCandidates = ctx.legacy.FallbackRanking();'
+SC = 'src/learning/ScoredCandidate.h'
+SC_LESS = 'return Core::RanksBefore(score, TieBreakDps(), other.score, other.TieBreakDps());'
+SC_SLOT = 'return isRememberedOnly ? Core::kUnrankedScore : score;'
+D2 = 'C::SetLegacy(x.feat,'
 
 PROBES = [
+    # --- round 3: ScoredCandidate.h and SlotScoreMath.h rank live (budgets, not allows) ---
+    ('R3 must-fix 1.1: utility ranks the list again through operator<', SC, SC_LESS,
+     '            return Core::RanksBefore(Core::BridgeScore(utility), TieBreakDps(), '
+     'Core::BridgeScore(other.utility), other.TieBreakDps());', 'replace'),
+    ('R3 must-fix 1.1b: operator< on the bare utility', SC, SC_LESS,
+     '            return utility > other.utility;', 'replace'),
+    ('R3 must-fix 1.2: SlotScore() on the bridged utility', SC, SC_SLOT,
+     '            return isRememberedOnly ? Core::kUnrankedScore : Core::BridgeScore(utility);', 'replace'),
+    ('R3 must-fix 1.3: a wrapper accessor on the old utility', SC, '// Check if this is a specific candidate type',
+     '        [[nodiscard]] float OldU() const noexcept { return utility; }', 'after'),
+    ('R3: a bridge call added to the live slot math', 'src/core/SlotScoreMath.h', 'namespace Huginn::Core',
+     '    inline SlotScore ProbeScore(float u) noexcept { return BridgeScore(u); }', 'after'),
+    ('R3 must-fix 2: the stale reason-from-weights comment back', 'src/candidate/CandidateGenerator.cpp',
+     'No relevance metadata is stamped here',
+     '        // No relevance metadata is stamped here: the per-tick display reason is\n'
+     '        // derived by the pipeline from the scorer\'s context weights (#10).', 'replace'),
+    ('R3: a qualified read (pointer to member) of utility', PC, FALLBACK,
+     '        auto pm = &Scoring::ScoredCandidate::utility; '
+     'for (auto& sc : ctx.scoredCandidates) sc.score = std::log(sc.*pm);', 'after'),
+    ('R3: the cold-start flag read in RankOnChoice', PC, D2,
+     '        if (sc.isColdStartBoosted) x.feat[0] += 1.0;', 'after'),
+    ('R3: a Suppress skip put back in RankOnChoice', PC, D2,
+     '        if (g_utilityScorer->GetConfig().favoritesMode == Scoring::FavoritesMode::Suppress '
+     '&& sc.IsFavorited()) continue;', 'after'),
+
     # --- the R8.4 verifier's dodges: none renames anything ---
     ('a: utility ranks again in the live pipeline', PC, FALLBACK,
      '        for (auto& sc : ctx.scoredCandidates) sc.score = std::log(sc.utility);', 'after'),
@@ -127,7 +156,16 @@ def main():
     else:
         print(f'FAIL {name}: r8_check passed it')
         failures += 1
-    total = len(PROBES) + 1
+    for f in rc.REQUIRED_INI:   # a moved or renamed INI / dMenu JSON must fail, not pass silently
+        i2 = dict(ini)
+        i2[f] = None
+        bad, paths, _ = run(tree, i2)
+        if bad and f in paths:
+            print(f'ok   R3: {f} missing: caught')
+        else:
+            print(f'FAIL R3: {f} missing: r8_check passed it')
+            failures += 1
+    total = len(PROBES) + 1 + len(rc.REQUIRED_INI)
     print(f'{total - failures}/{total} probes caught' + ('' if not failures else f'; {failures} FAILED'))
     return 1 if failures else 0
 

@@ -1,9 +1,10 @@
 """Offline replay of Huginn's selection log -- the Phase 3 harness.
 
 Re-ranks every logged selection under a scoring policy and reports how often
-the item the player actually chose would have been near the top. A learning
-change costs minutes here instead of play-hours (roadmap, "Learning swamps
-context", review note "Replay needs randomness Huginn lacks").
+the item the player actually chose would have been near the top. It was the
+Phase 3 harness for learning changes (roadmap, "Learning swamps context",
+review note "Replay needs randomness Huginn lacks"); since R8.4 it keeps only
+the two context policies below, as R5's cheap yardstick on the v2 log.
 
 Input: Huginn_Selections.jsonl (SKSE log folder). Each record carries the
 press-time state vector `phi`, the page that was `shown`, and every scored
@@ -109,7 +110,9 @@ def load(path, char, from_launch, to_launch=None):
             r["_cands"] = [dict(zip(cols, c)) for c in r["cands"]]
             # The recency term on ONE scale, the pre-0.23.0 one (1.5): since
             # the choice target the game logs it already divided by 8
-            # (0.1875), and the policies' rec_scale = 1/8 would divide again.
+            # (0.1875). (The R8.4-pruned learner policies divided by 8 again
+            # through their rec_scale; the field stays on one scale for any
+            # reader of `_cands`.)
             for c in r["_cands"]:
                 if 0.0 < c.get("rec", 0.0) < 1.0:
                     c["rec"] *= 8.0

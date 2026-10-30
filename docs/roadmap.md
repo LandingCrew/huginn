@@ -1125,27 +1125,43 @@ changed in the same PR, and the shipped INI loses the dead keys.
         LEGACY lines appear only in the allowlisted files, each with its reason
         (the legacy module, the old learner's own files and subscribers,
         BanditSerializer, the selection logs, `core/OldScore.h` and the v3
-        format, the settings loaders, the R7 slot math and its harness, the
-        legacy host tests), or in a BUDGETED file within its count, each line
-        matching one of the file's allowed forms. A LEGACY line names the old
+        format, the settings loaders, the R7 snapshot format and capture
+        harness, the legacy host tests), or in a BUDGETED file within its
+        count, each line matching one of the file's allowed forms. A file that
+        ranks or does slot math live is never allowed whole (review 3:
+        `ScoredCandidate.h`, whose `operator<` and `SlotScore()` rank, and
+        `core/SlotScoreMath.h` had been). A LEGACY line names the old
         engine's types, globals or config fields, the utility -> rank-score
         bridge, the legacy module's facade (`Legacy::` / `Scoring::Legacy`, its
         include, `ctx.legacy`, `FallbackRanking`, `KeptFor`, `RowFor`,
         `OldScoreCapture`, ...), or reads the old utility's members (`.utility`,
         `.breakdown` and its fields; C++ only) -- so utility cannot rank or
         display again through a wrapper or a member read (review 2: the first
-        version listed only the inner names, and nine probes passed it).
-        Budgets, patterned: `PipelineCoordinator.cpp` 20 lines (the pass or its
+        version listed only the inner names, and nine probes passed it;
+        review 3 added qualified reads, `X::utility`, and the cold-start flag
+        `isColdStartBoosted`). A few words are LEGACY in one file only: a
+        bare `utility` / `breakdown` in `ScoredCandidate.h`'s code (an
+        accessor or comparator written on it) and `Suppress` in
+        `PipelineCoordinator.cpp` (its one read is the favorite_suppressed
+        filter's input). A STALE list fails comments that describe a pruned
+        behaviour as live (the display reason derived from the context
+        weights), and a missing shipped INI or dMenu JSON fails the INI-key
+        check instead of passing it unread.
+        Budgets, patterned: `PipelineCoordinator.cpp` 24 lines (the pass or its
         skip, the switch, the fallback call, the old learner's weights-changed
-        latch, the D2 feature per candidate, the v2 / v3 log copies, four
-        comments) and its header 6; `UpdateLoop.cpp` 4 (the old learner's play
+        latch, the D2 feature per candidate, the v2 / v3 log copies, the
+        filter's Suppress input, the Debug widget's cold-start count, five
+        comments) and its header 6; `ScoredCandidate.h` 9 (the old utility's
+        fields, the cold-start flag, `RankOnUtility`, three comments);
+        `core/SlotScoreMath.h` 2 (the bridge's two definitions); `UpdateLoop.cpp` 4 (the old learner's play
         clock and forget sweep, which run with the switch off so BNDW ages);
         `SoakMetrics.cpp` 2 (the `[Soak]` heartbeat's old-learner counts: the
         soak's check that the forget sweep keeps BNDW bounded; reads only, off
-        the lm / um path); `UtilityScorer.cpp` 4 (only `[Recs]` lines logging
-        lm's inputs and the fallback's line) and its header 0;
-        `PipelineStateCache.h` 2 (the v2 log's cached rows); `SlotSnapshot.cpp`
-        1 (the R7 capture's utility token). Counted: ConsoleCommands, Main,
+        the lm / um path); `UtilityScorer.cpp` 6 (only `[Recs]` lines logging
+        lm's inputs, the fallback's line and the `[COLD]` tag) and its header
+        0; `PipelineStateCache.h` 4 (the v2 log's cached rows);
+        `UtilityScorerDebugWidget.cpp` 1 (the cold-start badge);
+        `SlotSnapshot.cpp` 1 (the R7 capture's utility token). Counted: ConsoleCommands, Main,
         Globals, SettingsReloader and `Tests.cpp` on their R8.4 line counts, so
         a new use anywhere in them fails. To get there the legacy half of UtilityScorer
         (the pass, the per-candidate score, λ, the favourites helper and the
@@ -1159,7 +1175,12 @@ changed in the same PR, and the shipped INI loses the dead keys.
         learner's clock, forget sweep, counts and weights-changed latch), and
         the facts the live filters and the skip gate share with the context
         rules moved to `context/ContextFacts.h`. `tools/prune/test_r8_check.py`
-        runs 25 mutation probes in memory, each of which must fail the check:
+        runs 36 mutation probes in memory, each of which must fail the check
+        (review 3 added: utility ranking again through `operator<` or
+        `SlotScore()`, an accessor on the bare utility, a bridge call in the
+        slot math, the stale reason comment back, a pointer to the old
+        utility, the cold-start flag or a Suppress skip in RankOnChoice, and
+        a missing INI or dMenu JSON; the earlier set:
         utility ranking again in the pipeline (`sc.score = log(sc.utility)`),
         an `ln util` feature in RankOnChoice, the Verbose breakdown back in
         IntuitionMenu, `utility * contextWeight` in UtilityScorer, a facade
@@ -1170,7 +1191,7 @@ changed in the same PR, and the shipped INI loses the dead keys.
         global in a console command or test, `DisplayUtility` in the HUD menu,
         `g_legacyScorer` in a display backend, a pruned symbol (the tier
         preference, a Suppress branch, the discriminator's timer, the
-        elemental window) and a pruned INI key. PRUNED also covers what R8.1
+        elemental window) and a pruned INI key). PRUNED also covers what R8.1
         pruned that has a name (the potion multiplier's own combat timer:
         `OnCombatStart` / `OnCombatEnd` / `ConsumeCombatTransition`, and its
         members scoped to PotionDiscriminator) and `Suppress` in
