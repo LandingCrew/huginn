@@ -59,11 +59,9 @@ namespace Huginn::Candidate
         SourceType sourceType = SourceType::Spell;
         std::string_view name;
 
-        // Pre-computed filter results (set by filters before scoring)
-        bool canAfford = true;           // Has enough magicka (spells) or count > 0 (consumables)
-        bool isEquipped = false;         // Already equipped in a slot
-        bool isOnCooldown = false;       // Recently used, in cooldown period
-        bool isBuffAlreadyActive = false; // Effect already active on player (waterbreathing, etc.)
+        // Already equipped (set by the gather; the filter visitor drops an
+        // equipped torch or ammo as Reason::equipped)
+        bool isEquipped = false;
 
         // Why an OVERRIDE surfaced this candidate (set by OverrideManager only —
         // ordinary candidates leave it None and the display falls back to the
@@ -79,11 +77,6 @@ namespace Huginn::Candidate
             return (static_cast<uint64_t>(sourceType) << 48) |
                    (static_cast<uint64_t>(uniqueID) << 32) |
                    static_cast<uint64_t>(formID);
-        }
-
-        // Check if candidate passes basic pre-filters
-        [[nodiscard]] constexpr bool PassesBasicFilters() const noexcept {
-            return canAfford && !isEquipped && !isOnCooldown && !isBuffAlreadyActive;
         }
     };
 

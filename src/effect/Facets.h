@@ -41,13 +41,6 @@ namespace Huginn::Effect
     /// facets for its form.
     [[nodiscard]] Core::Facets::Subject SubjectOf(const Candidate::CandidateVariant& candidate);
 
-    /// Just the facets of a candidate's form (the filters' and the label's
-    /// questions); empty without a catalog entry.
-    [[nodiscard]] inline Core::Facets::Set FacetSetOf(const Candidate::CandidateVariant& candidate)
-    {
-        return SubjectOf(candidate).facets;
-    }
-
 #ifndef NDEBUG
     /// The Debug test suites (Tests.cpp) build candidates with made-up FormIDs
     /// the catalog does not hold. A resolver set here answers for a candidate

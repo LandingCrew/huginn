@@ -115,14 +115,11 @@ endif()
 
 find_package(imgui REQUIRED)
 
-find_package(Freetype REQUIRED)
-
 target_link_libraries(
    "${PROJECT_NAME}"
    PRIVATE
       CommonLibSSE::CommonLibSSE
       imgui::imgui
-      Freetype::Freetype
 )
 
 # Tracy profiler integration

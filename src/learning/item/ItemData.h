@@ -7,7 +7,14 @@ namespace Huginn::Item
    // What a restore effect gives back within `windowSec` seconds: the whole
    // magnitude once for an instant potion (duration 0), magnitude-per-second
    // times the time inside the window for a heal-over-time one. See
-   // ItemData::RestoredWithin for why magnitude alone cannot compare them.
+   //
+   // Magnitude alone cannot compare potions across load orders: a vanilla
+   // or Apothecary restore is instant (dur 0, magnitude = the whole heal),
+   // a Requiem/LoreRim one heals over time (magnitude = per second). So an
+   // instant potion counts its magnitude once, and a heal-over-time one
+   // counts what it restores inside the window. LoreRim Restore Health
+   // (Fair), 8/s for 20 s, is 40 within 5 s; a vanilla 50-point instant
+   // potion is 50.
    [[nodiscard]] inline float RestoredWithin(float magnitude, float duration, float windowSec) noexcept
    {
       return magnitude * std::clamp(duration, 1.0f, std::max(windowSec, 1.0f));
@@ -193,18 +200,9 @@ namespace Huginn::Item
       // Poison modifiers (moved from primary to save bits)
       Lingering           = 1 << 0,   // Damage over time modifier
 
-      // Weakness effects (check 'element' field for which)
-      WeaknessElement     = 1 << 1,   // Weakness to Fire/Frost/Shock/Magic/Poison
-
-      // Ravage effects (instant damage to MAX attribute)
-      RavageHealth        = 1 << 2,
-      RavageMagicka       = 1 << 3,
-      RavageStamina       = 1 << 4,
-
-      // Damage regen effects
-      DamageHealthRegen   = 1 << 5,
-      DamageMagickaRegen  = 1 << 6,
-      DamageStaminaRegen  = 1 << 7,
+      // Bits 1-7 held the weakness, ravage and regen-drain flags until 0.24.5
+      // (nothing read them). The soul gem bits keep their positions:
+      // ItemRegistry's capacity mask reads bits 8-13.
 
       // Soul gem capacities (moved from primary to save bits)
       SoulGemPetty        = 1 << 8,
@@ -375,50 +373,6 @@ namespace Huginn::Item
       // =======================================================================
       // HELPER METHODS
       // =======================================================================
-
-      // Check if this is a Fortify Destruction potion
-      [[nodiscard]] bool IsFortifyDestruction() const noexcept {
-      return HasTag(tags, ItemTag::FortifyMagicSchool) &&
-             school == MagicSchool::Destruction;
-      }
-
-      // Check if this is a Fortify [specific school] potion
-      [[nodiscard]] bool IsFortifySchool(MagicSchool targetSchool) const noexcept {
-      return HasTag(tags, ItemTag::FortifyMagicSchool) &&
-             school == targetSchool;
-      }
-
-      // Check if this is a Fortify Smithing potion (at forge)
-      [[nodiscard]] bool IsFortifySmithing() const noexcept {
-      return HasTag(tags, ItemTag::FortifyCombatSkill) &&
-             combatSkill == CombatSkill::Smithing;
-      }
-
-      // Check if this is a Fortify [specific combat skill] potion
-      [[nodiscard]] bool IsFortifyCombat(CombatSkill targetSkill) const noexcept {
-      return HasTag(tags, ItemTag::FortifyCombatSkill) &&
-             combatSkill == targetSkill;
-      }
-
-      // Check if this is a Weakness to [element] poison
-      [[nodiscard]] bool IsWeaknessTo(ElementType targetElement) const noexcept {
-      return HasTagExt(tagsExt, ItemTagExt::WeaknessElement) &&
-             element == targetElement;
-      }
-
-      // How much a restore potion gives back within the first `windowSec`
-      // seconds -- what matters when the player is about to die.
-      //
-      // Magnitude alone cannot compare potions across load orders: a vanilla
-      // or Apothecary restore is instant (dur 0, magnitude = the whole heal),
-      // a Requiem/LoreRim one heals over time (magnitude = per second). So an
-      // instant potion counts its magnitude once, and a heal-over-time one
-      // counts what it restores inside the window. LoreRim Restore Health
-      // (Fair), 8/s for 20 s, is 40 within 5 s; a vanilla 50-point instant
-      // potion is 50.
-      [[nodiscard]] float RestoredWithin(float windowSec) const noexcept {
-      return Item::RestoredWithin(magnitude, duration, windowSec);
-      }
 
       // R11: the harmful-side-effect test by tags is gone; the override
       // finders ask the effect catalog's self_harm, intoxication and hostile facets

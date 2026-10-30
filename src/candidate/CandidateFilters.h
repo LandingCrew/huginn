@@ -44,13 +44,6 @@ namespace Huginn::Candidate
             filteredByHardGate = 0;
             outputCount = 0;
         }
-
-        /// Total filtered out
-        [[nodiscard]] size_t TotalFiltered() const noexcept {
-            return filteredByAffordability + filteredByEquipped + filteredByCooldown +
-                   filteredByActiveBuff + filteredByDuplication +
-                   filteredByFullVitals + filteredByHardGate;
-        }
     };
 
     /**
@@ -75,52 +68,7 @@ namespace Huginn::Candidate
     public:
         CandidateFilters(CooldownManager& cooldownMgr, const CandidateConfig& config);
 
-        // =========================================================================
-        // INDIVIDUAL FILTERS (return true to KEEP candidate)
-        // =========================================================================
-
-        /**
-         * @brief Check if player can afford to use this candidate.
-         *
-         * For spells: Computes effective cost via CalculateMagickaCost(player) with perk/enchant reductions
-         * For items: Checks if count > 0
-         * For weapons: Always returns true (no cost to equip)
-         *
-         * @param candidate The candidate to check
-         * @param currentMagicka Player's current magicka
-         * @return true if player can afford to use this candidate
-         */
-        [[nodiscard]] bool PassesAffordabilityFilter(
-            const CandidateVariant& candidate,
-            float currentMagicka
-        ) const;
-
-        /**
-         * @brief Check if candidate is already equipped.
-         *
-         * @param candidate The candidate to check
-         * @param player Current player state (for equipped items)
-         * @return true if candidate is NOT already equipped
-         */
-        [[nodiscard]] bool PassesEquippedFilter(
-            const CandidateVariant& candidate,
-            const State::PlayerActorState& player
-        ) const;
-
-        /**
-         * @brief Check if candidate is on cooldown (recently used).
-         *
-         * @param candidate The candidate to check
-         * @return true if candidate is NOT on cooldown
-         */
-        [[nodiscard]] bool PassesCooldownFilter(
-            const CandidateVariant& candidate
-        ) const;
-
-        // R8.1: PassesActiveBuffFilter / PassesFullVitalsFilter are gone.
-        // They re-ran the whole visitor and asked for one reason, so once the
-        // hard gates ran ahead of the active-buff filters a gated candidate
-        // read as passing. Nothing called them; ApplyAllFilters is the API.
+        // ApplyAllFilters is the only filter API (the single-filter methods went in 0.24.5).
 
         // =========================================================================
         // BATCH FILTER OPERATIONS
@@ -164,9 +112,6 @@ namespace Huginn::Candidate
 
         /// Get reference to configuration
         [[nodiscard]] const CandidateConfig& GetConfig() const noexcept { return m_config; }
-
-        /// Get reference to cooldown manager
-        [[nodiscard]] CooldownManager& GetCooldownManager() noexcept { return m_cooldownMgr; }
 
     private:
         CooldownManager& m_cooldownMgr;

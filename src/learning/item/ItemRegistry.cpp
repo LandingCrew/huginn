@@ -374,13 +374,6 @@ namespace Huginn::Item
       });
    }
 
-   std::vector<const InventoryItem*> ItemRegistry::GetItemsWithTag(ItemTag tag) const
-   {
-      return Collect([tag](const InventoryItem& i) {
-      return HasTag(i.data.tags, tag) && i.count > 0;
-      });
-   }
-
    std::vector<const InventoryItem*> ItemRegistry::GetHealthPotionsByMagnitude(size_t topK) const
    {
       return QueryTopK(
@@ -528,43 +521,6 @@ namespace Huginn::Item
       [](const InventoryItem& i) { return i.data.magnitude; });
    }
 
-   const InventoryItem* ItemRegistry::GetBestResistFirePotion() const noexcept
-   {
-      return FindBest(
-      [](const InventoryItem& i) { return HasTag(i.data.tags, ItemTag::ResistFire) && i.count > 0; },
-      [](const InventoryItem& i) { return i.data.magnitude; });
-   }
-
-   const InventoryItem* ItemRegistry::GetBestResistFrostPotion() const noexcept
-   {
-      return FindBest(
-      [](const InventoryItem& i) { return HasTag(i.data.tags, ItemTag::ResistFrost) && i.count > 0; },
-      [](const InventoryItem& i) { return i.data.magnitude; });
-   }
-
-   const InventoryItem* ItemRegistry::GetBestResistShockPotion() const noexcept
-   {
-      return FindBest(
-      [](const InventoryItem& i) { return HasTag(i.data.tags, ItemTag::ResistShock) && i.count > 0; },
-      [](const InventoryItem& i) { return i.data.magnitude; });
-   }
-
-   const InventoryItem* ItemRegistry::GetBestResistPoisonPotion() const noexcept
-   {
-      return FindBest(
-      [](const InventoryItem& i) { return HasTag(i.data.tags, ItemTag::ResistPoison) && i.count > 0; },
-      [](const InventoryItem& i) { return i.data.magnitude; });
-   }
-
-   // Cure potions are binary effects, so we prefer the most economical (lowest
-   // gold value). FindBest maximizes its key, so negate value to pick the minimum.
-   const InventoryItem* ItemRegistry::GetBestCureDiseasePotion() const noexcept
-   {
-      return FindBest(
-      [](const InventoryItem& i) { return HasTag(i.data.tags, ItemTag::CureDisease) && i.count > 0; },
-      [](const InventoryItem& i) { return -static_cast<int64_t>(i.data.value); });
-   }
-
    // =============================================================================
    // SOUL GEM ACCESSORS (SoulGemScanner v0.7.8)
    // =============================================================================
@@ -573,20 +529,6 @@ namespace Huginn::Item
    {
       return QueryTopK(
       [](const InventoryItem& i) { return i.data.type == ItemType::SoulGem && i.count > 0; },
-      [](const InventoryItem& i) { return i.data.magnitude; }, topK);
-   }
-
-   std::vector<const InventoryItem*> ItemRegistry::GetSoulGemsBySoulLevel(float minSoulLevel, size_t topK) const
-   {
-      // Renamed from GetSoulGemsByCapacity: magnitude stopped being capacity
-      // and became the soul held, so the old name described the opposite of
-      // what the filter did. Capacity now lives in tagsExt — see
-      // GetSoulGemsByCapacity below, which asks the question the old name
-      // promised.
-      return QueryTopK(
-      [minSoulLevel](const InventoryItem& i) {
-        return i.data.type == ItemType::SoulGem && i.count > 0 && i.data.magnitude >= minSoulLevel;
-      },
       [](const InventoryItem& i) { return i.data.magnitude; }, topK);
    }
 
@@ -622,17 +564,6 @@ namespace Huginn::Item
         return capacityBits >= minBit;
       },
       [](const InventoryItem& i) { return i.data.magnitude; }, topK);
-   }
-
-   std::vector<const InventoryItem*> ItemRegistry::GetBlackSoulGems() const
-   {
-      // Was `magnitude >= 6.0`, which stopped being satisfiable the moment
-      // magnitude became SOUL_LEVEL (max 5) — the query returned nothing at
-      // all. The record flag is the real answer and always was.
-      return Collect([](const InventoryItem& i) {
-      return i.data.type == ItemType::SoulGem && i.count > 0 &&
-             HasTagExt(i.data.tagsExt, ItemTagExt::SoulGemBlack);
-      });
    }
 
    const InventoryItem* ItemRegistry::GetBestSoulGem() const noexcept

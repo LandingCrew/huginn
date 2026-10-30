@@ -101,16 +101,12 @@ namespace Huginn::Learning
 
         struct Stats
         {
-            bool ready = false;
             std::size_t thetaEntries = 0;     // keyed weights (theta, strength, recent, covered)
             std::size_t thetaMoved = 0;       // ... whose {mu, var} differ from the bootstrap's
             std::size_t picksLearned = 0;
-            std::size_t picksSkipped = 0;     // repeats, unusable picks
             std::size_t onsets = 0;           // need onsets seen
             std::size_t onsetsCounted = 0;    // ... with an answering item on the page (variance grown)
             std::size_t bEntries = 0;
-            std::size_t forgotten = 0;
-            double lastLogp = 0.0;
         };
 
         ChoiceLearner() = default;
@@ -259,7 +255,6 @@ namespace Huginn::Learning
         Core::Choice::Model m_bootModel;
         std::vector<Core::Bootstrap::BuildCurve> m_curves;
         std::vector<Core::Bootstrap::ResolvedItem> m_bootItems;
-        bool m_itemsResolved = false;
         std::string m_createdUtc, m_sha256;
 
         // the learner

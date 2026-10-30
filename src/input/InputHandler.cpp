@@ -77,12 +77,6 @@ namespace Huginn::Input
       settings.toggleKey);
    }
 
-   KeybindingSettings InputHandler::GetKeybindings() const
-   {
-      std::shared_lock lock(m_keyCodeMutex);
-      return m_keybindings;
-   }
-
    void InputHandler::ConsumePendingStateReset()
    {
       if (m_pendingStateReset.load(std::memory_order_acquire) &&

@@ -47,7 +47,6 @@ namespace Huginn::Learning
         }
 
         void Subscribe(IEquipSubscriber* subscriber);
-        void Unsubscribe(IEquipSubscriber* subscriber);
 
         /// Evaluate the game state NOW into an event (no dispatch).
         [[nodiscard]] static EquipEvent Capture(RE::FormID formID, EquipSource source);

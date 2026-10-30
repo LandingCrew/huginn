@@ -75,25 +75,6 @@ namespace Huginn::Core::Filter
         return i < kReasonCount ? kReasonNames[i] : std::string_view("?");
     }
 
-    /// One of the filters that drop an item whose effect is already running on
-    /// the player (CandidateFilters' "active buff" stage, resists included).
-    [[nodiscard]] constexpr bool IsActiveBuff(Reason r) noexcept
-    {
-        return r >= Reason::invisibility && r <= Reason::resist;
-    }
-
-    [[nodiscard]] constexpr bool IsFullVital(Reason r) noexcept
-    {
-        return r >= Reason::full_health && r <= Reason::full_stamina;
-    }
-
-    /// One of the hard gates (R8.1): an item the old engine's context weight
-    /// zeroed, or a suppressed favourite.
-    [[nodiscard]] constexpr bool IsHardGate(Reason r) noexcept
-    {
-        return r >= Reason::no_follower && r <= Reason::favorite_suppressed;
-    }
-
     /// One gathered candidate the filters dropped, and why.
     struct Dropped
     {

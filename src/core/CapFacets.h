@@ -245,8 +245,8 @@ namespace Huginn::Core::Facets
     /// intoxication (survival_intoxication: Skooma's Drugged; Simonrim's
     /// Skooma keeps its Damage Health under it, not under self_harm), or a
     /// hostile row (a poison; a wrapper's payload aimed at others). Replaces
-    /// the old ItemData tag test (DamageHealth/Magicka/Stamina, Ravage*,
-    /// Damage*Regen, WeaknessElement, isHostile).
+    /// the old ItemData tag test (DamageHealth/Magicka/Stamina, isHostile, and
+    /// the Ravage, regen-drain and weakness ext bits, deleted in 0.24.5).
     [[nodiscard]] constexpr bool HasSideEffect(const Set& f) noexcept
     {
         return f.Has(F::SelfHarm) || f.Has(F::Intoxicating) || f.Has(F::Hostile);

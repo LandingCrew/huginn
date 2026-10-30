@@ -6,8 +6,6 @@
 #include "ContextWeightConfig.h"
 #include "ContextFacts.h"   // R8.4: the facts the rules and the live filters share
 
-#include <algorithm>  // std::max (GetMaxWeight)
-
 namespace Huginn::Context
 {
     // =============================================================================
@@ -108,55 +106,6 @@ namespace Huginn::Context
         // UTILITY / ALWAYS-AVAILABLE
         // =========================================================================
         float baseRelevanceWeight = State::ContextWeightDefaults::BASE_RELEVANCE;  // 0.05: noise floor for items with no specific context
-
-        // =========================================================================
-        // HELPER METHODS
-        // =========================================================================
-
-        /**
-         * @brief Get the maximum weight across all categories.
-         * Used for debugging and validation.
-         */
-        [[nodiscard]] constexpr float GetMaxWeight() const noexcept
-        {
-            float maxWeight = 0.0f;
-            maxWeight = std::max(maxWeight, healingWeight);
-            maxWeight = std::max(maxWeight, magickaRestoreWeight);
-            maxWeight = std::max(maxWeight, staminaRestoreWeight);
-            maxWeight = std::max(maxWeight, damageWeight);
-            maxWeight = std::max(maxWeight, resistFireWeight);
-            maxWeight = std::max(maxWeight, resistFrostWeight);
-            maxWeight = std::max(maxWeight, resistShockWeight);
-            maxWeight = std::max(maxWeight, resistPoisonWeight);
-            maxWeight = std::max(maxWeight, resistDiseaseWeight);
-            maxWeight = std::max(maxWeight, waterbreathingWeight);
-            maxWeight = std::max(maxWeight, unlockWeight);
-            maxWeight = std::max(maxWeight, slowFallWeight);
-            maxWeight = std::max(maxWeight, darknessWeight);
-            maxWeight = std::max(maxWeight, hungerWeight);
-            maxWeight = std::max(maxWeight, coldWeight);
-            maxWeight = std::max(maxWeight, fortifySmithingWeight);
-            maxWeight = std::max(maxWeight, fortifyEnchantingWeight);
-            maxWeight = std::max(maxWeight, fortifyAlchemyWeight);
-            maxWeight = std::max(maxWeight, wardWeight);
-            maxWeight = std::max(maxWeight, aoeWeight);
-            maxWeight = std::max(maxWeight, summonWeight);
-            maxWeight = std::max(maxWeight, allyHealWeight);
-            maxWeight = std::max(maxWeight, antiUndeadWeight);
-            maxWeight = std::max(maxWeight, antiDaedraWeight);
-            maxWeight = std::max(maxWeight, antiDragonWeight);
-            maxWeight = std::max(maxWeight, stealthWeight);
-            maxWeight = std::max(maxWeight, weaponChargeWeight);
-            maxWeight = std::max(maxWeight, soulGemWeight);
-            maxWeight = std::max(maxWeight, ammoWeight);
-            maxWeight = std::max(maxWeight, boundWeaponWeight);
-            maxWeight = std::max(maxWeight, weaponWeight);
-            maxWeight = std::max(maxWeight, spellWeight);
-            maxWeight = std::max(maxWeight, buffPotionWeight);
-            maxWeight = std::max(maxWeight, buffCombatWeight);
-            maxWeight = std::max(maxWeight, baseRelevanceWeight);
-            return maxWeight;
-        }
     };
 
     // R8.4 (0.24.1): the reason derivation off this map (the dominant reason,

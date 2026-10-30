@@ -214,7 +214,7 @@ template <typename Registry>
 // STAGE 1: SUBSYSTEM UPDATES
 // =============================================================================
 // Tick time-dependent subsystems: state sensors, candidate cooldowns,
-// potion discriminator combat timer, override hysteresis.
+// override hysteresis.
 
 static void UpdateSubsystems(float deltaSeconds, float deltaMs)
 {
@@ -237,7 +237,7 @@ static void UpdateSubsystems(float deltaSeconds, float deltaMs)
     if (g_utilityScorer) {
         Huginn_ZONE_NAMED("UtilityScorer::Update");
         // Wildcard expiry: the exploration slot reverts to the ranked pick
-        forcePipelineRun |= g_utilityScorer->Update(deltaSeconds);
+        forcePipelineRun |= g_utilityScorer->Update();
         // R8.1 (0.23.55): no combat transition to hand on. The legacy potion
         // multiplier's own timer is gone; it reads the combat_onset clock
         // (NeedSensorState::combatStartAt) through the pipeline.
@@ -709,8 +709,9 @@ void OnUpdate(float deltaSeconds)
     UpdateSubsystems(deltaSeconds, deltaMs);
     MaintainRegistries(player, now);
 
-    // R3: the need vector, every tick, logged only. Reads the state the polls
-    // just wrote; touches neither skip gate (NeedMonitor.h).
+    // The need vector, every tick, for the choice score (R8.3). Reads the
+    // state the polls just wrote; its signature is a skip-gate term
+    // (PipelineCoordinator::GatherState reads NeedMonitor::LatestSignatureHash).
     Needs::NeedMonitor::GetSingleton().Tick(now);
 
     // R4: the selection log v3 -- this tick's cross-features for the eligible

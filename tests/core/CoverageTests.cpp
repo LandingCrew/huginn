@@ -192,20 +192,10 @@ TEST_CASE("filter reasons: names, groups and lookup")
         for (const char ch : Filter::kReasonNames[i]) CHECK(((ch >= 'a' && ch <= 'z') || ch == '_'));
         for (std::size_t j = i + 1; j < Filter::kReasonCount; ++j) CHECK(Filter::kReasonNames[i] != Filter::kReasonNames[j]);
     }
-    for (const auto r : { Reason::invisibility, Reason::muffle, Reason::armor, Reason::summon_limit, Reason::warming,
-                          Reason::waterbreathing, Reason::resist }) {
-        CHECK(Filter::IsActiveBuff(r));
-    }
-    for (const auto r : { Reason::affordability, Reason::equipped, Reason::full_health, Reason::cooldown,
-                          Reason::duplicate, Reason::truncated }) {
-        CHECK_FALSE(Filter::IsActiveBuff(r));
-    }
-    CHECK(Filter::IsFullVital(Reason::full_stamina));
-    CHECK_FALSE(Filter::IsFullVital(Reason::equipped));
 
-    // R8.1 (0.23.55): the four hard gates, appended. The ranges above keep
-    // their values (old files index their own head's list, but the groups are
-    // read by value in the plugin), and the head lists 19 names.
+    // R8.1 (0.23.55): the four hard gates, appended. The values below stay
+    // pinned (old files index their own head's list, but the plugin reads the
+    // reasons by value), and the head lists 19 names.
     CHECK(Filter::kReasonCount == 19);
     CHECK(static_cast<int>(Reason::invisibility) == 5);
     CHECK(static_cast<int>(Reason::resist) == 11);
@@ -215,14 +205,6 @@ TEST_CASE("filter reasons: names, groups and lookup")
     CHECK(Filter::ReasonName(Reason::no_workstation) == "no_workstation");
     CHECK(Filter::ReasonName(Reason::not_dark) == "not_dark");
     CHECK(Filter::ReasonName(Reason::favorite_suppressed) == "favorite_suppressed");
-    for (const auto r : { Reason::no_follower, Reason::no_workstation, Reason::not_dark, Reason::favorite_suppressed }) {
-        CHECK(Filter::IsHardGate(r));
-        CHECK_FALSE(Filter::IsActiveBuff(r));
-        CHECK_FALSE(Filter::IsFullVital(r));
-    }
-    for (std::size_t i = 0; i < static_cast<std::size_t>(Reason::no_follower); ++i) {
-        CHECK_FALSE(Filter::IsHardGate(static_cast<Reason>(i)));
-    }
     CHECK(Filter::ReasonName(Reason::_Count) == "?");
 
     const std::vector<Filter::Dropped> dropped{

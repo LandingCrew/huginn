@@ -178,14 +178,6 @@ namespace Huginn::Update
       }
    }
 
-   float UpdateHandler::GetTimeSinceLastUpdate() const
-   {
-      std::lock_guard<std::mutex> lock(m_mutex);
-      auto now = std::chrono::steady_clock::now();
-      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastUpdate);
-      return static_cast<float>(elapsed.count());
-   }
-
    void UpdateHandler::DoUpdate(std::chrono::steady_clock::time_point now)
    {
       SCOPED_TIMER("UpdateHandler::DoUpdate");
@@ -204,8 +196,7 @@ namespace Huginn::Update
          deltaSeconds = MAX_DELTA_SECONDS;
       }
 
-      // Lock for callback invocation and m_lastUpdate write (thread safety).
-      // GetTimeSinceLastUpdate() also acquires this mutex to read m_lastUpdate.
+      // Lock for callback invocation and the m_lastUpdate write (thread safety).
       {
       std::lock_guard<std::mutex> lock(m_mutex);
       if (m_updateCallback) {

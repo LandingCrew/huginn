@@ -280,44 +280,6 @@ namespace Huginn::Candidate
         }, candidate);
     }
 
-    // Keep individual filters as public API for external callers
-    bool CandidateFilters::PassesAffordabilityFilter(
-        const CandidateVariant& candidate, float currentMagicka) const
-    {
-        // Simplified — delegates to consolidated visitor for spell logic,
-        // but external callers may use this standalone
-        return std::visit([currentMagicka, policy = m_config.uncastableSpellPolicy](const auto& c) -> bool {
-            using T = std::decay_t<decltype(c)>;
-            if constexpr (std::is_same_v<T, SpellCandidate>) {
-                if (currentMagicka >= c.effectiveCost) return true;
-                return policy != UncastableSpellPolicy::Disallow;
-            }
-            else if constexpr (std::is_same_v<T, ItemCandidate>) { return c.count > 0; }
-            else if constexpr (std::is_same_v<T, ScrollCandidate>) { return c.count > 0; }
-            else if constexpr (std::is_same_v<T, AmmoCandidate>) { return c.count > 0; }
-            else if constexpr (std::is_same_v<T, TorchCandidate>) { return c.count > 0; }
-            else { return true; }
-        }, candidate);
-    }
-
-    bool CandidateFilters::PassesEquippedFilter(
-        const CandidateVariant& candidate, const State::PlayerActorState& player) const
-    {
-        return std::visit([&player](const auto& c) -> bool {
-            using T = std::decay_t<decltype(c)>;
-            if constexpr (std::is_same_v<T, SpellCandidate>) { return !player.IsSpellEquipped(c.formID); }
-            else if constexpr (std::is_same_v<T, AmmoCandidate>) { return !c.isEquipped; }
-            else if constexpr (std::is_same_v<T, TorchCandidate>) { return !c.isEquipped; }
-            else { return true; }
-        }, candidate);
-    }
-
-    bool CandidateFilters::PassesCooldownFilter(const CandidateVariant& candidate) const
-    {
-        const auto& base = GetBase(candidate);
-        return !m_cooldownMgr.IsOnCooldown(base.formID, base.sourceType);
-    }
-
     // =========================================================================
     // BATCH FILTER APPLICATION
     // =========================================================================
@@ -433,7 +395,7 @@ namespace Huginn::Candidate
                             ++stats.filteredByFullVitals;
                             if (isWeapon) ++weaponsFilteredByFullVitals;
                             break;
-                        default:   // the active-buff filters (Core::Filter::IsActiveBuff)
+                        default:   // the active-buff filters (Reason::invisibility..Reason::resist)
                             ++stats.filteredByActiveBuff;
                             if (isWeapon) ++weaponsFilteredByActiveBuff;
                             break;

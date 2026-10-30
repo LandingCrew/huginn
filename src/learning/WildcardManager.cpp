@@ -152,12 +152,6 @@ namespace Huginn::Scoring
         return lapsed;
     }
 
-    bool WildcardManager::HasActiveWildcard(size_t pageIndex) const
-    {
-        const auto* c = m_gate.Page(pageIndex);
-        return c && c->Active();
-    }
-
     RE::FormID WildcardManager::GetWildcard(size_t pageIndex) const
     {
         const auto* c = m_gate.Page(pageIndex);

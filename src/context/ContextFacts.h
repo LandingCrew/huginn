@@ -55,8 +55,8 @@ namespace Huginn::Context
 
     /// True when darknessWeight fires: dark, and the player has no way to see
     /// yet -- no Night Eye, no light spell, no torch out. The legacy context
-    /// rules, the pipeline's skip gate and the torch gate (not_dark, R8.1) all read this,
-    /// so they cannot disagree.
+    /// rules and the torch gate (not_dark, R8.1, through HardGateInputs) both
+    /// read this, so they cannot disagree.
     [[nodiscard]] inline bool DarknessApplies(
         const State::PlayerActorState& player, const State::WorldState& world) noexcept
     {
@@ -68,7 +68,7 @@ namespace Huginn::Context
     /// spell for someone else (the legacy context rules and no_follower, R8.1).
     [[nodiscard]] inline bool FollowerNear(const State::TargetCollection& targets) noexcept
     {
-        return targets.GetFollowerCount() > 0;   // == !GetNearbyFollowers().empty(), without the copy
+        return targets.GetFollowerCount() > 0;   // a living follower near
     }
 
     /// The craft whose fortify weight is up: the bench in the crosshair
@@ -95,8 +95,8 @@ namespace Huginn::Context
 
     /// Survival need as a tier: 0 none, 1 half weight, 2 full weight.
     /// Hunger: Hungry (3) is half, Famished (4) and worse full. Cold: Very Cold
-    /// (3) half, Freezing (4) and worse full. Shared by the legacy context rules
-    /// and the pipeline's skip gate, as DarknessApplies is.
+    /// (3) half, Freezing (4) and worse full. Read by the legacy context rules
+    /// (D2) only since R8.3; the skip gate reads the need signature.
     ///
     /// NOT silenced by a warming effect, though it was at first: a warm meal
     /// drops the cold level itself within half a second, and LoreRim's

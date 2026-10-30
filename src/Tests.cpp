@@ -50,10 +50,6 @@
 #include <set>
 #include <thread>
 
-#ifdef _DEBUG
-#include "ui/StateManagerDebugWidget.h"
-#endif
-
 using namespace Huginn;
 
 // =============================================================================
@@ -231,16 +227,8 @@ void RunMultiplicativeScoringTests()
         player.vitals.health = 1.0f;  // Full health
 
         TargetCollection targets{};
-        GameState gameState{};
-        gameState.health = HealthBucket::VeryHigh;
 
         auto weights = engine.EvaluateRules(player, targets, world);
-
-        // Healing spell candidate (not needed at full health)
-        Candidate::SpellCandidate healingSpell{};
-        healingSpell.tags = Spell::SpellTag::RestoreHealth;
-        healingSpell.name = "Heal Self";
-        healingSpell.formID = 0x00012345;
 
         // Extract weight - should be low (~0.05 base relevance)
         float contextWeight = weights.healingWeight;  // Should be very low at full health
@@ -271,196 +259,12 @@ void RunMultiplicativeScoringTests()
             utility, contextWeight);
     }
 
-    // =========================================================================
-    // Test 2: Adaptive lambda scales with confidence
-    // =========================================================================
-    {
-        logger::info("  Test 2: Adaptive lambda scales with confidence..."sv);
-
-        ScorerConfig config;
-
-        config.lambdaMin = 0.5f;
-        config.lambdaMax = 3.0f;
-
-        // Test at different confidence levels
-        float lambda0 = config.lambdaMin + 0.0f * (config.lambdaMax - config.lambdaMin);  // 0.5
-        float lambda50 = config.lambdaMin + 0.5f * (config.lambdaMax - config.lambdaMin); // 1.75
-        float lambda100 = config.lambdaMin + 1.0f * (config.lambdaMax - config.lambdaMin); // 3.0
-
-        if (std::abs(lambda0 - 0.5f) > 0.01f || std::abs(lambda100 - 3.0f) > 0.01f) {
-            logger::error("TEST FAIL: Adaptive lambda should scale from 0.5 to 3.0"sv);
-            return;
-        }
-        logger::info("  ✓ Adaptive lambda: λ(0)={:.1f}, λ(0.5)={:.2f}, λ(1)={:.1f}"sv,
-            lambda0, lambda50, lambda100);
-    }
-
-    // =========================================================================
-    // Test 3: Multiplicative formula amplifies learning at high confidence
-    // =========================================================================
-    {
-        logger::info("  Test 3: Multiplicative formula amplifies learning..."sv);
-
-        float contextWeight = 0.7f;
-        float learningScore = 0.8f;
-        float lambdaLow = 0.5f;   // Low confidence
-        float lambdaHigh = 3.0f;  // High confidence
-
-        float utilityLow = contextWeight * (1.0f + lambdaLow * learningScore);
-        float utilityHigh = contextWeight * (1.0f + lambdaHigh * learningScore);
-
-        // utilityLow = 0.7 × (1 + 0.5×0.8) = 0.7 × 1.4 = 0.98
-        // utilityHigh = 0.7 × (1 + 3.0×0.8) = 0.7 × 3.4 = 2.38
-
-        float amplification = utilityHigh / utilityLow;  // Should be ~2.4×
-
-        if (amplification < 2.0f) {
-            logger::error("TEST FAIL: High confidence should amplify learning significantly"sv);
-            return;
-        }
-        logger::info("  ✓ Learning amplification: {:.1f}× at high confidence (low={:.2f}, high={:.2f})"sv,
-            amplification, utilityLow, utilityHigh);
-    }
-
-    // =========================================================================
-    // Test 4: Correlation bonuses are multiplicative and compound
-    // =========================================================================
-    {
-        logger::info("  Test 4: Correlation bonuses compound multiplicatively..."sv);
-
-        // Test compounding: bow+arrow bonus (2.0) + fortify archery buff (2.0)
-        // Additive (old): +2.0 + +2.0 = +4.0
-        // Multiplicative (new): ×3.0 × ×3.0 = ×9.0
-
-        float multiplier = 1.0f;
-        float bowArrowBonus = 2.0f;
-        float fortifyBonus = 2.0f;
-
-        // Apply as multiplicative
-        multiplier *= (1.0f + bowArrowBonus);    // ×3.0
-        multiplier *= (1.0f + fortifyBonus);     // ×3.0
-        // Result: ×9.0
-
-        if (std::abs(multiplier - 9.0f) > 0.01f) {
-            logger::error("TEST FAIL: Correlation bonuses should compound to ×9.0, got {:.1f}"sv, multiplier);
-            return;
-        }
-        logger::info("  ✓ Correlation compounding: ×{:.1f} (bow+arrow ×3.0, fortify ×3.0)"sv, multiplier);
-    }
-
-    // =========================================================================
-    // Test 5: Full integration (context × learning × correlation)
-    // =========================================================================
-    {
-        logger::info("  Test 5: Full multiplicative integration..."sv);
-
-        float contextWeight = 0.8f;        // High relevance
-        float learningScore = 0.6f;        // Moderate learning
-        float confidence = 0.7f;           // High-ish confidence
-        float correlationBonus = 3.0f;     // Bow+arrow (×3.0)
-        float lambdaMin = 0.5f;
-        float lambdaMax = 3.0f;
-
-        // Compute adaptive lambda
-        float lambda = lambdaMin + confidence * (lambdaMax - lambdaMin);  // 2.25
-
-        // Multiplicative formula
-        float utility = contextWeight * (1.0f + lambda * learningScore) * correlationBonus;
-        // = 0.8 × (1 + 2.25×0.6) × 3.0
-        // = 0.8 × (1 + 1.35) × 3.0
-        // = 0.8 × 2.35 × 3.0
-        // = 5.64
-
-        float expected = 5.64f;  // Hand-computed: 0.8 × (1 + 2.25×0.6) × 3.0
-
-        if (std::abs(utility - expected) > 0.01f) {
-            logger::error("TEST FAIL: Full integration mismatch"sv);
-            return;
-        }
-        logger::info("  ✓ Full integration: utility={:.2f} (ctx={:.1f}, λ={:.2f}, learn={:.1f}, corr=×{:.1f})"sv,
-            utility, contextWeight, lambda, learningScore, correlationBonus);
-    }
-
-    // Test 6 (favourites boost scaled by rank) went with the rank scaling in
-    // R8.4 (0.24.1): the legacy utility's favourites multiplier is the
-    // uniform fFavoritesBoostMax.
+    // Tests 2-5 checked arithmetic on their own constants and called no
+    // Huginn code (0.24.5: deleted); Test 6 went with the rank scaling (R8.4).
 
     logger::info("TEST PASS: All multiplicative scoring formula tests passed!"sv);
 #endif
 }
-
-// ============================================================================
-// Console Commands for Manual Contextual Bandit Testing (Debug Mode Only)
-// ============================================================================
-
-#ifndef NDEBUG
-
-void ConsoleCmd_ShowEquippedSpells()
-{
-    if (!g_stateEvaluator || !g_utilityScorer) {
-        RE::ConsoleLog::GetSingleton()->Print("Huginn: Systems not initialized");
-        return;
-    }
-
-    // Evaluate current game state
-    auto [currentState, playerState] = EvaluateCurrentGameState();
-
-    RE::ConsoleLog::GetSingleton()->Print("=== Currently Equipped Spells ===");
-    logger::info("[Console] === Currently Equipped Spells ==="sv);
-
-    // Log player equipped spells info
-    auto player = RE::PlayerCharacter::GetSingleton();
-    if (player) {
-        auto* leftSpell = player->GetActorRuntimeData().selectedSpells[RE::Actor::SlotTypes::kLeftHand];
-        auto* rightSpell = player->GetActorRuntimeData().selectedSpells[RE::Actor::SlotTypes::kRightHand];
-
-        if (leftSpell) {
-            RE::ConsoleLog::GetSingleton()->Print(
-                std::format("Left Hand: {} (0x{:08X})", leftSpell->GetName(), leftSpell->GetFormID()).c_str());
-        } else {
-            RE::ConsoleLog::GetSingleton()->Print("Left Hand: None");
-        }
-
-        if (rightSpell) {
-            RE::ConsoleLog::GetSingleton()->Print(
-                std::format("Right Hand: {} (0x{:08X})", rightSpell->GetName(), rightSpell->GetFormID()).c_str());
-        } else {
-            RE::ConsoleLog::GetSingleton()->Print("Right Hand: None");
-        }
-    }
-}
-
-#ifdef _DEBUG
-// Command: Toggle the StateManager debug widget (v0.6.1)
-void ConsoleCmd_ToggleStateManagerDebug()
-{
-    auto& widget = UI::StateManagerDebugWidget::GetSingleton();
-    widget.ToggleVisible();
-
-    bool isVisible = widget.IsVisible();
-    RE::ConsoleLog::GetSingleton()->Print(
-        std::format("StateManager Debug Widget: {}", isVisible ? "SHOWN" : "HIDDEN").c_str());
-
-    logger::info("[Console] StateManager debug widget toggled: {}"sv, isVisible ? "shown" : "hidden");
-}
-
-// Command: Force update StateManager (useful for testing)
-void ConsoleCmd_ForceUpdateStateManager()
-{
-    State::StateManager::GetSingleton().ForceUpdate();
-
-    auto worldState = State::StateManager::GetSingleton().GetWorldState();
-    auto playerState = State::StateManager::GetSingleton().GetPlayerState();
-    auto targets = State::StateManager::GetSingleton().GetTargets();
-
-    RE::ConsoleLog::GetSingleton()->Print(
-        std::format("StateManager force updated - {} tracked targets", targets.targets.size()).c_str());
-
-    logger::info("[Console] StateManager force updated - {} tracked targets"sv, targets.targets.size());
-}
-#endif
-
-#endif  // !NDEBUG (console commands)
 
 // =============================================================================
 // SPELL REGISTRY INTEGRATION TESTS
@@ -926,21 +730,15 @@ void RunItemRegistryTests()
     // Numbers are the real ones from 2026-09-25: LoreRim Restore Health
     // (Fair) is 8/s for 20 s, Apothecary Minor Healing is an instant 25.
     {
-        const auto potion = [](float mag, float dur) {
-            Item::ItemData d;
-            d.magnitude = mag;
-            d.duration = dur;
-            return d;
-        };
         const auto check = [](const char* what, float got, float want) {
             if (std::abs(got - want) > 0.001f) {
                 logger::error("TEST FAIL: RestoredWithin {}: got {:.2f}, expected {:.2f}"sv, what, got, want);
             }
         };
-        check("instant 25", potion(25.0f, 0.0f).RestoredWithin(5.0f), 25.0f);
-        check("8/s for 20s", potion(8.0f, 20.0f).RestoredWithin(5.0f), 40.0f);
-        check("8/s for 3s", potion(8.0f, 3.0f).RestoredWithin(5.0f), 24.0f);
-        check("zero window", potion(8.0f, 20.0f).RestoredWithin(0.0f), 8.0f);
+        check("instant 25", Item::RestoredWithin(25.0f, 0.0f, 5.0f), 25.0f);
+        check("8/s for 20s", Item::RestoredWithin(8.0f, 20.0f, 5.0f), 40.0f);
+        check("8/s for 3s", Item::RestoredWithin(8.0f, 3.0f, 5.0f), 24.0f);
+        check("zero window", Item::RestoredWithin(8.0f, 20.0f, 0.0f), 8.0f);
         logger::info("TEST PASS: RestoredWithin (instant vs heal-over-time) ran"sv);
     }
 
@@ -7037,8 +6835,8 @@ void RunSlotClassCapTest()
         for (uint32_t k = 0; k < free; ++k) {
             list.push_back(spell(6 + k, Spell::SpellType::Healing, 3.0f));
         }
-        const float between = Core::DisplayUtility(
-            Core::BridgeScore(2.0f) + 0.5 * Core::ClassCapTerm(discount, free, free));
+        const float between = static_cast<float>(std::exp(
+            Core::BridgeScore(2.0f) + 0.5 * Core::ClassCapTerm(discount, free, free)));
         list.push_back(spell(4, Spell::SpellType::Healing, 2.0f));
         list.push_back(spell(5, Spell::SpellType::Damage, between));
 
@@ -7121,9 +6919,9 @@ void RunSlotClassCapHoldTest()
     // the other challenger ties it (no win). Scores, not ratios (R7): the
     // hold asks s_challenger - s_holder > ln m.
     constexpr float kAxe = 0.325f;
-    const float weakened = Core::DisplayUtility(Core::BridgeScore(kAxe) +
+    const float weakened = static_cast<float>(std::exp(Core::BridgeScore(kAxe) +
         0.5 * Core::ClassCapTerm(discount, settings.ClassFreeSlots(), settings.ClassFreeSlots()) -
-        Core::LogHoldMargin(margin));
+        Core::LogHoldMargin(margin)));
 
     using SpellType = Spell::SpellType;
     const Scoring::ScoredCandidateList first = {
@@ -7251,8 +7049,8 @@ void RunHomeKeyTest()
     // Back, A beats H by the margin but not N: the hold puts it on slot 7.
     // Halfway between them in score, plus ln m (the hold is a difference of
     // scores since R7, not a ratio of utilities).
-    const float returned = Core::DisplayUtility(
-        0.5 * (Core::BridgeScore(0.3f) + Core::BridgeScore(0.35f)) + Core::LogHoldMargin(margin));
+    const float returned = static_cast<float>(std::exp(
+        0.5 * (Core::BridgeScore(0.3f) + Core::BridgeScore(0.35f)) + Core::LogHoldMargin(margin)));
     const Scoring::ScoredCandidateList pass1 = { spell(0, SpellType::Healing, 1.0f), B, C, D, E, F, G, H };
     const Scoring::ScoredCandidateList pass2 = { B, C, D, E, F, G, N, H };
     const Scoring::ScoredCandidateList pass3 = { B, C, D, E, F, G, spell(0, SpellType::Healing, returned), N, H };

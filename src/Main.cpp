@@ -348,7 +348,8 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
     if (haveMainIni) State::ContextWeightSettings::GetSingleton().LoadFromIni(mainIni);
     g_legacyScorer->SetContextWeightConfig(State::ContextWeightSettings::GetSingleton().BuildConfig());
 
-    // ── 6a. NeedSettings (R3: the [Needs] response curves; logged only) ─
+    // ── 6a. NeedSettings (the [Needs] response curves; the choice score reads
+    //    the need vector; the bootstrap's curves replace their lines at step 6c)
     if (haveMainIni) Needs::NeedSettings::GetSingleton().LoadFromIni(mainIni);
 
     // ── 6b. LearningSettings ────────────────────────────────────────────
@@ -538,7 +539,7 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
         HUGINN_RUN_SUITE(RunBuffElementResistTest);       // THROWAWAY (0.20.63): buff element != resist
         HUGINN_RUN_SUITE(RunNeedVectorTests);             // R3: the need vector on the live game
         RemoveSyntheticFacetResolver();
-        logger::info("Debug build ready. Console command functions available for hotkey integration"sv);
+        logger::info("Debug load suites done"sv);
         // One RESULT line for the batch; in test mode this ends the run.
         TestHarness::EndPhase(TestHarness::Phase::Load, loadSucceeded);
     }
@@ -597,12 +598,12 @@ static void OnDataLoaded()
     // build waits for the main menu to open (after every plugin's kDataLoaded
     // handler and the tasks they queued), reads the forms then on the main
     // thread -- in slices of a few ms, one a frame (0.23.47) -- and maps them
-    // on a worker thread. Nothing reads it for scoring yet.
+    // on a worker thread. Since R8.3 (0.24.0) cap(i) is the choice score's
+    // attributes (PipelineCoordinator::AttrOf).
     Effect::EffectCatalog::GetSingleton().ScheduleBuild();
 
     // Initialize StateEvaluator
     g_stateEvaluator = std::make_unique<Huginn::State::StateEvaluator>();
-    g_lastStateLog = std::chrono::steady_clock::now();
     logger::info("StateEvaluator initialized"sv);
 
     // Register DamageEventSink for instant damage type classification (v0.6.8)

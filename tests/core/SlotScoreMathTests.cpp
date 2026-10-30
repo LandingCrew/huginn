@@ -59,20 +59,6 @@ TEST_CASE("slot score: the bridge keeps every distinct utility distinct and in o
     }
 }
 
-TEST_CASE("slot score: display utility undoes the bridge exactly")
-{
-    std::mt19937 rng(11);
-    std::uniform_int_distribution<std::uint32_t> bits(0x00800000u, 0x7F7FFFFFu);   // positive normal floats
-    for (int i = 0; i < 200000; ++i) {
-        const float u = std::bit_cast<float>(bits(rng));
-        REQUIRE(DisplayUtility(BridgeScore(u)) == u);
-    }
-    CHECK(DisplayUtility(-kInf) == 0.0f);
-    CHECK(DisplayUtility(kInf) == std::numeric_limits<float>::max());
-    CHECK(DisplayUtility(std::numeric_limits<double>::quiet_NaN()) == 0.0f);
-    CHECK(DisplayUtility(-3.0) > 0.0f);   // a negative score is a small positive display value
-}
-
 TEST_CASE("slot score: the class cap term is ln of the old factor")
 {
     for (const float d : { 0.5f, 0.25f, 0.75f, 0.9f, 0.3f }) {
@@ -140,7 +126,6 @@ TEST_CASE("slot score: sentinels sit outside every finite score")
 {
     CHECK(kUnrankedScore < -std::numeric_limits<double>::max());
     CHECK(kPinnedScore > std::numeric_limits<double>::max());
-    CHECK(DisplayUtility(kPinnedScore) == std::numeric_limits<float>::max());   // no overflow to inf
 }
 
 TEST_CASE("slot score: churn buckets on scores match the old ratio buckets on utilities")

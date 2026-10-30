@@ -86,12 +86,6 @@ namespace Huginn::State
       // from persisting into the new session.
       void ResetTrackingState();
 
-      // Stage 3b: Poll all sensors and return true if ANY state changed
-      // Ignores timers - meant to be called when timer-based poll is due
-      // Returns: true if any sensor detected a change, false if all unchanged
-      // Takes m_pollMutex, like Update, ForceUpdate and ResetTrackingState.
-      [[nodiscard]] bool PollAll();
-
       // Stage 3c: Check if last Update() detected any state changes
       // Returns: true if last Update() changed any state, false otherwise
       // Used by UpdateLoop to skip expensive pipeline when state is stable
@@ -161,9 +155,6 @@ namespace Huginn::State
       // Get all targets (copy-out)
       [[nodiscard]] TargetCollection GetTargets() const noexcept;
 
-      // Get primary target only (copy-out)
-      [[nodiscard]] std::optional<TargetActorState> GetPrimaryTarget() const;
-
       // Get health tracking state (copy-out)
       [[nodiscard]] HealthTrackingState GetHealthTracking() const noexcept;
 
@@ -200,28 +191,6 @@ namespace Huginn::State
       // scoring target marked. Reads a copy of the targets and the actors as
       // they stand; any thread.
       [[nodiscard]] std::vector<std::string> DescribeTrackedActors() const;
-
-      // =============================================================================
-      // CONFIGURATION (Optional - defaults from StateManagerConstants.h)
-      // =============================================================================
-
-      // Set poll intervals (milliseconds)
-      void SetWorldPollInterval(float ms) noexcept { m_worldPollInterval = ms; }
-      void SetPlayerVitalsPollInterval(float ms) noexcept { m_playerVitalsPollInterval = ms; }
-      void SetPlayerMagicEffectsPollInterval(float ms) noexcept { m_playerMagicEffectsPollInterval = ms; }
-      void SetPlayerEquipmentPollInterval(float ms) noexcept { m_playerEquipmentPollInterval = ms; }
-      void SetPlayerSurvivalPollInterval(float ms) noexcept { m_playerSurvivalPollInterval = ms; }
-      void SetPlayerPositionPollInterval(float ms) noexcept { m_playerPositionPollInterval = ms; }
-      void SetTargetsPollInterval(float ms) noexcept { m_targetsPollInterval = ms; }
-
-      // Get poll intervals
-      [[nodiscard]] float GetWorldPollInterval() const noexcept { return m_worldPollInterval; }
-      [[nodiscard]] float GetPlayerVitalsPollInterval() const noexcept { return m_playerVitalsPollInterval; }
-      [[nodiscard]] float GetPlayerMagicEffectsPollInterval() const noexcept { return m_playerMagicEffectsPollInterval; }
-      [[nodiscard]] float GetPlayerEquipmentPollInterval() const noexcept { return m_playerEquipmentPollInterval; }
-      [[nodiscard]] float GetPlayerSurvivalPollInterval() const noexcept { return m_playerSurvivalPollInterval; }
-      [[nodiscard]] float GetPlayerPositionPollInterval() const noexcept { return m_playerPositionPollInterval; }
-      [[nodiscard]] float GetTargetsPollInterval() const noexcept { return m_targetsPollInterval; }
 
    private:
       StateManager();

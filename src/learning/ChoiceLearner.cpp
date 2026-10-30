@@ -188,7 +188,6 @@ namespace Huginn::Learning
             m_bootModel = std::move(mapped.model);
             m_curves = std::move(mapped.curves);
             m_bootItems = std::move(items);
-            m_itemsResolved = RE::TESDataHandler::GetSingleton() != nullptr;
             m_doc = std::move(*read.doc);
             // The live model is filled here, before Ready() turns true: a tick on
             // the loading-screen thread can run the shadow between this call and
@@ -349,8 +348,7 @@ namespace Huginn::Learning
             m_onsetCounter.Reset();
             m_taken.clear();
             BuildKeys();
-            m_stats.picksLearned = m_stats.picksSkipped = m_stats.onsets = m_stats.onsetsCounted = 0;
-            m_stats.forgotten = 0;
+            m_stats.picksLearned = m_stats.onsets = m_stats.onsetsCounted = 0;
             m_stats.bEntries = m_b.size();
             Moved();
         }
@@ -405,20 +403,14 @@ namespace Huginn::Learning
         const bool nothing = d.outcome == DL::Outcome::Nothing;
         const bool usable = C::UsablePick(nothing, d.ctx != nullptr, d.row >= 0, d.name, d.list);
         std::unique_lock lock(m_mutex);
-        if (!usable) {
-            ++m_stats.picksSkipped;
-            return;
-        }
+        if (!usable) return;
         const DL::Context& ctx = *d.ctx;
         std::vector<const DL::Row*> rows;
         rows.reserve(ctx.rows.size() + d.added.size());
         for (const auto& r : ctx.rows) rows.push_back(&r);
         for (const auto& r : d.added) rows.push_back(&r);
         const auto chosen = static_cast<std::size_t>(d.row);
-        if (chosen >= rows.size()) {
-            ++m_stats.picksSkipped;
-            return;
-        }
+        if (chosen >= rows.size()) return;
         auto takenIt = std::find_if(m_taken.begin(), m_taken.end(), [&](const auto& p) { return p.first == ctx.id; });
         if (takenIt == m_taken.end()) {
             m_taken.emplace_back(ctx.id, std::set<std::uint64_t>{});
@@ -446,7 +438,6 @@ namespace Huginn::Learning
         if (d.repeat) {
             // REPEAT_PICK_WINDOW_SEC: the same decision again, no update
             record();
-            ++m_stats.picksSkipped;
             // no Touch(): m_recent and m_taken are not in the Snapshot
             return;
         }
@@ -559,7 +550,6 @@ namespace Huginn::Learning
         }
         record();
         ++m_stats.picksLearned;
-        m_stats.lastLogp = res.logpChosen;
         m_stats.bEntries = m_b.size();
         Moved();
         logger::debug("[Choice] learned {:08X} '{}' ({}): {} rows ({} off the page), P(chosen) {:.3f}, {} weights and {} b moved"sv,
@@ -626,7 +616,6 @@ namespace Huginn::Learning
                 }
             }
             if (forgotten) {
-                m_stats.forgotten += forgotten;
                 m_stats.bEntries = m_b.size();
                 Moved();
             }
@@ -754,7 +743,6 @@ namespace Huginn::Learning
     {
         std::shared_lock lock(m_mutex);
         Stats s = m_stats;
-        s.ready = Ready();
         s.bEntries = m_b.size();
         s.thetaEntries = m_keys.size();
         // Moved from the bootstrap: the same slot in both models, compared

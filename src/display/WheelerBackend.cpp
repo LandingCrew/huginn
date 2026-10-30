@@ -174,7 +174,7 @@ namespace Huginn::Display
             == Wheeler::PostActivationPolicy::Empty;
 
         // #14: one lock snapshot for the whole push. The lock-timer branch below
-        // used to call IsSlotLocked() then GetRemainingLockTime() per slot, each
+        // used to call IsSlotLocked() then a remaining-time getter per slot, each
         // taking m_mutex — up to 2 round-trips x slots x pages every push, which
         // is exactly what GetLockSnapshot() was added to avoid (SlotLocker.h:147).
         // Hoisted above the page loop rather than per-page because only the

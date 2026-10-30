@@ -10,9 +10,10 @@ namespace Huginn::Scroll
    // =============================================================================
    // SCROLL CHANGE EVENT (v0.7.7)
    // =============================================================================
-   // Emitted when scroll counts change. Used for contextual bandit feedback:
-   // - Consumed scroll (delta < 0) → potential reward signal
-   // - Acquired scroll (delta > 0) → inventory update notification
+   // Emitted when scroll counts change. A consumed scroll (delta < 0) breaks
+   // its slot lock and confirms the consumption through
+   // SelectionTracker::OnConsumed, which feeds both learners; an acquired one
+   // (delta > 0) is an inventory update.
    // =============================================================================
 
    struct ScrollChangeEvent
@@ -114,16 +115,8 @@ namespace Huginn::Scroll
       [[nodiscard]] std::vector<const InventoryScroll*> GetFrostScrolls(size_t topK = 3) const;
       [[nodiscard]] std::vector<const InventoryScroll*> GetShockScrolls(size_t topK = 3) const;
 
-      // Convenience "best" accessors — single best scroll, nullptr if none.
-      [[nodiscard]] const InventoryScroll* GetBestDamageScroll() const noexcept;
-      [[nodiscard]] const InventoryScroll* GetBestHealingScroll() const noexcept;
-      [[nodiscard]] const InventoryScroll* GetBestFireScroll() const noexcept;
-      [[nodiscard]] const InventoryScroll* GetBestFrostScroll() const noexcept;
-      [[nodiscard]] const InventoryScroll* GetBestShockScroll() const noexcept;
-
       // Thin forwarders keeping the historical public names (zero call-site churn).
       [[nodiscard]] size_t GetScrollCount() const noexcept { return EntryCount(); }
-      [[nodiscard]] std::vector<InventoryScroll> GetAllScrolls() const { return AllEntriesCopy(); }
 
       /** @brief Zero-allocation visitor over all scrolls (holds shared_lock). */
       template<typename Func>

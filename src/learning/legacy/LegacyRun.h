@@ -73,8 +73,6 @@ namespace Huginn::Scoring::Legacy
         [[nodiscard]] Row RowFor(std::size_t i) const noexcept;
         /// The kept row candidate i reads (utility, breakdown), or nullptr.
         [[nodiscard]] const ScoredCandidate* KeptFor(std::size_t i) const noexcept;
-        /// Kept rows, for the [Pipeline] and capture counts.
-        [[nodiscard]] std::size_t KeptCount() const noexcept { return kept.size(); }
 
         /// The R8.3 FALLBACK ranking (the bootstrap is missing or invalid): a
         /// copy of the kept rows, each flagged legacyScored and ranked on

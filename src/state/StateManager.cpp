@@ -87,16 +87,6 @@ namespace Huginn::State
       m_lastUpdateChanged = changed;
    }
 
-   bool StateManager::PollAll()
-   {
-      std::lock_guard pollLock(m_pollMutex);
-      bool changed = false;
-      for (auto [timer, interval, poll] : GetPollTable()) {
-         changed |= (this->*poll)();
-      }
-      return changed;
-   }
-
    void StateManager::ResetTrackingState()
    {
       logger::info("[StateManager] ResetTrackingState() - clearing accumulated state for save load"sv);
@@ -194,9 +184,8 @@ namespace Huginn::State
    {
       logger::info("[StateManager] ForceUpdate() called - polling all sensors"sv);
 
-      // PollAll's loop, under the one lock with the timer reset (PollAll
-      // takes m_pollMutex itself). Each poll, then its timer: the polls do
-      // not read the timers.
+      // Every poll, under m_pollMutex, with its timer reset. Each poll, then
+      // its timer: the polls do not read the timers.
       std::lock_guard pollLock(m_pollMutex);
       for (auto [timer, interval, poll] : GetPollTable()) {
          (void)(this->*poll)();
@@ -230,12 +219,6 @@ namespace Huginn::State
    {
       std::shared_lock lock(m_targetsMutex);
       return m_targets;  // Copy-out pattern
-   }
-
-   std::optional<TargetActorState> StateManager::GetPrimaryTarget() const
-   {
-      std::shared_lock lock(m_targetsMutex);
-      return m_targets.primary;  // Copy-out pattern
    }
 
    HealthTrackingState StateManager::GetHealthTracking() const noexcept

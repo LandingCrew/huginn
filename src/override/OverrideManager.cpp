@@ -1010,14 +1010,4 @@ namespace Huginn::Override
     // DIAGNOSTICS
     // =============================================================================
 
-    bool OverrideManager::IsOverrideActive(std::string_view overrideName) const
-    {
-        std::string key(overrideName);
-        auto it = m_hysteresisStates.find(key);
-        if (it == m_hysteresisStates.end()) {
-            return false;
-        }
-        return it->second.isActive;
-    }
-
 }  // namespace Huginn::Override

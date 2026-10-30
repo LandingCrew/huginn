@@ -265,7 +265,8 @@ namespace Huginn::Slot
 
         /// The combat flag SetInCombat last saw: the lock's notion of combat
         /// (CombatPresence-filtered). WildcardManager reads it so no wildcard
-        /// is placed while it is up (core::WildcardMayBePlaced).
+        /// is placed while it is up (StepWildcardsForCombat in core/CombatLock.h,
+        /// stepped in core/WildcardGate.h).
         [[nodiscard]] bool IsInCombat() const;
 
         /// Restart every lock's timer at the full duration, as if each key had
@@ -342,16 +343,13 @@ namespace Huginn::Slot
         };
 
         /// Snapshot all slots' lock state under a SINGLE mutex acquisition.
-        /// Prefer this over per-slot IsSlotLocked/GetRemainingLockTime/WasConfirmed
+        /// Prefer this over per-slot IsSlotLocked/WasConfirmed
         /// when a caller needs several slots' state in one pass (e.g. visual-state
         /// computation), which otherwise takes up to 3 lock/unlock pairs per slot.
         [[nodiscard]] std::array<SlotLockView, MAX_SLOTS_PER_PAGE> GetLockSnapshot() const;
 
         /// Check if a slot is currently locked
         [[nodiscard]] bool IsSlotLocked(size_t slotIndex) const;
-
-        /// Get remaining lock time for a slot (0 if not locked)
-        [[nodiscard]] float GetRemainingLockTime(size_t slotIndex) const;
 
         /// Check if slot content was confirmed (re-evaluated to same FormID)
         [[nodiscard]] bool WasConfirmed(size_t slotIndex, RE::FormID currentFormID) const;

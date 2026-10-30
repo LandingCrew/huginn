@@ -51,7 +51,7 @@ namespace Huginn::Scoring
         // combat_onset clock instead.
         // @return true if a displayed exploration wildcard expired this tick
         //         (caller must force a pipeline run so the slot content swaps)
-        [[nodiscard]] bool Update(float deltaSeconds);
+        [[nodiscard]] bool Update();
 
         // Reset state (e.g., on save load)
         void Reset();

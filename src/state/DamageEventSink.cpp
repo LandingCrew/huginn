@@ -57,12 +57,6 @@ namespace Huginn::State
       return events;
    }
 
-   size_t DamageEventSink::GetQueueSize() const
-   {
-      std::lock_guard lock(m_queueMutex);
-      return m_eventQueue.size();
-   }
-
    RE::BSEventNotifyControl DamageEventSink::ProcessEvent(
       const RE::TESHitEvent* event,
       RE::BSTEventSource<RE::TESHitEvent>* /*source*/)

@@ -88,24 +88,6 @@ namespace Huginn::Core
         return std::log(static_cast<double>(utility));
     }
 
-    /// The bridge undone: exp(score). R8.4: no runtime reader (the widget's
-    /// unused confidence payload sends 0 now); kept for the in-game suite's
-    /// slot tests, which build a list from scores and state them as
-    /// utilities, and its own host test. Defined for any sign: 0 for -inf,
-    /// finite for +inf (clamped to the largest float), 0 for NaN. Under the
-    /// bridge it returns the utility.
-    [[nodiscard]] inline float DisplayUtility(SlotScore score) noexcept
-    {
-        if (!(score == score)) {
-            return 0.0f;   // NaN
-        }
-        const double u = std::exp(score);
-        if (!(u < static_cast<double>(std::numeric_limits<float>::max()))) {
-            return std::numeric_limits<float>::max();
-        }
-        return static_cast<float>(u);
-    }
-
     /// a beats b: greater by more than the tie epsilon. -inf never beats -inf.
     [[nodiscard]] inline bool ScoreGreater(SlotScore a, SlotScore b) noexcept
     {

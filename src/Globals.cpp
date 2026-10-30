@@ -41,9 +41,6 @@ std::unique_ptr<Huginn::Scoring::UtilityScorer> g_utilityScorer;
 // R8.4: the legacy scorer (the D2 feature's input; learning/legacy/LegacyScorer.h)
 std::unique_ptr<Huginn::Scoring::Legacy::LegacyScorer> g_legacyScorer;
 
-// Timer for periodic state logging
-std::chrono::steady_clock::time_point g_lastStateLog;
-
 // Item registry instance (v0.7.4)
 std::unique_ptr<Huginn::Item::ItemRegistry> g_itemRegistry;
 
@@ -80,9 +77,6 @@ std::atomic<uint32_t> g_loadGeneration{ 0 };
 std::string g_launchStamp;
 std::string g_listName;
 std::atomic<uint64_t> g_activeCharacterID{ 0 };
-
-// Track whether we've shown the welcome notification
-bool g_hasShownWelcomeNotification = false;
 
 // Degraded mode flag - tracks if core update system failed to initialize
 // (Issue #4: Silent failure when UpdateHandler::Register() fails leaves plugin non-functional)
@@ -137,21 +131,6 @@ void ResetPipelineSubsystems() {
     }
 
     State::StateManager::GetSingleton().ResetTrackingState();
-}
-
-// =============================================================================
-// HELPER: Evaluate Current Game State
-// =============================================================================
-
-EvaluatedGameState EvaluateCurrentGameState() {
-  auto& stateMgr = State::StateManager::GetSingleton();
-  auto playerState = stateMgr.GetPlayerState();
-  auto targets = stateMgr.GetTargets();
-
-  return {
-    g_stateEvaluator->EvaluateCurrentState(playerState, targets),
-    playerState
-  };
 }
 
 // =============================================================================

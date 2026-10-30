@@ -352,20 +352,6 @@ namespace Huginn::UI
             });
     }
 
-    void IntuitionMenu::ClearSlot(int index)
-    {
-        auto* tasks = SKSE::GetTaskInterface();
-        if (!tasks) return;
-
-        tasks->AddUITask([index]() {
-            auto* self = GetSingleton();
-            if (!self || !self->m_widget.IsObject()) return;
-
-            RE::GFxValue arg{ static_cast<double>(index) };
-            self->m_widget.Invoke("clearSlot", nullptr, &arg, 1);
-        });
-    }
-
     void IntuitionMenu::SetSlotCount(int count)
     {
         auto* tasks = SKSE::GetTaskInterface();
