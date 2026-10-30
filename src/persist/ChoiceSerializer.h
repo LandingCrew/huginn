@@ -35,8 +35,9 @@ namespace Huginn::Persist
    // is retired (a refit on 0.23.53+ logs where a variant without the old
    // scorer passes the gate).
    //
-   // What a load does (ResolveLoadedChoice, after BanditSerializer decided
-   // what kind of load it is, so both learners follow ONE decision):
+   // What a load does (ResolveLoadedChoice, after persist/CharacterRecord.h
+   // decided what kind of load it is by the learning clock, so both learners
+   // follow ONE decision):
    //   new game           theta from the bootstrap; b under sBootstrapBias
    //   failed load        nothing changes
    //   reload, same char  the in-memory learning is kept (as BNDW); b's
@@ -69,7 +70,7 @@ namespace Huginn::Persist
    inline constexpr uint32_t kRecordType_Bias  = 'SAIB';  // 'BIAS' on disk
    inline constexpr uint32_t kRecordType_Discovery = 'CSID';  // 'DISC' on disk
 
-   /// What kind of load ResolveLoadedLearner decided (BanditSerializer.h);
+   /// What kind of load DecideCharacterLoad decided (CharacterRecord.h);
    /// defined in core so the model-off carry (CarryLoaded) is host-tested.
    using LoadDecision = Core::ChoiceCosave::LoadDecision;
 

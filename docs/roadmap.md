@@ -1240,7 +1240,21 @@ changed in the same PR, and the shipped INI loses the dead keys.
         the old scorer passes R6's gate -- L1 / L7 with fresh per-row learner
         columns, or θ + b + recent with more data -- or the user's call. Then
         the LEGACY list in `r8_check.py` becomes PRUNED, BNDW gives way to
-        THTA/BIAS, and the map's full Phase 6 list goes. 0.24.19: the fit
+        THTA/BIAS, and the map's full Phase 6 list goes. The learning clock
+        and the load's keep-or-replace decision stay (0.24.22: one shared
+        clock in `core/LearningClock.h`, HCID in `persist/CharacterRecord.*`):
+        the retirement deletes the old learner's two tick calls and its
+        `ResolveLoadedLearner`, and moves the save/load callback registration
+        (`SaveCharacterRecord`, `LoadCharacterRecord`,
+        `ResetPendingCharacter`, called from BanditSerializer's SKSE
+        callbacks under its unique ID `'QCNO'`) out of BanditSerializer.
+        Nothing of the decision changes, but the reset sites must then
+        tick before the reset (or under the learner's lock): today the old
+        learner's `Clear` ticks first; without it, a save taken between
+        `ResetChoiceLearning` and the site's tick would pair the reset
+        learning with the pre-reset clock, and a fresh session loading the
+        pre-reset save then that one would keep memory and lose the
+        reset. 0.24.19: the fit
         tools read 0.24 logs for that refit (tools/fit/README.md): the v2
         log's rows the old floors dropped (written 0.24.0-0.24.18 with an
         all-zero breakdown) are skipped and no longer written, and a fit of

@@ -313,7 +313,7 @@ namespace Huginn::Persist
          // save's records for a load, none for a new game, unchanged for a
          // failed load. A reload of the same character keeps them only after
          // a reset, so the reset holds; otherwise it takes the save's, since
-         // the carried records do not learn while the old learner's clock,
+         // the carried records do not learn while the learning clock,
          // which calls the load a reload, runs on.
          std::optional<CC::BiasRecord> savedBias;
          if (bias) {

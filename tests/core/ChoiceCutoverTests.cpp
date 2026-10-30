@@ -354,8 +354,9 @@ TEST_CASE("cosave carry with the model off: a reload of the same character after
 
 TEST_CASE("cosave carry with the model off: a reload with no reset since the last load takes the save's records")
 {
-    // The carried records never learn while the model is off, but the old
-    // learner's clock keeps running: load S_early, play past S_late's clock,
+    // The carried records never learn while the model is off, but the
+    // learning clock keeps running (the old learner and the discovery boost
+    // tick it): load S_early, play past S_late's clock,
     // load S_late of the same character, and the load is a reload. Keeping
     // S_early's records there would write them over S_late's (the verifier on
     // #243); before 0.24.18 the fallback took the save's, and it still does.

@@ -2,6 +2,7 @@
 
 #include "StateFeatures.h"
 #include "core/Battery.h"
+#include "core/LearningClock.h"
 #include <chrono>
 #include <unordered_map>
 #include <shared_mutex>
@@ -65,6 +66,13 @@ namespace Huginn::Learning
    class FeatureBanditLearner
    {
    public:
+      // `clock`: the shared learning clock (g_learningClock) its Update and
+      // Clear tick (core/LearningClock.h); none for the Debug suite's own
+      // learners, so they leave it alone.
+      explicit FeatureBanditLearner(Core::LearningClock::Clock* clock = nullptr) noexcept :
+         m_learningClock(clock)
+      {}
+
       // Core API
       [[nodiscard]] float GetRewardEstimate(RE::FormID formID, const StateFeatures& features) const;
       // `step` scales the gradient step; `countsAsTrain` false leaves the train
@@ -157,16 +165,11 @@ namespace Huginn::Learning
       // The total is summed from the entries, not taken from the header.
       void ImportData(const std::vector<SerializedEntry>& entries);
 
-      // ── Learning clock (learning survives a reload, 0.22.11) ───────────
-      // Ticks on every Update() and every Clear(); saved with the character ID
-      // (cosave HCID record). A load of the same character keeps the in-memory
-      // learner only when its clock is not behind the save's -- so a reload
-      // after a death keeps the fight, and loading a LATER save of the same
-      // character restores that save's learning instead of discarding it. A
-      // Clear() (hg reset weights) ticks it too, so a reload cannot undo a
-      // reset with an older save.
-      [[nodiscard]] uint64_t GetClock() const;
-      void SetClock(uint64_t clock);
+      // The learning clock (learning survives a reload, 0.22.11) is shared
+      // since 0.24.22 (core/LearningClock.h): Update() and Clear() tick it,
+      // as the choice learner's changes and the resets do (a reset ticks
+      // twice while this class exists: Clear, then the reset site). R12
+      // deletes those two calls with this class.
 
       // Same-character reload: replace every DYNAMIC-form entry (0xFF------:
       // brewed potions, player enchantments, created spells) with the save's.
@@ -245,7 +248,7 @@ namespace Huginn::Learning
 
       std::unordered_map<RE::FormID, ItemLearningData> m_items;
       float m_totalTrains = 0.0f;   // sum of n over m_items
-      uint64_t m_clock = 0;   // Learning clock, see GetClock -- under m_mutex
+      Core::LearningClock::Clock* m_learningClock = nullptr;   // shared, atomic; set at construction
       MemoryLife m_life;      // under m_mutex
 
       // One writer (the update loop); read anywhere, so atomic, not locked.

@@ -167,8 +167,9 @@ namespace Huginn::Core::ChoiceCosave
     /// (CarryLoaded reads it at the next load).
     void ResetCarried(std::optional<ThetaRecord>& theta, std::optional<BiasRecord>& bias, bool& resetSinceLoad);
 
-    /// What kind of load ResolveLoadedLearner decided (persist/
-    /// BanditSerializer.h); both learners and the carried records follow it.
+    /// What kind of load the learning clock's decision is (core/
+    /// LearningClock.h DecideLoad, 0.24.22); both learners and the carried
+    /// records follow it.
     enum class LoadDecision : std::uint8_t
     {
         NewGame,   // a fresh character
@@ -198,10 +199,11 @@ namespace Huginn::Core::ChoiceCosave
     ///              (the engine reuses those IDs); no BIAS carried stays none,
     ///              no BIAS in the save keeps the carried ones.
     ///              With no reset: this save's records, as a load. The carried
-    ///              records never learn while the model is off, but the old
-    ///              learner's clock (which decides a reload) keeps running, so
-    ///              a save the clock calls "not ahead" can hold learning the
-    ///              carried records lack (0.24.18)
+    ///              records never learn while the model is off, but the
+    ///              learning clock (which decides a reload; core/
+    ///              LearningClock.h) keeps running -- the old learner and the
+    ///              discovery boost tick it -- so a save the clock calls "not
+    ///              ahead" can hold learning the carried records lack (0.24.18)
     ///   replace    this save's records (an absent one absent)
     /// Every decision but a failed load clears `resetSinceLoad`.
     CarryReport CarryLoaded(LoadDecision decision, std::optional<ThetaRecord>& carriedTheta,

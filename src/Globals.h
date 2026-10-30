@@ -22,6 +22,7 @@
 #include "learning/UtilityScorer.h"
 #include "slot/SlotLocker.h"
 #include "util/IntervalTimer.h"
+#include "core/LearningClock.h"
 
 namespace Huginn::Scoring::Legacy
 {
@@ -87,6 +88,10 @@ extern std::string g_listName;
 // Mirrored from Persist's own copy so the selection and A|B logs can stamp it
 // without reaching into the serializer.
 extern std::atomic<uint64_t> g_activeCharacterID;
+// The learning clock (core/LearningClock.h, 0.24.22): one count both learners
+// and the resets tick, saved in HCID beside the character ID; a load compares
+// it with the save's and sets it (persist/CharacterRecord.h).
+extern Huginn::Core::LearningClock::Clock g_learningClock;
 
 // Flags
 extern std::atomic<bool> g_updateSystemFailed;

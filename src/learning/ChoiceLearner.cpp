@@ -18,6 +18,7 @@ namespace Huginn::Learning
     {
         namespace C = Core::Choice;
         namespace DL = Core::DecisionLog;
+        using ClockEvent = Core::LearningClock::Event;
 
         constexpr std::size_t kTakenContexts = 64;     // Plackett-Luce memory: the latest contexts
         constexpr double kForgetSweepSec = 60.0;
@@ -224,6 +225,7 @@ namespace Huginn::Learning
             m_b.clear();
             BuildKeys();
             Touch();
+            Note(ClockEvent::Rebootstrap);
         }
         const auto& rep = mapped.report;
         const auto& d = *m_doc;
@@ -262,6 +264,7 @@ namespace Huginn::Learning
         std::unique_lock lock(m_mutex);
         m_settings = s;
         Touch();
+        Note(ClockEvent::Settings);
     }
 
     ChoiceSettings ChoiceLearner::GetSettings() const
@@ -275,6 +278,7 @@ namespace Huginn::Learning
         std::unique_lock lock(m_mutex);
         m_life = life.Clamped();
         Touch();
+        Note(ClockEvent::Settings);
     }
 
     void ChoiceLearner::SetFavoritesBoost(bool boost)
@@ -282,6 +286,7 @@ namespace Huginn::Learning
         std::unique_lock lock(m_mutex);
         m_favoritesBoost = boost;
         Touch();
+        Note(ClockEvent::Settings);
     }
 
     // =========================================================================
@@ -380,6 +385,9 @@ namespace Huginn::Learning
             m_stats.picksLearned = m_stats.onsets = m_stats.onsetsCounted = 0;
             m_stats.bEntries = m_b.size();
             Moved();
+            // a load's, or a reset's: the reset site ticks (SettingsReloader,
+            // `hg reset all`), whether or not the model is ready
+            Note(ClockEvent::Rebootstrap);
         }
         logger::info("[Choice] Reset to the bootstrap for character {:016X}: theta and kappa from the file, b {} "
                      "(sBootstrapBias = {}, file character {})"sv,
@@ -395,6 +403,7 @@ namespace Huginn::Learning
         m_recent.Reset();
         m_onsetCounter.Reset();
         m_taken.clear();
+        Note(ClockEvent::Transient);
     }
 
     std::shared_ptr<const ChoiceLearner::Snapshot> ChoiceLearner::GetSnapshot()
@@ -438,7 +447,10 @@ namespace Huginn::Learning
         {
             std::unique_lock lock(m_mutex);
             boostEnded = m_discovery.OnDecision(nothing, d.form);
-            if (boostEnded) Touch();
+            if (boostEnded) {
+                Touch();
+                Note(ClockEvent::BoostEnded);
+            }
         }
         if (boostEnded) {
             logger::debug("[Discovery] {:08X} '{}' picked ({}): its discovery boost ends"sv, d.form, d.name,
@@ -447,14 +459,20 @@ namespace Huginn::Learning
         if (!Ready()) return;
         const bool usable = C::UsablePick(nothing, d.ctx != nullptr, d.row >= 0, d.name, d.list);
         std::unique_lock lock(m_mutex);
-        if (!usable) return;
+        if (!usable) {
+            Note(ClockEvent::UnusablePick);
+            return;
+        }
         const DL::Context& ctx = *d.ctx;
         std::vector<const DL::Row*> rows;
         rows.reserve(ctx.rows.size() + d.added.size());
         for (const auto& r : ctx.rows) rows.push_back(&r);
         for (const auto& r : d.added) rows.push_back(&r);
         const auto chosen = static_cast<std::size_t>(d.row);
-        if (chosen >= rows.size()) return;
+        if (chosen >= rows.size()) {
+            Note(ClockEvent::UnusablePick);
+            return;
+        }
         auto takenIt = std::find_if(m_taken.begin(), m_taken.end(), [&](const auto& p) { return p.first == ctx.id; });
         if (takenIt == m_taken.end()) {
             m_taken.emplace_back(ctx.id, std::set<std::uint64_t>{});
@@ -482,7 +500,9 @@ namespace Huginn::Learning
         if (d.repeat) {
             // REPEAT_PICK_WINDOW_SEC: the same decision again, no update
             record();
-            // no Touch(): m_recent and m_taken are not in the Snapshot
+            // no Touch(): m_recent and m_taken are not in the Snapshot (nor
+            // in the save: no tick)
+            Note(ClockEvent::RepeatPick);
             return;
         }
         const bool keyOrWheel = d.outcome == DL::Outcome::Key || d.outcome == DL::Outcome::Wheel;
@@ -596,6 +616,7 @@ namespace Huginn::Learning
         ++m_stats.picksLearned;
         m_stats.bEntries = m_b.size();
         Moved();
+        Note(ClockEvent::PickLearned);
         logger::debug("[Choice] learned {:08X} '{}' ({}): {} rows ({} off the page), P(chosen) {:.3f}, {} weights and {} b moved"sv,
             d.form, d.name, DL::OutcomeName(d.outcome), members.size(), offPage, std::exp(res.logpChosen),
             res.weightsMoved, res.b.size());
@@ -620,7 +641,10 @@ namespace Huginn::Learning
                 ++m_stats.onsetsCounted;
                 grown.push_back(k);
             }
-            if (!grown.empty()) Touch();
+            if (!grown.empty()) {
+                Touch();
+                Note(ClockEvent::NeedGrown);
+            }
         }
         if (!grown.empty()) {
             std::string names;
@@ -637,6 +661,8 @@ namespace Huginn::Learning
         if (seconds > 0.0f) {
             m_playSeconds.store(m_playSeconds.load(std::memory_order_relaxed) + seconds, std::memory_order_relaxed);
         }
+        // the battery decays at read time; only the sweep's erase is saved
+        Note(ClockEvent::PlayTime);
     }
 
     std::size_t ChoiceLearner::MaybeForgetFaded()
@@ -651,9 +677,17 @@ namespace Huginn::Learning
         {
             std::unique_lock lock(m_mutex);
             // The discovery boosts that ran out (their excess under 1%): a
-            // variance-only change, so Touch, no latch.
+            // variance-only change, so Touch, no latch. Neither this nor the
+            // b erase below ticks the learning clock (the table says so):
+            // they re-occur on their own. Learning a reload keeps forgets
+            // again once its entries age past their life, which can be later
+            // by up to the play between that save and a later one
+            // (core/LearningClock.h).
             boostsEnded = m_discovery.Expire(m_settings.discovery, now);
-            if (boostsEnded) Touch();
+            if (boostsEnded) {
+                Touch();
+                Note(ClockEvent::BoostsExpired);
+            }
             for (auto it = m_b.begin(); it != m_b.end();) {
                 const double mult = (it->second.favorite && m_favoritesBoost) ? m_settings.favoriteLifeMult : 1.0;
                 if (Core::Battery::Faded(m_life, now, it->second.chosenAt, it->second.n, mult)) {
@@ -667,6 +701,7 @@ namespace Huginn::Learning
             if (forgotten) {
                 m_stats.bEntries = m_b.size();
                 Moved();
+                Note(ClockEvent::BForgotten);
             }
         }
         if (forgotten) logger::info("[Choice] {} b entr{} past their useful life of play forgotten"sv, forgotten, forgotten == 1 ? "y" : "ies");
@@ -692,7 +727,10 @@ namespace Huginn::Learning
         {
             std::unique_lock lock(m_mutex);
             g = m_discovery.OnGained(form, m_playSeconds.load(std::memory_order_relaxed));
-            if (g == Gain::New) Touch();   // the snapshot carries the boosts; mu unchanged: no latch
+            if (g == Gain::New) {
+                Touch();   // the snapshot carries the boosts; mu unchanged: no latch
+                Note(ClockEvent::NewlyGained);
+            }
             p = m_settings.discovery;
         }
         if (g == Gain::New) {
@@ -709,6 +747,7 @@ namespace Huginn::Learning
     {
         std::unique_lock lock(m_mutex);
         m_discovery.Suspend();
+        Note(ClockEvent::LoadSuspend);
     }
 
     std::size_t ChoiceLearner::PrimeDiscovery(const std::vector<std::uint32_t>& present)
@@ -737,6 +776,7 @@ namespace Huginn::Learning
             boosted = m_discovery.BoostedCount();
             p = m_settings.discovery;
             Touch();
+            Note(ClockEvent::LoadPrime);
         }
         logger::info("[Discovery] Load: {} forms present ({} new to this character's seen set, not boosted; {} more from "
                      "b's entries; {} vanished dynamic forms dropped); {} known in all, {} boosted (bDiscoveryBoost = {}, "
@@ -756,6 +796,7 @@ namespace Huginn::Learning
         std::unique_lock lock(m_mutex);
         m_discovery.Import(saved, m_playSeconds.load(std::memory_order_relaxed));
         Touch();
+        Note(ClockEvent::LoadImport);
     }
 
     std::pair<std::size_t, std::size_t> ChoiceLearner::ReplaceDynamicDiscovery(const Core::Discovery::Saved& saved)
@@ -763,6 +804,7 @@ namespace Huginn::Learning
         std::unique_lock lock(m_mutex);
         const auto r = m_discovery.ReplaceDynamic(saved, m_playSeconds.load(std::memory_order_relaxed));
         Touch();
+        Note(ClockEvent::LoadReplaceDynamic);
         return r;
     }
 
@@ -771,6 +813,7 @@ namespace Huginn::Learning
         std::unique_lock lock(m_mutex);
         m_discovery.Clear();
         Touch();
+        Note(ClockEvent::LoadClearDiscovery);
     }
 
     ChoiceLearner::DiscoveryStats ChoiceLearner::GetDiscoveryStats() const
@@ -837,6 +880,7 @@ namespace Huginn::Learning
             }
         }
         Moved();
+        Note(ClockEvent::LoadImport);
         return applied;
     }
 
@@ -870,6 +914,7 @@ namespace Huginn::Learning
         }
         m_stats.bEntries = m_b.size();
         Moved();
+        Note(ClockEvent::LoadImport);
     }
 
     std::pair<std::size_t, std::size_t> ChoiceLearner::ReplaceDynamicB(const std::vector<BEntry>& saved)
@@ -900,6 +945,7 @@ namespace Huginn::Learning
         }
         m_stats.bEntries = m_b.size();
         if (removed || added) Moved();
+        Note(ClockEvent::LoadReplaceDynamic);
         return { removed, added };
     }
 
