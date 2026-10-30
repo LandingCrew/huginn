@@ -1,9 +1,12 @@
 #pragma once
 
 #include "../Config.h"
+#include "../core/LapHoldInputs.h"
 // Note: std headers (chrono, functional) come from PCH via RE/Skyrim.h
+#include <array>
 #include <atomic>
 #include <mutex>
+#include <string_view>
 
 namespace Huginn::Update
 {
@@ -103,6 +106,21 @@ namespace Huginn::Update
        */
       [[nodiscard]] double SecondsSinceInput(std::chrono::steady_clock::time_point now) const noexcept;
 
+      /**
+       * @brief Re-read the stick deadzones from the game's INI settings (0.23.55)
+       *
+       * A thumbstick event counts as input (SecondsSinceInput) only when its
+       * deflection lies beyond the deadzone the game's controls apply to that
+       * stick: fMovementAxisDeadzone:Controls for the left,
+       * fHeadingAxisDeadzone:Controls for the right (core/LapHoldInputs.h;
+       * 0.15 when a setting cannot be read). Called at kDataLoaded, at every
+       * kNewGame / kPostLoadGame, and by DoUpdate every 60 s. Logs the values
+       * at info when they change. Main thread (the message handler and the
+       * update loop; serialized by a mutex); the values reach ProcessEvent
+       * through atomics.
+       */
+      void SyncStickDeadzones(std::string_view why);
+
    private:
       UpdateHandler() = default;
       UpdateHandler(const UpdateHandler&) = delete;
@@ -120,6 +138,19 @@ namespace Huginn::Update
       /// read by the update loop.
       static constexpr std::int64_t kNoInput = INT64_MIN;
       std::atomic<std::int64_t> m_lastInputTicks{ kNoInput };
+
+      /// The stick deadzones IsPlayerInput applies (SyncStickDeadzones writes,
+      /// ProcessEvent reads); the fallback until the first sync.
+      std::atomic<float> m_leftStickDeadzone{ Core::Needs::kFallbackStickDeadzone };
+      std::atomic<float> m_rightStickDeadzone{ Core::Needs::kFallbackStickDeadzone };
+      /// SyncStickDeadzones' bookkeeping, under m_deadzoneMutex (the load
+      /// messages and the update loop run on the main thread, but DoUpdate is
+      /// also reachable through ForceUpdate).
+      mutable std::mutex m_deadzoneMutex;
+      static constexpr std::chrono::seconds kDeadzoneResync{ 60 };
+      bool m_deadzonesSynced = false;
+      std::chrono::steady_clock::time_point m_lastDeadzoneSync{};
+      std::array<float, 4> m_lastDeadzonesSeen{ -2.0f, -2.0f, -2.0f, -2.0f };   // never a value read: the first sync logs
 
       /// Update callback function
       UpdateCallback m_updateCallback;

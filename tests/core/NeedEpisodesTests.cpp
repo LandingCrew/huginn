@@ -441,6 +441,31 @@ TEST_CASE("laps: the gate holds the clock in a dialogue, with the controls off, 
     CHECK(std::string_view(LapHoldName(LapHold::kIdle)) == "idle");
 }
 
+TEST_CASE("laps (0.23.55): a menu that blocks gameplay holds the clock; after a dialogue, before the controls and idle")
+{
+    const EpisodeParams p;
+    LapGate menu;
+    menu.menu = true;
+    CHECK(LapHoldFor(p, menu) == LapHold::kMenu);
+    CHECK(LapHoldFor(p, LapGate{ 99.0, false, false, true }) == LapHold::kMenu);    // before controls and idle
+    CHECK(LapHoldFor(p, LapGate{ 0.0, true, true, true }) == LapHold::kDialogue);   // a dialogue keeps its name
+    CHECK(LapHoldFor(p, LapGate{ 0.0, true, false, false }) == LapHold::kNone);
+    CHECK(std::string_view(LapHoldName(LapHold::kMenu)) == "menu");
+
+    // The clock adds nothing while the menu is open, and runs again after.
+    EpisodeTracker<int> t;
+    NeedArray v{};
+    t.Tick(v, 0.0);
+    t.Tick(v, 0.5);
+    CHECK(t.ActiveSec() == doctest::Approx(0.5));
+    for (int i = 1; i <= 100; ++i) t.Tick(v, 0.5 + 0.5 * i, menu);   // 50 s in the menu
+    CHECK(t.Hold() == LapHold::kMenu);
+    CHECK(t.ActiveSec() == doctest::Approx(0.5));
+    t.Tick(v, 51.0);
+    CHECK(t.Hold() == LapHold::kNone);
+    CHECK(t.ActiveSec() == doctest::Approx(1.0));
+}
+
 TEST_CASE("laps: an AFK spell with the game unpaused adds at most lapIdleSec to the active clock")
 {
     // The mage's log has 261 silent gaps over 120 s (20 h): no pick, no onset,
