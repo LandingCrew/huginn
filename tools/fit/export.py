@@ -45,8 +45,9 @@ import bootstrap
 import curve
 from fitlib import *
 
-EXPORTABLE_FEATURES = {'astar', 'pos', 'learn', 'mults', 'learner'}
-V2_FEATURES = {'learn', 'mults', 'learner'}     # read the v2 log (fitlib.row_features)
+EXPORTABLE_FEATURES = {'astar', 'pos', 'learn', 'learn_live', 'mults', 'learner'}
+# read the v2 log (fitlib.row_features; learn_live on rows logged before 0.23.56)
+V2_FEATURES = {'learn', 'learn_live', 'mults', 'learner'}
 
 
 def default_forms(D):

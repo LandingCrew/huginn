@@ -341,9 +341,10 @@ scope.
 again as they were under D2: `util` and the `scored` flag on rows the old floors kept, `fl`, the
 old parts `est`..`wu`, `ctx.old`. They describe the old floors, not the live score: a fit of the
 live engine on 0.24.17+ logs must take the D2 feature from `lm` / `um` (0 / 1 under B), not from
-`util`. With `bShadowLegacy` = 0 and B live, the legacy pass does not run (no old columns, no
-shadow columns). With `bLegacyLearnFeature` = 1, A is the live engine, the shadow does not run
-and the columns are null (the `[Soak]` field says `moot`).
+`util` (tools/fit's row feature `learn_live`, 0.24.19; tools/fit/README.md). With
+`bShadowLegacy` = 0 and B live, the legacy pass does not run (no old columns, no shadow columns).
+With `bLegacyLearnFeature` = 1, A is the live engine, the shadow does not run and the columns are
+null (the `[Soak]` field says `moot`).
 
 **Who reads it.** `tools/shadow/shadow_compare.py` (menu reach-ins A's page would have caught,
 key and wheel picks A's page also had, the chosen item's rank under each; split by combat -- the
@@ -433,11 +434,15 @@ wheel and menu picks the frozen learner takes, outside test mode) gets one
 number per launch, from 1, written as `"rid"` into its v2 record
 (`Huginn_Selections.jsonl`) and into its v3 decision; join on (`launch`,
 `rid`). The breakdown of the scored candidates in the v2 record no longer
-needs the form-and-time join. Null for `nothing`, for the picks the learner
-skips (`learned: 0`: they write no v2 record), and when the v2 writer dropped
-the record (its queue full). The rid is set once the record is queued, so if
-the v2 writer then fails to write it (the file will not open, a write error)
-the decision carries an rid that no v2 record has, and the join misses it.
+needs the form-and-time join. (From 0.24.0 to 0.24.18 the v2 record also held
+the candidates the old floors dropped, with an all-zero breakdown; from 0.24.19
+it holds only the scored ones again, and tools/fit and tools/replay skip the
+zero rows of the older records: tools/fit/README.md.) Null for `nothing`,
+for the picks the learner skips (`learned: 0`: they write no v2 record), and
+when the v2 writer dropped the record (its queue full). The rid is set once
+the record is queued, so if the v2 writer then fails to write it (the file
+will not open, a write error) the decision carries an rid that no v2 record
+has, and the join misses it.
 
 **Runtime cross-features** (`effects.csv` item features; the math is
 `core/CrossFeatures.h`, the inputs `effect/CrossFeatures.cpp`), computed every
