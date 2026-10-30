@@ -319,6 +319,8 @@ export.py). `--write-golden` rewrites
 
 ## Reading logs written by 0.23.55 and later
 
+This means rewrite-r8's 0.23.55 (R8.1) and later. engine-rewrite's 0.23.55 is the lap clock build (#224), which has none of the changes below; `head.build` names the build and its git sha.
+
 - The head's `filters` gains four names after `truncated` (R8.1, `core/FilterReason.h`):
   `no_follower` (a spell or scroll for someone else, no follower near), `no_workstation`
   (fortify apparel with no station up for a craft it fortifies), `not_dark` (a torch while

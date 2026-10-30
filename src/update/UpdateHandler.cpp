@@ -4,14 +4,17 @@
 #include "../Profiling.h"
 #include "../learning/PlayerInputGate.h"
 
+#include <format>
+
 namespace Huginn::Update
 {
    namespace
    {
       /// An event the player made: a button (down, held or up), the mouse
-      /// moving, a stick off centre, a typed character. Not a device
-      /// connecting.
-      bool IsPlayerInput(RE::InputEvent* event)
+      /// moving, a stick pushed past the deadzone the game's own controls
+      /// apply to it (0.23.55: a drifting stick at rest is not input), a typed
+      /// character. Not a device connecting.
+      bool IsPlayerInput(RE::InputEvent* event, float leftDeadzone, float rightDeadzone)
       {
          switch (event->GetEventType()) {
          case RE::INPUT_EVENT_TYPE::kButton:
@@ -23,7 +26,8 @@ namespace Huginn::Update
          }
          case RE::INPUT_EVENT_TYPE::kThumbstick: {
             const auto* stick = static_cast<RE::ThumbstickEvent*>(event);
-            return stick->xValue != 0.0f || stick->yValue != 0.0f;
+            return Core::Needs::StickIsInput(stick->xValue, stick->yValue,
+               stick->IsRight() ? rightDeadzone : leftDeadzone);
          }
          default:
             return false;
@@ -81,8 +85,10 @@ namespace Huginn::Update
       // 0.23.51: when the player last touched anything (SecondsSinceInput),
       // whether or not updates are enabled.
       if (a_event) {
+         const float leftDeadzone = m_leftStickDeadzone.load(std::memory_order_relaxed);
+         const float rightDeadzone = m_rightStickDeadzone.load(std::memory_order_relaxed);
          for (auto* event = *a_event; event; event = event->next) {
-            if (IsPlayerInput(event)) {
+            if (IsPlayerInput(event, leftDeadzone, rightDeadzone)) {
                m_lastInputTicks.store(std::chrono::steady_clock::now().time_since_epoch().count(),
                   std::memory_order_relaxed);
                break;
@@ -147,6 +153,55 @@ namespace Huginn::Update
       return RE::BSEventNotifyControl::kContinue;
    }
 
+   namespace
+   {
+      /// One float INI setting as the engine holds it (SkyrimPrefs.ini's
+      /// collection first, then Skyrim.ini's, as the game resolves a name);
+      /// false when it is not there or not a float.
+      bool ReadFloatIniSetting(const char* name, float& out)
+      {
+         auto* setting = RE::GetINISetting(name);
+         if (!setting || setting->GetType() != RE::Setting::Type::kFloat) return false;
+         out = setting->GetFloat();
+         return true;
+      }
+   }
+
+   void UpdateHandler::SyncStickDeadzones(std::string_view why)
+   {
+      // The deadzone the game's controls apply to each stick: the left stick
+      // moves (fMovementAxisDeadzone), the right one turns the view
+      // (fHeadingAxisDeadzone). The gamepad device's own pair
+      // (fLThumbDeadzone, fRThumbDeadzone) is logged beside them for
+      // reference only: see LapHoldInputs.h and the schema doc, Laps.
+      std::lock_guard lock(m_deadzoneMutex);
+      float move = 0.0f, look = 0.0f, devL = -1.0f, devR = -1.0f;
+      const bool moveRead = ReadFloatIniSetting("fMovementAxisDeadzone:Controls", move);
+      const bool lookRead = ReadFloatIniSetting("fHeadingAxisDeadzone:Controls", look);
+      ReadFloatIniSetting("fLThumbDeadzone:Controls", devL);
+      ReadFloatIniSetting("fRThumbDeadzone:Controls", devR);
+      const float left = Core::Needs::SaneStickDeadzone(moveRead, move);
+      const float right = Core::Needs::SaneStickDeadzone(lookRead, look);
+      m_leftStickDeadzone.store(left, std::memory_order_relaxed);
+      m_rightStickDeadzone.store(right, std::memory_order_relaxed);
+      m_lastDeadzoneSync = std::chrono::steady_clock::now();
+      m_deadzonesSynced = true;
+
+      // Log transitions, not ticks: only when a value (or whether it could be
+      // read) changed since the last sync.
+      const std::array<float, 4> seen{ moveRead ? move : -1.0f, lookRead ? look : -1.0f, devL, devR };
+      if (seen == m_lastDeadzonesSeen) return;
+      m_lastDeadzonesSeen = seen;
+      auto describe = [](bool read, float raw, float used) {
+         return read && raw == used ? std::format("{:.3f}", used)
+              : read                ? std::format("{:.3f} (read {:.3f}, out of range)", used, raw)
+                                    : std::format("{:.3f} (not found; default)", used);
+      };
+      logger::info("[UpdateHandler] stick input deadzones ({}): left {} (fMovementAxisDeadzone), right {} "
+                   "(fHeadingAxisDeadzone); device fLThumbDeadzone {:.3f}, fRThumbDeadzone {:.3f} (reference)"sv,
+         why, describe(moveRead, move, left), describe(lookRead, look, right), devL, devR);
+   }
+
    double UpdateHandler::SecondsSinceInput(std::chrono::steady_clock::time_point now) const noexcept
    {
       const auto ticks = m_lastInputTicks.load(std::memory_order_relaxed);
@@ -181,6 +236,19 @@ namespace Huginn::Update
    void UpdateHandler::DoUpdate(std::chrono::steady_clock::time_point now)
    {
       SCOPED_TIMER("UpdateHandler::DoUpdate");
+
+      // 0.23.55: re-read the stick deadzones now and then -- a console
+      // setini, or a mod or MCM that writes the setting, changes them
+      // mid-session. Every 60 s: a change takes effect within one lap, and a
+      // read is four name lookups in the engine's setting lists (well under a
+      // millisecond). Only after the first sync (kDataLoaded): the settings
+      // are not ours to read before the game has loaded them.
+      bool resync = false;
+      {
+         std::lock_guard lock(m_deadzoneMutex);
+         resync = m_deadzonesSynced && now - m_lastDeadzoneSync >= kDeadzoneResync;
+      }
+      if (resync) SyncStickDeadzones("periodic");
 
       // Type-safe time conversion using chrono duration cast
       auto delta = now - m_lastUpdate;

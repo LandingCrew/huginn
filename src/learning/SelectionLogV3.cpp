@@ -15,6 +15,7 @@
 #include "core/Coverage.h"
 #include "core/CrossFeatures.h"
 #include "core/FilterReason.h"
+#include "core/LapHoldInputs.h"
 #include "core/NeedEpisodes.h"
 #include "effect/CrossFeatures.h"
 #include "effect/EffectCatalog.h"
@@ -34,6 +35,7 @@
 #include <mutex>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 #include <unordered_set>
 
 namespace Huginn::Learning::SelectionLogV3
@@ -1323,6 +1325,74 @@ namespace Huginn::Learning::SelectionLogV3
         // Reset() re-arms it with the tracker, so the first hold after a load
         // is logged too.
         Core::Needs::LapHold g_lastLapHold = Core::Needs::LapHold::kNone;
+        // 0.23.55, guarded by g_episodeMutex too: the menus behind the latest
+        // kMenu hold, so a hold that passes from one menu to another is a
+        // transition of its own.
+        std::string g_lastLapHoldMenus;
+
+        // =====================================================================
+        // MENUS THAT BLOCK GAMEPLAY (0.23.55; core/LapHoldInputs.h)
+        // =====================================================================
+        // The rule reads the game's own menu flags and input contexts; these
+        // are the values core mirrors.
+        static_assert(Core::Needs::MenuFlag::kPausesGame == std::to_underlying(RE::UI_MENU_FLAGS::kPausesGame));
+        static_assert(Core::Needs::MenuFlag::kUsesMenuContext == std::to_underlying(RE::UI_MENU_FLAGS::kUsesMenuContext));
+        static_assert(Core::Needs::MenuFlag::kModal == std::to_underlying(RE::UI_MENU_FLAGS::kModal));
+        static_assert(Core::Needs::MenuFlag::kInventoryItemMenu == std::to_underlying(RE::UI_MENU_FLAGS::kInventoryItemMenu));
+        static_assert(Core::Needs::kContextGameplay == std::to_underlying(RE::UserEvents::INPUT_CONTEXT_ID::kGameplay));
+        static_assert(Core::Needs::kContextTotal == std::to_underlying(RE::UserEvents::INPUT_CONTEXT_ID::kTotal));
+        static_assert(Core::Needs::kContextNone == std::to_underlying(RE::UserEvents::INPUT_CONTEXT_ID::kNone));
+
+        // Each open menu's classification as first seen in play, so the debug
+        // log names every menu that was open while the clock ticked once per
+        // load (with its flags, for the in-game check), not once per tick.
+        // Keyed on what the rule reads (the blocking flag bits and the input
+        // context), not the whole flag word: an overlay that toggles another
+        // bit every frame (kRequiresUpdate, kUsesCursor) would otherwise log
+        // at tick rate. A change in what the rule reads logs again.
+        // The flags are read live on every tick, never cached for the
+        // decision: a menu (or a mod) may change them while it is open.
+        std::mutex g_menuSeenMutex;
+        std::unordered_map<std::string, std::pair<std::uint32_t, std::uint32_t>> g_menuSeen;
+
+        // The open menus that block gameplay input, by the game's own flags,
+        // their names sorted and joined; empty when none does. Update tick
+        // only, which in gameplay runs on a game job thread, not the main
+        // thread where the UI mutates its menu map (THREADS in UpdateLoop.cpp:
+        // no job tick overlapped a main-thread zone in the traces); the same
+        // read the IsMenuOpen calls of this tick already make.
+        std::string BlockingMenus(RE::UI* ui)
+        {
+            if (!ui) return {};
+            std::vector<std::string> names;
+            for (const auto& [name, entry] : ui->menuMap) {
+                const RE::IMenu* menu = entry.menu.get();
+                if (!menu || !menu->OnStack()) continue;
+                const std::uint32_t flags = menu->menuFlags.underlying();
+                const std::uint32_t context = menu->inputContext.underlying();
+                const bool blocks = Core::Needs::MenuBlocksGameplay(flags, context);
+                std::string menuName(name.c_str());
+                {
+                    const std::pair<std::uint32_t, std::uint32_t> ruleReads{ flags & Core::Needs::MenuFlag::kBlocking, context };
+                    std::lock_guard lock(g_menuSeenMutex);
+                    auto [it, added] = g_menuSeen.try_emplace(menuName, ruleReads);
+                    if (added || it->second != ruleReads) {
+                        it->second = ruleReads;
+                        logger::debug("[SelectionV3] menu '{}' open in play: flags 0x{:X}, input context {}: {}"sv,
+                            menuName, flags, context,
+                            blocks ? "blocks gameplay (holds the lap clock)" : "an overlay (does not hold it)");
+                    }
+                }
+                if (blocks) names.push_back(std::move(menuName));
+            }
+            std::sort(names.begin(), names.end());
+            std::string joined;
+            for (const auto& n : names) {
+                if (!joined.empty()) joined += ", ";
+                joined += n;
+            }
+            return joined;
+        }
 
         void RecordTickCost(Clock::time_point t0)
         {
@@ -1443,17 +1513,22 @@ namespace Huginn::Learning::SelectionLogV3
         // says how its stretch began (0: at the onset; n: at the episode's
         // n-th lap), and ep.why how it ended ("end" or "lap").
         // The lap clock runs only while the player could press something:
-        // it holds after lapIdleSec without input, with the movement controls
-        // disabled, or in a dialogue (LapHoldFor).
+        // it holds after lapIdleSec without input (a stick counts past the
+        // game's own deadzone, UpdateHandler::SyncStickDeadzones), with the
+        // movement controls disabled, in a dialogue, or (0.23.55) while an
+        // open menu blocks gameplay input by its own flags (LapHoldFor).
         if (live && !paused && !dead) {
             Core::Needs::LapGate gate;
             gate.idleSec = Update::UpdateHandler::GetSingleton()->SecondsSinceInput(now);
             if (const auto* controls = RE::ControlMap::GetSingleton()) gate.controls = controls->IsMovementControlsEnabled();
             gate.dialogue = ui && ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME);
+            std::string menus = BlockingMenus(ui);
+            gate.menu = !menus.empty();
             std::vector<size_t> onsets;
             std::vector<size_t> laps;
             Core::Needs::LapHold hold = Core::Needs::LapHold::kNone;
             Core::Needs::LapHold prevHold = Core::Needs::LapHold::kNone;
+            std::string prevMenus;
             double active = 0.0;
             {
                 std::lock_guard lock(g_episodeMutex);
@@ -1463,11 +1538,18 @@ namespace Huginn::Learning::SelectionLogV3
                 active = g_episodes.ActiveSec();
                 prevHold = g_lastLapHold;
                 g_lastLapHold = hold;
+                if (hold != Core::Needs::LapHold::kMenu) menus.clear();   // only a menu hold names its menus
+                prevMenus = std::exchange(g_lastLapHoldMenus, menus);
             }
-            if (hold != prevHold) {
-                logger::debug("[SelectionV3] lap clock {} ({}; active {:.0f}s)"sv,
-                    hold == Core::Needs::LapHold::kNone ? "runs" : "holds",
-                    Core::Needs::LapHoldName(hold == Core::Needs::LapHold::kNone ? prevHold : hold), active);
+            if (hold != prevHold || menus != prevMenus) {
+                // The reason the line names: the new hold's, or on release the
+                // one that ended. A menu hold names its menus.
+                const bool runs = hold == Core::Needs::LapHold::kNone;
+                const auto why = runs ? prevHold : hold;
+                const std::string& whyMenus = runs ? prevMenus : menus;
+                logger::debug("[SelectionV3] lap clock {} ({}{}{}; active {:.0f}s)"sv,
+                    runs ? "runs" : "holds", Core::Needs::LapHoldName(why),
+                    whyMenus.empty() ? "" : ": ", whyMenus, active);
             }
             if (!onsets.empty() || !laps.empty()) {
                 auto ctx = BuildContext(onsets.empty() ? "lap" : "onset", {});
@@ -1679,6 +1761,12 @@ namespace Huginn::Learning::SelectionLogV3
             std::lock_guard lock(g_episodeMutex);
             g_episodes.Reset();
             g_lastLapHold = Core::Needs::LapHold::kNone;
+            g_lastLapHoldMenus.clear();
+        }
+        {
+            // A load re-reads every open menu's flags into the debug log.
+            std::lock_guard lock(g_menuSeenMutex);
+            g_menuSeen.clear();
         }
         {
             std::lock_guard lock(g_pickMutex);
