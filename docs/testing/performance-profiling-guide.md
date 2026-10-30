@@ -260,7 +260,7 @@ actually look at:
 | `Update::PipelineCheck` | `src/UpdateLoop.cpp` | Skip decision |
 | `RunPipeline` | `src/pipeline/PipelineCoordinator.cpp` | Pipeline past the dirty-flag skip |
 | `Pipeline::GatherState` | `PipelineCoordinator.cpp` | State snapshot |
-| `Pipeline::ScoreCandidates` | `PipelineCoordinator.cpp` | Candidate generation, filters, the D2 legacy pass and `RankOnChoice` |
+| `Pipeline::ScoreCandidates` | `PipelineCoordinator.cpp` | Candidate generation, filters, the D2 legacy pass, `RankOnChoice` and `CaptureEligible` |
 | `Pipeline::RankOnChoice` | `PipelineCoordinator.cpp` | The choice score mu per candidate (R8.3) |
 | `Pipeline::CaptureEligible` | `PipelineCoordinator.cpp` | The v3 log's eligible rows (and `::Dropped`, the filtered ones) |
 | `Pipeline::AllocateAndLock` | `PipelineCoordinator.cpp` | Slot allocation + locks |
@@ -277,9 +277,11 @@ actually look at:
 | `SpellRegistry::Reconcile`, `ItemRegistry::Reconcile`, `ScrollRegistry::Reconcile` | `src/UpdateLoop.cpp` | Registry reconciles |
 | `WeaponRegistry::Refresh`, `::RefreshCharges`, `::ReconcileWeapons` | `src/UpdateLoop.cpp`, `src/weapon/WeaponRegistry.cpp` | Weapon registry work |
 
-**There is no force-everything poll zone.** `StateManager::ForceUpdate` (startup,
-`hg refresh`) is not the steady-state path; `StateManager::Update` is what runs
-every tick. Older docs that gave a `PollAll()` budget were describing a zone that
+**There is no force-everything poll zone.** `StateManager::ForceUpdate` (every
+poll at once, no zone of its own) runs only in Debug builds: once at game load
+(`Main.cpp`) and from the in-game test suite. `hg refresh` and `hg recs` call
+`UpdateHandler::ForceUpdate` instead, which runs one ordinary tick, so they land
+under the usual `OnUpdate` zones. `StateManager::Update` is what runs every tick. Older docs that gave a `PollAll()` budget were describing a zone that
 never existed (`PollAll` itself had no caller and went in 0.24.5).
 
 ### Skip-rate arithmetic

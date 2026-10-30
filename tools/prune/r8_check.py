@@ -536,8 +536,9 @@ CLASSIFIER_BUDGET = {
         r'^\s*if \(item\.data\.type != Item::ItemType::SoulGem\) return;$',
     ], 'the soul gem split (the registry\'s form kind)'),
     # The in-game Debug suite: the classifier and D2 tests, the synthetic candidates stated in the
-    # old vocabulary, and their facet resolver (InstallSyntheticFacetResolver). Counted. 178:
-    # 153 plus the 25 lines of the item registry's own tests that call its potion views.
+    # old vocabulary, and their facet resolver (InstallSyntheticFacetResolver). Counted. 177:
+    # 153 plus the 25 lines of the item registry's own tests that call its potion views, less
+    # the healingSpell SpellTag local that went out of RunMultiplicativeScoringTests' Test 1.
     'src/Tests.cpp': (177, None, 'the Debug suite: classifier and D2 tests, synthetic candidates and their resolver'),
 }
 

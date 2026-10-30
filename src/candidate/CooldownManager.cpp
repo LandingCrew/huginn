@@ -132,7 +132,7 @@ namespace Huginn::Candidate
 
     void CooldownManager::CleanupExpiredLocked()
     {
-        // Note: Caller must hold m_mutex (either shared or unique lock)
+        // Caller holds the write lock (unique on m_mutex): this erases.
         const auto now = std::chrono::steady_clock::now();
 
         // C++20 erase_if for efficient removal
