@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/ChoiceCosave.h"   // LoadDecision
 #include "learning/ChoiceLearner.h"
 
 #include <cstdint>
@@ -54,21 +55,19 @@ namespace Huginn::Persist
    //                      records this save holds are kept and every save
    //                      this session makes writes them back unchanged, so
    //                      a session without the bootstrap loses no learning.
-   //                      A reset empties them (ResetChoiceLearning).
+   //                      A reset empties them (ResetChoiceLearning). A reload
+   //                      of the same character keeps the carried ones, as
+   //                      it keeps the model, b's dynamic forms from the save
+   //                      (core/ChoiceCosave.h CarryLoaded); a reset holds.
    // =========================================================================
 
    inline constexpr uint32_t kRecordType_Theta = 'ATHT';  // 'THTA' on disk
    inline constexpr uint32_t kRecordType_Bias  = 'SAIB';  // 'BIAS' on disk
    inline constexpr uint32_t kRecordType_Discovery = 'CSID';  // 'DISC' on disk
 
-   /// What kind of load ResolveLoadedLearner decided (BanditSerializer.h).
-   enum class LoadDecision : uint8_t
-   {
-      NewGame,   // a fresh character
-      Failed,    // the load restored nothing: keep everything
-      Reload,    // the character in memory, the save not ahead: keep memory
-      Replace,   // another character, the first load, or a later save
-   };
+   /// What kind of load ResolveLoadedLearner decided (BanditSerializer.h);
+   /// defined in core so the model-off carry (CarryLoaded) is host-tested.
+   using LoadDecision = Core::ChoiceCosave::LoadDecision;
 
    [[nodiscard]] const char* LoadDecisionName(LoadDecision d) noexcept;
 

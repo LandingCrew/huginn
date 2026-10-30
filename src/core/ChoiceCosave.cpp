@@ -296,4 +296,36 @@ namespace Huginn::Core::ChoiceCosave
         }
         bias = BiasRecord{};
     }
+
+    std::pair<std::size_t, std::size_t> CarryLoaded(LoadDecision decision, std::optional<ThetaRecord>& carriedTheta,
+        std::optional<BiasRecord>& carriedBias, std::optional<ThetaRecord> savedTheta,
+        std::optional<BiasRecord> savedBias)
+    {
+        switch (decision) {
+        case LoadDecision::NewGame:
+            carriedTheta.reset();
+            carriedBias.reset();
+            return {};
+        case LoadDecision::Failed:
+            return {};
+        case LoadDecision::Reload: {
+            if (!carriedBias || !savedBias) return {};
+            auto dynamic = [](std::uint32_t form) { return (form >> 24) == 0xFF; };
+            auto& kept = carriedBias->entries;
+            const std::size_t removed = std::erase_if(kept, [&](const BiasEntry& e) { return dynamic(e.form); });
+            std::size_t added = 0;
+            for (const auto& e : savedBias->entries) {
+                if (!dynamic(e.form) || !(e.var > 0.0) || !std::isfinite(e.mu)) continue;
+                kept.push_back(e);
+                ++added;
+            }
+            return { removed, added };
+        }
+        case LoadDecision::Replace:
+            carriedTheta = std::move(savedTheta);
+            carriedBias = std::move(savedBias);
+            return {};
+        }
+        return {};
+    }
 }

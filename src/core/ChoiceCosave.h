@@ -165,4 +165,31 @@ namespace Huginn::Core::ChoiceCosave
     /// as the reset clears it -- an absent BIAS would let the next load seed b
     /// under sBootstrapBias, which a reset does not.
     void ResetCarried(std::optional<ThetaRecord>& theta, std::optional<BiasRecord>& bias);
+
+    /// What kind of load ResolveLoadedLearner decided (persist/
+    /// BanditSerializer.h); both learners and the carried records follow it.
+    enum class LoadDecision : std::uint8_t
+    {
+        NewGame,   // a fresh character
+        Failed,    // the load restored nothing: keep everything
+        Reload,    // the character in memory, the save not ahead: keep memory
+        Replace,   // another character, the first load, or a later save
+    };
+
+    /// A load while the model is off (no or an invalid bootstrap): what the
+    /// records carried for this session's saves become (ResolveLoadedChoice).
+    ///   new game   none
+    ///   failed     unchanged
+    ///   reload     the carried records are the in-memory state and are kept,
+    ///              as the ready model keeps theta and b: a reset before the
+    ///              reload stays reset (0.24.18). Only b's dynamic forms
+    ///              (0xFF......) come from the save's BIAS, as
+    ///              ChoiceLearner::ReplaceDynamicB (the engine reuses those
+    ///              IDs); no BIAS carried stays none, no BIAS in the save
+    ///              keeps the carried ones
+    ///   replace    this save's records (an absent one absent)
+    /// Returns the dynamic-form b entries {dropped, taken} on a reload.
+    std::pair<std::size_t, std::size_t> CarryLoaded(LoadDecision decision, std::optional<ThetaRecord>& carriedTheta,
+        std::optional<BiasRecord>& carriedBias, std::optional<ThetaRecord> savedTheta,
+        std::optional<BiasRecord> savedBias);
 }

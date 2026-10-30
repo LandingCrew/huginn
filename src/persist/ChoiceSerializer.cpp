@@ -57,7 +57,9 @@ namespace Huginn::Persist
       }
       // Fallback mode: no theta or b lives in memory, but the saves write the
       // carried records back. Without this the reset would not reach them,
-      // and the learning from before it would return with the bootstrap.
+      // and the learning from before it would return with the bootstrap. A
+      // reload of the same character keeps the emptied records (CarryLoaded),
+      // as it keeps a reset model.
       std::size_t thetaWas = 0, biasWas = 0;
       {
          std::lock_guard lock(s_carriedMutex);
@@ -65,10 +67,11 @@ namespace Huginn::Persist
          biasWas = s_carriedBias ? s_carriedBias->entries.size() : 0;
          CC::ResetCarried(s_carriedTheta, s_carriedBias);
       }
-      logger::info("[Cosave] Reset with the choice model off (no bootstrap): the THTA / BIAS carried from the load "
-                   "dropped ({} theta entries, {} b entries); this session's saves write theta unmoved and b empty"sv,
+      logger::info("[Cosave] Reset with the choice model off (no usable bootstrap): the THTA / BIAS carried from "
+                   "the load dropped ({} theta entries, {} b entries); this session's saves write theta unmoved and "
+                   "b empty"sv,
          thetaWas, biasWas);
-      return "choice model off, no bootstrap: the save's theta and b dropped";
+      return "choice model off (no usable bootstrap): the save's theta and b dropped";
    }
 
    void ResetPendingChoice()
@@ -130,7 +133,7 @@ namespace Huginn::Persist
          std::lock_guard lock(s_carriedMutex);
          const bool theta = s_carriedTheta && WriteTheta(a_intfc, *s_carriedTheta);
          const bool bias = s_carriedBias && WriteBias(a_intfc, *s_carriedBias);
-         logger::warn("[Cosave] Choice model off (no bootstrap): THTA {} / BIAS {} carried over from the load "
+         logger::warn("[Cosave] Choice model off (no usable bootstrap): THTA {} / BIAS {} carried over from the load "
                       "unchanged ({} theta entries, {} b entries)"sv,
             theta ? "written" : "not", bias ? "written" : "not",
             theta ? s_carriedTheta->entries.size() : 0, bias ? s_carriedBias->entries.size() : 0);
@@ -299,29 +302,30 @@ namespace Huginn::Persist
       ResolveDiscovery(learner, decision, std::move(disc));
       std::unique_lock carriedLock(s_carriedMutex);
       if (!learner.Ready()) {
-         // Fallback mode: nothing to apply them to. Keep this save's records
-         // (what it holds, or nothing) for the saves this session makes; a new
-         // game has none, and a failed load leaves the carried records as they
-         // were.
-         if (decision == LoadDecision::NewGame) {
-            s_carriedTheta.reset();
-            s_carriedBias.reset();
-         } else if (decision != LoadDecision::Failed) {
-            s_carriedTheta = std::move(theta);
-            s_carriedBias.reset();
-            if (bias) {
-               CC::BiasRecord rec;
-               rec.entries.reserve(bias->size());
-               for (const auto& e : *bias) {
-                  rec.entries.push_back(CC::BiasEntry{ e.form, e.mu, e.var, e.n, e.minutesSinceChosen,
-                     static_cast<uint8_t>(e.favorite ? CC::kBiasFavorite : 0) });
-               }
-               s_carriedBias = std::move(rec);
+         // Fallback mode: nothing to apply them to. The carried records
+         // follow the load's decision (core/ChoiceCosave.h CarryLoaded): this
+         // save's records for a load, none for a new game, unchanged for a
+         // failed load; a reload of the same character keeps them, as the
+         // ready path keeps the model, so a reset before it stays reset.
+         std::optional<CC::BiasRecord> savedBias;
+         if (bias) {
+            CC::BiasRecord rec;
+            rec.entries.reserve(bias->size());
+            for (const auto& e : *bias) {
+               rec.entries.push_back(CC::BiasEntry{ e.form, e.mu, e.var, e.n, e.minutesSinceChosen,
+                  static_cast<uint8_t>(e.favorite ? CC::kBiasFavorite : 0) });
             }
+            savedBias = std::move(rec);
          }
-         logger::warn("[Cosave] Choice model off (no bootstrap): THTA {} / BIAS {} not applied ({}); kept to be "
-                      "written back by this session's saves"sv,
-            s_carriedTheta ? "read" : "absent", s_carriedBias ? "read" : "absent", LoadDecisionName(decision));
+         const auto [removed, added] =
+            CC::CarryLoaded(decision, s_carriedTheta, s_carriedBias, std::move(theta), std::move(savedBias));
+         logger::warn("[Cosave] Choice model off (no usable bootstrap): THTA {} / BIAS {} not applied ({}); "
+                      "{} to be written back by this session's saves ({} theta entries, {} b entries{})"sv,
+            s_carriedTheta ? "carried" : "absent", s_carriedBias ? "carried" : "absent", LoadDecisionName(decision),
+            decision == LoadDecision::Reload ? "the carried records kept" : "kept",
+            s_carriedTheta ? s_carriedTheta->entries.size() : 0, s_carriedBias ? s_carriedBias->entries.size() : 0,
+            removed || added ? std::format("; dynamic-form b from the save: {} dropped, {} taken", removed, added)
+                             : std::string{});
          return;
       }
       s_carriedTheta.reset();

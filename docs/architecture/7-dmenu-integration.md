@@ -427,7 +427,8 @@ kPostLoadGame / kNewGame  ->  InitializeGameSystems()
     |-- LoadMainIni ONCE (shipped + player's), distribute to every loader
     |     WheelerSettings, SlotSettings, ScorerSettings, ContextWeightSettings,
     |     NeedSettings, Override::Settings, LearningSettings, CandidateConfig,
-    |     wildcards, ChoiceSettings (SlotLocker config: ResetPipelineSubsystems)
+    |     wildcards, ChoiceSettings; the SlotLocker config at step 8, after
+    |     ResetPipelineSubsystems (which resets the locks, not the config)
     +-- LoadDMenuIni ONCE (descriptor defaults + dMenu's INI)
           IntuitionSettings (then IntuitionMenu::Show()), DebugSettings + ApplyToWidgets()
 ```

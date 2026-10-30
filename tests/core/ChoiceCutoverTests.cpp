@@ -323,6 +323,83 @@ TEST_CASE("cosave reset with the model off: a load that carried nothing writes n
     CHECK(bias->entries.empty());
 }
 
+TEST_CASE("cosave carry with the model off: a reload of the same character after a reset keeps the reset")
+{
+    // 0.24.18: the fallback reload took the save's records as a load does, so
+    // a quickload (or a death) after a reset brought the learning from before
+    // it back, and every later save wrote it. The ready path keeps the model.
+    std::optional<CC::ThetaRecord> theta = SampleTheta();
+    std::optional<CC::BiasRecord> bias = SampleBias();
+    CC::ResetCarried(theta, bias);
+    const auto [removed, added] =
+        CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, SampleTheta(), SampleBias());
+    REQUIRE(theta.has_value());
+    CHECK(theta->entries.empty());   // not the save's three
+    REQUIRE(bias.has_value());
+    // b's dynamic forms come from the save (the engine reuses their IDs), as
+    // ChoiceLearner::ReplaceDynamicB; the plugin's form stays dropped.
+    CHECK(removed == 0);
+    CHECK(added == 1);
+    REQUIRE(bias->entries.size() == 1);
+    CHECK(bias->entries[0] == SampleBias().entries[1]);
+}
+
+TEST_CASE("cosave carry with the model off: a reload swaps only b's dynamic forms, theta kept")
+{
+    std::optional<CC::ThetaRecord> theta = SampleTheta();
+    std::optional<CC::BiasRecord> bias = SampleBias();
+    CC::ThetaRecord savedTheta;
+    savedTheta.entries = { { 0x3333ull, 9.0, 1.0 } };
+    CC::BiasRecord savedBias;
+    savedBias.entries = { { 0x0002C3D4u, 1.0, 0.2, 1.0f, 0u, 0 },          // a plugin form: not taken
+        { 0xFF000900u, 0.75, 0.1, 2.0f, 5u, 0 },                              // taken
+        { 0xFF000901u, std::numeric_limits<double>::quiet_NaN(), 0.1, 1.0f, 0u, 0 },   // not finite
+        { 0xFF000902u, 0.5, 0.0, 1.0f, 0u, 0 } };                             // var <= 0
+    const auto [removed, added] = CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, savedTheta, savedBias);
+    CHECK(theta->entries == SampleTheta().entries);
+    CHECK(removed == 1);   // the carried 0xFF000801
+    CHECK(added == 1);
+    REQUIRE(bias->entries.size() == 2);
+    CHECK(bias->entries[0] == SampleBias().entries[0]);
+    CHECK(bias->entries[1] == savedBias.entries[1]);
+
+    // No BIAS in the save keeps the carried b; none carried stays none (the
+    // next load seeds b under sBootstrapBias, as before the reload).
+    std::optional<CC::BiasRecord> kept = SampleBias();
+    CC::CarryLoaded(CC::LoadDecision::Reload, theta, kept, std::nullopt, std::nullopt);
+    CHECK(kept->entries == SampleBias().entries);
+    std::optional<CC::BiasRecord> none;
+    CC::CarryLoaded(CC::LoadDecision::Reload, theta, none, std::nullopt, savedBias);
+    CHECK_FALSE(none.has_value());
+}
+
+TEST_CASE("cosave carry with the model off: a load takes the save's records, a new game none, a failed load nothing")
+{
+    std::optional<CC::ThetaRecord> theta;
+    std::optional<CC::BiasRecord> bias;
+    CC::ResetCarried(theta, bias);
+
+    CC::CarryLoaded(CC::LoadDecision::Replace, theta, bias, SampleTheta(), SampleBias());
+    REQUIRE(theta.has_value());
+    CHECK(theta->entries == SampleTheta().entries);
+    REQUIRE(bias.has_value());
+    CHECK(bias->entries == SampleBias().entries);
+
+    CC::CarryLoaded(CC::LoadDecision::Failed, theta, bias, std::nullopt, std::nullopt);
+    CHECK(theta->entries == SampleTheta().entries);
+    CHECK(bias->entries == SampleBias().entries);
+
+    CC::CarryLoaded(CC::LoadDecision::Replace, theta, bias, std::nullopt, std::nullopt);   // an older save
+    CHECK_FALSE(theta.has_value());
+    CHECK_FALSE(bias.has_value());
+
+    theta = SampleTheta();
+    bias = SampleBias();
+    CC::CarryLoaded(CC::LoadDecision::NewGame, theta, bias, SampleTheta(), SampleBias());
+    CHECK_FALSE(theta.has_value());
+    CHECK_FALSE(bias.has_value());
+}
+
 // ---------------------------------------------------------------------------
 // The need signature (the skip gate's key)
 // ---------------------------------------------------------------------------
