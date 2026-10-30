@@ -35,8 +35,10 @@ F = {'eligible': 1, 'scored': 2, 'held': 4, 'equipped': 8, 'shown': 16, 'wildcar
 # pass / cold / ctx / util / suppressed, None when not eligible), the utility
 # an unscored candidate would have had, the vanilla hotkey 0-7 (v3load.py;
 # docs/architecture/9-selection-log-v3.md).
-# SHADOW (0.23.56, R8.2) is None or (mu, sd, lm, um, ex): the new model in
-# shadow, indexed by S_MU..S_EX; ex is (need id, column id) or "learned".
+# SHADOW (0.23.56, R8.2) is None or (mu, sd, lm, um, ex): the choice model,
+# in shadow at 0.23.56 and the live ranking's score from R8.3 (0.24.0), indexed
+# by S_MU..S_EX; lm / um are the D2 feature as the live score read it (0 / 1
+# under engine B); ex is (need id, column id) or "learned".
 # SHADOW_A (0.24.17) is None or (amu, ar, br, ak, bk): the D2 engine in shadow
 # beside the live one, indexed by A_MU..A_BK: engine A's mu, the row's rank
 # under A and under the live ranking (1 = first), its key on A's and on the

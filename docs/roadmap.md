@@ -1234,7 +1234,11 @@ changed in the same PR, and the shipped INI loses the dead keys.
         the old scorer passes R6's gate -- L1 / L7 with fresh per-row learner
         columns, or θ + b + recent with more data -- or the user's call. Then
         the LEGACY list in `r8_check.py` becomes PRUNED, BNDW gives way to
-        THTA/BIAS, and the map's full Phase 6 list goes.
+        THTA/BIAS, and the map's full Phase 6 list goes. 0.24.19: the fit
+        tools read 0.24 logs for that refit (tools/fit/README.md): the v2
+        log's rows the old floors dropped (written 0.24.0-0.24.18 with an
+        all-zero breakdown) are skipped and no longer written, and a fit of
+        the live engine B reads the D2 feature from `lm` / `um` (`learn_live`).
       - **Box status at R8.4:** steps 1-6 built ([x] above); the need signature
         in the skip gate [x]; doc 11 step 7 [ ] (not R8's code: the sensors are
         still to build); the update-loop thread [ ] (undecided, not blocking);

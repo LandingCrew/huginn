@@ -407,9 +407,11 @@ class ShadowAColumns(TempWork):
 
 
 class ShadowColumns(TempWork):
-    """0.23.56 (R8.2): the new model in shadow (row columns mu, sd, lm, um, ex; the head's
-    bootstrap). v3load keeps them as the row tuple's SHADOW element (None on older rows), ex as
-    (need id, column id) by the loader's global names or "learned"; the fit reads none of it."""
+    """0.23.56 (R8.2): the choice model's columns (mu, sd, lm, um, ex; the head's bootstrap;
+    in shadow at 0.23.56, the live ranking from R8.3). v3load keeps them as the row tuple's
+    SHADOW element (None on older rows), ex as (need id, column id) by the loader's global names
+    or "learned"; of them the fit reads only lm / um, and only in the 'learn_live' feature
+    (LiveLearnFeature), so the other specs build the same thing with or without them."""
 
     def text(self):
         def older(r):                # a 0.23.55 writer: no shadow columns, no bootstrap
@@ -536,9 +538,9 @@ class HardGateDrops(TempWork):
 
 
 class FloorCheck(TempWork):
-    """v3load.floor_check: each row's old-engine floor (fl) against the tests the scorer
-    applies. The C++ encoder's golden session (whose floors CaptureEligible's rules give)
-    passes; rows edited to break each rule are caught, and a value logged equal to its
+    """v3load.floor_check: each row's old-engine floor (fl) against the tests the floor pass
+    applies. The C++ encoder's golden session (whose floors the legacy module's capture
+    gives) passes; rows edited to break each rule are caught, and a value logged equal to its
     floor is not judged."""
     GOLDEN = HERE.parents[1] / 'tests' / 'core' / 'fixtures' / 'decisions' / 'synthetic_v3.jsonl'
     # row columns of the 0.23.53 head (DecisionLog.cpp): flags 5, cw 18, fl 19, wu 20
@@ -1466,7 +1468,7 @@ class Export(unittest.TestCase):
     def test_features_and_refusals(self):
         *_, d, _ = self.doc({'outside': False, 'feat_spec': ['astar']})
         self.assertEqual([f['name'] for f in d['features']], ['ln util', 'util missing'])
-        for ok in (['learn'], ['learn', 'mults'], ['learner'], ['astar', 'pos']):
+        for ok in (['learn'], ['learn', 'mults'], ['learn_live'], ['learner'], ['astar', 'pos']):
             export.check_spec({'outside': False, 'feat_spec': ok})
         for bad in ({'feat_spec': ['ctx']}, {'feat_spec': ['cheap']}, {'_with': ['split']}, {'_latest': True},
                     {'bias_need': True, '_with': ['presence+strength']},
@@ -1570,6 +1572,12 @@ def v2_record(utc, form, char, cands, launch='20261011-100000', gen=2):
                        'cols': cols, 'cands': rows})
 
 
+# A row the old floors dropped, as a 0.24.0..0.24.18 writer logged it: ScoreBreakdown's defaults
+# (src/learning/ScoredCandidate.h), util 0 (fitlib.v2_unscored skips it).
+V2_DROPPED = dict(util=0, ctx=0, est=0, prior=0, ucb=0, alpha=0, learn=0, rec=0, corr=0, potion=1, fav=1,
+                  **{'lambda': 0})
+
+
 class LearnerFeatures(TempWork):
     """The old score's components (fitlib.row_features 'learn', 'mults', 'learner'; the R8
     component test): read from the v2 log, joined per pick, carried forward per item."""
@@ -1583,10 +1591,18 @@ class LearnerFeatures(TempWork):
             os.environ['HUGINN_FIT_V2'] = self._v2env
         super().tearDown()
 
-    def dataset(self, launches=1):
+    def dataset(self, launches=1, edit=None, dropped=False):
+        """edit: applied to every v3 record (edit_lines); dropped: the key pick's v2 record also
+        holds the sword as a 0.24.0..0.24.18 writer logged a row the old floors dropped."""
         # launch 1: key 0003EAE3 at 15:01:01 (its v2 record joins), menu 00099999, wheel 00012EB7 at 15:01:04
         text = ''.join(session(f'2026101{i}-100000', CHAR_A, '0.23.50 (abc)', minute=i) for i in range(1, launches + 1))
+        if edit:
+            text = edit_lines(text, edit)
         self.quiet(v3load.main, [str(self.write('v3.jsonl', text))])
+        key_cands = {'0003EAE3': {'lambda': 2.0, 'learn': 0.5, 'alpha': 0.5, 'est': 0.6, 'rec': 0.1, 'fav': 2.5,
+                                  'corr': 1.3, 'potion': 0.8}}
+        if dropped:
+            key_cands['00012EB7'] = V2_DROPPED
         lines = [
             # an earlier record of this character holds the sword (not a candidate of the key pick's record)
             v2_record('2026-10-09 14:59:00.000', 'AAAAAAAA', CHAR_A,
@@ -1595,9 +1611,7 @@ class LearnerFeatures(TempWork):
             v2_record('2026-10-09 15:00:59.000', 'BBBBBBBB', CHAR_B,
                       {'00012EB7': {'lambda': 9.0, 'alpha': 1.0, 'est': 5.0}}),
             # the key pick's own record, 0.5 s after it
-            v2_record('2026-10-09 15:01:01.500', '0003EAE3', CHAR_A,
-                      {'0003EAE3': {'lambda': 2.0, 'learn': 0.5, 'alpha': 0.5, 'est': 0.6, 'rec': 0.1, 'fav': 2.5,
-                                    'corr': 1.3, 'potion': 0.8}}),
+            v2_record('2026-10-09 15:01:01.500', '0003EAE3', CHAR_A, key_cands),
         ]
         self.write('Huginn_Selections.jsonl', '\n'.join(lines) + '\n')     # beside the v3 file: v2_path finds it
         D = common.load()
@@ -1670,12 +1684,74 @@ class LearnerFeatures(TempWork):
         self.assertNotEqual(fitlib.data_key(dict(S, LRN=S['LRN'] + 1)), k)
         self.assertNotEqual(fitlib.data_key(dict(S, ELIG=1 - S['ELIG'])), k)
 
+    def test_dropped_rows_of_a_0_24_v2_record_are_not_scored(self):
+        """0.24.0..0.24.18 wrote every ranked candidate into the v2 record, the ones the old floors
+        dropped with an all-zero breakdown: load_v2 skips them, so the dataset is the one a record
+        holding only the scored rows gives (no context weight, the learner carried forward)."""
+        S, v2 = self.dataset(dropped=True)
+        self.assertTrue(fitlib.v2_unscored(V2_DROPPED))
+        self.assertFalse(fitlib.v2_unscored(dict(V2_DROPPED, corr=1.0)))    # a scored row never has corr 0
+        self.assertEqual([list(c) for _, c in v2['0003EAE3']], [['0003EAE3']])
+        self.assertEqual(len(v2.appear['00012EB7']), 2)                     # the two earlier records only
+        S0, _ = self.dataset()
+        for k in ('V2', 'LRN', 'CLS', 'v2ok'):
+            np.testing.assert_array_equal(S[k], S0[k], err_msg=k)
+        key = [d for d in range(len(S['Y'])) if S['OUT'][d] == 'key'][0]
+        sword = self.row(S, key, '00012EB7')
+        self.assertTrue(np.isnan(S['V2'][key, sword]).all())
+        self.assertAlmostEqual(S['LRN'][key, sword, 1], math.log(1 + 1.0 * (0.5 * 0.4)))
+
+    def test_learn_live_reads_what_the_live_score_read(self):
+        """'learn_live' reads the v3 row's lm / um (what the live score read), 'learn' derives the
+        same two columns from util and the v2 record; a row with no lm / um reads as 'learn'."""
+        S, _ = self.dataset()
+        key = [d for d in range(len(S['Y'])) if S['OUT'][d] == 'key'][0]
+        pot, sword, ammo = (self.row(S, key, f) for f in ('0003EAE3', '00012EB7', '0001397D'))
+        L, names = fitlib.row_features(S, ['learn'])
+        Fm, live_names = fitlib.row_features(S, ['learn_live'])
+        self.assertEqual(live_names, names)          # the same bootstrap weights (export.py)
+        np.testing.assert_allclose(L[key, pot], [math.log(2.0), 0.0])
+        np.testing.assert_allclose(Fm[key, pot], [0.125, 0.0])        # the synthetic row's lm, um
+        np.testing.assert_allclose(Fm[key, ammo], [0.0, 1.0])
+        np.testing.assert_allclose(Fm[key, sword], L[key, sword])     # no lm / um logged
+
+    def test_learn_live_under_engine_b(self):
+        """Engine B live with the D2 shadow on (0.24.17): the old floors kept the potion (util
+        set) but the live score read 0 / 1. 'learn' reads A's values, 'learn_live' B's."""
+        head = {}
+
+        def b_live(r):
+            if r['t'] == 'head':
+                head['lm'], head['um'] = r['row'].index('lm'), r['row'].index('um')
+            for row in r.get('rows', []) + r.get('add', []):
+                if row[0] == '0003EAE3' and len(row) > head['um']:
+                    row[head['lm']], row[head['um']] = 0, 1
+        S, _ = self.dataset(edit=b_live)
+        key = [d for d in range(len(S['Y'])) if S['OUT'][d] == 'key'][0]
+        pot = self.row(S, key, '0003EAE3')
+        self.assertFalse(np.isnan(S['UTIL'][key, pot]))
+        np.testing.assert_allclose(fitlib.row_features(S, ['learn'])[0][key, pot], [math.log(2.0), 0.0])
+        np.testing.assert_allclose(fitlib.row_features(S, ['learn_live'])[0][key, pot], [0.0, 1.0])
+
+    def test_learn_live_before_0_23_56_reads_as_learn(self):
+        def older(r):                # a 0.23.55 writer: no lm / um
+            if r['t'] == 'head':
+                r['row'] = r['row'][:22]
+            elif r['t'] == 'ctx':
+                r['rows'] = [row[:22] for row in r['rows']]
+            elif r['t'] == 'dec':
+                r['add'] = [row[:22] for row in r['add']]
+        S, _ = self.dataset(edit=older)
+        self.assertTrue(np.isnan(S['LMUM']).all())
+        np.testing.assert_array_equal(fitlib.row_features(S, ['learn_live'])[0], fitlib.row_features(S, ['learn'])[0])
+
     def test_component_specs_fit(self):
         S, _ = self.dataset(launches=3)
         obv = fitlib.obvious_pairs(S['needs'], S['cols'])
         FOLD = np.zeros(len(S['Y']), dtype=int)
         for name in ('theta + b + recent + learn mult (D2)', 'theta + b + recent + learn mult + fav/corr/potion (D5)',
-                     'theta + b + recent + old learner state (L1)'):
+                     'theta + b + recent + old learner state (L1)',
+                     'theta + b + recent + learn mult as the live score read it (lm/um, B)'):
             spec = cv.PICKS[name]
             res, fits = fitlib.online_results(S, obv, spec, every=1, min_train=1, maxiter=10)
             self.assertGreater(fits, 0, name)

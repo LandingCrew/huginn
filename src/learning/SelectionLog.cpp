@@ -250,12 +250,20 @@ namespace Huginn::Learning
             // tools/replay reads old and new logs alike.
             line += R"("cols":["form","type","need","rank","util","ctx","est","prior","ucb","alpha",)"
                     R"("learn","lambda","rec","corr","potion","fav","wildcard","coldStart","pred"],"cands":[)";
+            // 0.24.19: only the rows the old engine scored (its floors kept
+            // them), as before R8.3. R8.3 (0.24.0) put every ranked candidate
+            // in the cache, and until 0.24.19 this wrote them all, the dropped
+            // ones with an all-zero breakdown the tools read as scored
+            // (tools/fit fitlib.load_v2 and tools/replay now skip those rows).
+            // `rank` stays the live ranking's; `pred` is indexed by cache row.
+            bool first = true;
             for (size_t i = 0; i < snap.scores.size(); ++i) {
                 const auto& row = snap.scores[i];
+                if (!row.legacyScored) continue;
                 const auto& b = row.breakdown;
                 const long long rank = row.rank >= PipelineStateCache::kUnrankedTail ? -1 : static_cast<long long>(row.rank);
                 line += std::format(R"({}["{:08X}","{}","{}",{},{},{},{},{},{},{},)",
-                    i ? "," : "", row.formID, Candidate::SourceTypeToString(row.sourceType),
+                    first ? "" : ",", row.formID, Candidate::SourceTypeToString(row.sourceType),
                     Slot::SlotClassificationToString(row.slotClass), rank, Num(row.utility),
                     Num(b.contextWeight), Num(b.rewardEstimate), Num(b.prior), Num(b.ucb), Num(b.confidence));
                 line += std::format("{},{},{},{},{},{},{},{},{}]",
@@ -263,6 +271,7 @@ namespace Huginn::Learning
                     Num(b.potionMultiplier), Num(b.favoritesMultiplier),
                     row.isWildcard ? 1 : 0, row.isColdStartBoosted ? 1 : 0,
                     Num(i < r.predictions.size() ? r.predictions[i] : 0.0f));
+                first = false;
             }
             line += "]}\n";
             return line;
