@@ -322,6 +322,11 @@ namespace Huginn::Slot
         m_homeKeyMemorySec.store(60.0f, std::memory_order_release);
         m_classRepeatDiscount.store(0.5f, std::memory_order_release);
         m_classFreeSlots.store(3, std::memory_order_release);
+        // The Remembrance and fill-job keys: LoadFromIni's fallbacks.
+        m_remembranceDurationMs.store(15000.0f, std::memory_order_release);
+        m_remembranceMismatchMs.store(5000.0f, std::memory_order_release);
+        m_remembranceToJobKey.store(false, std::memory_order_release);
+        m_fillJobKeysFromRegular.store(false, std::memory_order_release);
         m_pressGraceMs.store(600.0f, std::memory_order_release);
         m_vitalBucketHysteresis.store(0.03f, std::memory_order_release);
         m_distanceBucketHysteresis.store(0.1f, std::memory_order_release);

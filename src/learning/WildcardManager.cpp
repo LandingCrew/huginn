@@ -13,8 +13,8 @@ namespace Huginn::Scoring
 
     WildcardManager::WildcardManager()
     {
-        m_gate.settings.cooldownSec = Config::WILDCARD_COOLDOWN_SECONDS;
-        m_gate.settings.refractorySec = 5.0;
+        // The clocks start at GateSettings' defaults (the shipped Huginn.ini's
+        // values) until LoadWildcardConfigFromINI sets them.
         m_gate.Reset(NowNs());
     }
 

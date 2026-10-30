@@ -200,7 +200,7 @@ sequenceDiagram
 |---|---|---|
 | `Huginn_toggle_widget` | Show/Hide Widget | `IntuitionMenu::ToggleUserHidden()` — deliberately the *same* latch the hotkey flips, not a parallel flag. Resets to shown on load; use `bEnabled` to turn the widget off for good |
 | `Huginn_reset_weights` | Reset Learned Weights | `ResetLearningData()` — clears `FeatureBanditLearner` **and** resets `SlotLocker`, so locked slots stop pinning recommendations scored by the just-cleared table. Shared with `hg reset weights` |
-| `Huginn_reset_defaults` | Reset to Defaults | `ResetAllToDefaults()` — every settings singleton back to compile-time defaults, then the same side effects as a reload |
+| `Huginn_reset_defaults` | Reset to Defaults | `ResetAllToDefaults()` — every settings singleton back to compile-time defaults, then the same side effects as a reload. `[Wildcards]` and `[SlotLocker]` (the lock keys and the Remembrance / fill-job keys) included: nothing re-reads `Huginn.ini`. The page layout resets to the code default, one page of eight Regular keys (the shipped `Huginn.ini` has three pages). Nothing is written to disk, so the next game load or reload reads `Huginn.ini` again |
 | `Huginn_reload_ini` | Reload INI | `ReloadAllSettings(GetDMenuIniPath())`. dMenu-managed sections still come from the dMenu INI, so a manual reload does **not** reset the player's widget customizations |
 
 An unknown button ID logs a warning and shows "Huginn: Unknown action (check logs)".
@@ -364,12 +364,13 @@ Each INI is parsed **once** per reload and handed to every loader via
 file (9+ parses per load before `866f7bb`). `LoadIniFile` in `src/IniLoad.h` is
 the shared parse front door. `ApplySideEffects` takes the already-parsed main INI
 so the wildcard and slot-locker loaders can reuse it; on the reset-to-defaults
-path it is `nullptr` and those two parse `Huginn.ini` themselves.
+path it is `nullptr` and those two read an empty INI, so every key takes its
+loader's fallback, which is its default.
 
 Graceful degradation inside the reload: if the dMenu INI does not exist, the path
 falls back to the main INI with a warning; if the main INI is missing, every
-main-INI loader is skipped and keeps its current values, while keybindings fall
-back to compile-time defaults.
+main-INI loader is skipped and keeps its current values, while keybindings,
+`[Wildcards]` and `[SlotLocker]`'s lock keys fall back to compile-time defaults.
 
 ### ApplySideEffects order
 

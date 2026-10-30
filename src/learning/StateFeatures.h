@@ -59,13 +59,13 @@ namespace Huginn::Learning
       // [17] Bias — always 1.0 (intercept term for linear model)
       float bias = 1.0f;
 
-      // APPEND-ONLY: the ToArray() order is the cosave wire order, and
-      // BanditSerializer migrates saved weights positionally when
-      // NUM_FEATURES changes. New features must be appended at the END of
-      // ToArray() (after the current last index); never reorder or remove
-      // positions — saved weights would silently apply to the wrong
-      // features. Retiring a feature means keeping its slot and feeding it
-      // a constant 0.
+      // APPEND-ONLY: the ToArray() order is the cosave wire order. A
+      // changed NUM_FEATURES makes BanditSerializer skip every saved BNDW
+      // record (no migration since 0.24.8), so the old learner starts empty;
+      // a reorder at the same count would load saved weights onto the wrong
+      // features without a word. New features go at the END of ToArray();
+      // never reorder or remove positions. Retiring a feature means keeping
+      // its slot and feeding it a constant 0.
       static constexpr size_t NUM_FEATURES = 18;
 
       // Max distance for normalization: 4096 game units ≈ 56m
@@ -136,8 +136,8 @@ namespace Huginn::Learning
       [[nodiscard]] std::array<float, NUM_FEATURES> ToArray() const
       {
          static_assert(NUM_FEATURES == 18,
-            "New features must be APPENDED at the END of ToArray() — cosave "
-            "migration is positional (see APPEND-ONLY block above NUM_FEATURES)");
+            "New features must be APPENDED at the END of ToArray() — the order "
+            "is the cosave wire order (see APPEND-ONLY block above NUM_FEATURES)");
          return {{
             healthPct, magickaPct, staminaPct,
             inCombat, isSneaking, distanceNorm,

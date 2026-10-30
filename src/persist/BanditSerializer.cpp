@@ -19,16 +19,15 @@ namespace Huginn::Persist
    // contract: the entry must be trivially copyable and tightly packed. The size
    // check equals the exact field sum — if a field is added/reordered or padding
    // appears, this fails to compile, forcing a wire-format + version bump instead
-   // of silently writing an incompatible blob. The byte order also matches the
-   // legacy per-field format (formID, weights[18], trainCount, minutes); v4
-   // keeps the stride and makes the count a float.
+   // of silently writing an incompatible blob. Byte order: formID,
+   // weights[18], trainCount (float), minutesSinceChosen.
    static_assert(std::is_trivially_copyable_v<BanditEntry>,
       "SerializedEntry must be trivially copyable for batch cosave I/O");
    static_assert(sizeof(BanditEntry) ==
          sizeof(RE::FormID)
        + sizeof(float) * Learning::StateFeatures::NUM_FEATURES
-       + sizeof(float)      // trainCount (v4: float; v2/v3: uint32)
-       + sizeof(uint32_t),  // minutesSinceChosen (v4; v2/v3: since the last update)
+       + sizeof(float)      // trainCount
+       + sizeof(uint32_t),  // minutesSinceChosen
       "SerializedEntry layout changed — batch cosave I/O assumes tight packing; "
       "bump kBanditSerializationVersion and update the wire format");
 
@@ -56,49 +55,37 @@ namespace Huginn::Persist
       return id;
    }
 
-   std::vector<BanditEntry> DecodeV2EntryBlob(
-      const std::byte* data, size_t byteLen, uint32_t numItems, uint32_t diskFeatureCount,
-      uint32_t recordVersion, bool unitTest)
+   // The accept/skip decision, checked at compile time (the Debug suite's
+   // Test 4 checks it at run time too).
+   static_assert(CheckBndwHeader(kBanditSerializationVersion, Learning::StateFeatures::NUM_FEATURES)
+      == BndwHeader::Accept);
+   static_assert(CheckBndwHeader(3, Learning::StateFeatures::NUM_FEATURES) == BndwHeader::WrongVersion);
+   static_assert(CheckBndwHeader(kBanditSerializationVersion, Learning::StateFeatures::NUM_FEATURES - 2)
+      == BndwHeader::WrongFeatureCount);
+
+   std::vector<BanditEntry> DecodeEntryBlob(
+      const std::byte* data, size_t byteLen, uint32_t numItems, bool unitTest)
    {
-      static_assert(sizeof(float) == sizeof(uint32_t), "v3 and v4 share one stride");
-      constexpr auto compiled = static_cast<uint32_t>(Learning::StateFeatures::NUM_FEATURES);
-      const size_t stride = sizeof(RE::FormID)
-                          + sizeof(float) * diskFeatureCount
-                          + sizeof(uint32_t) * 2;
+      constexpr size_t stride = sizeof(BanditEntry);
       if (byteLen != stride * numItems) {
          // The unit tests feed a short blob on purpose. Logged at [E] like a
          // real one, it was read as a save dropping learned weights on load
          // (2026-10-01), so a test call says so on the line itself.
          if (unitTest) {
-            logger::info("[Cosave Test] DecodeV2EntryBlob: byteLen {} != stride {} x numItems {} — "
+            logger::info("[Cosave Test] DecodeEntryBlob: byteLen {} != stride {} x numItems {} — "
                "rejecting (UNIT TEST: deliberate short blob, not a save fault)"sv,
                byteLen, stride, numItems);
          } else {
-            logger::error("[Cosave] DecodeV2EntryBlob: byteLen {} != stride {} x numItems {} — rejecting"sv,
+            logger::error("[Cosave] DecodeEntryBlob: byteLen {} != stride {} x numItems {} — rejecting"sv,
                byteLen, stride, numItems);
          }
          return {};
       }
-      const uint32_t copyCount = std::min(diskFeatureCount, compiled);
-
-      // Value-init zeroes every weight, so positions >= copyCount stay 0
-      // (new features start untrained).
+      // The save side writes the entry array as one blob, so the read is one
+      // memcpy back (trivially copyable and tightly packed: asserted above).
       std::vector<BanditEntry> out(numItems);
-      const std::byte* p = data;
-      for (uint32_t i = 0; i < numItems; ++i, p += stride) {
-         auto& e = out[i];
-         std::memcpy(&e.formID, p, sizeof(e.formID));
-         std::memcpy(e.weights.data(), p + sizeof(e.formID), sizeof(float) * copyCount);
-         const std::byte* tail = p + sizeof(e.formID) + sizeof(float) * diskFeatureCount;
-         if (recordVersion >= 4) {
-            std::memcpy(&e.trainCount, tail, sizeof(e.trainCount));
-         } else {
-            uint32_t count = 0;
-            std::memcpy(&count, tail, sizeof(count));
-            e.trainCount = static_cast<float>(count);
-         }
-         std::memcpy(&e.minutesSinceChosen, tail + sizeof(e.trainCount),
-            sizeof(e.minutesSinceChosen));
+      if (byteLen > 0) {
+         std::memcpy(out.data(), data, byteLen);
       }
       return out;
    }
@@ -172,9 +159,8 @@ namespace Huginn::Persist
          // real playthrough. If a corrupt/oversized count somehow reached here, the
          // load side rejects numItems > kMaxBanditItems wholesale (see LoadCallback).
 
-         // Entries: one contiguous blob instead of 21 calls/item. The array is
-         // byte-identical to the old per-field layout (see static_asserts above),
-         // so existing v2 saves remain compatible in both directions.
+         // Entries: one contiguous blob instead of 21 calls/item; the array's
+         // memory layout is the wire format (see static_asserts above).
          if (numItems > 0) {
             const uint32_t byteLen = numItems * static_cast<uint32_t>(sizeof(BanditEntry));
             if (!a_intfc->WriteRecordData(banditEntries.data(), byteLen)) {
@@ -229,15 +215,18 @@ namespace Huginn::Persist
                logger::error("[Cosave] Failed to read BNDW version"sv);
                break;
             }
-            if (recVersion != 3 && recVersion != kBanditSerializationVersion) {
-               logger::warn("[Cosave] BNDW version unsupported: got {} (expected 3 or {}) — skipping"sv,
+            // Only the current version (v4) with NUM_FEATURES weights per
+            // entry is read (CheckBndwHeader); anything else is skipped whole
+            // and the old learner starts empty. No migration: no save holds
+            // another format. A header/in-data version mismatch is logged
+            // rather than rejected, and the in-data version is trusted. The
+            // header check, the item cap and the exact-length read below
+            // validate everything decode relies on.
+            if (CheckBndwHeader(recVersion, Learning::StateFeatures::NUM_FEATURES) == BndwHeader::WrongVersion) {
+               logger::warn("[Cosave] BNDW version unsupported: got {} (expected {}) — skipping"sv,
                   recVersion, kBanditSerializationVersion);
                break;
             }
-            // Only v3 and v4 reach here (v1/v2, the old 8/5 target, are skipped); both keep
-            // v2's fixed-stride wire format. A header/in-data mismatch is logged rather than rejected, and the
-            // in-data version is trusted. The version check, bounds checks, and
-            // exact-length reads below validate everything decode relies on.
             if (recVersion != version) {
                logger::warn("[Cosave] BNDW version mismatch: SKSE header {} vs in-data {} — trusting in-data version"sv,
                   version, recVersion);
@@ -248,20 +237,10 @@ namespace Huginn::Persist
                logger::error("[Cosave] Failed to read BNDW numFeatures"sv);
                break;
             }
-            if (numFeatures == 0 || numFeatures > kMaxBanditFeatures) {
-               logger::error("[Cosave] BNDW numFeatures {} out of range [1, {}] — corrupt record, skipping"sv,
-                  numFeatures, kMaxBanditFeatures);
+            if (CheckBndwHeader(recVersion, numFeatures) != BndwHeader::Accept) {
+               logger::warn("[Cosave] BNDW feature count unsupported: got {} (expected {}) — skipping"sv,
+                  numFeatures, Learning::StateFeatures::NUM_FEATURES);
                break;
-            }
-            constexpr auto compiledFeatures = static_cast<uint32_t>(Learning::StateFeatures::NUM_FEATURES);
-            if (numFeatures != compiledFeatures) {
-               // Positional migration (append-only convention, see header/StateFeatures.h):
-               // smaller on-disk count → tail zero-pads (new features untrained);
-               // larger → tail truncates (removed features dropped).
-               logger::info("[Cosave] BNDW feature-count migration: {} on disk -> {} compiled ({})"sv,
-                  numFeatures, compiledFeatures,
-                  numFeatures < compiledFeatures ? "zero-padding new features"sv
-                                                 : "truncating removed features"sv);
             }
 
             if (!a_intfc->ReadRecordData(banditData.totalTrainCount)) {
@@ -315,17 +294,13 @@ namespace Huginn::Persist
             };
 
             {
-               // v2/v3: fixed-stride entries — read the whole array in one call, using
-               // the stride the record was WRITTEN with (differs from sizeof(BanditEntry)
-               // during feature-count migration). A short read rejects the record
-               // wholesale (no silent partial import). byteLen cannot overflow:
-               // numItems <= 50k and stride <= 4 + 4*256 + 8, product < 52 MB.
-               const size_t diskStride = sizeof(RE::FormID)
-                                       + sizeof(float) * numFeatures
-                                       + sizeof(uint32_t) * 2;
+               // Fixed-stride entries — read the whole array in one call. A
+               // short read rejects the record wholesale (no silent partial
+               // import). byteLen cannot overflow: numItems <= kMaxBanditItems
+               // (the static_assert in the header).
                std::vector<BanditEntry> raw;
                if (numItems > 0) {
-                  const uint32_t byteLen = numItems * static_cast<uint32_t>(diskStride);
+                  const uint32_t byteLen = numItems * static_cast<uint32_t>(sizeof(BanditEntry));
                   std::vector<std::byte> blob(byteLen);
                   const uint32_t got = a_intfc->ReadRecordData(blob.data(), byteLen);
                   if (got != byteLen) {
@@ -333,17 +308,7 @@ namespace Huginn::Persist
                         got, byteLen);
                      break;
                   }
-                  raw = DecodeV2EntryBlob(blob.data(), blob.size(), numItems, numFeatures, recVersion);
-               }
-               // v3 -> v4: the evidence is kept as it was (n_eff = the train
-               // count) and every life starts now. v3's minutes counted from
-               // the last update or decay stamp, not the last pick.
-               if (recVersion == 3) {
-                  for (auto& entry : raw) {
-                     entry.minutesSinceChosen = 0;
-                  }
-                  logger::info("[Cosave] BNDW v3 converted to v{}: {} entries keep their evidence; "
-                     "each one's useful life starts now"sv, kBanditSerializationVersion, raw.size());
+                  raw = DecodeEntryBlob(blob.data(), blob.size(), numItems);
                }
                for (auto& entry : raw) {
                   acceptEntry(entry);

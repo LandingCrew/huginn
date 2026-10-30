@@ -371,6 +371,13 @@ namespace Huginn::Settings
         // ModCallbackEvent gives no thread guarantee. SlotSettings additionally
         // has its own shared_mutex. Side effects are ordered to avoid inconsistency.
 
+        // [Wildcards] and [SlotLocker] read the caller's parsed INI on a reload.
+        // With none (Reset to Defaults, or a reload that found no Huginn.ini)
+        // they read an empty one, so every key takes its loader's fallback,
+        // which is its default.
+        const CSimpleIniA noIni;
+        const CSimpleIniA& iniOrDefaults = mainIni ? *mainIni : noIni;
+
         // 1. Apply scorer config + context weight config + wildcard config
         auto* utilityScorer = g_utilityScorer.get();
         if (g_legacyScorer) {
@@ -379,13 +386,7 @@ namespace Huginn::Settings
         }
         if (utilityScorer) {
             utilityScorer->SetConfig(Scoring::ScorerSettings::GetSingleton().BuildConfig());
-            // Reuse the caller's parsed INI when available (reload path); otherwise
-            // parse Huginn.ini here (reset-to-defaults path).
-            if (mainIni) {
-                LoadWildcardConfigFromINI(utilityScorer->GetWildcardManager(), *mainIni);
-            } else {
-                LoadWildcardConfigFromINI(utilityScorer->GetWildcardManager());
-            }
+            LoadWildcardConfigFromINI(utilityScorer->GetWildcardManager(), iniOrDefaults);
         }
 
         // 1b. Apply learning config to ExternalEquipLearner and the learner's
@@ -419,8 +420,7 @@ namespace Huginn::Settings
         // 3. Reset slot locker AFTER allocator (so it operates on correct slot count)
         auto& slotLocker = Slot::SlotLocker::GetSingleton();
         slotLocker.Reset();
-        slotLocker.SetConfig(mainIni ? LoadSlotLockerConfigFromINI(*mainIni)
-                                     : LoadSlotLockerConfigFromINI());
+        slotLocker.SetConfig(LoadSlotLockerConfigFromINI(iniOrDefaults));
         // Holds name page/slot indices of the layout that just went away.
         Slot::Remembrance::GetSingleton().Reset();
 

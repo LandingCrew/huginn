@@ -7381,90 +7381,77 @@ void RunCosaveTests()
         logger::info("  PASS: learner import clears old data and replaces with new"sv);
     }
 
-    // ── Test 4: Feature-count migration decode (pad / truncate) ─────────
+    // ── Test 4: BNDW accepts only v4 at the compiled feature count; decode ─
     {
-        using Huginn::Persist::DecodeV2EntryBlob;
+        using Huginn::Persist::BndwHeader;
+        using Huginn::Persist::CheckBndwHeader;
+        using Huginn::Persist::DecodeEntryBlob;
+        using Huginn::Persist::kBanditSerializationVersion;
         constexpr auto compiled = static_cast<uint32_t>(StateFeatures::NUM_FEATURES);
 
-        // Build a synthetic blob with diskFeatures weights per entry: v3's
-        // integer count, or v4's float.
-        auto makeBlob = [](uint32_t diskFeatures, uint32_t numItems, bool v4 = false) {
-            const size_t stride = sizeof(RE::FormID)
-                                + sizeof(float) * diskFeatures
-                                + sizeof(uint32_t) * 2;
+        // Accept / skip: the current version at the compiled count loads;
+        // any other version (v3, the pre-0.23.6 format) or feature count
+        // (the old pad / truncate migration's inputs) is skipped.
+        {
+            const bool ok = CheckBndwHeader(kBanditSerializationVersion, compiled) == BndwHeader::Accept
+                && CheckBndwHeader(3, compiled) == BndwHeader::WrongVersion
+                && CheckBndwHeader(kBanditSerializationVersion + 1, compiled) == BndwHeader::WrongVersion
+                && CheckBndwHeader(kBanditSerializationVersion, compiled - 2) == BndwHeader::WrongFeatureCount
+                && CheckBndwHeader(kBanditSerializationVersion, compiled + 3) == BndwHeader::WrongFeatureCount
+                && CheckBndwHeader(kBanditSerializationVersion, 0) == BndwHeader::WrongFeatureCount;
+            if (!ok) {
+                logger::error("[Cosave Test] FAIL: BNDW header accept/skip incorrect"sv);
+                return;
+            }
+            logger::info("  PASS: BNDW header: v{} at {} features accepted, other versions and counts skipped"sv,
+                kBanditSerializationVersion, compiled);
+        }
+
+        // Build a synthetic v4 blob: formID, the compiled weights, the float
+        // evidence and the minutes, field by field.
+        auto makeBlob = [](uint32_t numItems) {
+            constexpr size_t stride = sizeof(RE::FormID)
+                                    + sizeof(float) * compiled
+                                    + sizeof(uint32_t) * 2;
             std::vector<std::byte> blob(stride * numItems);
             std::byte* p = blob.data();
             for (uint32_t i = 0; i < numItems; ++i, p += stride) {
                 RE::FormID formID = 0x00040000 + i;
                 std::memcpy(p, &formID, sizeof(formID));
-                for (uint32_t f = 0; f < diskFeatures; ++f) {
+                for (uint32_t f = 0; f < compiled; ++f) {
                     float w = static_cast<float>(i * 100 + f + 1);  // distinct, nonzero
                     std::memcpy(p + sizeof(formID) + f * sizeof(float), &w, sizeof(w));
                 }
-                uint32_t trainCount = 10 + i;
                 float evidence = 10.5f + static_cast<float>(i);
                 uint32_t minutes = 20 + i;
-                std::byte* tail = p + sizeof(formID) + sizeof(float) * diskFeatures;
-                if (v4) {
-                    std::memcpy(tail, &evidence, sizeof(evidence));
-                } else {
-                    std::memcpy(tail, &trainCount, sizeof(trainCount));
-                }
-                std::memcpy(tail + sizeof(trainCount), &minutes, sizeof(minutes));
+                std::byte* tail = p + sizeof(formID) + sizeof(float) * compiled;
+                std::memcpy(tail, &evidence, sizeof(evidence));
+                std::memcpy(tail + sizeof(evidence), &minutes, sizeof(minutes));
             }
             return blob;
         };
 
-        // Pad: 16 on disk -> compiled 18, tail must be zero
+        // v4: decode must match the fields as written and a straight memcpy
+        // of SerializedEntry
         {
-            constexpr uint32_t disk = compiled - 2;
-            auto blob = makeBlob(disk, 2);
-            auto entries = DecodeV2EntryBlob(blob.data(), blob.size(), 2, disk, 3);
-            bool ok = entries.size() == 2
-                   && entries[1].formID == 0x00040001
-                   && entries[1].trainCount == 11.0f
-                   && entries[1].minutesSinceChosen == 21
-                   && entries[1].weights[0] == 101.0f
-                   && entries[1].weights[disk - 1] == static_cast<float>(100 + disk)
-                   && entries[1].weights[disk] == 0.0f
-                   && entries[1].weights[compiled - 1] == 0.0f;
-            if (!ok) {
-                logger::error("[Cosave Test] FAIL: pad migration decode incorrect"sv);
-                return;
-            }
-        }
-
-        // Truncate: 21 on disk -> compiled 18, extras dropped, tail fields intact
-        {
-            constexpr uint32_t disk = compiled + 3;
-            auto blob = makeBlob(disk, 2);
-            auto entries = DecodeV2EntryBlob(blob.data(), blob.size(), 2, disk, 3);
+            auto blob = makeBlob(2);
+            auto entries = DecodeEntryBlob(blob.data(), blob.size(), 2);
+            FeatureBanditLearner::SerializedEntry direct;
+            std::memcpy(&direct, blob.data() + sizeof(direct), sizeof(direct));
             bool ok = entries.size() == 2
                    && entries[0].formID == 0x00040000
-                   && entries[0].trainCount == 10.0f
-                   && entries[0].minutesSinceChosen == 20
                    && entries[0].weights[0] == 1.0f
-                   && entries[0].weights[compiled - 1] == static_cast<float>(compiled);
-            if (!ok) {
-                logger::error("[Cosave Test] FAIL: truncate migration decode incorrect"sv);
-                return;
-            }
-        }
-
-        // Equal count, v4: decode must match a straight memcpy of SerializedEntry
-        {
-            auto blob = makeBlob(compiled, 1, true);
-            auto entries = DecodeV2EntryBlob(blob.data(), blob.size(), 1, compiled, 4);
-            FeatureBanditLearner::SerializedEntry direct;
-            std::memcpy(&direct, blob.data(), sizeof(direct));
-            bool ok = entries.size() == 1
-                   && entries[0].formID == direct.formID
-                   && entries[0].weights == direct.weights
-                   && entries[0].trainCount == direct.trainCount
+                   && entries[0].weights[compiled - 1] == static_cast<float>(compiled)
                    && entries[0].trainCount == 10.5f
-                   && entries[0].minutesSinceChosen == direct.minutesSinceChosen;
+                   && entries[0].minutesSinceChosen == 20
+                   && entries[1].formID == direct.formID
+                   && entries[1].weights == direct.weights
+                   && entries[1].trainCount == direct.trainCount
+                   && entries[1].trainCount == 11.5f
+                   && entries[1].minutesSinceChosen == direct.minutesSinceChosen
+                   && entries[1].minutesSinceChosen == 21;
             if (!ok) {
-                logger::error("[Cosave Test] FAIL: equal-count decode differs from raw layout"sv);
+                logger::error("[Cosave Test] FAIL: v4 decode differs from the written fields"sv);
                 return;
             }
         }
@@ -7477,9 +7464,8 @@ void RunCosaveTests()
         // second time after a note above it, which did not survive grepping
         // for errors (2026-10-01).
         {
-            auto blob = makeBlob(compiled, 1);
-            auto entries = DecodeV2EntryBlob(blob.data(), blob.size() - 1, 1, compiled, 4,
-                /*unitTest=*/true);
+            auto blob = makeBlob(1);
+            auto entries = DecodeEntryBlob(blob.data(), blob.size() - 1, 1, /*unitTest=*/true);
             if (!entries.empty()) {
                 logger::error("[Cosave Test] FAIL: byteLen mismatch should reject decode"sv);
                 return;
@@ -7487,7 +7473,7 @@ void RunCosaveTests()
             logger::info("  PASS: short blob rejected"sv);
         }
 
-        logger::info("  PASS: learner feature-count migration pads, truncates, round-trips"sv);
+        logger::info("  PASS: learner BNDW v4 decode round-trips"sv);
     }
 
     logger::info("=== Cosave Serialization Tests PASSED ==="sv);
