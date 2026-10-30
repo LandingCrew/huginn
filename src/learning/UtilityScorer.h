@@ -5,6 +5,7 @@
 #include "ScoredCandidate.h"
 #include "WildcardManager.h"
 
+#include <limits>
 #include <vector>
 
 namespace Huginn::Scoring
@@ -68,8 +69,11 @@ namespace Huginn::Scoring
         // force: bypass the membership-change dedup (on-demand `hg recs` dumps).
         // fallback (R8.3): the list is the fallback ranking (no bootstrap;
         // built by the legacy module, learning/legacy/LegacyRun.h).
+        // outsideU0 (R11): the run's outside option u0 (outcomes "three"),
+        // printed in the header; NaN when the model has none.
         void LogTopCandidates(const ScoredCandidateList& ranked, size_t count = 5,
-            bool detail = false, bool force = false, bool fallback = false) const;
+            bool detail = false, bool force = false, bool fallback = false,
+            double outsideU0 = std::numeric_limits<double>::quiet_NaN()) const;
 
     private:
         ScorerConfig m_config;

@@ -4,11 +4,13 @@
 #include "IniLoad.h"
 #include "Profiling.h"
 #include "core/MiniRegex.h"
+#include "core/OverrideFiles.h"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <thread>
@@ -122,37 +124,80 @@ namespace Huginn::Effect
 
     void EffectCatalog::LoadOverrides()
     {
-        CSimpleIniA ini;
-        if (!LoadIniFile(ini, std::filesystem::path("Data/SKSE/Plugins/Huginn_EffectOverrides.ini"),
-                         "EffectCatalog"sv)) {
+        // R11: the override layer is a directory (core/OverrideFiles.h): every
+        // Data/SKSE/Plugins/Huginn/EffectOverrides/*.ini a mod ships, then the
+        // player's own Huginn_EffectOverrides.ini last. One file that cannot be
+        // read (an I/O error) or is for a newer format is skipped and named; the
+        // rest still load. A malformed line is ignored and counted.
+        namespace fs = std::filesystem;
+        std::vector<OverrideFile> files;
+        const auto readFile = [&files](const fs::path& path, bool player) {
+            OverrideFile f;
+            f.name = path.filename().string();
+            f.player = player;
+            CSimpleIniA ini;
+            ini.SetUnicode();
+            if (ini.LoadFile(path.string().c_str()) < 0) {
+                f.readOk = false;
+            }
+            else {
+                f.version = static_cast<int>(ini.GetLongValue("Huginn", "iFormatVersion", 0));
+                CSimpleIniA::TNamesDepend keys;
+                ini.GetAllKeys("Overrides", keys);
+                keys.sort(CSimpleIniA::Entry::LoadOrder());
+                for (const auto& k : keys) {
+                    const char* value = ini.GetValue("Overrides", k.pItem, "");
+                    f.lines.emplace_back(k.pItem ? k.pItem : "", value ? value : "");
+                }
+            }
+            files.push_back(std::move(f));
+        };
+        std::error_code ec;
+        const fs::path dir("Data/SKSE/Plugins/Huginn/EffectOverrides");
+        if (fs::is_directory(dir, ec)) {
+            for (const auto& e : fs::directory_iterator(dir, ec)) {
+                if (!e.is_regular_file(ec)) continue;
+                auto ext = e.path().extension().string();
+                for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                if (ext == ".ini") readFile(e.path(), false);
+            }
+        }
+        const fs::path playerFile("Data/SKSE/Plugins/Huginn_EffectOverrides.ini");
+        if (fs::exists(playerFile, ec)) readFile(playerFile, true);
+        if (files.empty()) {
+            logger::info("[EffectCatalog] no effect override files (Huginn/EffectOverrides/*.ini, Huginn_EffectOverrides.ini)"sv);
             return;
         }
-        CSimpleIniA::TNamesDepend keys;
-        ini.GetAllKeys("Overrides", keys);
-        std::size_t bad = 0;
-        for (const auto& k : keys) {
-            const std::string key = k.pItem ? k.pItem : "";
-            const char* value = ini.GetValue("Overrides", k.pItem, "");
-            const auto bar = key.find('|');
-            const auto col = FromName(value ? std::string_view(value) : std::string_view{});
-            if (bar == std::string::npos || !col) {
-                ++bad;
-                logger::warn("[EffectCatalog] override '{}' = '{}' ignored: want <plugin>|<local FormID hex> = <column>"sv,
-                    key, value ? value : "");
+
+        // "Loaded" is active in the load order: LookupModByName also finds a
+        // plugin that is present in Data but not active, whose entries would
+        // then count as loaded rather than "for plugins not loaded".
+        auto* dh = RE::TESDataHandler::GetSingleton();   // the lookups are non-const
+        const auto merged = MergeOverrides(files, [dh](std::string_view plugin) {
+            return dh && (dh->LookupLoadedModByName(plugin) != nullptr ||
+                          dh->LookupLoadedLightModByName(plugin) != nullptr);
+        });
+        overrides_ = merged.table;
+        std::size_t ignored = 0, notLoaded = 0, replaced = 0, skipped = 0;
+        for (const auto& f : merged.files) {
+            if (f.skipped) {
+                ++skipped;
+                logger::warn("[EffectCatalog] override file {} skipped: {}"sv, f.name, f.why);
                 continue;
             }
-            std::string hex = key.substr(bar + 1);
-            if (hex.starts_with("0x") || hex.starts_with("0X")) hex = hex.substr(2);
-            std::uint32_t local = 0;
-            const auto r = std::from_chars(hex.data(), hex.data() + hex.size(), local, 16);
-            if (r.ec != std::errc{} || r.ptr != hex.data() + hex.size()) {
-                ++bad;
-                logger::warn("[EffectCatalog] override '{}' ignored: bad FormID"sv, key);
-                continue;
+            ignored += f.ignored;
+            notLoaded += f.notLoaded;
+            replaced += f.replaced;
+            if (f.ignored > 0) {
+                logger::warn("[EffectCatalog] override file {}: {} line(s) ignored (want <plugin>|<local FormID hex> = "
+                             "<effects.csv column>)"sv, f.name, f.ignored);
             }
-            overrides_.Add(std::string_view(key).substr(0, bar), local, *col);
+            logger::debug("[EffectCatalog] override file {}: {} loaded, {} for plugins not loaded, {} replaced an "
+                          "earlier file's"sv, f.name, f.loaded, f.notLoaded, f.replaced);
         }
-        logger::info("[EffectCatalog] {} effect override(s) loaded, {} ignored"sv, overrides_.Size(), bad);
+        logger::info("[EffectCatalog] {} effect override(s) from {} file(s) ({} skipped); {} line(s) ignored, {} for "
+                     "plugins not loaded, {} replaced by a later file"sv,
+            merged.entries, files.size(), skipped, ignored, notLoaded, replaced);
     }
 
     void EffectCatalog::ScheduleBuild()

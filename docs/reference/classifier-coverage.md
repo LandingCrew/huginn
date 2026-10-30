@@ -1,5 +1,7 @@
 # Classifier Coverage by Load Order
 
+> **R11 (0.24.4):** historical. The per-type `hg dump` commands this page was built from are gone; the classifiers it measures feed only the D2 feature. The effect catalog's coverage is in `hg dump all`'s summary line and `huginn_effect_report`.
+
 How much of each load order Huginn's classifiers can type, measured from the
 `hg dump` commands. Every count is the whole LOAD ORDER, not what a character
 carries. Re-run the dumps and add a dated section when a load order or a

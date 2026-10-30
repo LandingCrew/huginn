@@ -125,13 +125,20 @@ namespace Huginn::Slot
                     return f == OverrideFilter::HP || f == OverrideFilter::Any;
                 };
 
-                Candidate::ItemCandidate potion{};
-                potion.type = Item::ItemType::HealthPotion;
-                potion.tags = Item::ItemTag::RestoreHealth;
-                Candidate::SpellCandidate spell{};
-                spell.type = Spell::SpellType::Healing;
-                spell.tags = Spell::SpellTag::RestoreHealth;
-                const std::array<Candidate::CandidateVariant, 2> probes{ potion, spell };
+                // R11: the probes are stated as the effect catalog would read
+                // a healing potion and a self-cast restore spell
+                // (core/CapFacets.h), not as classifier tags.
+                Core::Facets::Subject potion;
+                potion.source = Core::Facets::Source::Item;
+                potion.known = true;
+                potion.kind = Core::Effect::Kind::Potion;
+                potion.facets.Add(Core::Facets::F::RestoreHealth);
+                Core::Facets::Subject spell;
+                spell.source = Core::Facets::Source::Spell;
+                spell.known = true;
+                spell.kind = Core::Effect::Kind::Spell;
+                spell.facets.Add(Core::Facets::F::RestoreHealth);
+                const std::array<Core::Facets::Subject, 2> probes{ potion, spell };
 
                 std::set<size_t> landing;
                 for (const auto& probe : probes) {
@@ -140,7 +147,7 @@ namespace Huginn::Slot
                     for (const size_t s : order) {
                         if (!acceptsHealth(slots[s].overrideFilter)) continue;
                         if (firstAccepting == SIZE_MAX) firstAccepting = s;
-                        if (SlotClassifier::Matches(probe, slots[s].classification)) {
+                        if (Core::Facets::Matches(probe, slots[s].classification)) {
                             firstMatching = s;
                             break;
                         }

@@ -140,7 +140,7 @@ namespace Huginn::Spell
       }
 
       // A Defensive spell's element is what it protects against, and both
-      // readers -- ContextWeightForCandidate and IsResistSpellRedundant -- take
+      // readers -- ContextWeightForCandidate and (before R11) the resist filter -- take
       // it that way. Above, it could come from a word in the NAME: Ice Armor
       // (kDamageResist, a physical armour spell) read as Frost from "Ice", so it
       // was promoted while the player took frost damage and suppressed once
@@ -1226,22 +1226,6 @@ namespace Huginn::Spell
       return costliestEffect ? costliestEffect : firstValidEffect;
    }
 
-   bool SpellClassifier::RetryDecidedType(RE::SpellItem* spell) const
-   {
-      auto* costliest = GetCostliestEffect(spell);
-      if (!costliest || !costliest->baseEffect) {
-      return false;
-      }
-      if (costliest->baseEffect->GetArchetype() != RE::EffectSetting::Archetype::kScript) {
-      return false;
-      }
-      if (DetermineSpellType(spell, costliest->baseEffect) != SpellType::Unknown) {
-      return false;  // the school fallback answered it; no retry happened
-      }
-      auto* readable = GetCostliestNonScriptEffect(spell);
-      return readable && readable->baseEffect &&
-      DetermineSpellType(spell, readable->baseEffect) != SpellType::Unknown;
-   }
 
    RE::Effect* SpellClassifier::GetCostliestNonScriptEffect(RE::SpellItem* spell) const
    {

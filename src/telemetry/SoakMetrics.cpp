@@ -407,11 +407,33 @@ namespace Huginn::Telemetry
             pressTotal ? std::format("{:.2f}", static_cast<float>(ownChurn) / static_cast<float>(pressTotal))
                        : std::string("n/a"),
             bounces, bouncesHold);
+        // R11 (map Phase 9): theta drift, appended last so every field before
+        // it keeps its place (tools/soak reads fields by name). The moved
+        // count above climbs with every answered onset whether or not a mean
+        // changed (the opportunity counter widens variances); these say how
+        // far the MEANS moved (core/ThetaDrift.h): weights whose mean moved,
+        // their mean and largest |mu - mu_boot| and where, the mean
+        // ln(var / var_boot), b's spread, and theta_covered. "off" in the
+        // fallback ranking.
+        std::string driftStr = "off";
+        if (g_choiceLearner && g_choiceLearner->Ready()) {
+            const auto d = g_choiceLearner->GetDrift();
+            std::string at = "-";
+            if (d.theta.maxSlot < Core::Choice::K * Core::Choice::J) {
+                const std::size_t k = d.theta.maxSlot / Core::Choice::J;
+                const std::size_t j = d.theta.maxSlot % Core::Choice::J;
+                at = std::format("{}:{}", Core::Needs::kNeeds[k].id, Core::Effect::kColumns[j].id);
+            }
+            driftStr = std::format("mu-moved={} dmean={:.4f} drms={:.4f} dmax={:+.3f} at={} var-moved={} lnvar={:+.3f} "
+                                   "b={} bmean={:.3f} bmax={:.3f} covered={:+.3f}",
+                d.theta.meanMoved, d.theta.meanAbsDelta, d.theta.rmsDelta, d.theta.maxDelta, at, d.theta.varMoved,
+                d.theta.meanLnVar, d.b.entries, d.b.meanAbsMu, d.b.maxAbsMu, d.covered.mu);
+        }
         logger::info(
             "[Soak] up={}h{:02}m{:02}s | equips hit={} near={} miss={} novel={} new={} accept={} skipped={} | "
             "recompute={}/{} ticks override={} pageBail={} | slotChurn={} | learn items={} trains={} forgot={} | tick avg={:.3f} peak={:.3f} ms | "
             "goals reachIns={} (candidate={}) presses={} (regular={} labeled={} offPage={}) pageFlips={} | {} | "
-            "choice {} | rate {} | perPress {}"sv,
+            "choice {} | rate {} | perPress {} | drift {}"sv,
             upH, upM, upS,
             hit, near_, miss, novel, learned, acceptStr, skipStr,
             recomputes, ticks, overrideRuns, pageBails,
@@ -420,7 +442,7 @@ namespace Huginn::Telemetry
             avgMs, peakMs,
             totalEquips + learned, hit + near_ + miss,
             pressTotal, pressRegular, pressLabeled, pressOffPage, pageFlips,
-            Core::Reach::FormatSplit(reach), choiceStr, rateStr, perPressStr);
+            Core::Reach::FormatSplit(reach), choiceStr, rateStr, perPressStr, driftStr);
 
         Huginn_PLOT("Huginn/Learner Items", static_cast<int64_t>(learnerItems));
         // Only plot windows that carry signal — zero-equip windows would drag the

@@ -420,25 +420,9 @@ namespace Huginn::Item
       return Item::RestoredWithin(magnitude, duration, windowSec);
       }
 
-      // Check for harmful side effects (Skooma, mixed-effect potions).
-      // isHostile covers most cases (poisons), but Skooma has DamageHealth
-      // alongside RestoreStamina without the hostile flag, so also check
-      // damage/debuff tags. Emergency overrides only surface pure potions.
-      [[nodiscard]] bool HasHarmfulSideEffects() const noexcept {
-      if (isHostile) {
-        return true;
-      }
-      const auto primaryHarmfulMask =
-        ItemTag::DamageHealth | ItemTag::DamageMagicka | ItemTag::DamageStamina;
-      if (HasTag(tags, primaryHarmfulMask)) {
-        return true;
-      }
-      const auto extHarmfulMask =
-        ItemTagExt::RavageHealth | ItemTagExt::RavageMagicka | ItemTagExt::RavageStamina |
-        ItemTagExt::DamageHealthRegen | ItemTagExt::DamageMagickaRegen | ItemTagExt::DamageStaminaRegen |
-        ItemTagExt::WeaknessElement;
-      return HasTagExt(tagsExt, extHarmfulMask);
-      }
+      // R11: the harmful-side-effect test by tags is gone; the override
+      // finders ask the effect catalog's self_harm, intoxication and hostile facets
+      // (core/CapFacets.h HasSideEffect).
 
       // String representation for logging
       [[nodiscard]] std::string ToString() const

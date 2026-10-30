@@ -1,5 +1,7 @@
 # Future Work — Learning System
 
+> **R11 (0.24.4):** several ideas here were written for the old engine (urgency multipliers, more context weights). Since R8.3 the hand-tuned engine (context weights × the bandit's learning score × multipliers) no longer ranks: every candidate is ranked on the choice score μ (θ over need × effect columns, b per item; doc 9, [9-implementation-map.md](9-implementation-map.md)), and the old engine runs only for the D2 feature `ln learn mult` (`[Scoring] bLegacyLearnFeature`, confined by `tools/prune/r8_check.py`); a new situation is a need (a sensor and a curve) and the learner sets its weights. Read these as problems to solve, not designs.
+
 Deferred and speculative work on the learning and prediction systems, plus
 one-off ideas kept here so they are not lost.
 
@@ -13,7 +15,7 @@ one-off ideas kept here so they are not lost.
 > **Related documentation:**
 > - [../roadmap.md](../roadmap.md) — open work, and the only planning source of truth
 > - [../roadmap-archive.md](../roadmap-archive.md) — completed items, several recording *why* an approach was rejected
-> - [4-contextual-bandits.md](4-contextual-bandits.md) — the learner as it exists
+> - [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) — the learner as it exists
 > - [1-states.md](1-states.md) — the state models the prediction ideas below would draw on
 
 > **Terminology:** Huginn's learner is a **contextual bandit**, and since 0.20.0
@@ -235,7 +237,7 @@ Q(s,a) <- Q(s,a) + alpha[r + gamma*Q(s',a') - Q(s,a)]
 This is exactly the update Huginn does *not* perform, and it is what makes the
 current system a contextual bandit rather than Q-learning: `FeatureBanditLearner::Update`
 computes `error = reward - prediction` and takes a semi-gradient step on it —
-no `gamma`, no `s'`, no trajectory (see [4-contextual-bandits.md](4-contextual-bandits.md)).
+no `gamma`, no `s'`, no trajectory (see [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md)).
 A feature-based SARSA variant would keep `Q(s,a) = w_a · phi(s)` and update using
 the next feature vector `phi(s')` and next action `a'`.
 

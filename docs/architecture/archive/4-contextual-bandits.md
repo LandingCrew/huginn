@@ -1,5 +1,18 @@
 # Huginn Learning System
 
+> **ARCHIVED (R11, 0.24.4).** This describes the OLD learner, the
+> FeatureBanditLearner (an 18-float contextual bandit), which ranked the pages
+> until R8.3 (0.24.0). The pages are ranked by the choice model now: θ over
+> need × effect pairs, b per item, κ for the menu, learned online from a
+> bootstrap fitted offline ([9-context-as-learner-input.md](../9-context-as-learner-input.md),
+> [9-implementation-map.md](../9-implementation-map.md),
+> `src/learning/ChoiceLearner.*`, `src/core/ChoiceScore.h`). The old learner
+> still runs, for one input only: its learning score is the D2 feature
+> `ln learn mult` behind `[Scoring] bLegacyLearnFeature` (R6 chose it; see the
+> roadmap's R8 entry), confined by `tools/prune/r8_check.py`. Read this for
+> that feature's arithmetic and history, not for how Huginn ranks.
+
+
 > **Implementation Status (v0.19.x):** **FeatureBanditLearner** is the sole learning
 > system (linear reward model, 18-float context vectors). The tabular learner
 > was removed in v0.13.x and no trace of it remains in `src/`. See
@@ -78,7 +91,7 @@ Each item has a weight vector (18 floats). The reward estimate is the dot produc
 
 Normalized feature vector extracted from the state models
 (`PlayerActorState`, `TargetCollection`) — see
-[1-states.md](1-states.md). Defined in `src/learning/StateFeatures.h`.
+[1-states.md](../1-states.md). Defined in `src/learning/StateFeatures.h`.
 
 ```
 +------------------------------------------------------------------------------+
@@ -1005,11 +1018,11 @@ allocation draws from the ranked rows the page does not show, weighted by
 relevance × sd plus a uniform share (`src/core/WildcardPick.h`). The decisions
 around it (one roll per refractory window, only the displayed page rolls, the
 per-page cache and its shape, combat) are `Core::Wildcard::Gate`
-(`src/core/WildcardGate.h`). See [5-slots.md](5-slots.md) and the `[Wildcards]`
+(`src/core/WildcardGate.h`). See [5-slots.md](../5-slots.md) and the `[Wildcards]`
 section of `configs/Huginn.ini`.
 
 Slot classification and the multi-page layout are covered in
-[5-slots.md](5-slots.md).
+[5-slots.md](../5-slots.md).
 
 ---
 
@@ -1487,9 +1500,9 @@ the learning clock past it); a new game also clears the learner.
 
 ## See Also
 
-- [0-pipeline.md](0-pipeline.md) — Overall pipeline flow
-- [1-states.md](1-states.md) — State models (WorldState, PlayerActorState, TargetCollection)
-- [3-candidate-filtering.md](3-candidate-filtering.md) — Where the candidates being scored come from
-- [5-slots.md](5-slots.md) — Slot classification, locking and the multi-page layout
+- [0-pipeline.md](../0-pipeline.md) — Overall pipeline flow
+- [1-states.md](../1-states.md) — State models (WorldState, PlayerActorState, TargetCollection)
+- [3-candidate-filtering.md](../3-candidate-filtering.md) — Where the candidates being scored come from
+- [5-slots.md](../5-slots.md) — Slot classification, locking and the multi-page layout
 - [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) — Full console command reference
 - [Mod Compatibility](https://github.com/LandingCrew/huginn/wiki/Mod-Compatibility#wheeler-integration) — Wheeler integration notes

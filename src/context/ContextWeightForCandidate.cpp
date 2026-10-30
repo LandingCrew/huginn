@@ -122,9 +122,9 @@ namespace Huginn::Context
                 // donates health, Thundering Hooves a mount speed buff. Each was
                 // promoted as protection from an element it does not resist while
                 // the player took that damage -- and then dropped by the redundancy
-                // filter (CandidateFilters::IsResistSpellRedundant, in
-                // src/candidate/CandidateFilters.cpp) for duplicating a resistance
-                // it never granted.
+                // filter (in src/candidate/CandidateFilters.cpp; since R11 it reads
+                // the effect catalog's resist columns, not this type and element)
+                // for duplicating a resistance it never granted.
                 if (c.type == SpellType::Defensive) {
                     switch (c.element) {
                     case Spell::ElementType::Fire:

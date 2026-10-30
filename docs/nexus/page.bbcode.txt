@@ -77,7 +77,8 @@ Huginn reads three files, each with a distinct job:
 
 [list]
 [*][font=Courier New]Huginn.ini[/font] in [font=Courier New]Data/SKSE/Plugins/[/font] — slots, pages, keybindings, scoring, Wheeler[/*]
-[*][font=Courier New]Huginn_Overrides.ini[/font] in [font=Courier New]Data/SKSE/Plugins/[/font] — classification fixes for modded items and spells[/*]
+[*][font=Courier New]Huginn_Bootstrap.json[/font] in [font=Courier New]Data/SKSE/Plugins/[/font] — the shipped starting point of what Huginn learns[/*]
+[*][font=Courier New]Huginn_Overrides.ini[/font] in [font=Courier New]Data/SKSE/Plugins/[/font] — the old item and spell type fixes (see Effect Overrides)[/*]
 [*]dMenu [font=Courier New]Huginn.ini[/font] in [font=Courier New]Data/SKSE/Plugins/dmenu/customSettings/ini/[/font] — widget appearance and debug options[/*]
 [/list]
 
@@ -146,16 +147,16 @@ One thing worth knowing about emergencies: a slot set to [font=Courier New]Other
 
 [font=Courier New]sClassification[/font] is the one setting you'll change most, so it's worth reading this list. There are two ways to think about a slot: [b]by the job you want done[/b], or [b]by the kind of thing you want in it[/b].
 
-[b]By job.[/b] These mix everything you own together — a spell, a potion, and a scroll can all compete for the same slot, and Huginn picks whichever fits the moment best.
+[b]By job.[/b] These mix everything you own together — a spell, a potion, and a scroll can all compete for the same slot, and Huginn picks whichever fits the moment best. Since 0.24.4 Huginn decides the job from what the item actually does (its magic effects), so a modded item lands where its effects say it belongs.
 
 [list]
 [*][font=Courier New]DamageAny[/font] — Anything that hurts something: attack spells, damage scrolls, poisons, and your weapons[/*]
 [*][font=Courier New]DamageMagic[/font] — Attack magic only: damage spells and damage scrolls — no weapons, no poisons[/*]
-[*][font=Courier New]HealingAny[/font] — Healing spells, healing scrolls, and health potions[/*]
+[*][font=Courier New]HealingAny[/font] — Healing spells, healing scrolls, health and regeneration potions, and food that restores health[/*]
 [*][font=Courier New]BuffsAny[/font] — Things you use [i]before[/i] the fight: armor and cloak spells, invisibility, muffle, and fortify potions[/*]
 [*][font=Courier New]DefensiveAny[/font] — Wards, armor spells, and resist fire/frost/shock/magic/poison potions[/*]
-[*][font=Courier New]SummonsAny[/font] — Conjuration — summoned creatures, raised undead, and bound weapons[/*]
-[*][font=Courier New]Utility[/font] — Everything else useful: candlelight, detect life, telekinesis, unlock, waterbreathing, cure disease and cure poison[/*]
+[*][font=Courier New]SummonsAny[/font] — Summoned creatures, raised undead, and bound weapons[/*]
+[*][font=Courier New]Utility[/font] — Everything else useful: candlelight, night eye, detect life, telekinesis, unlock, waterbreathing, slow fall, cure disease and cure poison, and torches[/*]
 [/list]
 
 [b]By kind.[/b] These accept only one category of thing, which makes a page predictable — the same slot always holds the same sort of item.
@@ -170,8 +171,8 @@ One thing worth knowing about emergencies: a slot set to [font=Courier New]Other
 [*][font=Courier New]ScrollsAny[/font] — Any scroll[/*]
 [*][font=Courier New]PotionsAny[/font] — Any potion — restore, resist, fortify, cure, and poisons. Not food or drink[/*]
 [*][font=Courier New]PoisonsAny[/font] — Poisons only[/*]
-[*][font=Courier New]FoodAny[/font] — Food[/*]
-[*][font=Courier New]AlcoholAny[/font] — Ale, mead, wine, skooma[/*]
+[*][font=Courier New]FoodAny[/font] — Food and drink, alcohol included[/*]
+[*][font=Courier New]AlcoholAny[/font] — Ale, mead, wine, skooma: drink with a cost (a stamina regeneration penalty, inebriation). A few foods with a paralysing or weakening side effect (raw fish) count too[/*]
 [*][font=Courier New]WeaponsAny[/font] — Any weapon, including staves[/*]
 [*][font=Courier New]WeaponsMelee[/font] — Swords, axes, maces, daggers[/*]
 [*][font=Courier New]WeaponsRanged[/font] — Bows, crossbows, staves[/*]
@@ -230,59 +231,38 @@ Vital thresholds are fractions ([font=Courier New]0.35[/font] = 35%). Ammo is a 
 
 [b]Soul gems have two switches, and they are separate on purpose.[/b] [font=Courier New]bEnableWeaponCharge[/font] here controls the "your weapon is nearly dead" prompt. [font=Courier New]bEnableSoulGemRecharge[/font] under [font=Courier New][Candidates][/font] controls whether gems show up in ordinary recommendations at all. Turning off the second one does [i]not[/i] stop the emergency prompt. Turn off both to stop seeing soul gems entirely.
 
-[quote]Not to be confused with [font=Courier New]Huginn_Overrides.ini[/font], which is a different thing entirely — that file fixes how modded items get [i]categorised[/i]. See Classification Overrides below.[/quote]
+[quote]Not to be confused with the effect override files, which are a different thing entirely: they fix what a modded effect [i]does[/i] in Huginn's eyes. See Effect Overrides below.[/quote]
 
-[b][color=#cc9933]Algorithm configuration[/color][/b]
+[b][color=#cc9933]How Huginn decides[/color][/b]
 
-These settings are the ones that decide how Huginn makes up its mind. Tuning them is guesswork even with a good sense of how it works, so change one thing at a time and see what happens.
-
-Fiddle at your own risk. If you want to know what each number actually feeds into, [url=https://github.com/LandingCrew/huginn/blob/main/docs/README.md]the full write-up is here[/url].
-
-[b]What Huginn pays attention to — [ContextWeights][/b]
-
-This is the section that decides [i]what matters right now[/i]. Each setting is how loudly one condition shouts. Raise a number and Huginn reacts more strongly to that situation; set it to [font=Courier New]0[/font] and it stops caring about it altogether.
-
-The loud ones are the emergencies you can see happening to you:
-
-[code]fWeightOnFire = 8.0
-fWeightFrozen = 8.0
-fWeightShocked = 8.0
-fWeightPoisoned = 6.0
-fWeightUnderwater = 10.0
-fWeightFallingHigh = 8.0
-fWeightLookingAtLock = 10.0[/code]
-
-The rest sit on a 0-to-1 scale and cover the ordinary run of play: being in combat, facing several enemies, an enemy mid-cast, sneaking, standing at a forge or enchanter or alchemy lab, fighting undead or daedra or a dragon, being out of ammo, having no weapon drawn.
-
-Two of them are worth knowing about because they exist to stop things disappearing:
+Huginn no longer runs on hand-tuned weights. It reads two things every moment:
 
 [list]
-[*][font=Courier New]fWeightBuffPotion = 0.15[/font] is a constant low hum that keeps fortify and resist potions visible at all. Without it they would never score highly enough to be offered, and so Huginn would never get the chance to learn that you like them.[/*]
-[*][font=Courier New]fWeightSoulGem = 0.15[/font] does the same for filled soul gems, so you can see one even when you are not carrying a drained enchanted weapon. Set it to [font=Courier New]0[/font] to only ever see gems when a weapon actually needs one.[/*]
+[*][b]What the situation needs[/b] — a list of needs, each a number from 0 to 1: how hurt you are, whether you are burning, poisoned, underwater, about to fall, over-encumbered, in the dark, at a forge, and so on.[/*]
+[*][b]What each item does[/b] — read once from the load order when the main menu opens: every spell, potion, food, scroll, weapon and piece of gear, broken down into its effects (restore health, resist fire, slow fall, ...) and how strong each is compared with everything else in your load order.[/*]
 [/list]
 
-The three [font=Courier New]SmoothingExponent[/font] settings shape how sharply the health, magicka and stamina curves ramp up as the bar drains. [font=Courier New]1.0[/font] is a straight line, [font=Courier New]2.0[/font] (the default) stays calm until things get genuinely bad, [font=Courier New]3.0[/font] more so.
+It learns how much each need cares about each effect, from what you actually press in each situation, and adds a little for each item you personally like. It ships with a starting point fitted on real play, so it is useful from the first minute, and it keeps learning in your save. [font=Courier New]hg reset weights[/font] (or [b]Reset Learned Weights[/b] in dMenu) puts it back to that starting point.
 
-[b]Ranking — [Scoring] and [Favorites][/b]
+So there is very little to tune, and most of what is left is about how the display behaves. If you want to know exactly how the numbers work, [url=https://github.com/LandingCrew/huginn/blob/main/docs/README.md]the full write-up is here[/url].
 
-[font=Courier New][Scoring][/font] is the machinery that turns "what matters now" plus "what do you like" into a final order. Most of it you can leave alone. The parts worth touching:
+[b]Needs — [Needs][/b]
 
-[list]
-[*][b][font=Courier New]fLambdaMin[/font] / [font=Courier New]fLambdaMax[/font][/b] — how much weight Huginn gives your learned habits versus the situation in front of you. It starts near [font=Courier New]fLambdaMin[/font] while it barely knows you, and rises to [font=Courier New]fLambdaMax[/font] once it does. Raise them to have it lean harder on your habits; lower them to keep it more reactive.[/*]
-[*][b]The bonus settings[/b] — small nudges for combinations that make sense together: matching arrows to your bow, a shield spell with a melee weapon, silver against undead, a staff when your magicka is low. Adjust or zero out individually.[/*]
-[*][b][font=Courier New]iTopNCandidates = 10[/font][/b] — how many options get considered in detail each update.[/*]
-[*][b][font=Courier New]fMinimumUtility[/font][/b] — the bar an option has to clear to be shown at all. Raise it if you are seeing filler you don't want.[/*]
-[/list]
+Each need has a curve that turns what Huginn sees into that 0-to-1 number, one line per need: [font=Courier New]health_deficit = logistic 0.5 10[/font] means "half way at 50% health missing, rising steeply". You can reshape a curve, but the learned weights were fitted with the shipped curves, so change one at a time. [font=Courier New]hg needs[/font] in the console shows the live values.
 
-[font=Courier New][Favorites][/font] decides what your favourites flag means. [font=Courier New]Boost[/font] (the default) pushes favourited items up the order. [font=Courier New]Suppress[/font] does the opposite and hides them, on the grounds that they are already one keypress away in your favourites menu. [font=Courier New]Off[/font] ignores the flag.
+[b][Scoring], [ContextWeights] and [Favorites][/b]
+
+[font=Courier New]bLegacyLearnFeature = true[/font] keeps one input from Huginn's old engine (its per-item learning score), which the starting point was fitted with. Leave it on; turning it off is a fallback, not a supported mode. The [font=Courier New][ContextWeights][/font] section and most of [font=Courier New][Scoring][/font] only feed that one input now, so changing them has little visible effect.
+
+[font=Courier New][Favorites][/font] decides what your favourites flag means. [font=Courier New]Boost[/font] (the default) makes Huginn remember your favourites longer. [font=Courier New]Suppress[/font] hides them, on the grounds that they are already one keypress away in your favourites menu. [font=Courier New]Off[/font] ignores the flag.
 
 [b]Learning and trying new things — [Wildcards] and [Learning][/b]
 
-Huginn can only learn that you like something if it offers it to you occasionally. That is what wildcards are: now and then a lower-ranked option takes a slot, so it gets a chance to be picked.
+Huginn can only learn that you like something if it offers it to you occasionally. That is what the wildcard is: each page has one wildcard key (key 8 on the shipped pages) where, now and then, outside combat, Huginn shows something it is unsure about — a spell you just learned, an item you have not used in a long time — for about half a minute, then the key's own item comes back. A wildcard never pushes a better item off the page.
 
-Wildcards never touch your top slot — that always holds the genuine best pick — and they get rarer the more you care about a slot. [font=Courier New]fBaseProbability[/font] and [font=Courier New]fMaxProbability[/font] control how often they appear; the two cooldown settings stop the same slot churning. You can also turn them off per slot with [font=Courier New]bWildcardsEnabled = false[/font].
+[font=Courier New]fBaseProbability[/font] and [font=Courier New]fMaxProbability[/font] control how often a wildcard appears and [font=Courier New]fCooldownSeconds[/font] how long it stays. To move the wildcard key, turn [font=Courier New]bWildcardsEnabled[/font] off on the keys after the one you want; off on every key, the page has no wildcard.
 
-[font=Courier New][Learning][/font] covers the other half: Huginn also watches what you equip [i]outside[/i] of it, through the vanilla inventory, the favourites menu, or a vanilla hotkey. Reaching past Huginn for something is a strong signal, and the reward settings say how strong. [font=Courier New]bLearnFromExternalEquips = false[/font] turns this off if you would rather it only learn from your use of its own keys.
+[font=Courier New][Learning][/font] covers the other half: Huginn also watches what you equip [i]outside[/i] of it, through the vanilla inventory, the favourites menu, or a vanilla hotkey. Reaching past Huginn for something is the strongest signal it gets. [font=Courier New]bLearnFromExternalEquips = false[/font] turns this off if you would rather it only learn from your use of its own keys.
 
 [b]Steadiness — [SlotLocker][/b]
 
@@ -315,23 +295,22 @@ A remembered item pulses for the last few seconds before it goes. When it doesn'
 
 [font=Courier New]bEnableSoulGemRecharge[/font] belongs to this section too — see the soul gem note under Emergencies above.
 
-[size=3][b]Classification Overrides[/b][/size]
+[size=3][b]Effect Overrides[/b][/size]
 
-[b]Configuration Location:[/b] [font=Courier New]Data/SKSE/Plugins/Huginn_Overrides.ini[/font]
+[b]Configuration Location:[/b] [font=Courier New]Data/SKSE/Plugins/Huginn_EffectOverrides.ini[/font] (yours), and [font=Courier New]Data/SKSE/Plugins/Huginn/EffectOverrides/*.ini[/font] (shipped by other mods)
 
-Huginn classifies vanilla items and spells automatically. Modded potions, foods, and spells sometimes need a hint. This file supplies it:
+Huginn reads what every item does from its magic effects. When a modded effect is read wrongly (a scripted effect it cannot see into, say), you can tell it what the effect really is, by the effect's plugin and FormID:
 
-[code][Item:Battlemage's Elixir]
-type = BuffPotion
-tags = FortifyMagicSchool,FortifyHealth
+[code][Huginn]
+iFormatVersion = 1
 
-[Spell:Scroll of Bolide]
-type = Damage
-tags = Fire,Ranged[/code]
+[Overrides]
+MyMagicMod.esp|0x000800 = resist_frost
+MyMagicMod.esp|0x000801 = restore_health[/code]
 
-The [font=Courier New]Item:[/font] / [font=Courier New]Spell:[/font] prefix matters. This one file covers both items and spells, and some type and tag names mean something in each, so a section without a prefix is tried against [i]both[/i] — and can quietly reclassify a potion and a spell that happen to share a name. Prefix every section. The file itself lists every type and tag you can use, for items and for spells.
+The value is one of Huginn's effect columns; [font=Courier New]hg dump all[/font] writes every item and effect in your load order with the column Huginn gave it ([font=Courier New]effectColumn[/font]) to [font=Courier New]Huginn_All.csv[/font], which is the place to find both the FormID and the name to use. Mod authors can ship their own file in [font=Courier New]Huginn/EffectOverrides/[/font]; those load in alphabetical order and your own file loads last, so yours wins. A file Huginn cannot read is skipped and named in the log, and a line it cannot make sense of is ignored and counted there; lines for a plugin you do not have active are skipped quietly. Changes take effect on the next game start (the effect catalog is built once, at the main menu).
 
-Changes take effect on [font=Courier New]hg rebuild[/font] — no game restart needed, and [font=Courier New]hg reload[/font] is not enough (it reloads settings, not classifications).
+[i]The older [font=Courier New]Huginn_Overrides.ini[/font] (item and spell type / tag fixes) still loads, but since 0.24.4 it only reaches the one input Huginn keeps from its old engine; it no longer decides which key or filter an item gets.[/i]
 
 [size=3][b]dMenu UI Controls[/b][/size]
 
@@ -339,7 +318,7 @@ Changes take effect on [font=Courier New]hg rebuild[/font] — no game restart n
 
 This controls the in-game Intuition widget's appearance and, on a debug build, its debugging output. dMenu owns these settings exclusively — position, opacity, scale, display mode, and the widget on/off switch — and you edit them from Huginn's panel in the dMenu UI rather than by hand. Without dMenu installed, the widget uses its built-in defaults.
 
-The panel also has four buttons: [b]Show/Hide Widget[/b], [b]Reset Learned Weights[/b] (makes Huginn forget everything it has learned about your preferences), [b]Reset to Defaults[/b], and [b]Reload INI[/b].
+The panel also has four buttons: [b]Show/Hide Widget[/b], [b]Reset Learned Weights[/b] (puts what Huginn has learned back to the shipped starting point), [b]Reset to Defaults[/b], and [b]Reload INI[/b].
 
 Two controls turn the widget off:
 
@@ -357,12 +336,14 @@ Open the console with [font=Courier New]~[/font] and type [font=Courier New]hg[/
 [*][font=Courier New]hg status[/font] — Show system status[/*]
 [*][font=Courier New]hg refresh[/font] — Force an immediate recommendation update[/*]
 [*][font=Courier New]hg reload[/font] — Hot-reload all settings from INI[/*]
-[*][font=Courier New]hg rebuild[/font] — Re-read your spells and items from scratch, including [font=Courier New]Huginn_Overrides.ini[/font][/*]
+[*][font=Courier New]hg rebuild[/font] — Re-read your spells and items from scratch[/*]
 [*][font=Courier New]hg page [N][/font] — Switch to page N, or show the current page[/*]
 [*][font=Courier New]hg unlock[/font] — Unstick every slot, so all of them are free to change again[/*]
 [*][font=Courier New]hg recs [N][/font] — Write the top N picks, and why they scored as they did, to the log[/*]
-[*][font=Courier New]hg weights <FormID>[/font] — Show what Huginn has learned about one specific spell or item[/*]
-[*][font=Courier New]hg reset weights[/font] — Forget everything Huginn has learned about your preferences[/*]
+[*][font=Courier New]hg theta <FormID>[/font] — Show what Huginn has learned about one specific spell or item, and why it ranks where it does right now ([font=Courier New]hg theta[/font] alone: how far its learning has moved from the shipped starting point)[/*]
+[*][font=Courier New]hg needs[/font] — Show what Huginn thinks the situation needs right now[/*]
+[*][font=Courier New]hg dump all[/font] — Write every item and effect in your load order, as Huginn reads them, to [font=Courier New]Huginn_All.csv[/font][/*]
+[*][font=Courier New]hg reset weights[/font] — Forget what Huginn has learned in this save, back to the shipped starting point[/*]
 [*][font=Courier New]hg reset all[/font] — Full system reset[/*]
 [/list]
 
@@ -433,7 +414,7 @@ Huginn estimates how dark it is from the light level the game itself reports (me
 
 Lighting mods change that value, so how often this happens depends on your load order. With a dark lighting setup, caves and moonless nights count as dark. With a bright one, or the vanilla game, the light may never fall low enough and Night Eye will not be suggested for darkness.
 
-To turn the darkness suggestions off entirely, set [font=Courier New]fWeightDarkness = 0[/font] under [font=Courier New][ContextWeights][/font].
+Two settings decide what counts as dark. For torches it is [font=Courier New]fDarkLightLevel[/font] under [font=Courier New][ContextWeights][/font] (0.35 suits dark lighting mods; a bright load order may need about 0.55). For Night Eye and light spells it is the curve of the darkness need, [font=Courier New]darkness = logistic 0.65 15[/font] under [font=Courier New][Needs][/font]: its first number is how dark (1 minus the light level) counts as half way; lower it for a bright load order. To turn the darkness suggestions off entirely, set [font=Courier New]darkness = step 2 0[/font] (a curve that never rises).
 
 [line]
 [size=4][b]Source Code[/b][/size]

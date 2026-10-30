@@ -231,7 +231,7 @@ namespace Huginn::Settings
             logger::info("[SettingsReloader] Resetting learning data"sv);
             if (const auto learnerItems = ResetLearningData()) {
                 logger::info("[SettingsReloader] Learning data reset complete ({} learner items)"sv, *learnerItems);
-                RE::DebugNotification("Huginn: Learning data reset");
+                RE::DebugNotification("Huginn: Learning reset (theta back to the bootstrap, b cleared)");
             } else {
                 logger::warn("[SettingsReloader] g_featureBanditLearner is null, cannot reset"sv);
             }

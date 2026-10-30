@@ -210,3 +210,25 @@ to 1e-5, from `tools/fit/export_scores.py`'s fixture; the real log through
 pass, reported), and `LegacyFloorPassTests.cpp` (the old floor loop moved to
 `learning/legacy/LegacyLearnFeature.h` builds R8.1's list bit for bit; that
 header is not core, but it is a template over plain types and compiles here).
+
+The classifiers retired from the live engine (R11, 0.24.4):
+
+- `CapFacets.h`: the facets -- each yes/no question the live engine asks of an
+  item ("restores health?", "for someone else?", "has a side effect?"), read
+  off the nonzero columns of cap(i) -- and the 24 slot classes' `Matches` and
+  `Classify` order over them. The slot classes, the candidate filters, the
+  override finders, the label and the widget styling all ask here; the game
+  side is `effect/Facets.h`.
+- `SlotClassification.h`: the slot class enum, moved whole from
+  `slot/SlotConfig.h` (namespace kept) so `CapFacets.h` can name it.
+- `OverrideFiles.h`: the effect override directory (doc 9's layer 2) --
+  parsing a `<plugin>|<local FormID> = <column>` line, the file order (the
+  `EffectOverrides/*.ini` alphabetically, the player's file last), the format
+  version and the merge; the game side is `EffectCatalog::LoadOverrides`.
+- `ThetaDrift.h`: how far the live θ moved from the bootstrap (means moved,
+  mean / max / rms |Δμ|, mean ln variance ratio), for the `[Soak]` heartbeat
+  and `hg theta`.
+
+Their tests: `CapFacetsTests.cpp` (each facet's columns, each class arm, no
+dead class, real items from the three dump fixtures), `OverrideFilesTests.cpp`
+and `ThetaDriftTests.cpp`.

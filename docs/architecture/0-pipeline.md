@@ -1,10 +1,12 @@
 # Huginn Recommendation Pipeline
 
+> **R11 (0.24.4):** this page predates the engine rewrite. Since R8.3 the hand-tuned engine (context weights × the bandit's learning score × multipliers) no longer ranks: every candidate is ranked on the choice score μ (θ over need × effect columns, b per item; doc 9, [9-implementation-map.md](9-implementation-map.md)), and the old engine runs only for the D2 feature `ln learn mult` (`[Scoring] bLegacyLearnFeature`, confined by `tools/prune/r8_check.py`). The steps that changed: the skip gate also keys on the need signature; scoring is `RankOnChoice`, not UtilityScorer's floors; the slot classes, filters, override finders and the label read the effect catalog's facets (`core/CapFacets.h`, R11), not the classifiers' tags; the hold uses the challenger rule (R9); the wildcard has a key of its own (R10). docs/README.md has the current tick.
+
 This document describes the data flow from game state to slot recommendations as currently implemented in v0.20.0.
 
 > **Related documentation:**
 > - [1-states.md](1-states.md) - State models (WorldState, PlayerActorState, TargetCollection, tracking states)
-> - [4-contextual-bandits.md](4-contextual-bandits.md) - contextual bandit learning implementation
+> - [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) - contextual bandit learning implementation
 > - [5-slots.md](5-slots.md) - Slot classification and overrides
 
 ---
@@ -344,7 +346,7 @@ graph LR
 
 | Struct | Purpose | Details |
 |--------|---------|---------|
-| `GameState` | Discretized buckets for the pipeline skip-check — 48,384 states, bases `[6, 6, 3, 7, 4, 2, 2, 2, 2]` (health, magicka, distance, targetType, enemyCount, allyInjured, anyCasting, inCombat, isSneaking). Stamina is excluded from the hash; `distance` is the closest living hostile's band (`ClosestEnemyDistanceBucket`, the actor the learner's `distanceNorm` measures), not the crosshair primary's; `allyStatus` enters it as one bit (is it `InjuredPresent`) rather than its three states; `targetType` is the primary's type only when it is a living hostile (`TargetCollection::ScoringTargetType`), so townspeople under the crosshair read as None. | See [4-contextual-bandits.md](4-contextual-bandits.md) |
+| `GameState` | Discretized buckets for the pipeline skip-check — 48,384 states, bases `[6, 6, 3, 7, 4, 2, 2, 2, 2]` (health, magicka, distance, targetType, enemyCount, allyInjured, anyCasting, inCombat, isSneaking). Stamina is excluded from the hash; `distance` is the closest living hostile's band (`ClosestEnemyDistanceBucket`, the actor the learner's `distanceNorm` measures), not the crosshair primary's; `allyStatus` enters it as one bit (is it `InjuredPresent`) rather than its three states; `targetType` is the primary's type only when it is a living hostile (`TargetCollection::ScoringTargetType`), so townspeople under the crosshair read as None. | See [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) |
 
 ### Stage 2: Candidate Generator
 
@@ -821,7 +823,7 @@ graph LR
 | D | Displayed, page changed since the snapshot |
 | E | Displayed on current page |
 
-**Filters:** an outside equip needs player input behind it (`PlayerInputGate`: an open inventory/favorites/magic menu, a vanilla hotkey, or an own-wheel pick); the master toggle and a stale-cache check are the others. See [4-contextual-bandits.md](4-contextual-bandits.md#outside-selections-and-attribution).
+**Filters:** an outside equip needs player input behind it (`PlayerInputGate`: an open inventory/favorites/magic menu, a vanilla hotkey, or an own-wheel pick); the master toggle and a stale-cache check are the others. See [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md#outside-selections-and-attribution).
 
 **Removed signals (v0.13.0):**
 
@@ -832,7 +834,7 @@ graph LR
 | Misclick penalty (-3.0), v0.22.9 | Fired falsely off the late consumption event; the selection confirm window replaced it. |
 | Separate consumption reward (+5.0), v0.22.9 | Made every drink train twice; the count drop now only confirms a selection. |
 
-See [4-contextual-bandits.md](4-contextual-bandits.md) for learning update details and [../roadmap.md](../roadmap.md) for design rationale.
+See [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) for learning update details and [../roadmap.md](../roadmap.md) for design rationale.
 
 ---
 
@@ -906,6 +908,6 @@ graph TB
 ## See Also
 
 - [../README.md](../README.md) - Overall system design
-- [4-contextual-bandits.md](4-contextual-bandits.md) - Learning system (FeatureBanditLearner architecture)
+- [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) - Learning system (FeatureBanditLearner architecture)
 - [5-slots.md](5-slots.md) - Slot classification and overrides
 - [1-states.md](1-states.md) - State model architecture

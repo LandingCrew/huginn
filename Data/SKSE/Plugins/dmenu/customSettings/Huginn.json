@@ -259,7 +259,7 @@
           "type": "button",
           "text": {
             "name": "Reset Learned Weights",
-            "desc": "Clear all learned preferences (rewards/penalties)"
+            "desc": "Return the choice model's weights (theta) to the shipped bootstrap and clear every item's learned bias (b). Same as the console's hg reset weights"
           },
           "id": "Huginn_reset_weights"
         },

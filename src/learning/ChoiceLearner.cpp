@@ -767,6 +767,40 @@ namespace Huginn::Learning
         return s;
     }
 
+    ChoiceLearner::DriftReport ChoiceLearner::GetDrift() const
+    {
+        std::shared_lock lock(m_mutex);
+        DriftReport r;
+        r.ready = Ready();
+        if (!r.ready) return r;
+        r.theta = Core::Choice::ComputeDrift(m_model.theta, m_bootModel.theta);
+        if (m_model.HasStrength()) r.strength = Core::Choice::ComputeDrift(m_model.strength, m_bootModel.strength);
+        std::vector<std::pair<std::uint32_t, double>> bs;
+        bs.reserve(m_b.size());
+        for (const auto& [form, belief] : m_b) bs.emplace_back(form, belief.mu);
+        r.b = Core::Choice::ComputeBDrift(bs);
+        r.covered = m_model.covered;
+        // theta_covered starts at fCoveredPrior with precision 1 (MovedLocked).
+        r.coveredBoot = C::Weight{ m_settings.coveredPrior, 1.0 };
+        return r;
+    }
+
+    std::vector<ChoiceLearner::ThetaRow> ChoiceLearner::ThetaRows(bool movedOnly) const
+    {
+        std::shared_lock lock(m_mutex);
+        std::vector<ThetaRow> out;
+        if (!Ready() || m_model.theta.size() != C::K * C::J || m_bootModel.theta.size() != C::K * C::J) return out;
+        for (std::size_t k = 0; k < C::K; ++k) {
+            for (std::size_t j = 0; j < C::J; ++j) {
+                const auto& a = m_model.Th(k, j);
+                const auto& b = m_bootModel.Th(k, j);
+                if (movedOnly && a.mu == b.mu && a.var == b.var) continue;
+                out.push_back(ThetaRow{ static_cast<std::uint16_t>(k), static_cast<std::uint16_t>(j), a, b });
+            }
+        }
+        return out;
+    }
+
     std::pair<std::string, std::string> ChoiceLearner::FileIdentity() const
     {
         std::shared_lock lock(m_mutex);

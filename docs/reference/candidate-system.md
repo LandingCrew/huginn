@@ -1,5 +1,7 @@
 # Candidate System Reference
 
+> **R11 (0.24.4):** the registries below still build the candidates; since R11 what a candidate IS (its slot classes, the filters' questions) comes from the effect catalog's facets (`core/CapFacets.h`), and the classifier fields it carries are read only by the D2 feature.
+
 > **Module:** `src/candidate/`
 > **Verified against:** v0.19.10
 

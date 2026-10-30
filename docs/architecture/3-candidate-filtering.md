@@ -1,5 +1,7 @@
 # Candidate Generation, Filtering & Priors
 
+> **R11 (0.24.4):** the filters below read the candidate's facets from the effect catalog (`core/CapFacets.h` via `effect/Facets.h`), not the classifiers' tags: full vitals (RestoreHealth / Magicka / Stamina, not for TargetsOthers or HealsOverTime, not for food), the active buffs (Invisibility, Muffle, ArmorBuff but not a ward, Summon, Warming, Waterbreathing), the resist check (any resist_* column the player already covers, potions and spells alike; never a hostile or damaging item, so an elemental cloak's resist rider does not filter it: `Core::Facets::ResistJudgeable`) and the no_follower gate (TargetsOthers). A candidate the catalog has no entry for passes every effect filter. Since R8.1 the context zeros are hard gates; since R8.3 nothing is dropped by a utility floor (the hand-tuned engine (context weights × the bandit's learning score × multipliers) no longer ranks: every candidate is ranked on the choice score μ (θ over need × effect columns, b per item; doc 9, [9-implementation-map.md](9-implementation-map.md)), and the old engine runs only for the D2 feature `ln learn mult` (`[Scoring] bLegacyLearnFeature`, confined by `tools/prune/r8_check.py`)).
+
 > **Purpose:** Reference for what becomes a candidate, the hard filters that remove
 > candidates, the intrinsic priors that bootstrap learning, and how survivors reach
 > `UtilityScorer`.
@@ -9,7 +11,7 @@
 > **See also:**
 > - [0-pipeline.md](0-pipeline.md) - Overall pipeline flow and the three-tier scoring system
 > - [5-slots.md](5-slots.md) - Slot classification, overrides, and allocation
-> - [4-contextual-bandits.md](4-contextual-bandits.md) - contextual bandit learning and the utility formula
+> - [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) - contextual bandit learning and the utility formula
 
 ---
 
@@ -125,11 +127,15 @@ Gaps worth knowing, all present in v0.19.10:
 **Full-vital threshold:** `State::DefaultState::FULL_VITAL` is `1.0` and
 `FULL_VITAL_EPSILON` is `0.01` (`CandidateFilters.cpp:8`), so the gate fires at ≥ 99%.
 
-**Resist redundancy:** `IsResistPotionRedundant` (`CandidateFilters.cpp:370`) checks the
-ResistFire/Frost/Shock/Poison/Magic item tags against `player.resistances` and the
-`resistThresholdToFilter` percentage. `IsResistSpellRedundant`
-has no tag to read — `SpellTag` is full at 32 bits — so it uses `SpellType::Defensive`
-plus `ElementType` instead. Magic resistance has no spell arm as a result.
+**Resist redundancy (R11):** `CandidateFilters::IsResistRedundant` checks the
+item's ResistFire/Frost/Shock/Poison/Magic facets (the effect catalog's resist_*
+columns) against `player.resistances` and the `resistThresholdToFilter` percentage,
+for potions and spells alike, unless that element's block is due for its refresh. A
+hostile or damaging item is never judged (`Core::Facets::ResistJudgeable`): LoreRim's
+Flame Cloak carries resist_frost beside its damage aura, and judged by that rider a
+Nord mage over the frost threshold lost it. Before R11 the potion check read the item
+tags and the spell check `SpellType::Defensive` plus `ElementType` (no Resist Magic
+arm); the history below describes that version.
 
 > **Changed in #130.** This accepted `SpellType::Buff` as well, from when an
 > elemental resist spell *was* typed `Buff`. #128 moved every spell that
@@ -372,7 +378,7 @@ combat and AOE relevance, target type (undead / daedra / dragon), stealth, eleme
 while taking that damage type, environmental cases (underwater, looking at a lock, falling),
 weapon charge tiers, ammo need, and workstations.
 
-See [4-contextual-bandits.md](4-contextual-bandits.md) and the `[ContextWeights]` INI
+See [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) and the `[ContextWeights]` INI
 section for the full table.
 
 ### 4.8 Workstation context
@@ -474,7 +480,7 @@ add it a second time.
 `correlationBonus`, `potionMultiplier` and `favoritesMultiplier` come from
 `CorrelationBooster`, `PotionDiscriminator` and the favorites mode respectively. See
 [0-pipeline.md](0-pipeline.md) Stage 6 and
-[4-contextual-bandits.md](4-contextual-bandits.md) for the learner side.
+[archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) for the learner side.
 
 ---
 
@@ -684,7 +690,7 @@ There is no automated test suite in the repository; these are in-game checks
 
 - [0-pipeline.md](0-pipeline.md) — Overall recommendation pipeline
 - [2-classifiers.md](2-classifiers.md) — How registry entries get their types and tags
-- [4-contextual-bandits.md](4-contextual-bandits.md) — Contextual bandit learning implementation
+- [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) — Contextual bandit learning implementation
 - [5-slots.md](5-slots.md) — Slot classification and overrides
 - [../reference/candidate-system.md](../reference/candidate-system.md) — Candidate system reference
 - [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) — `hg recs`, `hg reload`

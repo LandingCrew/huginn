@@ -1,5 +1,7 @@
 # dMenu Integration
 
+> **R11 (0.24.4):** the "Reset Learned Weights" button returns θ to the bootstrap and clears b (and the old learner, D2's input), as `hg reset weights`; its text says so since R11. The `[Scoring]` and `[ContextWeights]` keys the panels expose are D2's inputs only (the hand-tuned engine (context weights × the bandit's learning score × multipliers) no longer ranks: every candidate is ranked on the choice score μ (θ over need × effect columns, b per item; doc 9, [9-implementation-map.md](9-implementation-map.md)), and the old engine runs only for the D2 feature `ln learn mult` (`[Scoring] bLegacyLearnFeature`, confined by `tools/prune/r8_check.py`)).
+
 How Huginn integrates with [dMenu](https://www.nexusmods.com/skyrimspecialedition/mods/97221)
 for in-game settings management, and what a settings reload actually does.
 

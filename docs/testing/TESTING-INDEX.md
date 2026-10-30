@@ -1,5 +1,7 @@
 # Huginn Testing Index
 
+> **R11 (0.24.4):** the host suite (`huginn_core_tests`) carries the engine's math, the facets and slot classes (`CapFacetsTests`), the override files (`OverrideFilesTests`) and the θ drift (`ThetaDriftTests`); the in-game suites state made-up candidates in the old classifiers' vocabulary and answer their facets through `InstallSyntheticFacetResolver` (Tests.cpp). `python -I tools/prune/r8_check.py` and `tools/prune/test_r8_check.py` are part of the gate.
+
 **Applies to:** v0.19.x (verified against v0.19.10); sections 0 and 1a added
 for v0.23.9 (R1, host tests and the unattended in-game run); the selection log
 v3 tests and `--decision-session` for v0.23.15 (R4)
@@ -464,7 +466,7 @@ TC-04, 06, 08, 09 and 13 are not present). Terminal marker:
 ### 2.3 Terminology
 
 The learning system is a linear contextual bandit — see
-[../architecture/4-contextual-bandits.md](../architecture/4-contextual-bandits.md).
+[../architecture/archive/4-contextual-bandits.md](../architecture/archive/4-contextual-bandits.md).
 Suite names above use the real identifiers.
 
 ---
