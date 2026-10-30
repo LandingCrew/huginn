@@ -292,9 +292,9 @@ TEST_CASE("cosave reset with the model off: the carried THTA keeps its identity 
     std::optional<CC::ThetaRecord> theta = SampleTheta();
     theta->dropped = 2;
     std::optional<CC::BiasRecord> bias = SampleBias();
-    bool resetSinceLoad = false;
-    CC::ResetCarried(theta, bias, resetSinceLoad);
-    CHECK(resetSinceLoad);
+    bool resetHolds = false;
+    CC::ResetCarried(theta, bias, resetHolds);
+    CHECK(resetHolds);
     REQUIRE(theta.has_value());
     CHECK(theta->entries.empty());
     CHECK(theta->dropped == 0);
@@ -320,9 +320,9 @@ TEST_CASE("cosave reset with the model off: a load that carried nothing writes n
 {
     std::optional<CC::ThetaRecord> theta;
     std::optional<CC::BiasRecord> bias;
-    bool resetSinceLoad = false;
-    CC::ResetCarried(theta, bias, resetSinceLoad);
-    CHECK(resetSinceLoad);
+    bool resetHolds = false;
+    CC::ResetCarried(theta, bias, resetHolds);
+    CHECK(resetHolds);
     CHECK_FALSE(theta.has_value());   // the load starts theta from the file either way
     REQUIRE(bias.has_value());
     CHECK(bias->entries.empty());
@@ -335,12 +335,12 @@ TEST_CASE("cosave carry with the model off: a reload of the same character after
     // it back, and every later save wrote it. The ready path keeps the model.
     std::optional<CC::ThetaRecord> theta = SampleTheta();
     std::optional<CC::BiasRecord> bias = SampleBias();
-    bool resetSinceLoad = false;
-    CC::ResetCarried(theta, bias, resetSinceLoad);
+    bool resetHolds = false;
+    CC::ResetCarried(theta, bias, resetHolds);
     const auto carry =
-        CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetSinceLoad, SampleTheta(), SampleBias());
+        CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetHolds, SampleTheta(), SampleBias());
     CHECK(carry.keptCarried);
-    CHECK_FALSE(resetSinceLoad);   // the load decided: the bit is spent
+    CHECK(resetHolds);   // 0.24.23: a reload does not spend the bit
     REQUIRE(theta.has_value());
     CHECK(theta->entries.empty());   // not the save's three
     REQUIRE(bias.has_value());
@@ -352,7 +352,7 @@ TEST_CASE("cosave carry with the model off: a reload of the same character after
     CHECK(bias->entries[0] == SampleBias().entries[1]);
 }
 
-TEST_CASE("cosave carry with the model off: a reload with no reset since the last load takes the save's records")
+TEST_CASE("cosave carry with the model off: a reload with no reset takes the save's records")
 {
     // The carried records never learn while the model is off, but the
     // learning clock keeps running (the old learner and the discovery boost
@@ -367,8 +367,8 @@ TEST_CASE("cosave carry with the model off: a reload with no reset since the las
     savedTheta.entries = { { 0x3333ull, 9.0, 1.0 } };
     CC::BiasRecord savedBias;
     savedBias.entries = { { 0x0002C3D4u, 1.0, 0.2, 1.0f, 0u, 0 }, { 0xFF000900u, 0.75, 0.1, 2.0f, 5u, 0 } };
-    bool resetSinceLoad = false;
-    const auto carry = CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetSinceLoad, savedTheta, savedBias);
+    bool resetHolds = false;
+    const auto carry = CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetHolds, savedTheta, savedBias);
     CHECK_FALSE(carry.keptCarried);
     CHECK(carry.dynamicDropped == 0);
     CHECK(carry.dynamicTaken == 0);
@@ -380,43 +380,84 @@ TEST_CASE("cosave carry with the model off: a reload with no reset since the las
 
     // A save without the records: none carried, as a load (the next load with
     // the bootstrap starts theta from the file and seeds b).
-    CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetSinceLoad, std::nullopt, std::nullopt);
+    CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetHolds, std::nullopt, std::nullopt);
     CHECK_FALSE(theta.has_value());
     CHECK_FALSE(bias.has_value());
 }
 
-TEST_CASE("cosave carry with the model off: a reset holds for one load; the reload after that takes the save's")
+TEST_CASE("cosave carry with the model off: a reset holds across reloads, not only the first")
 {
-    // Reset, reload (kept, emptied), reload again: the first load spent the
-    // bit, so the second takes the save's records.
+    // #243's known limit: every load decision spent the bit, so reset, load a
+    // pre-reset save (kept, emptied), load it again: the second reload took
+    // the save's records and the pre-reset theta and b came back. The reset
+    // ticked the learning clock past that save, so every load of it is a
+    // reload, and every one keeps the emptied records (0.24.23).
     std::optional<CC::ThetaRecord> theta = SampleTheta();
     std::optional<CC::BiasRecord> bias = SampleBias();
-    bool resetSinceLoad = false;
-    CC::ResetCarried(theta, bias, resetSinceLoad);
-    CHECK(CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetSinceLoad, SampleTheta(), SampleBias())
+    bool resetHolds = false;
+    CC::ResetCarried(theta, bias, resetHolds);
+    for (int load = 0; load < 2; ++load) {
+        CAPTURE(load);
+        const auto carry =
+            CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetHolds, SampleTheta(), SampleBias());
+        CHECK(carry.keptCarried);
+        CHECK(resetHolds);
+        REQUIRE(theta.has_value());
+        CHECK(theta->entries.empty());
+        CHECK(theta->createdUtc == SampleTheta().createdUtc);   // the bootstrap identity kept
+        // b's dynamic forms come from the save at each reload, as
+        // ChoiceLearner::ReplaceDynamicB does: the second drops the first's.
+        CHECK(carry.dynamicDropped == (load == 0 ? 0u : 1u));
+        CHECK(carry.dynamicTaken == 1);
+        REQUIRE(bias.has_value());
+        REQUIRE(bias->entries.size() == 1);
+        CHECK(bias->entries[0] == SampleBias().entries[1]);
+    }
+}
+
+TEST_CASE("cosave carry with the model off: a replace after a reset takes the save's records and ends the hold")
+{
+    // Reset, reload (kept), then a later save or another character: adopted
+    // as the ready model adopts it, so the bit is cleared and the reload of
+    // it after that takes its save's records.
+    std::optional<CC::ThetaRecord> theta = SampleTheta();
+    std::optional<CC::BiasRecord> bias = SampleBias();
+    bool resetHolds = false;
+    CC::ResetCarried(theta, bias, resetHolds);
+    CHECK(CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetHolds, SampleTheta(), SampleBias())
               .keptCarried);
     CHECK(theta->entries.empty());
-    CHECK_FALSE(CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetSinceLoad, SampleTheta(), SampleBias())
+    CHECK_FALSE(CC::CarryLoaded(CC::LoadDecision::Replace, theta, bias, resetHolds, SampleTheta(), SampleBias())
                     .keptCarried);
+    CHECK_FALSE(resetHolds);
+    REQUIRE(theta.has_value());
     CHECK(theta->entries == SampleTheta().entries);
+    REQUIRE(bias.has_value());
     CHECK(bias->entries == SampleBias().entries);
 
-    // Reset, a load of another character (or a later save), then a reload of
-    // it: the load spent the bit, the reload takes its save's records.
-    CC::ResetCarried(theta, bias, resetSinceLoad);
-    CC::CarryLoaded(CC::LoadDecision::Replace, theta, bias, resetSinceLoad, SampleTheta(), SampleBias());
-    CHECK_FALSE(resetSinceLoad);
     CC::ThetaRecord savedTheta;
     savedTheta.entries = { { 0x3333ull, 9.0, 1.0 } };
-    CHECK_FALSE(CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetSinceLoad, savedTheta, std::nullopt)
+    CHECK_FALSE(CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetHolds, savedTheta, std::nullopt)
                     .keptCarried);
     CHECK(theta->entries == savedTheta.entries);
     CHECK_FALSE(bias.has_value());
+}
 
-    // A new game spends it too.
-    CC::ResetCarried(theta, bias, resetSinceLoad);
-    CC::CarryLoaded(CC::LoadDecision::NewGame, theta, bias, resetSinceLoad, std::nullopt, std::nullopt);
-    CHECK_FALSE(resetSinceLoad);
+TEST_CASE("cosave carry with the model off: a new game after a reset clears the bit")
+{
+    std::optional<CC::ThetaRecord> theta = SampleTheta();
+    std::optional<CC::BiasRecord> bias = SampleBias();
+    bool resetHolds = false;
+    CC::ResetCarried(theta, bias, resetHolds);
+    CC::CarryLoaded(CC::LoadDecision::NewGame, theta, bias, resetHolds, std::nullopt, std::nullopt);
+    CHECK_FALSE(resetHolds);
+    CHECK_FALSE(theta.has_value());
+    CHECK_FALSE(bias.has_value());
+    // The reload after it is a plain one: the save's records.
+    CHECK_FALSE(CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetHolds, SampleTheta(), SampleBias())
+                    .keptCarried);
+    CHECK(theta->entries == SampleTheta().entries);
+    CHECK(bias->entries == SampleBias().entries);
 }
 
 TEST_CASE("cosave carry with the model off: a failed load keeps the reset bit, so the reload after it keeps the reset")
@@ -426,16 +467,16 @@ TEST_CASE("cosave carry with the model off: a failed load keeps the reset bit, s
     // thing that happened to them.
     std::optional<CC::ThetaRecord> theta = SampleTheta();
     std::optional<CC::BiasRecord> bias = SampleBias();
-    bool resetSinceLoad = false;
-    CC::ResetCarried(theta, bias, resetSinceLoad);
-    CHECK_FALSE(CC::CarryLoaded(CC::LoadDecision::Failed, theta, bias, resetSinceLoad, SampleTheta(), SampleBias())
+    bool resetHolds = false;
+    CC::ResetCarried(theta, bias, resetHolds);
+    CHECK_FALSE(CC::CarryLoaded(CC::LoadDecision::Failed, theta, bias, resetHolds, SampleTheta(), SampleBias())
                     .keptCarried);
-    CHECK(resetSinceLoad);
+    CHECK(resetHolds);
     CHECK(theta->entries.empty());
-    CHECK(CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetSinceLoad, SampleTheta(), SampleBias())
+    CHECK(CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetHolds, SampleTheta(), SampleBias())
               .keptCarried);
     CHECK(theta->entries.empty());
-    CHECK_FALSE(resetSinceLoad);
+    CHECK(resetHolds);
 }
 
 TEST_CASE("cosave carry with the model off: a reload after a reset swaps only b's dynamic forms, theta kept")
@@ -451,8 +492,8 @@ TEST_CASE("cosave carry with the model off: a reload after a reset swaps only b'
         { 0xFF000902u, 0.5, 0.0, 1.0f, 0u, 0 } };                             // var <= 0
     // The bit set by hand over full records: what a kept reload does with
     // what it holds (a real reset leaves them empty, the case above).
-    bool resetSinceLoad = true;
-    const auto carry = CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetSinceLoad, savedTheta, savedBias);
+    bool resetHolds = true;
+    const auto carry = CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetHolds, savedTheta, savedBias);
     CHECK(carry.keptCarried);
     CHECK(theta->entries == SampleTheta().entries);
     CHECK(carry.dynamicDropped == 1);   // the carried 0xFF000801
@@ -464,12 +505,12 @@ TEST_CASE("cosave carry with the model off: a reload after a reset swaps only b'
     // No BIAS in the save keeps the carried b; none carried stays none (the
     // next load seeds b under sBootstrapBias, as before the reload).
     std::optional<CC::BiasRecord> kept = SampleBias();
-    resetSinceLoad = true;
-    CC::CarryLoaded(CC::LoadDecision::Reload, theta, kept, resetSinceLoad, std::nullopt, std::nullopt);
+    resetHolds = true;
+    CC::CarryLoaded(CC::LoadDecision::Reload, theta, kept, resetHolds, std::nullopt, std::nullopt);
     CHECK(kept->entries == SampleBias().entries);
     std::optional<CC::BiasRecord> none;
-    resetSinceLoad = true;
-    CC::CarryLoaded(CC::LoadDecision::Reload, theta, none, resetSinceLoad, std::nullopt, savedBias);
+    resetHolds = true;
+    CC::CarryLoaded(CC::LoadDecision::Reload, theta, none, resetHolds, std::nullopt, savedBias);
     CHECK_FALSE(none.has_value());
 }
 
@@ -477,26 +518,26 @@ TEST_CASE("cosave carry with the model off: a load takes the save's records, a n
 {
     std::optional<CC::ThetaRecord> theta;
     std::optional<CC::BiasRecord> bias;
-    bool resetSinceLoad = false;
-    CC::ResetCarried(theta, bias, resetSinceLoad);
+    bool resetHolds = false;
+    CC::ResetCarried(theta, bias, resetHolds);
 
-    CC::CarryLoaded(CC::LoadDecision::Replace, theta, bias, resetSinceLoad, SampleTheta(), SampleBias());
+    CC::CarryLoaded(CC::LoadDecision::Replace, theta, bias, resetHolds, SampleTheta(), SampleBias());
     REQUIRE(theta.has_value());
     CHECK(theta->entries == SampleTheta().entries);
     REQUIRE(bias.has_value());
     CHECK(bias->entries == SampleBias().entries);
 
-    CC::CarryLoaded(CC::LoadDecision::Failed, theta, bias, resetSinceLoad, std::nullopt, std::nullopt);
+    CC::CarryLoaded(CC::LoadDecision::Failed, theta, bias, resetHolds, std::nullopt, std::nullopt);
     CHECK(theta->entries == SampleTheta().entries);
     CHECK(bias->entries == SampleBias().entries);
 
-    CC::CarryLoaded(CC::LoadDecision::Replace, theta, bias, resetSinceLoad, std::nullopt, std::nullopt);   // an older save
+    CC::CarryLoaded(CC::LoadDecision::Replace, theta, bias, resetHolds, std::nullopt, std::nullopt);   // an older save
     CHECK_FALSE(theta.has_value());
     CHECK_FALSE(bias.has_value());
 
     theta = SampleTheta();
     bias = SampleBias();
-    CC::CarryLoaded(CC::LoadDecision::NewGame, theta, bias, resetSinceLoad, SampleTheta(), SampleBias());
+    CC::CarryLoaded(CC::LoadDecision::NewGame, theta, bias, resetHolds, SampleTheta(), SampleBias());
     CHECK_FALSE(theta.has_value());
     CHECK_FALSE(bias.has_value());
 }

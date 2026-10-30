@@ -163,9 +163,9 @@ namespace Huginn::Core::ChoiceCosave
     /// from that file); an absent THTA stays absent (the load starts theta
     /// from the file either way). BIAS becomes present and empty: b cleared,
     /// as the reset clears it -- an absent BIAS would let the next load seed b
-    /// under sBootstrapBias, which a reset does not. Sets `resetSinceLoad`
-    /// (CarryLoaded reads it at the next load).
-    void ResetCarried(std::optional<ThetaRecord>& theta, std::optional<BiasRecord>& bias, bool& resetSinceLoad);
+    /// under sBootstrapBias, which a reset does not. Sets `resetHolds`
+    /// (CarryLoaded reads it at every load until a new game or a replace).
+    void ResetCarried(std::optional<ThetaRecord>& theta, std::optional<BiasRecord>& bias, bool& resetHolds);
 
     /// What kind of load the learning clock's decision is (core/
     /// LearningClock.h DecideLoad, 0.24.22); both learners and the carried
@@ -188,25 +188,32 @@ namespace Huginn::Core::ChoiceCosave
 
     /// A load while the model is off (no or an invalid bootstrap): what the
     /// records carried for this session's saves become (ResolveLoadedChoice).
-    /// `resetSinceLoad`: a reset (ResetCarried) since the last load decision.
-    ///   new game   none
-    ///   failed     unchanged; `resetSinceLoad` too: nothing was restored, so
-    ///              a reset before it still holds at the next reload
+    /// `resetHolds`: a reset (ResetCarried) since the carried records last
+    /// came from a save or a new game (0.24.23; until then, since the last
+    /// load decision).
+    ///   new game   none; clears `resetHolds`
+    ///   failed     unchanged; `resetHolds` too: nothing was restored, so a
+    ///              reset before it still holds at the next reload
     ///   reload     after a reset: the carried records are kept, so the reset
-    ///              holds (the save predates it, and its learning is what the
-    ///              reset dropped). Only b's dynamic forms (0xFF......) come
-    ///              from the save's BIAS, as ChoiceLearner::ReplaceDynamicB
-    ///              (the engine reuses those IDs); no BIAS carried stays none,
-    ///              no BIAS in the save keeps the carried ones.
+    ///              holds (the reset ticked the learning clock past the saves
+    ///              memory had reached, so a load of one of those is a
+    ///              reload, and its learning is what the reset dropped).
+    ///              `resetHolds` stays set: the next reload keeps them too.
+    ///              Only b's dynamic forms (0xFF......) come from the save's
+    ///              BIAS, at every such reload, as ChoiceLearner::
+    ///              ReplaceDynamicB (the engine reuses those IDs); no BIAS
+    ///              carried stays none, no BIAS in the save keeps the carried
+    ///              ones.
     ///              With no reset: this save's records, as a load. The carried
     ///              records never learn while the model is off, but the
     ///              learning clock (which decides a reload; core/
     ///              LearningClock.h) keeps running -- the old learner and the
     ///              discovery boost tick it -- so a save the clock calls "not
     ///              ahead" can hold learning the carried records lack (0.24.18)
-    ///   replace    this save's records (an absent one absent)
-    /// Every decision but a failed load clears `resetSinceLoad`.
+    ///   replace    this save's records (an absent one absent); clears
+    ///              `resetHolds`: a later save or another character, adopted
+    ///              as the ready model adopts it, ends the reset's hold
     CarryReport CarryLoaded(LoadDecision decision, std::optional<ThetaRecord>& carriedTheta,
-        std::optional<BiasRecord>& carriedBias, bool& resetSinceLoad, std::optional<ThetaRecord> savedTheta,
+        std::optional<BiasRecord>& carriedBias, bool& resetHolds, std::optional<ThetaRecord> savedTheta,
         std::optional<BiasRecord> savedBias);
 }
