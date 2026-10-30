@@ -588,9 +588,9 @@ bAllowImpurePotions = true
 bEnableDrowning = true               ; no threshold — binary
 ```
 
-> **Note on defaults:** the compile-time fallbacks in `src/override/OverrideConfig.h` are
-> **10%** for critical health/magicka/stamina; the shipped `Huginn.ini` sets **35%**.
-> Without the INI file the behavior differs significantly.
+> **Note on defaults:** since 0.24.8 the compile-time fallbacks in
+> `src/override/OverrideConfig.h` equal the shipped `Huginn.ini` values (35% for
+> critical health/magicka/stamina), so a missing INI or key behaves the same.
 
 ### 8.5 Compile-time only
 

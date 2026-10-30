@@ -450,17 +450,17 @@ graph TD
 
 | Priority | Condition | Threshold | Hysteresis | Action | INI Toggle |
 |----------|-----------|-----------|------------|--------|------------|
-| 100 | CRITICAL_HEALTH | HP < 10% | 15% | Best health potion | `bEnableCriticalHealth` |
-| 70 | CRITICAL_MAGICKA | MP < 10% | 15% | Best magicka potion | `bEnableCriticalMagicka` |
-| 60 | CRITICAL_STAMINA | SP < 10% | 15% | Best stamina potion | `bEnableCriticalStamina` |
+| 100 | CRITICAL_HEALTH | HP < 35% | 15% | Best health potion | `bEnableCriticalHealth` |
+| 70 | CRITICAL_MAGICKA | MP < 35% | 15% | Best magicka potion | `bEnableCriticalMagicka` |
+| 60 | CRITICAL_STAMINA | SP < 35% | 15% | Best stamina potion | `bEnableCriticalStamina` |
 | 50 | DROWNING | Underwater, no buff | N/A | Waterbreathing potion | `bEnableDrowning` |
 | 40 | LOW_AMMO | < 10 arrows/bolts | 15 | Best ammo | `bEnableLowAmmo` |
 | 35 | WEAPON_EMPTY | Charge < 25% | 5% | Best filled soul gem | `bEnableWeaponCharge` |
 
-> **Note:** The three *vital* rows show the compile-time fallbacks in
-> `Override::Defaults` (`src/override/OverrideConfig.h`); the shipped
-> `configs/Huginn.ini` sets all three to **35%** for a more proactive experience, and
-> the INI value is authoritative at runtime. The weapon-charge row is 25% in *both*
+> **Note:** The thresholds are the shipped `configs/Huginn.ini` values, which the
+> compile-time fallbacks in `Override::Defaults` (`src/override/OverrideConfig.h`)
+> equal since 0.24.8; the INI value is authoritative at runtime. The weapon-charge
+> row is 25%
 > — the activation test is `charge < threshold` and a drained weapon keeps a small
 > unusable remainder rather than exactly 0, so a zero threshold would never fire.
 > Hysteresis is a *release gap*: the override stays active until the value rises above
