@@ -83,7 +83,7 @@ namespace Huginn::Core::Facets
         Warming,           // survival_warmth
         Intoxicating,      // survival_intoxication
         SelfHarm,          // the self_harm family (a consumable's cost to its user)
-        Alcohol,           // alcohol: an alcoholic drink or a drug (0.24.9; core/EffectMapper.h IsAlcohol)
+        Narcotic,          // narcotic: an alcoholic drink or a drug (0.24.16; core/EffectMapper.h IsNarcotic)
         _Count
     };
     inline constexpr std::size_t kFacetCount = static_cast<std::size_t>(F::_Count);
@@ -94,7 +94,7 @@ namespace Huginn::Core::Facets
         "Damage", "Hostile", "Fortify", "Regen", "Stealth", "Invisibility", "Muffle", "ArmorBuff", "Ward", "Defense",
         "Resist", "ResistFire", "ResistFrost", "ResistShock", "ResistPoison", "ResistMagic", "Summon", "Cure",
         "CurePoison", "CureDisease", "Vision", "Utility", "Movement", "Waterbreathing", "Warming",
-        "Intoxicating", "SelfHarm", "Alcohol",
+        "Intoxicating", "SelfHarm", "Narcotic",
     };
 
     /// A set of facets.
@@ -165,7 +165,7 @@ namespace Huginn::Core::Facets
         add(F::Warming, has(Col::survival_warmth));
         add(F::Intoxicating, has(Col::survival_intoxication));
         add(F::SelfHarm, has(Col::self_harm));
-        add(F::Alcohol, has(Col::alcohol));
+        add(F::Narcotic, has(Col::narcotic));
         return s;
     }
 
@@ -207,17 +207,18 @@ namespace Huginn::Core::Facets
         bool ranged = false;   // a weapon: bow, crossbow or staff (the weapon's type, a form fact)
     };
 
-    /// Alcohol: the `alcohol` column (0.24.9; effects.csv, EffectMapper.h
-    /// IsAlcohol), an alcoholic drink or a drug of any consumable kind: the
-    /// food drinks, LoreRim's Balmora Blue, and the Skoomas and Sleeping Tree
-    /// Sap the load order makes potions. Before 0.24.9 it was guessed from the
-    /// side effects (food that intoxicates or costs something other than a
-    /// vital drain), which also took Rendil's Screaming Cheese and raw fish
-    /// with a paralysis. The user (2026-10-30): alcohol is a hybrid of food,
-    /// potion and poison, and is not food for the food keys (FoodAny).
-    [[nodiscard]] constexpr bool Alcoholic(const Subject& s) noexcept
+    /// Narcotic: the `narcotic` column (effects.csv, EffectMapper.h
+    /// IsNarcotic), an alcoholic drink or a drug, potion or food: the food
+    /// drinks, LoreRim's Balmora Blue, and the Skoomas and Sleeping Tree Sap
+    /// the load order makes potions. The user (2026-10-30): alcohol is a
+    /// hybrid of food, potion and poison, and is not food for the food keys
+    /// (FoodAny); drugs go with it ("just group into narcotics", 0.24.16;
+    /// 0.24.9 called the group alcohol). Before 0.24.9 it was guessed from
+    /// the side effects, which also took Rendil's Screaming Cheese and raw
+    /// fish with a paralysis.
+    [[nodiscard]] constexpr bool Narcotic(const Subject& s) noexcept
     {
-        return s.facets.Has(F::Alcohol);
+        return s.facets.Has(F::Narcotic);
     }
 
     /// Whether the resist-redundancy filter may judge an item: it gives its
@@ -308,9 +309,9 @@ namespace Huginn::Core::Facets
                     case C::PotionsAny:
                         return s.kind == K::Potion || poison;
                     case C::FoodAny:
-                        return s.kind == K::Food && !Alcoholic(s);   // 0.24.9: alcohol is not food
-                    case C::AlcoholAny:
-                        return Alcoholic(s);
+                        return s.kind == K::Food && !Narcotic(s);   // 0.24.9: a drink or drug is not food
+                    case C::NarcoticsAny:
+                        return !poison && Narcotic(s);              // a poison is applied, never taken
                     default:
                         return false;
                 }
@@ -346,7 +347,7 @@ namespace Huginn::Core::Facets
         Slot::SlotClassification::BuffsAny,
         Slot::SlotClassification::SummonsAny,
         Slot::SlotClassification::Utility,
-        Slot::SlotClassification::AlcoholAny,     // before PotionsAny, which takes a Skooma potion too
+        Slot::SlotClassification::NarcoticsAny,   // before PotionsAny, which takes a Skooma potion too
         Slot::SlotClassification::FoodAny,
         Slot::SlotClassification::PotionsAny,
         Slot::SlotClassification::ScrollsAny,

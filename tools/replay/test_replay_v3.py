@@ -42,6 +42,9 @@ GOLDEN_0_23_55 = REPO / "tests" / "core" / "fixtures" / "decisions" / "synthetic
 # The golden file as 0.24.8 wrote it: 243 columns, before 0.24.9 added alcohol
 # after kind_light (every later column's index moved by one).
 GOLDEN_0_24_8 = REPO / "tests" / "core" / "fixtures" / "decisions" / "synthetic_v3_0.24.8.jsonl"
+# The golden file as 0.24.9 wrote it: that column named alcohol, before 0.24.16
+# renamed it narcotic (same index).
+GOLDEN_0_24_9 = REPO / "tests" / "core" / "fixtures" / "decisions" / "synthetic_v3_0.24.9.jsonl"
 OLD_KEYS = ("est", "a", "n", "ucb", "rec", "prior", "cw", "fl", "wu", "hk")
 SHADOW_KEYS = ("mu", "sd", "lm", "um", "ex")
 
@@ -72,8 +75,9 @@ class GoldenFile(unittest.TestCase):
     def test_head(self):
         h = self.decs[0]["head"]
         self.assertEqual(h["v"], 3)
-        self.assertEqual(len(h["cols"]), 244)   # 243 until 0.24.9 added alcohol
-        self.assertEqual(h["cols"].index("alcohol"), h["cols"].index("kind_light") + 1)
+        self.assertEqual(len(h["cols"]), 244)   # 243 until 0.24.9 added alcohol (narcotic from 0.24.16)
+        self.assertEqual(h["cols"].index("narcotic"), h["cols"].index("kind_light") + 1)
+        self.assertNotIn("alcohol", h["cols"])
         self.assertEqual(len(h["needs"]), 97)  # 96 until 0.23.51 added loadout_quarterstaff; 94 until 0.23.50 added time_to_edge and edge_approach; 93 until 0.23.30 added combat_regen_ok
         self.assertEqual(h["cross"][4], "stack_count")
         # 0.23.46: covered at the end of cross, two row columns, the filter names.
@@ -292,7 +296,7 @@ class GoldenFile(unittest.TestCase):
 
 
 class GoldenFile0_24_8(unittest.TestCase):
-    """The same session as 0.24.8 wrote it (243 columns, no alcohol): its caps
+    """The same session as 0.24.8 wrote it (243 columns, no narcotic): its caps
     use the old indices of every column after kind_light, and decode by the
     head's own names to the same caps as this build's file."""
 
@@ -300,11 +304,28 @@ class GoldenFile0_24_8(unittest.TestCase):
         old = replay.load_v3([GOLDEN_0_24_8])
         new = replay.load_v3([GOLDEN])
         self.assertEqual(len(old[0]["head"]["cols"]), 243)
-        self.assertNotIn("alcohol", old[0]["head"]["cols"])
+        self.assertNotIn("narcotic", old[0]["head"]["cols"])
         caps = lambda decs: [r["cap"] for d in decs for r in d["rows"] + [d["chosen"] or {}] if "cap" in r]
         self.assertEqual(caps(old), caps(new))
-        moved = {k for c in caps(new) if c for k in c} & set(new[0]["head"]["cols"][new[0]["head"]["cols"].index("alcohol") + 1:])
+        moved = {k for c in caps(new) if c for k in c} & set(new[0]["head"]["cols"][new[0]["head"]["cols"].index("narcotic") + 1:])
         self.assertTrue(moved)   # the session's caps reach past the inserted column
+        self.assertEqual([d["out"] for d in old], [d["out"] for d in new])
+
+
+class GoldenFile0_24_9(unittest.TestCase):
+    """The same session as 0.24.9 wrote it: the column after kind_light named
+    alcohol. The reader keys by name with no alias, so the head differs in that
+    one name and the decoded session is the same."""
+
+    def test_rename(self):
+        old = replay.load_v3([GOLDEN_0_24_9])
+        new = replay.load_v3([GOLDEN])
+        oc, nc = old[0]["head"]["cols"], new[0]["head"]["cols"]
+        at = oc.index("alcohol")
+        self.assertEqual(nc.index("narcotic"), at)
+        self.assertEqual(oc[:at] + oc[at + 1:], nc[:at] + nc[at + 1:])
+        caps = lambda decs: [r["cap"] for d in decs for r in d["rows"] + [d["chosen"] or {}] if "cap" in r]
+        self.assertEqual(caps(old), caps(new))
         self.assertEqual([d["out"] for d in old], [d["out"] for d in new])
 
 

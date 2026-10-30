@@ -157,13 +157,15 @@ TEST_CASE("bootstrap: the shipped file reads and maps by name")
     CHECK(m.report.colsUnknown.empty());
     // the file predates three of the build's needs (0.23.50-0.23.51): they take the prior
     CHECK(m.report.needsPrior == 3);
-    // and the alcohol column (0.24.9): read, not refused; its weights start at the prior
+    // and the narcotic column (0.24.9 as alcohol, 0.24.16 renamed): read, not
+    // refused; its weights start at the prior. The file names neither.
+    CHECK(std::find(d.cols.begin(), d.cols.end(), "narcotic") == d.cols.end());
     CHECK(std::find(d.cols.begin(), d.cols.end(), "alcohol") == d.cols.end());
     CHECK(m.report.colsPrior == 1);
-    const auto alc = Col(Effect::Col::alcohol);
+    const auto alc = Col(Effect::Col::narcotic);
     for (std::size_t k = 0; k < C::K; ++k) {
-        const auto p = Obvious::PriorOf(static_cast<Needs::NeedId>(k), Effect::Col::alcohol);
-        CHECK_FALSE(p.isObvious);   // effects.csv gives alcohol no obvious need
+        const auto p = Obvious::PriorOf(static_cast<Needs::NeedId>(k), Effect::Col::narcotic);
+        CHECK_FALSE(p.isObvious);   // effects.csv gives narcotic no obvious need
         CHECK(m.model.Th(k, alc).mu == 0.0);
         CHECK(m.model.Th(k, alc).var == doctest::Approx(0.09));
     }

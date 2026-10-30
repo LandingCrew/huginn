@@ -652,7 +652,7 @@ graph TB
 **Slot Classifications** (from `SlotClassification` enum in `src/slot/SlotConfig.h`):
 
 - **Effect-based:** `DamageAny`, `DamageMagic`, `HealingAny`, `BuffsAny`, `DefensiveAny`, `SummonsAny`, `Utility`
-- **Item-type based:** `PotionsAny`, `ScrollsAny`, `SpellsAny`, `SpellsDestruction`, `SpellsRestoration`, `SpellsConjuration`, `SpellsIllusion`, `SpellsAlteration`, `WeaponsAny`, `WeaponsMelee`, `WeaponsRanged`, `FoodAny`, `AlcoholAny`, `AmmoAny`, `PoisonsAny`, `ApparelAny`
+- **Item-type based:** `PotionsAny`, `ScrollsAny`, `SpellsAny`, `SpellsDestruction`, `SpellsRestoration`, `SpellsConjuration`, `SpellsIllusion`, `SpellsAlteration`, `WeaponsAny`, `WeaponsMelee`, `WeaponsRanged`, `FoodAny`, `NarcoticsAny`, `AmmoAny`, `PoisonsAny`, `ApparelAny`
 - **Unrestricted:** `Regular` (accepts any candidate)
 
 **Duplicate Removal:**

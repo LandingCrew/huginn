@@ -1682,6 +1682,10 @@ passes R6's gate, or the user's call).
       map matches only what its source decides. 0.24.9: cap(i) gained an `alcohol`
       column (drink and drug marks of the records, effects.csv); AlcoholAny
       reads it and FoodAny excludes alcohol again (the user, 2026-10-30).
+      0.24.16: drugs and alcohol are one group, narcotics (the user,
+      2026-10-30): the column is `narcotic`, the class NarcoticsAny (never
+      a poison); Sweet Skooma, vanilla's Sleeping Tree Sap and Redwater
+      Skooma are caught by their drug MGEFs.
 - [x] **Confined, mechanically:** `tools/prune/r8_check.py` gains CLASSIFIER
       (the classifiers, the tag and type enums, `HasTag`, the override
       loaders, `.tags` / `.tagsExt` / `.element` reads; code only, comments

@@ -122,7 +122,7 @@ namespace
                 switch (c.type) {
                     case IT::Poison: ff.kind = K::Poison; f.Add(F::Damage); f.Add(F::Hostile); break;
                     case IT::Food: ff.kind = K::Food; break;
-                    case IT::Alcohol: ff.kind = K::Food; f.Add(F::Intoxicating); f.Add(F::Alcohol); break;
+                    case IT::Alcohol: ff.kind = K::Food; f.Add(F::Intoxicating); f.Add(F::Narcotic); break;
                     case IT::SoulGem: ff.kind = K::SoulGem; break;
                     default: ff.kind = c.sourceType == Candidate::SourceType::Food ? K::Food : K::Potion; break;
                 }

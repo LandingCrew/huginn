@@ -325,18 +325,20 @@ namespace Huginn::Core::Effect
         }
     }
 
-    // The alcohol column's marks (effects.csv `alcohol`; 0.24.9). Evidence: the
+    // The narcotic column's marks (effects.csv `narcotic`: alcohol and drugs,
+    // one group; 0.24.9 named it alcohol, 0.24.16 renamed it). Evidence: the
     // LoreRim dump of 2026-10-10 and the live load order (houseCARL).
     namespace
     {
         // Item keywords. OCF_AlchDrinkAlcohol (OCF, distributed by KID) tags 35
         // of LoreRim's 56 drinks; the Alcohol* family (LoreRim - Food
         // Tweaks.esp) 55 of them, the mods' drinks OCF misses included.
-        // OCF_AlchDrug / OCF_AlchDrugSkooma: the Skoomas and Sleeping Tree Sap.
+        // OCF_AlchDrug / OCF_AlchDrugSkooma: the Skoomas and Sleeping Tree Sap
+        // (not Sweet Skooma: the effect marks below catch it).
         // MAG_FoodTypeDrugs: Simonrim's (Gourmet) Skoomas. VendorItemAlcohol,
         // CACO_IsAlcohol, VendorItemSkooma: the old ItemClassifier's tier 1
         // (CACO); none in LoreRim.
-        constexpr std::array<std::string_view, 12> kAlcoholItemKeywords{
+        constexpr std::array<std::string_view, 12> kNarcoticItemKeywords{
             "OCF_AlchDrinkAlcohol", "AlcoholWine", "AlcoholMead", "AlcoholSpirit", "AlcoholGrain",
             "AlcoholRectifiedSpirit", "OCF_AlchDrug", "OCF_AlchDrugSkooma", "MAG_FoodTypeDrugs",
             "VendorItemAlcohol", "CACO_IsAlcohol", "VendorItemSkooma",
@@ -346,17 +348,39 @@ namespace Huginn::Core::Effect
         // (BOOB - Requiem.esp): their Inebriation, and Balmora Blue's. The
         // MAG_ ones are the old classifier's tier 1b (Simonrim's Apothecary /
         // Gourmet): MAG_FoodItemDrugs is on Simonrim's Skooma effects.
-        constexpr std::array<std::string_view, 5> kAlcoholEffectKeywords{
+        constexpr std::array<std::string_view, 5> kNarcoticEffectKeywords{
             "Feat_KW_Alcohol", "BOOB_AlcoholBadEffect", "MAG_DrinkAlcoholFortify", "MAG_DrinkAlcoholDamage",
             "MAG_FoodItemDrugs",
         };
-        // The drink drawback: Skyrim.esm 10C645, vanilla FoodDamageStaminaRate
-        // ("Damage Stamina Regeneration"), LoreRim's REQ_Alcohol_DamageRegeneration
-        // ("Inebriation"). Vanilla tags no drink, so this is its one mark; in
-        // the LoreRim load order its 57 carriers are the 56 drinks and Balmora
-        // Blue (houseCARL's carrier walk, 2026-10-30).
-        constexpr std::string_view kDrinkDrawbackPlugin = "skyrim.esm";
-        constexpr std::uint32_t kDrinkDrawbackLocal = 0x10C645;
+        // Effects that only a drink or a drug carries, by defining plugin and
+        // local id (how OverrideTable keys an MGEF). Carriers: houseCARL's
+        // reverse carrier walk over the LoreRim-5 load order, 2026-10-30.
+        struct MgefMark
+        {
+            std::string_view plugin;   // lower case
+            std::uint32_t local;
+        };
+        constexpr std::array<MgefMark, 6> kNarcoticEffects{ {
+            // The drink drawback: vanilla FoodDamageStaminaRate ("Damage Stamina
+            // Regeneration"), LoreRim's REQ_Alcohol_DamageRegeneration
+            // ("Inebriation"). Vanilla tags no drink, so this marks its drinks;
+            // in LoreRim its 57 carriers are the 56 drinks and Balmora Blue.
+            { "skyrim.esm", 0x10C645 },
+            // dunSleepingTreeDruggedAlch ("Drugged"): its two carriers are
+            // Sleeping Tree Sap and Redwater Skooma, vanilla's only drug mark.
+            { "skyrim.esm", 0x0E3CBB },
+            // DLC1dunRedwaterSkoomaEffect: Redwater Skooma alone.
+            { "dawnguard.esm", 0x01391E },
+            // Requiem's Skooma: REQ_AlchDamageHealthSkoomaSide ("Damage Health")
+            // and REQ_Effect_Drug_Skooma01_FX ("Spiritedness"). Carriers, each:
+            // Skooma, Skooma Pipe and Sweet Skooma (Unmarked Locations Pack,
+            // which has no drug keyword).
+            { "requiem.esp", 0x0693C3 },
+            { "requiem.esp", 0x191518 },
+            // WindhelmSSE's 0WHMoonshine ("Drugged"): both Windhelm Homebrews,
+            // the food and the guard-scene potion (which has no keyword).
+            { "windhelmsse.esp", 0x367FBC },
+        } };
 
         bool AnyOf(const std::vector<std::string>& kws, std::span<const std::string_view> marks) noexcept
         {
@@ -364,19 +388,30 @@ namespace Huginn::Core::Effect
                 return std::find(marks.begin(), marks.end(), std::string_view(k)) != marks.end();
             });
         }
+
+        bool IsNarcoticEffect(const MagicEffectRecord& m)
+        {
+            const std::uint32_t local = OverrideTable::LocalId(m.formId);
+            if (std::none_of(kNarcoticEffects.begin(), kNarcoticEffects.end(),
+                             [&](const MgefMark& k) { return k.local == local; })) {
+                return false;   // the common case, with no plugin name to lower
+            }
+            const std::string plugin = Lower(m.plugin);
+            return std::any_of(kNarcoticEffects.begin(), kNarcoticEffects.end(),
+                               [&](const MgefMark& k) { return k.local == local && k.plugin == plugin; });
+        }
     }
 
-    bool IsAlcohol(const ItemRecord& it, const EffectTable& effects)
+    bool IsNarcotic(const ItemRecord& it, const EffectTable& effects)
     {
-        if (it.kind != Kind::Potion && it.kind != Kind::Poison && it.kind != Kind::Food) return false;
-        if (AnyOf(it.keywords, kAlcoholItemKeywords)) return true;
+        // Taken, not applied: a poison goes on a blade, so it is never one
+        // (the dump has a Poisoned Firebrand Wine poison; it carries no mark).
+        if (it.kind != Kind::Potion && it.kind != Kind::Food) return false;
+        if (AnyOf(it.keywords, kNarcoticItemKeywords)) return true;
         for (const auto& row : it.effects) {
             if (row.effect >= effects.size()) continue;
             const auto& m = effects[row.effect];
-            if (AnyOf(m.keywords, kAlcoholEffectKeywords)) return true;
-            if (OverrideTable::LocalId(m.formId) == kDrinkDrawbackLocal && Lower(m.plugin) == kDrinkDrawbackPlugin) {
-                return true;
-            }
+            if (AnyOf(m.keywords, kNarcoticEffectKeywords) || IsNarcoticEffect(m)) return true;
         }
         return false;
     }
@@ -934,7 +969,7 @@ namespace Huginn::Core::Effect
             case Kind::Light: fix(Col::kind_light, 1.0f); break;
             default: break;
         }
-        if (IsAlcohol(it, effects)) fix(Col::alcohol, 1.0f);
+        if (IsNarcotic(it, effects)) fix(Col::narcotic, 1.0f);
         m.consumable = it.kind == Kind::Potion || it.kind == Kind::Poison || it.kind == Kind::Food ||
                        it.kind == Kind::Scroll || it.kind == Kind::Ammo || it.kind == Kind::SoulGem;
         if (m.consumable) fix(Col::consumable, 1.0f);

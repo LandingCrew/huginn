@@ -54,7 +54,7 @@ namespace Huginn::Slot
         WeaponsMelee,   // Melee weapons only (sword, axe, mace, dagger)
         WeaponsRanged,  // Ranged weapons only (bow, crossbow, staff)
         FoodAny,        // Food items (CC Survival Mode)
-        AlcoholAny,     // Alcoholic beverages (ale, mead, wine, skooma)
+        NarcoticsAny,   // Narcotics: alcohol and drugs (ale, mead, wine, skooma, sleeping tree sap)
         AmmoAny,        // Ammunition (arrows, bolts)
         ApparelAny,     // #65: fortify-crafting gear (only scores at a workstation)
         DamageMagic,    // Damage spells and damage scrolls: DamageAny minus
