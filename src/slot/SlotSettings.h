@@ -127,6 +127,15 @@ namespace Huginn::Slot
             return m_challengerMinGap.load(std::memory_order_acquire);
         }
 
+        /// 0.24.13: the hold and the combat upsert ask a key's challengers in
+        /// rank order, the first that clears the challenger rule's line taking
+        /// the key; false (default) asks the best one only. Only the rule (the
+        /// choice ranking) tells the two apart. `[SlotLocker] bTestAllChallengers`.
+        [[nodiscard]] bool TestAllChallengers() const noexcept
+        {
+            return m_testAllChallengers.load(std::memory_order_acquire);
+        }
+
         /// Home keys: an item back on the page within HomeKeyMemorySec() of
         /// leaving a slot takes that slot back from whatever filled the gap
         /// (SlotAllocator::ApplySeating). Needs KeepSlotPositions.
@@ -257,6 +266,7 @@ namespace Huginn::Slot
         std::atomic<float> m_challengerMargin{0.5f};
         std::atomic<float> m_challengerConfidence{0.8f};   // R9
         std::atomic<float> m_challengerMinGap{0.0f};       // R9
+        std::atomic<bool> m_testAllChallengers{false};     // 0.24.13
         std::atomic<bool> m_returnToHomeKey{true};
         std::atomic<float> m_homeKeyMemorySec{60.0f};
         std::atomic<float> m_classRepeatDiscount{0.5f};

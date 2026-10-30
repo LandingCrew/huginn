@@ -1028,6 +1028,7 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
     lockRun.challengerMargin = Slot::SlotSettings::GetSingleton().ChallengerMargin();
     lockRun.challengerZ = Core::Challenger::ZForConfidence(Slot::SlotSettings::GetSingleton().ChallengerConfidence());
     lockRun.challengerMinGap = Core::Challenger::ClampMinGap(Slot::SlotSettings::GetSingleton().ChallengerMinGap());
+    lockRun.testAllChallengers = Slot::SlotSettings::GetSingleton().TestAllChallengers();
     // A combat-locked key's item, checked against the game every run: a spell
     // or shout the player no longer knows, or an item now equipped / worn.
     // The worn stack's uniqueID in one hand (the list carrying ExtraWorn, else

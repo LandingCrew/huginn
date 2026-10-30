@@ -12,6 +12,7 @@
 #include "learning/legacy/LegacyScorer.h"   // g_legacyScorer's destructor
 #include "core/WildcardGate.h"   // GateSettings: the [Wildcards] clocks' defaults
 #include "core/WildcardPick.h"   // Params: the [Wildcards] odds' defaults
+#include "core/ChallengerRule.h"   // the combat upsert confidence range (0.24.13)
 
 #include <algorithm>
 #include <filesystem>
@@ -251,6 +252,13 @@ Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {
     const double upsertCooldown = ini.GetDoubleValue(section, "fCombatUpsertCooldownSec", 10.0);
     config.combatUpsertCooldownSec = !std::isfinite(upsertCooldown) ? 10.0f
       : static_cast<float>(std::clamp(upsertCooldown, 0.0, 300.0));
+    // 0.24.13: the upsert's confidence under the choice ranking, clamped to
+    // the challenger rule's range (core/ChallengerRule.h) as
+    // fChallengerConfidence is; NaN or +-inf reads as the default.
+    const double upsertConfidence = ini.GetDoubleValue(section, "fCombatChallengerConfidence", 0.995);
+    config.combatChallengerConfidence = !std::isfinite(upsertConfidence) ? 0.995f
+      : static_cast<float>(std::clamp(upsertConfidence, Core::Challenger::kMinConfidence,
+          Core::Challenger::kMaxConfidence));
   }
 
   logger::info("[SlotLockerConfig] duration={:.0f}ms, min={:.0f}ms, lockOnFill={}, overridesBreak={}, breakPri={}, combat={}",
@@ -261,7 +269,9 @@ Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {
   logger::info("[SlotLockerConfig] combat lock lets go after {:.1f}s with no enemy (0 = never)",
     config.combatNoEnemyReleaseSec);
   if (config.combatUpsertMarginMult > 0.0f) {
-    logger::info("[SlotLockerConfig] combat upsert: a challenger beating a combat-locked key's item by {:.1f} x ln(1 + fChallengerMargin) takes it, at most once per key per {:.0f}s",
+    logger::info("[SlotLockerConfig] combat upsert: a challenger better than a combat-locked key's item with P > {:.3f} (z {:.3f}; with no belief, beating it by {:.1f} x ln(1 + fChallengerMargin)) takes it, at most once per key per {:.0f}s",
+      config.combatChallengerConfidence,
+      Core::Challenger::ZForConfidence(static_cast<double>(config.combatChallengerConfidence)),
       config.combatUpsertMarginMult, config.combatUpsertCooldownSec);
   } else {
     logger::info("[SlotLockerConfig] combat upsert: off");

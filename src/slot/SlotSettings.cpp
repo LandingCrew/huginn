@@ -224,9 +224,14 @@ namespace Huginn::Slot
             ini.GetDoubleValue("SlotLocker", "fChallengerMinGap", 0.0)));
         m_challengerConfidence.store(confidence, std::memory_order_release);
         m_challengerMinGap.store(minGap, std::memory_order_release);
-        SKSE::log::info("[SlotSettings] Hold seated items: {} (challenger rule: P(better) > {:.3f}, z {:.3f}, ln m {:.3f}; "
-                        "fallback ranking: margin {:.0f}%)"sv,
-            hold ? "on" : "off", confidence, Core::Challenger::ZForConfidence(confidence), minGap, margin * 100.0f);
+        // 0.24.13: the hold and the combat upsert ask every challenger in rank
+        // order (the first past the line wins), or the best one only.
+        const bool testAll = ini.GetBoolValue("SlotLocker", "bTestAllChallengers", false);
+        m_testAllChallengers.store(testAll, std::memory_order_release);
+        SKSE::log::info("[SlotSettings] Hold seated items: {} (challenger rule: P(better) > {:.3f}, z {:.3f}, ln m {:.3f}, "
+                        "asks {}; fallback ranking: margin {:.0f}%)"sv,
+            hold ? "on" : "off", confidence, Core::Challenger::ZForConfidence(confidence), minGap,
+            testAll ? "every challenger in rank order" : "the best challenger", margin * 100.0f);
 
         const bool returnHome = ini.GetBoolValue("SlotLocker", "bReturnToHomeKey", true);
         const float homeMemorySec = std::clamp(
@@ -318,6 +323,7 @@ namespace Huginn::Slot
         m_challengerMargin.store(0.5f, std::memory_order_release);
         m_challengerConfidence.store(0.8f, std::memory_order_release);
         m_challengerMinGap.store(0.0f, std::memory_order_release);
+        m_testAllChallengers.store(false, std::memory_order_release);
         m_returnToHomeKey.store(true, std::memory_order_release);
         m_homeKeyMemorySec.store(60.0f, std::memory_order_release);
         m_classRepeatDiscount.store(0.5f, std::memory_order_release);

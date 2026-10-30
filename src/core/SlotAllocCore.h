@@ -150,6 +150,14 @@ namespace Huginn::Core::SlotAlloc
         /// their hold is the fixed margin above, which these do not touch.
         float challengerConfidence = static_cast<float>(Challenger::kDefaultConfidence);
         float challengerMinGap = 0.0f;
+        /// 0.24.13, `[SlotLocker] bTestAllChallengers`: the hold asks a held
+        /// key's challengers in rank order and the first that clears the
+        /// challenger rule's line takes the key; false (the default) asks the
+        /// best one only. Only the rule can tell the two apart (a sigma_Delta
+        /// per pair); under the fixed margin a lower challenger never clears
+        /// a line the best one missed, so the hold stops at the best one there
+        /// either way. Not in the snapshot format (as the two above).
+        bool testAllChallengers = false;
     };
 
     struct Departure
@@ -279,7 +287,8 @@ namespace Huginn::Core::SlotAlloc
         HoldNotCandidate,         // a: slot pressed, b: formID -- a Remembrance hold whose item is not a candidate
         HoldShown,                // a: slot pressed, b: slot shown on, c: 1 = its class does not fit there
         NoCandidate,              // a: slot
-        HoldGaveWay,              // a: slot, b: holder, c: challenger; x/y: their raw scores, z/w: their caps; capped; sd (R9)
+        HoldGaveWay,              // a: slot, b: holder, c: challenger; x/y: their raw scores, z/w: their caps; capped; sd (R9);
+                                  //   d: higher challengers that missed the line first (bTestAllChallengers; kNone = the best one won)
         PulledToJobKey,           // a: job slot, b: from Regular slot, c: candidate
         Returner,                 // a: candidate now showing it, b: home slot, c: slot now, f: away s, why, key, d/e: displaced cand/slot
     };
@@ -631,9 +640,12 @@ namespace Huginn::Core::SlotAlloc
             /// cover the gap between the two. R10: no wildcard rule here any
             /// more -- the wildcard is placed on its seat by its own pass
             /// (PlaceCachedWildcard, DrawWildcard), never found by rank.
+            ///
+            /// `noteSkips` false: a hypothetical search that leaves no class-cap
+            /// note (the hold's further challengers under bTestAllChallengers).
             [[nodiscard]] std::optional<std::uint32_t> FindBest(const SlotRec& slot,
                 const std::set<std::uint32_t>& ids, const std::set<std::string_view>& names,
-                bool skipEquipped, bool useCap)
+                bool skipEquipped, bool useCap, bool noteSkips = true)
             {
                 const bool capped = useCap && m_cap.active && slot.regular;
                 std::uint32_t first = kNone;
@@ -672,7 +684,7 @@ namespace Huginn::Core::SlotAlloc
                 if (best == kNone) {
                     return std::nullopt;
                 }
-                if (best != first) {
+                if (best != first && noteSkips) {
                     NoteSkipped(first);
                 }
                 return best;
@@ -981,10 +993,15 @@ namespace Huginn::Core::SlotAlloc
         // the Bayesian challenger rule, mu_c - mu_i > ln m + z sigma_Delta,
         // when the scorer's beliefs are known; else by the fixed margin,
         // score difference > ln(1 + fChallengerMargin) (the old u_c > m u_i).
-        // Only the best challenger is asked, as before R9: a lower one with
-        // a narrower sigma_Delta that would clear the line waits until the
-        // best one stops standing in its way (the conservative reading; the
-        // no-swap-back argument holds either way).
+        // By default only the best challenger is asked, as before R9: a lower
+        // one with a narrower sigma_Delta that would clear the line waits
+        // until the best one stops standing in its way (the conservative
+        // reading). bTestAllChallengers (0.24.13) asks the rest in rank order
+        // when the best one misses the RULE's line, and the first that clears
+        // it takes the key; under the fixed margin it stops at the best one
+        // too (a lower score cannot clear the same line). The no-swap-back
+        // argument holds either way: every accepted swap clears a line >= 0
+        // that is symmetric in its pair, whichever challenger it was.
         //
         // Two problems, one pass. Near-tied items were trading slots every
         // time a lock expired -- most slot changes in play were under 10%
@@ -1168,18 +1185,55 @@ namespace Huginn::Core::SlotAlloc
                 // be held there for good.
                 m_cap.Remove(it.capClass);
                 const std::size_t skipMark = m_cap.skipped.size();
-                const auto challenger = FindBest(config, excludedIDs, excludedNames, config.skipEquipped,
+                auto challenger = FindBest(config, excludedIDs, excludedNames, config.skipEquipped,
                     /*useCap=*/true);
                 const bool capped = config.regular;
                 const Cap itemCap = capped ? holderCap[t] : m_p.NoCap();
-                const Cap challengerCap = capped && challenger ? CapOf(cands[*challenger].capClass) : m_p.NoCap();
                 const Score itemScore = m_p.Apply(m_p.Raw(it), itemCap);
 
-                if (challenger) {
+                // bTestAllChallengers: the challengers already asked, kept out
+                // of the next search only (they stay free for the fill).
+                std::set<std::uint32_t> askedIDs;
+                std::set<std::string_view> askedNames;
+                std::uint32_t passedOver = 0;
+                bool gaveWay = false;
+                while (challenger) {
                     const auto& ch = cands[*challenger];
+                    const Cap challengerCap = capped ? CapOf(ch.capClass) : m_p.NoCap();
                     const Score challengerScore = m_p.Apply(m_p.Raw(ch), challengerCap);
                     double sd = -1.0;
-                    if (TakesKey(*challenger, challengerScore, item, itemScore, &sd)) {
+                    if (!TakesKey(*challenger, challengerScore, item, itemScore, &sd)) {
+                        // Off (the default): the best challenger only. On:
+                        // the next one in the order the fill serves them --
+                        // but only past a miss of the RULE's line (sd >= 0):
+                        // the fixed margin's line is the same for every
+                        // challenger, and the next one scores no higher
+                        // (the list is in score order; under the class cap
+                        // FindBest takes the best capped score). For the
+                        // same reason nothing below a challenger that does
+                        // not even outscore the holder can clear a line >= 0.
+                        if (!m_in.settings.testAllChallengers || sd < 0.0 ||
+                            !m_p.Greater(challengerScore, itemScore)) {
+                            break;
+                        }
+                        if (passedOver == 0) {
+                            // The first search's class-cap note is kept only
+                            // if, uncapped, it would take the key from this
+                            // holder -- what the holder staying would leave
+                            // (below); the further searches note nothing.
+                            DropSkipsSince(skipMark, item, itemScore);
+                            askedIDs = excludedIDs;
+                            askedNames = excludedNames;
+                        }
+                        askedIDs.insert(ch.formID);
+                        askedNames.insert(ch.name);
+                        ++passedOver;
+                        challenger = FindBest(config, askedIDs, askedNames, config.skipEquipped,
+                            /*useCap=*/true, /*noteSkips=*/false);
+                        continue;
+                    }
+                    {
+                        gaveWay = true;
                         m_cap.Add(ch.capClass);
                         Event e{ EventKind::HoldGaveWay, static_cast<std::uint32_t>(j), item, *challenger };
                         e.x = Policy::ToDouble(m_p.Raw(it));
@@ -1188,6 +1242,7 @@ namespace Huginn::Core::SlotAlloc
                         e.w = Policy::ToDouble(challengerCap);
                         e.sd = sd;
                         e.capped = m_p.IsCapped(itemCap) || m_p.IsCapped(challengerCap);
+                        if (passedOver > 0) e.d = passedOver;   // bTestAllChallengers: higher ones that missed
                         Note(e);
 
                         Place(j, Kind::Normal, *challenger);
@@ -1215,9 +1270,10 @@ namespace Huginn::Core::SlotAlloc
                         if (seats[j] == loserKey && m_out.generationMatches && m_out.memory.seats[j] == loserKey) {
                             m_out.memory.seats[j] = 0;
                         }
-                        continue;
+                        break;
                     }
                 }
+                if (gaveWay) continue;
 
                 Place(j, Kind::Normal, item);
                 // A home claimant arriving at its key from where it waited:

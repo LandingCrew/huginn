@@ -720,3 +720,160 @@ TEST_CASE("challenger rule: under the line -- the changes the rule would not hav
         CHECK(UnderLine(a, b, s, 0.0, z) == !Exceeds(a, b, s, 0.0, z));
     }
 }
+
+// =============================================================================
+// bTestAllChallengers (0.24.13): every challenger in rank order, or the best
+// =============================================================================
+
+namespace
+{
+    /// One Regular key seated on form 1 (row 0, score -1.0); form 2 ranks
+    /// first, form 3 second.
+    SA::Input HeldKeyTwo(double best, double second, const BeliefSource* beliefs, bool testAll)
+    {
+        SA::Input in;
+        in.nowNs = 5'000'000'000'000LL;
+        in.slots = { Regular() };
+        in.candidates = { Cand(2, best, 1), Cand(3, second, 2), Cand(1, -1.0, 0) };
+        in.settings.keepSlotPositions = true;
+        in.settings.holdSeatedItems = true;
+        in.settings.classDiscount = 1.0f;   // no class cap
+        in.settings.testAllChallengers = testAll;
+        in.memory.seats[0] = 1;
+        in.memory.lastPlaced[0] = 1;
+        in.beliefs = beliefs;
+        return in;
+    }
+}
+
+TEST_CASE("bTestAllChallengers: a certain second-best challenger takes the key when the uncertain best misses")
+{
+    // The best (-0.5, +0.5) is uncertain: sd 1.0, line 0.84. The second
+    // (-0.7, +0.3) is sure: sd 0.1, line 0.084.
+    PairBeliefs b;
+    b.Set(0, 1, 1.0);
+    b.Set(0, 2, 0.1);
+    CHECK(ShownOn0(HeldKeyTwo(-0.5, -0.7, &b, false)) == 1);   // off: the best only, and it misses
+    CHECK(ShownOn0(HeldKeyTwo(-0.5, -0.7, &b, true)) == 3);    // on: the second clears the line
+    {
+        const auto in = HeldKeyTwo(-0.5, -0.7, &b, true);
+        const auto out = SA::Allocate(in);
+        int seen = 0;
+        for (const auto& e : out.events) {
+            if (e.kind != SA::EventKind::HoldGaveWay) continue;
+            ++seen;
+            CHECK(e.b == 2);   // holder: candidate index 2
+            CHECK(e.c == 1);   // the second-ranked row
+            CHECK(e.d == 1);   // one higher challenger missed first
+            CHECK(e.sd == doctest::Approx(0.1));
+        }
+        CHECK(seen == 1);
+    }
+    // The best clears the line: it takes the key either way, d unset.
+    {
+        PairBeliefs sure;
+        sure.Set(0, 1, 0.1);
+        sure.Set(0, 2, 0.1);
+        for (const bool testAll : { false, true }) {
+            const auto in = HeldKeyTwo(-0.5, -0.7, &sure, testAll);
+            const auto out = SA::Allocate(in);
+            CHECK(in.candidates[out.slots[0].src].formID == 2);
+            for (const auto& e : out.events) {
+                if (e.kind == SA::EventKind::HoldGaveWay) CHECK(e.d == SA::kNone);
+            }
+        }
+    }
+    // Nobody clears it: the holder stays either way.
+    {
+        PairBeliefs wide;
+        wide.Set(0, 1, 1.0);
+        wide.Set(0, 2, 1.0);
+        CHECK(ShownOn0(HeldKeyTwo(-0.5, -0.7, &wide, true)) == 1);
+    }
+    // The best one's pair has no belief: the fixed margin decided it
+    // (0.3 < ln 1.5), and the fixed line is the same for every lower
+    // challenger, so the hold stops there even with the switch on.
+    {
+        PairBeliefs noBest;
+        noBest.Set(0, 2, 0.05);
+        CHECK(ShownOn0(HeldKeyTwo(-0.7, -0.75, &noBest, true)) == 1);
+    }
+    // A second challenger that does not outscore the holder never takes it.
+    {
+        PairBeliefs b2;
+        b2.Set(0, 1, 1.0);
+        b2.Set(0, 2, 0.0);
+        CHECK(ShownOn0(HeldKeyTwo(-0.5, -1.0, &b2, true)) == 1);
+    }
+}
+
+TEST_CASE("bTestAllChallengers: the fixed-margin path is unchanged by the switch (no beliefs)")
+{
+    // The golden snapshots and the fallback ranking carry no beliefs: the
+    // switch must not change one output there.
+    T::SyntheticGenerator gen(4243, T::SyntheticSpec{ .exoticSettings = true });
+    int diffs = 0;
+    for (int s = 0; s < 300; ++s) {
+        auto settings = gen.RandomSettings();
+        const auto layout = gen.RandomLayout();
+        settings.testAllChallengers = false;
+        auto in = gen.Next(settings, layout, SA::PageMemory{}, true);
+        const auto a = SA::Allocate(in);
+        in.settings.testAllChallengers = true;
+        const auto b = SA::Allocate(in);
+        const auto d = T::DiffOutputs(in, a, b);
+        diffs += d.empty() ? 0 : 1;
+        CHECK(d.empty());
+    }
+    CHECK(diffs == 0);
+}
+
+TEST_CASE("bTestAllChallengers: no swap-back on fixed beliefs, and the pages settle (property test)")
+{
+    // The R9 property test's worlds with the switch on: unique keys, then
+    // duplicate keys and names kept. Every accepted swap still clears a line
+    // >= 0 that is symmetric in its pair, so no reversal; and the switch is
+    // exercised (give-ways past a higher challenger happen).
+    for (const bool uniqueKeys : { true, false }) {
+        std::mt19937 rng(uniqueKeys ? 20261031u : 20261032u);
+        T::SyntheticGenerator gen(uniqueKeys ? 79 : 80,
+            T::SyntheticSpec{ .exoticSettings = true, .formPool = uniqueKeys ? 40 : 12, .maxCandidates = 30 });
+        int worlds = 0, giveWays = 0, pastHigher = 0, swapBacks = 0, unsettled = 0;
+        for (int s = 0; s < 600; ++s) {
+            FixedWorld w = MakeWorld(rng, gen, uniqueKeys);
+            w.in.settings.testAllChallengers = true;
+            const auto policy = SA::LogScorePolicy::From(w.in.settings);
+            std::set<std::pair<std::uint32_t, std::uint32_t>> beaten;
+            SA::Input in = w.in;
+            in.beliefs = &w.table;
+            std::uniform_int_distribution<int> dt(0, 30);
+            int late = 0;
+            const int passes = 12;
+            for (int p = 0; p < passes; ++p) {
+                in.nowNs += static_cast<std::int64_t>(dt(rng)) * 100'000'000LL;
+                const auto out = SA::Allocate(in, policy);
+                for (const auto& e : out.events) {
+                    if (e.kind != SA::EventKind::HoldGaveWay) continue;
+                    ++giveWays;
+                    if (e.d != SA::kNone) ++pastHigher;
+                    if (p >= passes - 3) ++late;
+                    if (beaten.contains({ e.b, e.c })) ++swapBacks;
+                    beaten.insert({ e.c, e.b });
+                }
+                in.memory = out.memory;
+                in.generationMatches = out.generationMatches;
+            }
+            INFO("world " << s << " unique " << uniqueKeys);
+            CHECK(late == 0);
+            unsettled += late > 0 ? 1 : 0;
+            ++worlds;
+        }
+        MESSAGE("bTestAllChallengers on, " << std::string(uniqueKeys ? "unique keys" : "duplicate keys") << ": " << giveWays
+                << " give-ways in " << worlds << " worlds (" << pastHigher << " past a higher challenger), "
+                << swapBacks << " swap-backs, " << unsettled << " unsettled");
+        CHECK(swapBacks == 0);
+        CHECK(unsettled == 0);
+        CHECK(giveWays > 100);
+        CHECK(pastHigher > 0);
+    }
+}
