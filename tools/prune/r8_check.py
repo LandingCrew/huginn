@@ -253,6 +253,8 @@ REQUIRED += [
     ('src/pipeline/PipelineCoordinator.cpp',
      r'Core::LegacyShadow::RanksAndPages\([^\n]*\);\s*(?://[^\n]*\n\s*)*ctx\.legacyShadowAllocInput = \{\};',
      '0.24.17: the input the pass left holding A\'s order and mu is cleared right after the pass'),
+    ('src/learning/SelectionLogV3.cpp', r'r\.lm = e\.lnLearnMult;\s*r\.um = e\.utilMissing;',
+     '0.24.17: the v3 row carries the lm / um the live score read (the hop between CaptureEligible and the learner)'),
 ]
 # R11: the facets' readers stay wired (a deleted call would let the classifiers back by default).
 REQUIRED += [
@@ -355,6 +357,9 @@ FILE_PATTERNS = {
         # 0.24.17: the legacy row's util missing, which only CaptureEligible's guarded block may copy
         # into the v3 row (a second copy re-feeds D2's feature to engine B's learner)
         'lg.utilMissing': r'\blg\.utilMissing\b',
+        # 0.24.17: the legacy row's feature and floor (the old floors' values; with the shadow on
+        # they are filled under engine B too): only D2's exact live line and the floor check read them
+        'lg.<member>': r'\blg\.(?:lnLearnMult|floor)\b',
     },
 }
 
@@ -408,8 +413,10 @@ ALLOW = [
 COMMENT = r'^\s*//'
 BUDGET = {
     # The live pipeline (PipelineCoordinator): the legacy pass and everything it reads off it.
-    'src/pipeline/PipelineCoordinator.cpp': (58, [
+    'src/pipeline/PipelineCoordinator.cpp': (59, [
         COMMENT,
+        # CaptureEligible's floor cross-check (the one read of lg.floor)
+        r'^\s*if \(static_cast<uint8_t>\(lg\.floor\) != row\.old\.floor\) \+\+floorMismatch;$',
         # the pass (or its skip with the switch off), and the switch
         r'^\s*ctx\.legacy = Scoring::Legacy::LegacyPass\(',
         r'^\s*ctx\.legacy\.Skip\(candidates\.size\(\)\);$',
