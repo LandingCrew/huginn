@@ -5,6 +5,8 @@
 #include "core/DMenuDefaults.h"
 #include "huginn/ShippedFiles.h"     // generated: cmake/EmbedShipped.cmake
 
+#include <ctime>
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <optional>
@@ -42,6 +44,51 @@ namespace Huginn::Settings
             return !out.fail();
         }
 
+        /// Replace `path` with `bytes` without ever leaving it half-written:
+        /// write <path>.tmp, then rename it over `path` (MoveFileEx with
+        /// replace). Under MO2 the rename goes through usvfs, which supports
+        /// it (the result lands in the file's mod folder or in Overwrite;
+        /// either way the game sees it). If the rename fails anyway, the file
+        /// is written in place: the backup, made before this, still holds the
+        /// old one.
+        bool ReplaceFileBytes(const std::filesystem::path& path, std::string_view bytes)
+        {
+            auto tmp = path;
+            tmp += ".tmp";
+            std::error_code ec;
+            if (WriteFileBytes(tmp, bytes)) {
+                std::filesystem::rename(tmp, path, ec);
+                if (!ec) {
+                    return true;
+                }
+                logger::warn("[ShippedDefaults] Could not rename {} over {} ({}); writing it in place"sv,
+                    tmp.string(), path.string(), ec.message());
+            }
+            std::filesystem::remove(tmp, ec);
+            return WriteFileBytes(path, bytes);
+        }
+
+        /// <path>.<YYYYMMDD-HHMMSS>.bak, local time; a free name if a reset
+        /// in the same second already took it. Backups are never deleted:
+        /// the button is pressed rarely and each one is a file the player
+        /// may want back.
+        std::filesystem::path BackupPath(const std::filesystem::path& path)
+        {
+            const std::time_t now = std::time(nullptr);
+            std::tm local{};
+            localtime_s(&local, &now);
+            char stamp[32];
+            std::strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &local);
+            std::error_code ec;
+            for (int n = 1;; ++n) {
+                auto bak = path;
+                bak += n == 1 ? std::format(".{}.bak", stamp) : std::format(".{}-{}.bak", stamp, n);
+                if (!std::filesystem::exists(bak, ec) || n >= 100) {
+                    return bak;
+                }
+            }
+        }
+
         void LogOverlay(const OverlayResult& r, std::string_view tag, const std::filesystem::path& path)
         {
             if (r.shipped < 0) {
@@ -54,9 +101,13 @@ namespace Huginn::Settings
             }
         }
 
-        /// Back up `path` to <path>.bak if it differs from `shipped`, then write `shipped`.
+        /// Back up `path` to a timestamped .bak if it differs from `shipped`,
+        /// then write `shipped`. `sameContent` decides "differs" (bytes for
+        /// Huginn.ini; key by key for dMenu's INI, which dMenu re-saves in
+        /// its own layout).
         RestoreResult::Outcome RestoreOne(const std::filesystem::path& path, std::string_view shipped,
-                                          bool createIfAbsent, std::string_view what)
+                                          bool createIfAbsent, std::string_view what,
+                                          bool (*sameContent)(std::string_view, std::string_view))
         {
             std::error_code ec;
             const bool exists = std::filesystem::exists(path, ec) && !ec;
@@ -70,12 +121,11 @@ namespace Huginn::Settings
                     logger::error("[ShippedDefaults] {}: could not read {}; left as it is"sv, what, path.string());
                     return RestoreResult::Outcome::Failed;
                 }
-                if (*current == shipped) {
+                if (sameContent(*current, shipped)) {
                     logger::info("[ShippedDefaults] {}: {} is already the shipped file"sv, what, path.string());
                     return RestoreResult::Outcome::AlreadyShipped;
                 }
-                auto bak = path;
-                bak += ".bak";
+                const auto bak = BackupPath(path);
                 if (!WriteFileBytes(bak, *current)) {
                     logger::error("[ShippedDefaults] {}: could not write the backup {}; {} left as it is"sv, what,
                         bak.string(), path.string());
@@ -85,7 +135,7 @@ namespace Huginn::Settings
             } else {
                 std::filesystem::create_directories(path.parent_path(), ec);
             }
-            if (!WriteFileBytes(path, shipped)) {
+            if (!ReplaceFileBytes(path, shipped)) {
                 logger::error("[ShippedDefaults] {}: could not write {} (if the backup was made, it holds the old "
                               "file)"sv, what, path.string());
                 return RestoreResult::Outcome::Failed;
@@ -157,7 +207,10 @@ namespace Huginn::Settings
     {
         RestoreResult r;
         // The main INI is written even when absent: a fresh install has one.
-        r.main = RestoreOne(GetMainIniPath(), ShippedMainIni(), /*createIfAbsent=*/true, "Huginn.ini"sv);
+        // Huginn.ini byte for byte: the shipped file's comments are part of
+        // what a reset restores.
+        r.main = RestoreOne(GetMainIniPath(), ShippedMainIni(), /*createIfAbsent=*/true, "Huginn.ini"sv,
+            [](std::string_view a, std::string_view b) { return a == b; });
         // dMenu's INI only when dMenu has made one. dMenu writes it itself, at
         // the descriptor's defaults, the first time it runs with Huginn.json,
         // and creating it for a player without dMenu would only add a file.
@@ -165,7 +218,12 @@ namespace Huginn::Settings
         if (dMenuText.empty()) {
             r.dMenu = RestoreResult::Outcome::Failed;   // logged in ShippedDMenuIni
         } else {
-            r.dMenu = RestoreOne(GetDMenuOwnIniPath(), dMenuText, /*createIfAbsent=*/false, "dMenu INI"sv);
+            // dMenu's INI key by key (core/DMenuDefaults.h SameIniContent: a
+            // BOM, CRLF, spacing, order and comments do not count), so a file
+            // dMenu re-saved at the defaults is "already shipped" and gets no
+            // backup.
+            r.dMenu = RestoreOne(GetDMenuOwnIniPath(), dMenuText, /*createIfAbsent=*/false, "dMenu INI"sv,
+                [](std::string_view a, std::string_view b) { return Core::DMenu::SameIniContent(a, b); });
         }
         return r;
     }

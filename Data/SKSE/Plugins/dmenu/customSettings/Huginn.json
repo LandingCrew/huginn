@@ -267,7 +267,7 @@
           "type": "button",
           "text": {
             "name": "Reset to Defaults",
-            "desc": "Every setting back to the shipped defaults: writes the shipped Huginn.ini over yours (yours kept as Huginn.ini.bak) and this panel's values back to their defaults. Learned weights are kept (Reset Learned Weights clears those). Restart the game before changing this panel again: it shows the old values until then."
+            "desc": "Every setting back to the shipped defaults: writes the shipped Huginn.ini over yours (yours kept as Huginn.ini.<date>-<time>.bak) and this panel's values back to their defaults. Learned weights are kept (Reset Learned Weights clears those). Restart the game before changing this panel again: it shows the old values until then."
           },
           "id": "Huginn_reset_defaults"
         },

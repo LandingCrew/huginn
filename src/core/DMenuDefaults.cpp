@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <format>
+#include <map>
 
 namespace Huginn::Core::DMenu
 {
@@ -121,5 +122,48 @@ namespace Huginn::Core::DMenu
             }
         }
         return text;
+    }
+
+    namespace
+    {
+        std::string_view TrimView(std::string_view v)
+        {
+            const auto b = v.find_first_not_of(" \t\r");
+            if (b == std::string_view::npos) return {};
+            const auto e = v.find_last_not_of(" \t\r");
+            return v.substr(b, e - b + 1);
+        }
+
+        using IniMap = std::map<std::string, std::map<std::string, std::string>>;
+
+        IniMap ParseIni(std::string_view text)
+        {
+            if (text.starts_with("\xEF\xBB\xBF")) text.remove_prefix(3);
+            IniMap out;
+            std::string section;
+            while (!text.empty()) {
+                const auto nl = text.find('\n');
+                const std::string_view line = TrimView(text.substr(0, nl));
+                text = nl == std::string_view::npos ? std::string_view{} : text.substr(nl + 1);
+                if (line.empty() || line.front() == ';' || line.front() == '#') continue;
+                if (line.front() == '[' && line.back() == ']') {
+                    section = std::string(TrimView(line.substr(1, line.size() - 2)));
+                    out[section];
+                    continue;
+                }
+                const auto eq = line.find('=');
+                if (eq == std::string_view::npos) {
+                    out[section][std::string(line)];   // a bare key: present, empty
+                    continue;
+                }
+                out[section][std::string(TrimView(line.substr(0, eq)))] = std::string(TrimView(line.substr(eq + 1)));
+            }
+            return out;
+        }
+    }
+
+    bool SameIniContent(std::string_view a, std::string_view b)
+    {
+        return ParseIni(a) == ParseIni(b);
     }
 }

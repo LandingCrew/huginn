@@ -364,7 +364,34 @@ TEST_CASE("Source guard: every settings INI read goes through the shipped-defaul
 
     // SimpleIni's own loaders: the overlay, LoadIniFile, and the effect
     // catalog's override directory (its own files, not settings).
-    RequireOnlyIn(std::regex(R"(\.\s*Load(Data|File)\s*\()"),
+    // Through `.` or `->`.
+    RequireOnlyIn(std::regex(R"((\.|->)\s*Load(Data|File)\s*\()"),
         { "src/settings/IniOverlay.h", "src/Globals.cpp", "src/effect/EffectCatalog.cpp" },
         "a SimpleIni load outside the overlay");
+
+    // The two settings files' paths are spelled once, in Globals.cpp
+    // (GetMainIniPath, GetDMenuOwnIniPath): a hand-built path elsewhere would
+    // be a way round the guards above. `Plugins` then a separator then
+    // `Huginn.ini` is the main INI; `customSettings`, separator, `ini` is
+    // dMenu's folder (Huginn.json's own "ini" value is not C++ and not here).
+    RequireOnlyIn(std::regex(R"(Plugins(/|\\\\)+Huginn\.ini|customSettings(/|\\\\)+ini)"),
+        { "src/Globals.cpp" },
+        "a settings INI path spelled outside Globals.cpp");
+}
+
+TEST_CASE("DMenuDefaults: SameIniContent compares keys, not layout")
+{
+    const std::string ours = "[Widget]\nbEnabled = true\nfScale = 70.000000\n\n[Debug]\niRecommendationLog = 1.000000\n";
+    // dMenu's own re-save: BOM, CRLF, no spaces, another order, a comment.
+    CHECK(DMenu::SameIniContent(ours,
+        "\xEF\xBB\xBF; dMenu\r\n[Debug]\r\niRecommendationLog=1.000000\r\n[Widget]\r\nfScale=70.000000\r\nbEnabled=true\r\n"));
+    CHECK(DMenu::SameIniContent(ours, ours));
+    CHECK_FALSE(DMenu::SameIniContent(ours, "[Widget]\nbEnabled = true\nfScale = 85.000000\n\n[Debug]\niRecommendationLog = 1.000000\n"));
+    CHECK_FALSE(DMenu::SameIniContent(ours, "[Widget]\nbEnabled = true\n\n[Debug]\niRecommendationLog = 1.000000\n"));
+    CHECK_FALSE(DMenu::SameIniContent(ours, ours + "[Widget]\nbExtra = true\n"));
+    CHECK_FALSE(DMenu::SameIniContent(ours, "[widget]\nbEnabled = true\nfScale = 70.000000\n[Debug]\niRecommendationLog = 1.000000\n"));
+    // The shipped defaults against themselves, through ToIniText.
+    const auto r = DMenu::DefaultsFromDescriptor(Huginn::Shipped::DMenuJsonText());
+    REQUIRE(r.Ok());
+    CHECK(DMenu::SameIniContent(DMenu::ToIniText(r.entries), DMenu::ToIniText(r.entries)));
 }

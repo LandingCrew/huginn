@@ -2,7 +2,7 @@
 
 > **R11 (0.24.4):** the "Reset Learned Weights" button returns θ to the bootstrap and clears b (and the old learner, D2's input), as `hg reset weights`; its text says so since R11. The `[Scoring]` and `[ContextWeights]` sections in the ownership table (main INI, re-read by `hg reload` / the Reload INI button) are D2's inputs only; the panels themselves expose `[Widget]` and `[Debug]` (the hand-tuned engine (context weights × the bandit's learning score × multipliers) no longer ranks: every candidate is ranked on the choice score μ (θ over need × effect columns, b per item; doc 9, [9-implementation-map.md](9-implementation-map.md)), and the old engine runs only for the D2 feature `ln learn mult` (`[Scoring] bLegacyLearnFeature`, confined by `tools/prune/r8_check.py`)).
 
-> **0.24.10: one source of defaults; Reset to Defaults restores the shipped files.** The shipped `configs/Huginn.ini` and the dMenu descriptor are compiled into the DLL (`cmake/EmbedShipped.cmake`). Every main-INI read is the shipped Huginn.ini with the player's file over it, and every `[Widget]`/`[Debug]` read is the descriptor's defaults with dMenu's INI over them (`settings/ShippedDefaults.h`, `settings/IniOverlay.h`), so a key a file leaves out reads its shipped value, never a loader constant. Reset to Defaults writes the shipped files back to disk (keeping `.bak` copies) and loads them, so it persists. See [Reset to Defaults](#reset-to-defaults).
+> **0.24.10: one source of defaults; Reset to Defaults restores the shipped files.** The shipped `configs/Huginn.ini` and the dMenu descriptor are compiled into the DLL (`cmake/EmbedShipped.cmake`). Every main-INI read is the shipped Huginn.ini with the player's file over it, and every `[Widget]`/`[Debug]` read is the descriptor's defaults with dMenu's INI over them (`settings/ShippedDefaults.h`, `settings/IniOverlay.h`), so a key a file leaves out reads its shipped value, never a loader constant. Reset to Defaults writes the shipped files back to disk (keeping timestamped `.bak` copies) and loads them, so it persists. See [Reset to Defaults](#reset-to-defaults).
 
 How Huginn integrates with [dMenu](https://www.nexusmods.com/skyrimspecialedition/mods/97221)
 for in-game settings management, and what a settings reload actually does.
@@ -163,14 +163,14 @@ from exactly one place via two path helpers in `Globals.cpp`:
 Data/SKSE/Plugins/
     Huginn.ini                              <- Main INI (never written by dMenu; Reset to Defaults
                                                writes the shipped file here)
-    Huginn.ini.bak                          <- the player's Huginn.ini before the last Reset to
-                                               Defaults (only when it differed from the shipped one)
+    Huginn.ini.<YYYYMMDD-HHMMSS>.bak        <- the player's Huginn.ini before a Reset to Defaults,
+                                               one per reset that changed it (all kept)
     Huginn_Overrides.ini                    <- Classification overrides (registry-time, NOT reloaded)
     dmenu/customSettings/
         Huginn.json                         <- dMenu descriptor (setting definitions + "ini" path)
         ini/
             Huginn.ini                      <- dMenu-managed INI ([Widget], [Debug] only)
-            Huginn.ini.bak                  <- it, before the last Reset to Defaults
+            Huginn.ini.<stamp>.bak          <- it, before a Reset to Defaults that changed it
 ```
 
 The repository copies live in `configs/Huginn.ini`, `configs/Huginn_Overrides.ini`
@@ -233,7 +233,7 @@ sequenceDiagram
 |---|---|---|
 | `Huginn_toggle_widget` | Show/Hide Widget | `IntuitionMenu::ToggleUserHidden()` — deliberately the *same* latch the hotkey flips, not a parallel flag. Resets to shown on load; use `bEnabled` to turn the widget off for good |
 | `Huginn_reset_weights` | Reset Learned Weights | `ResetLearningData()` — clears `FeatureBanditLearner` **and** resets `SlotLocker`, so locked slots stop pinning recommendations scored by the just-cleared table. Shared with `hg reset weights` |
-| `Huginn_reset_defaults` | Reset to Defaults | `ResetAllToDefaults()` — writes the shipped `Huginn.ini` over the player's and the descriptor's defaults over dMenu's INI (old files kept as `.bak`), then loads the shipped files alone through the same pass as a reload: every setting, the page layout included, as a fresh install. Learned data is untouched. See [Reset to Defaults](#reset-to-defaults) |
+| `Huginn_reset_defaults` | Reset to Defaults | `ResetAllToDefaults()` — writes the shipped `Huginn.ini` over the player's and the descriptor's defaults over dMenu's INI (old files kept as timestamped `.bak` copies), then loads the shipped files alone through the same pass as a reload: every setting, the page layout included, as a fresh install. Learned data is untouched. See [Reset to Defaults](#reset-to-defaults) |
 | `Huginn_reload_ini` | Reload INI | `ReloadAllSettings(GetDMenuIniPath())`. dMenu-managed sections still come from the dMenu INI, so a manual reload does **not** reset the player's widget customizations |
 
 An unknown button ID logs a warning and shows "Huginn: Unknown action (check logs)".
@@ -256,9 +256,17 @@ would, now and after the next game start.
      (dMenu creates it itself, at those same defaults, the first time it runs
      with `Huginn.json`; a player without dMenu gets no new file).
 
-   A file that differs from what is written is first copied to `<name>.bak`,
-   replacing an older `.bak`; a file already identical is left alone, so
-   pressing the button twice keeps the first backup. If a backup or a write
+   A file that differs from what is written is first copied to
+   `<name>.<YYYYMMDD-HHMMSS>.bak` (local time; a `-2`, `-3` ... suffix if a
+   reset in the same second took the name). Backups are never deleted: the
+   button is pressed rarely, and each is a file the player may want back. A
+   file already the same is left alone and gets no backup -- `Huginn.ini`
+   compared byte for byte (its comments are part of what is restored),
+   dMenu's INI key by key (`core/DMenuDefaults.h` `SameIniContent`: BOM, CRLF,
+   spacing, order and comments ignored), so a file dMenu re-saved at the
+   defaults counts as reset. The new file is written to `<name>.tmp` and
+   renamed over the old one (in place if the rename fails; the backup is made
+   first either way). If a backup or a write
    fails, that file is left as it was, the log says which, and the
    notification says the reset holds for this session only.
 2. **Loads the shipped files alone** (`LoadShippedMainIni` /
@@ -303,9 +311,9 @@ default.)
 
 **Under MO2** the writes go through the virtual file system: the new
 `Huginn.ini` lands where usvfs puts a write to an existing file (the file's
-mod folder, or Overwrite), and the `.bak` files, being new, in Overwrite.
+mod folder, or Overwrite), and the `.bak` (and the transient `.tmp`) files, being new, in Overwrite.
 Either way the game sees the new file. Huginn never writes anywhere but the
-two settings files and their `.bak` copies.
+two settings files and their `.bak` / `.tmp` siblings.
 
 ## What a reload does — and does not — rebuild
 
@@ -513,7 +521,7 @@ locks; the update mutex is what makes that safe.
 | File | Role |
 |---|---|
 | `src/settings/SettingsReloader.h` / `.cpp` | Event sink, reload orchestration, Reset to Defaults, button dispatch, wheel-layout gating, side effects |
-| `src/settings/ShippedDefaults.h` / `.cpp` | `LoadMainIni` / `LoadDMenuIni` (each file over its shipped defaults), `RestoreShippedFiles` (Reset to Defaults' writes and `.bak` copies) |
+| `src/settings/ShippedDefaults.h` / `.cpp` | `LoadMainIni` / `LoadDMenuIni` (each file over its shipped defaults), `RestoreShippedFiles` (Reset to Defaults' writes and timestamped `.bak` copies) |
 | `src/settings/IniOverlay.h` | The layering itself (SimpleIni only; host-tested) |
 | `src/core/DMenuDefaults.h` / `.cpp` | The descriptor's defaults as dMenu writes them (host-tested) |
 | `cmake/EmbedShipped.cmake` | Compiles `configs/Huginn.ini` and `Huginn.json` into the DLL |

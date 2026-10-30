@@ -78,7 +78,7 @@ See [docs/README.md](docs/README.md) for the full system design.
 
 **Compile-time constants**: `src/Config.h` (intervals, target limits, the old learner's constants D2 uses)
 
-**INI settings**: `Data/SKSE/Plugins/Huginn.ini`, read over the shipped `configs/Huginn.ini` (compiled in): a key the player's file leaves out reads the shipped value, and dMenu's Reset to Defaults writes the shipped file back (the old one kept as `Huginn.ini.bak`):
+**INI settings**: `Data/SKSE/Plugins/Huginn.ini`, read over the shipped `configs/Huginn.ini` (compiled in): a key the player's file leaves out reads the shipped value, and dMenu's Reset to Defaults writes the shipped file back (the old one kept as `Huginn.ini.<YYYYMMDD-HHMMSS>.bak`):
 - `[Scoring]`: `bLegacyLearnFeature` (D2's feature, hot-reloadable; off is a fallback), `fCoveredPrior`, `fRefreshPriorSec` (the active-buff filters' refresh window); the old scoring params (`ScorerSettings`) are D2's inputs only
 - `[Learning]`: `sBootstrapBias` (b's seed from the bootstrap), `fThetaProcessNoise`, the memory life, which both learners use (ChoiceLearner's b battery; the old learner's for D2), and the discovery boost (`bDiscoveryBoost`, `fDiscoveryBoostVarMult`, `fDiscoveryBoostHalfLifeSec`; hot-reloadable)
 - `[Favorites]`: the favourites mode (Boost / Suppress) and `fFavoriteLifeMult`

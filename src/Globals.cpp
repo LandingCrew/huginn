@@ -280,8 +280,10 @@ Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {
 
 void LoadWildcardConfigFromINI(Scoring::WildcardManager& wildcardMgr, const CSimpleIniA& ini) {
   const char* section = "Wildcards";
-  // A missing key takes the core structs' default (the shipped Huginn.ini's
-  // value); an empty INI therefore loads the defaults (dMenu Reset to Defaults).
+  // `ini` is the main INI over the shipped Huginn.ini (Settings::LoadMainIni),
+  // or the shipped file alone on dMenu's Reset to Defaults, so these keys are
+  // always there. The core structs' defaults (equal to the shipped values)
+  // apply only to a key in neither file.
   constexpr Core::Wildcard::Params odds{};
   constexpr Core::Wildcard::GateSettings clocks{};
 

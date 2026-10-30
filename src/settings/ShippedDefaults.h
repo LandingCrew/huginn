@@ -56,7 +56,7 @@ namespace Huginn::Settings
     {
         enum class Outcome
         {
-            Written,        ///< replaced (the old file kept as <name>.bak), or created
+            Written,        ///< replaced (the old file kept as <name>.<stamp>.bak), or created
             AlreadyShipped, ///< already byte-identical: nothing written, no .bak made
             Absent,         ///< dMenu's INI only: dMenu has not created one (not installed,
                             ///< or never run); nothing to reset, and none is created
@@ -71,8 +71,10 @@ namespace Huginn::Settings
     /// @brief Write the shipped files over the player's: the shipped Huginn.ini
     /// to Data/SKSE/Plugins/Huginn.ini and, when dMenu's INI exists, the
     /// descriptor's defaults to it. A file that differs is first copied to
-    /// <name>.bak (replacing an older .bak), so a reset can be undone by hand;
-    /// a file already identical is left alone, so pressing twice keeps the
-    /// first backup. Logs each step.
+    /// <name>.<YYYYMMDD-HHMMSS>.bak (local time; every backup kept), so a
+    /// reset can be undone by hand; a file already the same (Huginn.ini byte
+    /// for byte, dMenu's INI key by key) is left alone and gets no backup.
+    /// The new file is written to <name>.tmp and renamed over the old one.
+    /// Logs each step.
     RestoreResult RestoreShippedFiles();
 }

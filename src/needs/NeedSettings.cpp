@@ -19,9 +19,16 @@ namespace Huginn::Needs
             text = text.substr(0, semi);  // an inline comment
          }
          if (const auto c = Core::Needs::ParseCurve(text)) {
-            if (*c != info.curve) ++overridden;
             curves[i] = *c;
-            source[i] = Source::Ini;
+            // The INI is read over the shipped Huginn.ini (Settings::LoadMainIni),
+            // so every need has a line here whether the player wrote one or not.
+            // "[Needs]" therefore means a line that CHANGES the csv curve (the
+            // shipped encumbrance line, or the player's own); one that repeats
+            // it reports "default", which is what the curve is.
+            if (*c != info.curve) {
+               ++overridden;
+               source[i] = Source::Ini;
+            }
          } else {
             ++rejected;
             logger::warn("[NeedSettings] [Needs] {} = '{}' is not a usable curve; keeping {}"sv, info.id, raw,

@@ -51,4 +51,13 @@ namespace Huginn::Core::DMenu
     /// @brief The entries as an INI: one [section] per section, in first-seen
     /// order, each key on its own `key = value` line; LF line ends.
     [[nodiscard]] std::string ToIniText(const std::vector<Entry>& entries);
+
+    /// @brief Do two INI texts hold the same keys with the same values?
+    /// Compared section by section and key by key: a UTF-8 BOM, CR line ends,
+    /// spacing around '=' and at line ends, blank lines, `;`/`#` comment lines
+    /// and the order of sections and keys do not count; a key present in one
+    /// and not the other does (as does a different value). Section and key
+    /// names compare as written. Used so a dMenu INI dMenu re-saved at the
+    /// defaults counts as already reset (no backup, no rewrite).
+    [[nodiscard]] bool SameIniContent(std::string_view a, std::string_view b);
 }

@@ -31,12 +31,12 @@ this doc, and it is the single easiest thing to get wrong:
 | `[Wheeler]`, `[Subtexts]`, `[Input]` | `Data/SKSE/Plugins/Huginn.ini` (main INI) |
 
 dMenu owns `[Widget]` and `[Debug]`; the main `Huginn.ini` does **not** define
-them ("one key, one home"). `IntuitionMenu::ReapplySettings()` reads
-`GetDMenuIniPath()` for exactly this reason — reading the main INI there would
-silently reset every widget setting to its compile-time default
-(`src/ui/IntuitionMenu.cpp:426`, `src/Globals.cpp:138`). If the dMenu file is
-absent, `GetDMenuIniPath()` falls back to the main INI, where the keys are
-undefined, so every value lands on its default.
+them ("one key, one home"). Every `[Widget]`/`[Debug]` read goes through
+`Settings::LoadDMenuIni(GetDMenuIniPath())` for exactly this reason: the dMenu
+descriptor's defaults (compiled in) with dMenu's file over them. If the dMenu
+file is absent, `GetDMenuIniPath()` falls back to the main INI, where the keys
+are undefined, so every value reads the descriptor's default (0.24.10; see
+[7-dmenu-integration.md](7-dmenu-integration.md)).
 
 ---
 
@@ -234,7 +234,8 @@ to the UI thread.
 - `Show()` / `Hide()` — queue `kShow` / `kHide` on `RE::UIMessageQueue`.
 - `ToggleUserHidden()` / `IsUserHidden()` / `ResetUserHidden()` — the player's
   hide latch.
-- `ReapplySettings()` / `ReapplySettings(const IntuitionConfig&)` — hot-reload.
+- `ReapplySettings(const IntuitionConfig&)` — hot-reload (the no-argument
+  overload that re-read the INI itself went in 0.24.10: unused).
 - `MapSlotContentType()` and `BuildSlotDetail()` — static helpers the backend
   calls while building its change-detection view.
 
@@ -541,9 +542,9 @@ Effect dropdown is ordered `Tint, Pulse, None`, so index 0 is `Tint`, not
 the same setting the name-matching fallback would have chosen. A non-numeric
 value (including `1minimal`) falls through to name matching.
 
-**Hot reload:** `hg reload` → `IntuitionMenu::ReapplySettings()` re-reads the
-dMenu INI and applies a whole `IntuitionConfig` snapshot; `SettingsReloader`
-calls the config-taking overload directly to avoid a second file read. A disabled
+**Hot reload:** `hg reload` → `SettingsReloader` re-reads the dMenu INI (over
+the descriptor's defaults) and calls `IntuitionMenu::ReapplySettings(const
+IntuitionConfig&)` with the whole snapshot. A disabled
 widget is hidden and the styling work skipped; an enabled one is `Show()`n (a
 no-op if already open), then position, alpha, scale, child alpha and the three
 effect modes are pushed in a single deferred GFx batch.
@@ -1191,7 +1192,7 @@ graph TB
 8. **A missing dMenu INI silently defaults the widget.** `[Widget]` and
    `[Debug]` live only in dMenu's file; if it is absent, `GetDMenuIniPath()`
    falls back to the main INI, which does not define those keys, and every value
-   lands on its compile-time default.
+   reads the dMenu descriptor's default (compiled in, `Settings::LoadDMenuIni`).
 
 **No longer a limitation:** strings exported to Wheeler were once modelled as
 indefinite borrows, requiring address-stable storage for the lifetime of the

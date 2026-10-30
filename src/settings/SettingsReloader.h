@@ -98,7 +98,7 @@ namespace Huginn::Settings
         /// Reset every setting to the shipped defaults (Reset to Defaults):
         /// writes the shipped Huginn.ini (and dMenu's INI, at the descriptor's
         /// defaults, when it exists) over the player's, keeping each old file as
-        /// <name>.bak, then loads the shipped layers alone. Learned data is not
+        /// <name>.<stamp>.bak, then loads the shipped layers alone. Learned data is not
         /// touched. Wraps itself in UpdateHandler::RunExclusive like
         /// ReloadAllSettings (the file writes happen before, outside the lock).
         void ResetAllToDefaults();

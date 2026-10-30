@@ -320,7 +320,7 @@ The value is one of Huginn's effect columns; [font=Courier New]hg dump all[/font
 
 This controls the in-game Intuition widget's appearance and, on a debug build, its debugging output. dMenu owns these settings exclusively — position, opacity, scale, display mode, and the widget on/off switch — and you edit them from Huginn's panel in the dMenu UI rather than by hand. Without dMenu installed, the widget uses its built-in defaults.
 
-The panel also has four buttons: [b]Show/Hide Widget[/b], [b]Reset Learned Weights[/b] (puts what Huginn has learned back to the shipped starting point), [b]Reset to Defaults[/b] (every setting back to the shipped Huginn.ini, written back to disk with your old file kept as Huginn.ini.bak; learned weights are kept), and [b]Reload INI[/b].
+The panel also has four buttons: [b]Show/Hide Widget[/b], [b]Reset Learned Weights[/b] (puts what Huginn has learned back to the shipped starting point), [b]Reset to Defaults[/b] (every setting back to the shipped Huginn.ini, written back to disk with your old file kept beside it as Huginn.ini.(date)-(time).bak; learned weights are kept), and [b]Reload INI[/b].
 
 Two controls turn the widget off:
 
