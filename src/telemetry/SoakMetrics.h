@@ -9,6 +9,7 @@
 #include <mutex>
 #include "core/ChallengerRule.h"
 #include "core/ReachLog.h"
+#include "core/ShadowCompare.h"   // the D2 shadow's pick tally (0.24.17)
 #include "core/SlotScoreMath.h"
 #include <optional>
 #include <span>
@@ -338,6 +339,19 @@ namespace Huginn::Telemetry
         }
         void RecordWildcardPicked() noexcept { m_wildcardPicks.fetch_add(1, std::memory_order_relaxed); }
 
+        // 0.24.17: one pick against the D2 engine in shadow
+        // (core/ShadowCompare.h ClassifyPick, from the v3 decision's chosen
+        // row): a key / wheel pick or a menu reach-in, and whether A's and the
+        // live ranking's stateless pages held it. The heartbeat's last field,
+        // `shadowA ...`. Any thread (the v3 log queues picks off the game
+        // thread); guarded by its own mutex, picks are rare.
+        void RecordShadowPick(const Core::ShadowCompare::Pick& legacyShadowPick)
+        {
+            if (legacyShadowPick.kind == Core::ShadowCompare::PickKind::None) return;
+            std::lock_guard lock(m_shadowMutex);
+            legacyShadowWindowTally.Add(legacyShadowPick);
+        }
+
         // A pipeline tick was abandoned because a page switch landed mid-tick
         // (PipelineCoordinator::AllocateAndLock). Expected ~0; a nonzero heartbeat
         // value means the display-page race path actually executes on this build.
@@ -434,6 +448,9 @@ namespace Huginn::Telemetry
         std::atomic<uint32_t> m_wildcardRolls{0};
         std::atomic<uint32_t> m_wildcardRollsRelevant{0};
         std::atomic<uint32_t> m_wildcardPicks{0};
+        // 0.24.17 (window): the D2 shadow's pick tally.
+        std::mutex m_shadowMutex;
+        Core::ShadowCompare::Tally legacyShadowWindowTally;
         std::atomic<uint64_t> m_tickSumMicros{0};
         std::atomic<uint32_t> m_tickPeakMicros{0};
 

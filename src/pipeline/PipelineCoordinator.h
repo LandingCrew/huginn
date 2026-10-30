@@ -9,6 +9,8 @@
 #include "learning/PipelineStateCache.h"   // EligibleRow (R4, the selection log v3)
 #include "learning/legacy/LegacyRun.h"   // Legacy::Run (R8.4: the pipeline's one handle on the D2 feature)
 #include "core/ChoiceLive.h"                      // the ranking pass's rows (R8.3)
+#include "core/SlotAllocCore.h"                   // the live allocation's input, for the D2 shadow's pages (0.24.17)
+#include "core/LegacyShadowPass.h"                // the D2 shadow's run (0.24.17)
 #include "candidate/CandidateTypes.h"
 #include "context/ContextReason.h"     // Context::ContextReason (per-tick display reason)
 #include "context/ReasonHold.h"        // Context::ReasonHold (label stability, #62)
@@ -148,7 +150,29 @@ namespace Huginn::Pipeline
         // `eligible`), the row each candidate reads (itself, or the kept one of
         // its dedup key), the kept rows and the weights the pass used.
         Scoring::Legacy::Run legacy;
-
+        // 0.24.17: [Scoring] bLegacyLearnFeature as this run read it (the
+        // live score reads the D2 feature: engine A live), read once in
+        // ScoreCandidates so a hot reload cannot split a run.
+        bool legacyLive = false;
+        // 0.24.17: the D2 engine in shadow (core/LegacyShadowPass.h): engine
+        // A's mu, ranks and stateless page keys, index-aligned with the
+        // candidates (and so with `eligible`). Ran when B is live, the choice
+        // score ranks and [Scoring] bShadowLegacy is on. Written only through
+        // the pure pass (RankOnChoice, ShadowLegacyPages), copied onto the
+        // eligible rows, read by nothing live (tools/prune/r8_check.py tags
+        // every line that names it).
+        Core::LegacyShadow::Run legacyShadow;
+        // ...and the live allocation's input, handed back by the allocator
+        // for the shadow's stateless pages (core/SlotAllocStateless.h), with
+        // each of its candidates' run row (ScoredCandidate::runRow). Filled
+        // only on a run the shadow runs on. The pure pass builds both
+        // stateless pages in place on it, A's last, so afterwards it holds
+        // A's order and A's mu: legacyShadow-prefixed for that reason
+        // (tools/prune/r8_check.py tags it), and cleared right after the pass
+        // and on every Reset.
+        Core::SlotAlloc::Input legacyShadowAllocInput;
+        bool haveAllocInput = false;
+        std::vector<uint32_t> pageRunRows;
 
         /// Reset all fields for reuse, preserving allocated container capacity
         /// (except the legacy pass's: since R8.4 the pass returns a fresh Run
@@ -194,6 +218,11 @@ namespace Huginn::Pipeline
             oldScore.dropped.clear();
             oldScore.shadow.reset();
             legacy.Clear();
+            legacyLive = false;
+            legacyShadow.Clear();
+            legacyShadowAllocInput = {};
+            haveAllocInput = false;
+            pageRunRows.clear();
             choiceLive = false;
             choiceAttrs.clear();
             choiceScores.clear();
@@ -335,6 +364,12 @@ namespace Huginn::Pipeline
         /// off-thread page switch landed after ResolveDisplayPage's snapshot —
         /// locking the stale page would leak page-blind locks across the switch.
         bool AllocateAndLock(PipelineContext& ctx);
+        /// 0.24.17: the D2 engine in shadow, after the allocation: each
+        /// candidate's rank under A and under B, its key on A's and on B's
+        /// stateless page (core/SlotAllocStateless.h, from the live
+        /// allocation's input), copied onto the eligible rows. Reads the run;
+        /// writes only ctx.legacyShadow and the eligible rows' shadow fields.
+        void ShadowLegacyPages(PipelineContext& ctx);
         void UpdateCaches(PipelineContext& ctx);
         /// R8.3 (was R8.2's ScoreShadow): after the allocation, what the page
         /// adds to each eligible row's logged score -- the slot feature of its

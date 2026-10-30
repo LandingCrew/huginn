@@ -362,7 +362,8 @@ namespace Huginn::Settings
             g_featureBanditLearner->SetMemoryLife(Learning::LearningSettings::GetSingleton().BuildConfig().memory);
         }
         // R8.2: the new learner's keys ([Learning] sBootstrapBias and
-        // fThetaProcessNoise, [Scoring] fCoveredPrior and bLegacyLearnFeature,
+        // fThetaProcessNoise, [Scoring] fCoveredPrior, bLegacyLearnFeature and
+        // (0.24.17) bShadowLegacy,
         // [Favorites] fFavoriteLifeMult; 0.24.14: bDiscoveryBoost,
         // fDiscoveryBoostVarMult, fDiscoveryBoostHalfLifeSec, live at the next
         // pipeline run) and its battery. sBootstrapBias and
@@ -373,6 +374,11 @@ namespace Huginn::Settings
             // R8.3: a live score input. A change logs one line and re-scores
             // the page now (the switch moves no sensor).
             if (Scoring::Legacy::SetEnabled(cs.legacyLearnFeature) != cs.legacyLearnFeature) {
+                Slot::SlotAllocator::GetSingleton().MarkPageDirty();
+            }
+            // 0.24.17: the D2 shadow. Shows nothing, but a run now puts it on
+            // (or takes it off) the logged rows at once.
+            if (Scoring::Legacy::SetShadowEnabled(cs.shadowLegacy) != cs.shadowLegacy) {
                 Slot::SlotAllocator::GetSingleton().MarkPageDirty();
             }
             g_choiceLearner->SetMemoryLife(Learning::LearningSettings::GetSingleton().BuildConfig().memory);

@@ -120,7 +120,7 @@ namespace Huginn::Scoring
             }
             if (terms.empty()) terms = "learned";
             const std::string legacy = !scored.legacyScored ? std::string(" | lm: under the old floors")
-                                     : detail               ? fmt::format(" | lm from {}", bd.ToDetailString())
+                                     : detail               ? fmt::format(" | {} from {}", p.utilMissing != 0.0 ? "shadow A's lm" : "lm", bd.ToDetailString())
                                                             : std::string{};
 
             if (fallback) {

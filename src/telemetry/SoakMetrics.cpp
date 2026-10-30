@@ -429,11 +429,34 @@ namespace Huginn::Telemetry
                 d.theta.meanMoved, d.theta.meanAbsDelta, d.theta.rmsDelta, d.theta.maxDelta, at, d.theta.varMoved,
                 d.theta.meanLnVar, d.b.entries, d.b.meanAbsMu, d.b.maxAbsMu, d.covered.mu);
         }
+        // 0.24.17: the D2 engine in shadow beside the live one, appended last
+        // so every field before it keeps its place (tools/soak reads by name
+        // and position). Per pick of the window: key / wheel picks and menu
+        // reach-ins, whether A's stateless page held the chosen item and
+        // whether the live ranking's stateless page did (the control: the
+        // two differ only by the ranking), the reach-ins only one of them
+        // held, and picks whose context had no shadow (nodata). "moot" with
+        // bLegacyLearnFeature on (A is live), "off" with bShadowLegacy off.
+        Core::ShadowCompare::Tally legacyShadowTally;
+        {
+            std::lock_guard lock(m_shadowMutex);
+            legacyShadowTally = legacyShadowWindowTally;
+            legacyShadowWindowTally = {};
+        }
+        const bool shadowMoot = Scoring::Legacy::Enabled();
+        const bool shadowOn = Scoring::Legacy::ShadowEnabled();
+        const std::string shadowStr = shadowMoot ? std::string("moot (bLegacyLearnFeature on: A is live)")
+            : !shadowOn ? std::string("off")
+            : std::format("keys={} keysOnA={} keysOnB0={} reach={} reachOnA={} reachOnB0={} reachAonly={} "
+                          "reachB0only={} nodata={}",
+                  legacyShadowTally.keys, legacyShadowTally.keysOnA, legacyShadowTally.keysOnB0,
+                  legacyShadowTally.reach, legacyShadowTally.reachOnA, legacyShadowTally.reachOnB0,
+                  legacyShadowTally.reachAOnly, legacyShadowTally.reachB0Only, legacyShadowTally.noData);
         logger::info(
             "[Soak] up={}h{:02}m{:02}s | equips hit={} near={} miss={} novel={} new={} accept={} skipped={} | "
             "recompute={}/{} ticks override={} pageBail={} | slotChurn={} | learn items={} trains={} forgot={} | tick avg={:.3f} peak={:.3f} ms | "
             "goals reachIns={} (candidate={}) presses={} (regular={} labeled={} offPage={}) pageFlips={} | {} | "
-            "choice {} | rate {} | perPress {} | drift {}"sv,
+            "choice {} | rate {} | perPress {} | drift {} | shadowA {}"sv,
             upH, upM, upS,
             hit, near_, miss, novel, learned, acceptStr, skipStr,
             recomputes, ticks, overrideRuns, pageBails,
@@ -442,7 +465,7 @@ namespace Huginn::Telemetry
             avgMs, peakMs,
             totalEquips + learned, hit + near_ + miss,
             pressTotal, pressRegular, pressLabeled, pressOffPage, pageFlips,
-            Core::Reach::FormatSplit(reach), choiceStr, rateStr, perPressStr, driftStr);
+            Core::Reach::FormatSplit(reach), choiceStr, rateStr, perPressStr, driftStr, shadowStr);
 
         Huginn_PLOT("Huginn/Learner Items", static_cast<int64_t>(learnerItems));
         // Only plot windows that carry signal — zero-equip windows would drag the

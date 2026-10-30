@@ -225,8 +225,10 @@ namespace Huginn::Core::DecisionLog
         // 0.23.53: est..hk appended (the old engine's score parts, the
         // favourites hotkey); a row may end before them (trailing nulls are
         // not written).
+        // 0.24.17: amu, ar, br, ak, bk appended (the D2 engine in shadow).
         out += R"(,"row":["form","uid","kind","src","cap","flags","slot","util","x","wp","fb","cr",)"
-               R"("est","a","n","ucb","rec","prior","cw","fl","wu","hk","mu","sd","lm","um","ex"])";
+               R"("est","a","n","ucb","rec","prior","cw","fl","wu","hk","mu","sd","lm","um","ex",)"
+               R"("amu","ar","br","ak","bk"])";
         out += R"(,"flags":{"eligible":1,"scored":2,"held":4,"equipped":8,"shown":16,"wildcard":32,)"
                R"("override":64,"remembered":128,"addedAtPick":256,"favorite":512})";
         out += R"(,"filters":)";   // 0.23.46: a row's "fb" indexes this
@@ -361,6 +363,12 @@ namespace Huginn::Core::DecisionLog
         if (std::isfinite(r.lm)) last = 12;
         if (r.um >= 0) last = 13;
         if (r.exNeed != kExNone) last = 14;
+        // 0.24.17: amu, ar, br, ak, bk -- the D2 engine in shadow.
+        if (std::isfinite(r.legacyShadowMu)) last = 15;
+        if (r.legacyShadowRankA > 0) last = 16;
+        if (r.legacyShadowRankB > 0) last = 17;
+        if (r.legacyShadowKeyA != kNoShadowKey) last = 18;
+        if (r.legacyShadowKeyB0 != kNoShadowKey) last = 19;
         for (int i = 0; i <= last; ++i) {
             out += ',';
             if (i < 7) AppendNum(out, lead[static_cast<std::size_t>(i)]);
@@ -379,6 +387,17 @@ namespace Huginn::Core::DecisionLog
             else if (i == 13) {
                 if (r.um < 0) out += "null";
                 else AppendInt(out, r.um);
+            }
+            else if (i == 15) AppendNum(out, r.legacyShadowMu);
+            else if (i == 16 || i == 17) {
+                const std::int16_t rank = i == 16 ? r.legacyShadowRankA : r.legacyShadowRankB;
+                if (rank <= 0) out += "null";
+                else AppendInt(out, rank);
+            }
+            else if (i == 18 || i == 19) {
+                const std::int8_t key = i == 18 ? r.legacyShadowKeyA : r.legacyShadowKeyB0;
+                if (key == kNoShadowKey) out += "null";
+                else AppendInt(out, key);
             }
             else {
                 if (r.exNeed == kExNone) out += "null";

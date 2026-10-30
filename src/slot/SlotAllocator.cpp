@@ -283,7 +283,8 @@ namespace Huginn::Slot
         const State::PlayerActorState& player,
         const State::WorldState& world,
         const WildcardRequest* wildcard,
-        WildcardResult* wildcardOut) const
+        WildcardResult* wildcardOut,
+        Core::SlotAlloc::Input* inputOut) const
     {
         // Hold the snapshot for the duration of the call so the config refs
         // passed to AllocateSlotsInternal stay valid even across a concurrent reload.
@@ -294,7 +295,7 @@ namespace Huginn::Slot
         }
         const size_t page = pageIndex < snap->size() ? pageIndex : 0;
         return AllocateSlotsInternal(page, generation, (*snap)[page].slots,
-            candidates, overrides, player, world, /*forTest=*/false, wildcard, wildcardOut);
+            candidates, overrides, player, world, /*forTest=*/false, wildcard, wildcardOut, inputOut);
     }
 
     SlotAssignments SlotAllocator::AllocateSlots(
@@ -363,7 +364,8 @@ namespace Huginn::Slot
         [[maybe_unused]] const State::WorldState& world,
         bool forTest,
         const WildcardRequest* wildcard,
-        WildcardResult* wildcardOut) const
+        WildcardResult* wildcardOut,
+        Core::SlotAlloc::Input* inputOut) const
     {
         namespace SA = Core::SlotAlloc;
         if (wildcardOut) {
@@ -629,6 +631,11 @@ namespace Huginn::Slot
         }
 #endif
 
+        // 0.24.17: the input, for the D2 shadow's stateless pages. Moved out
+        // last: nothing above reads `in` after this point.
+        if (inputOut) {
+            *inputOut = std::move(in);
+        }
         return assignments;
     }
 

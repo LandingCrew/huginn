@@ -91,8 +91,10 @@ namespace Huginn::Scoring
         ScoreBreakdown breakdown;               // the old utility's parts (legacy rows only)
         bool isColdStartBoosted = false;        // True if scored via cold-start UCB boost
         // R8.3: the old floors kept this row (pass or cold start), so the D2
-        // legacy feature (ln learn mult) applies to it. False with
-        // [Scoring] bLegacyLearnFeature off.
+        // legacy feature (ln learn mult) applies to it under engine A: the
+        // live score's with [Scoring] bLegacyLearnFeature on, the shadow's
+        // with it off (0.24.17; the live score then reads 0 / 1). False when
+        // the legacy pass did not run.
         bool legacyScored = false;
         // R8.4: ranked by the FALLBACK (Legacy::Run::FallbackRanking: no
         // bootstrap): `score` is s = ln utility, not mu, and `choice` is unset.
@@ -147,6 +149,12 @@ namespace Huginn::Scoring
         // (PipelineCoordinator::ScoreCandidates). Nothing but that hold may
         // place it -- the fill and the slot hold skip it.
         bool isRememberedOnly = false;
+        // 0.24.17: the row's index in the run's candidate list (the ranking
+        // pass's, PipelineCoordinator::RankOnChoice), which the eligible rows
+        // and the run's per-candidate vectors are aligned with; UINT32_MAX for
+        // a row the ranking did not make (remembered-only, the fallback).
+        // The D2 shadow's pages find each page row's candidate by it.
+        uint32_t runRow = UINT32_MAX;
         // R11: what the effect catalog says of the candidate (core/CapFacets.h),
         // for the slot classes, the label and the display: filled once per
         // pipeline run (PipelineCoordinator::ScoreCandidates). A row built

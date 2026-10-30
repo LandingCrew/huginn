@@ -132,6 +132,12 @@ namespace Huginn::Slot
         /// @param wildcard       R10: the page's wildcard key request
         ///                       (WildcardManager::Plan), or none
         /// @param wildcardOut    what the allocation did with it
+        /// @param inputOut       0.24.17: receives the core input this
+        ///                       allocation ran (index-aligned with
+        ///                       `candidates`), for the D2 shadow's stateless
+        ///                       pages (core/SlotAllocStateless.h). A copy out:
+        ///                       the allocation is the same with or without it.
+        ///                       Left untouched when the page has no slots.
         [[nodiscard]] SlotAssignments AllocateSlotsForPage(
             size_t pageIndex,
             const Scoring::ScoredCandidateList& candidates,
@@ -139,7 +145,8 @@ namespace Huginn::Slot
             const State::PlayerActorState& player,
             const State::WorldState& world,
             const WildcardRequest* wildcard = nullptr,
-            WildcardResult* wildcardOut = nullptr) const;
+            WildcardResult* wildcardOut = nullptr,
+            Core::SlotAlloc::Input* inputOut = nullptr) const;
 
         /// Simplified allocation without overrides (for testing/legacy)
         [[nodiscard]] SlotAssignments AllocateSlots(
@@ -318,7 +325,8 @@ namespace Huginn::Slot
             const State::WorldState& world,
             bool forTest = false,
             const WildcardRequest* wildcard = nullptr,
-            WildcardResult* wildcardOut = nullptr) const;
+            WildcardResult* wildcardOut = nullptr,
+            Core::SlotAlloc::Input* inputOut = nullptr) const;
 
         /// True if any slot on ANY configured page accepts this override
         /// category. Overrides are global; a page without an accepting slot is

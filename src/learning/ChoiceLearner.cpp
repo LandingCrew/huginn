@@ -68,10 +68,17 @@ namespace Huginn::Learning
         /// engine's per-row multipliers (ln fav / corr / potion, ln learner) are
         /// not in the row and read 0. R8.4: `ln util` reads 0 too (the build
         /// refuses a weight on it, core/Bootstrap.cpp), as in the live ranking.
+        /// The D2 feature is the one the live score read: the row's um and lm
+        /// (0.24.17). Until 0.24.10 it was read off whether the old floors
+        /// scored the row (a finite `util`), which was the same thing while the
+        /// legacy pass ran only for the live score; from 0.24.17 it also runs
+        /// for the D2 shadow with the live score reading 0 / 1, and `util` is
+        /// then set on rows whose score read um 1. A row with no um (held,
+        /// never a candidate) reads 1, as it did (its util was never set).
         C::Features RowFeatures(const DL::Row& r)
         {
             C::Features f{};
-            const bool scored = std::isfinite(r.util);
+            const bool scored = r.um == 0;
             f[static_cast<std::size_t>(C::Feature::util_missing)] = scored ? 0.0 : 1.0;
             if (scored) {
                 if (std::isfinite(r.lm)) f[static_cast<std::size_t>(C::Feature::ln_learn_mult)] = r.lm;
@@ -102,6 +109,7 @@ namespace Huginn::Learning
         s.thetaProcessNoise = std::clamp(ini.GetDoubleValue("Learning", "fThetaProcessNoise", s.thetaProcessNoise), 0.0, 1.0);
         s.coveredPrior = std::clamp(ini.GetDoubleValue("Scoring", "fCoveredPrior", s.coveredPrior), -10.0, 10.0);
         s.legacyLearnFeature = ini.GetBoolValue("Scoring", "bLegacyLearnFeature", s.legacyLearnFeature);
+        s.shadowLegacy = ini.GetBoolValue("Scoring", "bShadowLegacy", s.shadowLegacy);
         s.favoriteLifeMult = std::clamp(ini.GetDoubleValue("Favorites", "fFavoriteLifeMult", s.favoriteLifeMult), 1.0, 100.0);
         s.discovery.enabled = ini.GetBoolValue("Learning", "bDiscoveryBoost", s.discovery.enabled);
         s.discovery.varMult = ini.GetDoubleValue("Learning", "fDiscoveryBoostVarMult", s.discovery.varMult);

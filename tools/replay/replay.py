@@ -196,10 +196,13 @@ V3_FLAGS = {"eligible": 1, "scored": 2, "held": 4, "equipped": 8, "shown": 16, "
 # engine's score parts est..wu and fl, and the favourites hotkey hk; 0.23.56
 # (R8.2) the new model in shadow: mu, sd, lm (the D2 legacy feature ln learn
 # mult), um (util missing) and ex (the explanation: [need index, column index]
-# or "learned"). A row may end before the last of them (written up to the last
-# one set): a column past a row's end reads None.
+# or "learned"); 0.24.17 the D2 engine in shadow beside the live one: amu (engine
+# A's mu), ar and br (the row's rank under A and under the live ranking, 1 =
+# first), ak and bk (its key on A's and on the live ranking's stateless page,
+# -1 = off). A row may end before the last of them (written up to the last one
+# set): a column past a row's end reads None.
 V3_APPENDED = ("fb", "cr", "est", "a", "n", "ucb", "rec", "prior", "cw", "fl", "wu", "hk",
-               "mu", "sd", "lm", "um", "ex")
+               "mu", "sd", "lm", "um", "ex", "amu", "ar", "br", "ak", "bk")
 
 
 class V3FormatError(ValueError):
@@ -317,6 +320,12 @@ def _v3_row(raw, head, caps, extras=None):
         "lm": col.get("lm"),
         "um": col.get("um"),
         "ex": _shadow_ex(col.get("ex"), head),
+        # 0.24.17: the D2 engine in shadow (docs/architecture/9-selection-log-v3.md)
+        "amu": col.get("amu"),
+        "ar": col.get("ar"),
+        "br": col.get("br"),
+        "ak": col.get("ak"),
+        "bk": col.get("bk"),
     }
 
 

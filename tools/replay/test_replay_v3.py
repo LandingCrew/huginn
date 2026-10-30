@@ -45,8 +45,12 @@ GOLDEN_0_24_8 = REPO / "tests" / "core" / "fixtures" / "decisions" / "synthetic_
 # The golden file as 0.24.9 wrote it: that column named alcohol, before 0.24.16
 # renamed it narcotic (same index).
 GOLDEN_0_24_9 = REPO / "tests" / "core" / "fixtures" / "decisions" / "synthetic_v3_0.24.9.jsonl"
+# The golden file as 0.24.16 wrote it: before the D2 shadow's columns (amu, ar,
+# br, ak, bk; 0.24.17).
+GOLDEN_0_24_16 = REPO / "tests" / "core" / "fixtures" / "decisions" / "synthetic_v3_0.24.16.jsonl"
 OLD_KEYS = ("est", "a", "n", "ucb", "rec", "prior", "cw", "fl", "wu", "hk")
 SHADOW_KEYS = ("mu", "sd", "lm", "um", "ex")
+SHADOW_A_KEYS = ("amu", "ar", "br", "ak", "bk")   # 0.24.17
 
 # python -I leaves the script's folder off sys.path: load replay.py by path
 # (and write no __pycache__ into the tree).
@@ -86,7 +90,8 @@ class GoldenFile(unittest.TestCase):
         # 0.23.53: the old engine's score parts and the hotkey, the favorite
         # flag, the floor names.
         self.assertEqual(h["row"][12:22], list(OLD_KEYS))
-        self.assertEqual(h["row"][22:], list(SHADOW_KEYS))   # 0.23.56 (R8.2)
+        self.assertEqual(h["row"][22:27], list(SHADOW_KEYS))   # 0.23.56 (R8.2)
+        self.assertEqual(h["row"][27:], list(SHADOW_A_KEYS))   # 0.24.17
         self.assertEqual(h["flags"]["favorite"], 512)
         self.assertEqual(h["floors"], ["pass", "cold", "ctx", "util", "suppressed"])
         self.assertEqual(h["filters"][8], "summon_limit")
@@ -277,7 +282,7 @@ class GoldenFile(unittest.TestCase):
     def test_shadow_columns(self):
         # 0.23.56 (R8.2): every number from DecisionLogTests.cpp.
         d = self.decs[0]
-        self.assertEqual(d["head"]["row"][-5:], list(SHADOW_KEYS))
+        self.assertEqual(d["head"]["row"][22:27], list(SHADOW_KEYS))
         self.assertEqual(d["head"]["bootstrap"]["created_utc"], "2026-10-29 12:29:59")
         self.assertTrue(d["head"]["bootstrap"]["sha256"].startswith("0011"))
         rows = d["ctx"]["rows"]
@@ -293,6 +298,37 @@ class GoldenFile(unittest.TestCase):
         # the others carry none
         for i in (1, 2, 4, 5):
             self.assertEqual(tuple(rows[i][k] for k in SHADOW_KEYS), (None,) * 5, i)
+
+    def test_d2_shadow_columns(self):
+        # 0.24.17: every number from DecisionLogTests.cpp.
+        rows = self.decs[0]["ctx"]["rows"]
+        # 0: A ranks it first (key 0 of A's stateless page), the live ranking second (key 2)
+        self.assertTrue(close(rows[0]["amu"], 1.75))
+        self.assertEqual((rows[0]["ar"], rows[0]["br"], rows[0]["ak"], rows[0]["bk"]), (1, 2, 0, 2))
+        # 1: off A's page (rank 7), on the live ranking's stateless page (rank 4, key 5)
+        self.assertTrue(close(rows[1]["amu"], 0.2))
+        self.assertEqual((rows[1]["ar"], rows[1]["br"], rows[1]["ak"], rows[1]["bk"]), (7, 4, -1, 5))
+        self.assertEqual(tuple(rows[1][k] for k in SHADOW_KEYS), (None,) * 5)   # the nulls between
+        for i in (2, 3, 4, 5):
+            self.assertEqual(tuple(rows[i][k] for k in SHADOW_A_KEYS), (None,) * 5, i)
+
+
+class GoldenFile0_24_16(unittest.TestCase):
+    """The same session as 0.24.16 wrote it (before 0.24.17): every row reads
+    the D2 shadow's columns as None; the rest as before."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.decs = replay.load_v3([GOLDEN_0_24_16])
+
+    def test_defaults(self):
+        h = self.decs[0]["head"]
+        self.assertEqual(h["row"][-1], "ex")
+        for d in self.decs:
+            for r in d["rows"]:
+                self.assertEqual(tuple(r[k] for k in SHADOW_A_KEYS), (None,) * 5)
+        self.assertTrue(close(self.decs[0]["ctx"]["rows"][0]["mu"], 1.25))   # everything else as before
+        self.assertTrue(close(self.decs[0]["chosen"]["util"], 1.234))
 
 
 class GoldenFile0_24_8(unittest.TestCase):
@@ -427,7 +463,8 @@ def encode(segments):
             if "fb" in head.get("row", []):   # 0.23.46 heads: the two appended columns
                 out += [None if r.get("fb") is None else head["filters"].index(r["fb"]), r.get("cr")]
             if "est" in head.get("row", []):   # 0.23.53 heads: up to the last one set
-                keys = OLD_KEYS + (SHADOW_KEYS if "mu" in head.get("row", []) else ())   # 0.23.56
+                keys = OLD_KEYS + (SHADOW_KEYS if "mu" in head.get("row", []) else ()) \
+                    + (SHADOW_A_KEYS if "amu" in head.get("row", []) else ())   # 0.23.56, 0.24.17
                 tail = []
                 for k in keys:
                     v = r.get(k)
@@ -471,7 +508,7 @@ def make_session():
     def r(form, kind, src, cap, flags, slot=-1, util=None, x=None, wp=None, uid=0, fb=None, cr=None, **old):
         row = {"form": form, "uid": uid, "kind": kind, "src": src, "cap": cap, "flags": flags,
                "slot": slot, "util": util, "x": x or {}, "wp": wp, "fb": fb, "cr": cr}
-        row.update({k: old.get(k) for k in OLD_KEYS + SHADOW_KEYS})   # 0.23.53, 0.23.56
+        row.update({k: old.get(k) for k in OLD_KEYS + SHADOW_KEYS + SHADOW_A_KEYS})   # 0.23.53, 0.23.56, 0.24.17
         return row
 
     ctx_a = {"id": 10, "utc": "2026-10-09 15:00:00.000", "why": "press",
@@ -482,7 +519,8 @@ def make_session():
              "rows": [r("0003EAE3", "Potion", "Potion", potion, 1 | 2 | 4 | 16, 0, 2.5,
                         {"overshoot_magicka": 0.1, "stack_count": 0.6},
                         est=0.31, a=0.75, n=6, ucb=0.25, rec=0, prior=0.5, cw=0.9, fl="pass",
-                        mu=0.875, sd=0.25, lm=0.125, um=0, ex=("magicka_deficit", "restore_magicka")),
+                        mu=0.875, sd=0.25, lm=0.125, um=0, ex=("magicka_deficit", "restore_magicka"),
+                        amu=1.125, ar=1, br=3, ak=0, bk=-1),
                       # 0.23.53: a favourite on key 1 under the context floor.
                       r("00012EB7", "Weapon", "Weapon", sword, 1 | 4 | 512, uid=12, x={"weapon_charge": 0.25},
                         est=0, a=0, n=0, ucb=1, rec=0, prior=0.4, cw=0.01, fl="ctx", wu=0.004, hk=0),
@@ -536,7 +574,7 @@ class PythonRoundTrip(unittest.TestCase):
             self.assertEqual(len(got["rows"]), len(want_rows))
             for g, w in zip(got["rows"], want_rows):
                 for k in ("form", "uid", "kind", "src", "cap", "flags", "slot", "util", "x", "wp", "fb", "cr") + OLD_KEYS \
-                        + SHADOW_KEYS:
+                        + SHADOW_KEYS + SHADOW_A_KEYS:
                     self.assertEqual(g[k], w[k], k)
             self.assertEqual(got["ctx"]["need"], want["ctx"]["need"])
             self.assertEqual(got["ctx"]["input"], want["ctx"]["input"])
@@ -568,7 +606,7 @@ class PythonRoundTrip(unittest.TestCase):
         for d in seg1:   # what the old segment reads back as
             for r in d["ctx"]["rows"] + d["add"]:
                 r["fb"], r["cr"] = None, None
-                r.update(dict.fromkeys(OLD_KEYS + SHADOW_KEYS))
+                r.update(dict.fromkeys(OLD_KEYS + SHADOW_KEYS + SHADOW_A_KEYS))
         decs = self.roundtrip(text)
         self.assertEqual(len(decs[0]["ctx"]["rows"]), 4)
         for d in decs[:3]:

@@ -163,6 +163,14 @@ namespace
                 r.um = 0;
                 r.exNeed = static_cast<std::int16_t>(N(Needs::NeedId::health_deficit));
                 r.exCol = static_cast<std::int16_t>(C("restore_health"));
+                // 0.24.17: the D2 engine in shadow: A ranks it first and
+                // shows it on key 0 of its stateless page; the live ranking
+                // second, on key 2 of its own.
+                r.legacyShadowMu = 1.75f;
+                r.legacyShadowRankA = 1;
+                r.legacyShadowRankB = 2;
+                r.legacyShadowKeyA = 0;
+                r.legacyShadowKeyB0 = 2;
                 p->rows.push_back(r);
             }
             {
@@ -188,6 +196,13 @@ namespace
                 r.old.prior = 0.3f;
                 r.old.ctx = 0.02f;
                 r.old.floor = static_cast<std::uint8_t>(Floor::cold);
+                // 0.24.17: off A's stateless page (rank 7), on the live
+                // ranking's (rank 4, key 5); no mu..ex in between (nulls).
+                r.legacyShadowMu = 0.2f;
+                r.legacyShadowRankA = 7;
+                r.legacyShadowRankB = 4;
+                r.legacyShadowKeyA = -1;
+                r.legacyShadowKeyB0 = 5;
                 p->rows.push_back(r);
             }
             {
@@ -541,7 +556,8 @@ TEST_CASE("decision log: the old engine's columns end at the last one set (0.23.
     CHECK(encodeRow(r) == R"(["00000012",0,null,null,-1,4,-1,null,[],null,null,null,0,0,0,1,0,null,null,null,null,0])");
     // The head names the columns and the floors.
     const std::string head = Encoder().BeginSegment(Synthetic::MakeHead());
-    CHECK(head.find(R"("fb","cr","est","a","n","ucb","rec","prior","cw","fl","wu","hk","mu","sd","lm","um","ex"])") != std::string::npos);
+    CHECK(head.find(R"("fb","cr","est","a","n","ucb","rec","prior","cw","fl","wu","hk","mu","sd","lm","um","ex",)"
+                    R"("amu","ar","br","ak","bk"])") != std::string::npos);
     // 0.23.56 (R8.2): the bootstrap the shadow model was seeded from
     CHECK(head.find(R"(,"bootstrap":{"created_utc":"2026-10-29 12:29:59","sha256":"0011)") != std::string::npos);
     {
@@ -563,6 +579,19 @@ TEST_CASE("decision log: the old engine's columns end at the last one set (0.23.
     r.mu = kNone;
     r.um = -1;
     r.exNeed = kExNone;
+    // 0.24.17: the D2 shadow's columns: a rank of 0 and a key of
+    // kNoShadowKey read null, a key of -1 (off that page) is written.
+    r.legacyShadowKeyA = -1;
+    CHECK(encodeRow(r) == R"(["00000012",0,null,null,-1,4,-1,null,[],null,null,null,0,0,0,1,0,null,null,null,null,null,)"
+                          R"(null,null,null,null,null,null,null,null,-1])");
+    r.legacyShadowMu = -0.25f;
+    r.legacyShadowRankB = 12;
+    r.legacyShadowKeyB0 = 3;
+    CHECK(encodeRow(r).ends_with(R"(null,null,null,null,null,-0.25,null,12,-1,3])"));
+    r.legacyShadowMu = kNone;
+    r.legacyShadowRankB = 0;
+    r.legacyShadowKeyA = kNoShadowKey;
+    r.legacyShadowKeyB0 = kNoShadowKey;
     CHECK(head.find(R"("addedAtPick":256,"favorite":512})") != std::string::npos);
     CHECK(head.find(R"("floors":["pass","cold","ctx","util","suppressed"])") != std::string::npos);
     // 0.23.55: covered(i)'s left(r) centre, [Scoring] fRefreshPriorSec.

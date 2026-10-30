@@ -53,8 +53,8 @@ namespace Huginn::Core::Choice
     /// With the switch on: ln learn mult on a row the old floors kept (pass or
     /// cold start), 0 on the others; util missing 0 on a kept row, 1 on the
     /// others. With it off: 0 and 1 on every row (the model is then plain
-    /// theta + b + recent; a fallback, not a supported mode: that variant fails
-    /// R6's gate).
+    /// theta + b + recent, engine B: the live engine by default from 0.24.17,
+    /// with D2 -- this call with the switch on -- computed in shadow).
     [[nodiscard]] constexpr LegacyValues LegacyFeature(bool enabled, bool scored, double lnLearnMult) noexcept
     {
         if (!enabled || !scored) return LegacyValues{ 0.0, 1.0 };
@@ -152,6 +152,27 @@ namespace Huginn::Core::Choice
             if (!(o.s.mu == o.s.mu)) {   // NaN
                 o.s.mu = o.s.logit = o.s.shat = -std::numeric_limits<double>::infinity();
             }
+        }
+    }
+
+    /// mu alone, exactly as ScoreForRanking ranks it (the upgrade gate on
+    /// `extras` first when `outIdx` names an entry, then each row's mu, a NaN
+    /// read as -inf), without the explanation's terms or the need part: for a
+    /// second ranking of the same run that nothing displays or logs beyond
+    /// its mu (0.24.17: the D2 engine in shadow, core/ShadowCompare.h). Same
+    /// contract on attrs / extras / gates as ScoreForRanking; `extras` is the
+    /// caller's own copy (the gate writes covered into it).
+    inline void RankMu(const Model& m, const Tick& t, std::span<const Attr> attrs, std::span<RowExtra> extras,
+                       std::span<const GateRow> gates, std::size_t outIdx, double leftOut, std::size_t rows,
+                       std::vector<double>& out)
+    {
+        out.assign(rows, -std::numeric_limits<double>::infinity());
+        if (outIdx < attrs.size() && outIdx < extras.size()) {
+            ApplyUpgradeGate(m, t, attrs, extras, gates, outIdx, leftOut);
+        }
+        for (std::size_t i = 0; i < rows && i < attrs.size() && i < extras.size(); ++i) {
+            const double mu = Score(m, t, attrs[i], extras[i], false).mu;
+            out[i] = mu == mu ? mu : -std::numeric_limits<double>::infinity();
         }
     }
 

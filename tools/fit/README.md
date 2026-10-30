@@ -417,6 +417,17 @@ So for the `three` group:
 The `picks` group reads no `nothing` record; there only `loadout_two_handed` is
 affected, and the same split applies.
 
+## Logs from 0.24.17 on: engine B live, D2 in shadow
+
+From 0.24.17 the live engine is B (`[Scoring] bLegacyLearnFeature = 0`), and with
+`bShadowLegacy = 1` the legacy pass still runs for the D2 shadow, so `util`, the
+`scored` flag, `fl` and the old parts are set on B's rows as under D2. A fit of
+**D2** reads them as before (fitlib.build derives util missing and ln learn mult
+from `util` and the old parts: right for D2, what the old floors kept). A fit of
+**B** must read the feature the live score read, the `lm` / `um` columns (0 / 1
+on every row under B), not `util`. The shadow's own columns (`amu ar br ak bk`)
+are for tools/shadow/shadow_compare.py; no fit reads them.
+
 ## R8.2: replay equivalence (`export_scores.py`, 0.23.56)
 
 `export_scores.py` writes fitlib's per-row logits under a bootstrap file

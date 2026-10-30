@@ -27,15 +27,22 @@
 // out of UtilityScorer in R8.4) calls FloorPass with its own
 // ScoreCandidateInternal.
 //
-// The switch: [Scoring] bLegacyLearnFeature (default true, because the
-// bootstrap's weight w = 1.36 was fitted with it). Off, the feature is 0 and
-// util missing 1 on every row, so the model is plain theta + b + recent; that
-// variant fails R6's gate, so the switch is a fallback, not a supported mode.
-// R8.2 read the key and logged it. R8.3 (0.24.0) makes it a LIVE SCORE INPUT:
-// the pipeline ranks every candidate on the choice score, which reads this
-// feature (w = 1.36) on the rows the floors keep. ContextRuleEngine still runs
-// every pipeline pass, but only to decide which rows the feature is computed
-// on; none of this module's output ranks anything by itself.
+// The switch: [Scoring] bLegacyLearnFeature. R8.2 read the key and logged
+// it. R8.3 (0.24.0) made it a LIVE SCORE INPUT, default on: the pipeline
+// ranks every candidate on the choice score, which reads this feature
+// (w = 1.36, the bootstrap's) on the rows the floors keep. Off, the feature is
+// 0 and util missing 1 on every row: the model is plain theta + b + recent.
+// 0.24.17 makes OFF the default and the live engine ("B"): R6's offline fit
+// could not tell the two apart (display bias: every logged pick was made on a
+// page the old engine built), so the user (2026-10-30) runs B live and
+// mirrors D2 ("A") in the background, [Scoring] bShadowLegacy (default on):
+// the pipeline still runs the legacy pass, and computes A's score, ranks and
+// page beside B's without showing them (core/ShadowCompare.h,
+// PipelineCoordinator::ShadowLegacyPages). Both engines are supported modes;
+// with the switch on, A is live and the shadow does not run. ContextRuleEngine
+// runs on every pipeline pass that runs the legacy pass, but only to decide
+// which rows the feature is computed on; none of this module's output ranks
+// anything by itself.
 //
 // Retiring this code needs a refit on 0.23.53+ logs (the v3 rows log the old
 // learner on every row) where a variant without the old scorer passes the gate.
@@ -296,13 +303,22 @@ namespace Huginn::Scoring::Legacy
         return r.scoredIndex;
     }
 
-    /// [Scoring] bLegacyLearnFeature (R8.3: live and hot-reloaded). On, the
-    /// pipeline runs the legacy pass (the context rules, the prior, the
-    /// correlations, the potion multiplier, the floors) and the feature reads
-    /// it; off, none of that runs and the feature is 0 / 1 on every row. The
-    /// old learner and UsageMemory keep training either way, so switching back
-    /// on is not stale.
+    /// [Scoring] bLegacyLearnFeature (R8.3: live and hot-reloaded; 0.24.17:
+    /// default off). On, the live score reads the feature off the legacy pass
+    /// (the context rules, the prior, the correlations, the potion multiplier,
+    /// the floors): D2, engine A. Off, the live score reads 0 / 1 on every
+    /// row: engine B. The old learner and UsageMemory keep training either
+    /// way, so switching back on is not stale.
     [[nodiscard]] bool Enabled() noexcept;
     /// Returns the previous value; a change logs one line.
     bool SetEnabled(bool on) noexcept;
+    /// [Scoring] bShadowLegacy (0.24.17, hot-reloaded, default on): with the
+    /// switch above off, the pipeline still runs the legacy pass, and A's
+    /// score, ranks and page are computed beside B's for the v3 log and the
+    /// [Soak] heartbeat, never shown (core/ShadowCompare.h). Moot with the
+    /// switch on (A is live; the shadow does not run). Off with the switch
+    /// off, the legacy pass does not run at all.
+    [[nodiscard]] bool ShadowEnabled() noexcept;
+    /// Returns the previous value; a change logs one line.
+    bool SetShadowEnabled(bool on) noexcept;
 }

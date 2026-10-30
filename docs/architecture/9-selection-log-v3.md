@@ -18,7 +18,7 @@ schema of that log, field by field.
 | Code | `src/core/DecisionLog.h/.cpp` (records, encoder), `src/core/OldScore.h` (the old engine's score parts, 0.23.53), `src/core/NeedEpisodes.h` (episodes and their laps), `src/learning/SelectionLogV3*.cpp` (the game side), `src/pipeline/PipelineCoordinator.cpp` `CaptureEligible` (the eligible rows and their score parts) |
 | Reader | `tools/replay/replay.py`: `iter_v3` / `load_v3`, `--v3 FILE...` prints a summary |
 | Tests | `tests/core/DecisionLogTests.cpp` (encoder vs the golden file), `tests/core/NeedEpisodesTests.cpp`, `tests/core/CoverageTests.cpp` (covered(i), the filter reasons), `tools/replay/test_replay_v3.py` (CTest `replay_v3_roundtrip`) |
-| Golden file | `tests/core/fixtures/decisions/synthetic_v3.jsonl`; beside it the same session as older builds wrote it, which the readers must keep decoding: `synthetic_v3_0.23.45.jsonl` (before `fb`, `cr`, `covered`, `summon`) and `synthetic_v3_0.23.52.jsonl` (before the old engine's columns `est`..`hk`, the `favorite` flag, `ctx.old` and `dec.rid`) |
+| Golden file | `tests/core/fixtures/decisions/synthetic_v3.jsonl`; beside it the same session as older builds wrote it, which the readers must keep decoding: `synthetic_v3_0.23.45.jsonl` (before `fb`, `cr`, `covered`, `summon`) and `synthetic_v3_0.23.52.jsonl` (before the old engine's columns `est`..`hk`, the `favorite` flag, `ctx.old` and `dec.rid`), `synthetic_v3_0.23.55.jsonl` (before `mu`..`ex`), `synthetic_v3_0.24.8.jsonl` (243 columns: before 0.24.9's `alcohol`), `synthetic_v3_0.24.9.jsonl` (that column named `alcohol`, before 0.24.16 renamed it `narcotic`) and `synthetic_v3_0.24.16.jsonl` (before the D2 shadow's `amu`..`bk`, 0.24.17; builds 0.24.9-0.24.16 write the alcohol / narcotic column but no shadow columns) |
 | Fit loader | `tools/fit/v3load.py` (row tuple indices in `tools/fit/common.py`), tested by `tools/fit/test_fit.py` |
 
 ## Files
@@ -108,7 +108,7 @@ contexts per segment and clears both at a head.
 | `cross` | string[8] | the runtime cross-features, in order (`row.x` indexes it). 7 before 0.23.46 (no `covered`) |
 | `kinds` | string[10] | catalog kinds: `Spell Scroll Potion Poison Food Weapon Ammo Armor SoulGem Light` (`row.kind`) |
 | `src` | string[10] | the old engine's candidate source types (`row.src`) |
-| `row` | string[27] | the row columns, in order (below). 22 before 0.23.56 (no `mu`..`ex`), 12 before 0.23.53 (no `est`..`hk`), 10 before 0.23.46 (no `fb`, `cr`) |
+| `row` | string[32] | the row columns, in order (below). 27 before 0.24.17 (no `amu`..`bk`), 22 before 0.23.56 (no `mu`..`ex`), 12 before 0.23.53 (no `est`..`hk`), 10 before 0.23.46 (no `fb`, `cr`) |
 | `flags` | object | row flag bits by name (`favorite` since 0.23.53) |
 | `filters` | string[19] | (0.23.46) the candidate filters' reasons, in order (`row.fb` indexes it; `core/FilterReason.h`). 15 before 0.23.55 (no `no_follower` .. `favorite_suppressed`); absent before 0.23.46 |
 | `floors` | string[5] | (0.23.53) how the old engine's floors treated an eligible row, in order: `pass`, `cold`, `ctx`, `util`, `suppressed` (`row.fl` indexes it; `core/OldScore.h`, [below](#the-old-engines-score-parts-02353)). `suppressed` is not written from 0.23.55 (a suppressed favourite is a filter drop, `favorite_suppressed`); the name stays so older rows read. Absent before 0.23.53 |
@@ -190,9 +190,14 @@ Each row is an array, in the order `head.row` names:
 | 21 | `hk` | int or null | (0.23.53) the vanilla favourites hotkey bound to the item, 0-7 (keys 1-8) |
 | 22 | `mu` | float or null | (0.23.56, R8.2) the new model's score of the row ([below](#the-new-model-in-shadow-02356); in shadow at 0.23.56, the live ranking's score from 0.24.0): mu_i with no kappa |
 | 23 | `sd` | float or null | (0.23.56) its standard deviation under the diagonal posterior |
-| 24 | `lm` | float or null | (0.23.56) the D2 legacy feature `ln learn mult` the score read: ln(max(1 + λ·learn, 1e-6)) on a row the old floors passed, 0 on any other |
-| 25 | `um` | int or null | (0.23.56) `util missing` the score read: 0 on a row the old floors passed, 1 on any other |
+| 24 | `lm` | float or null | (0.23.56) the D2 legacy feature `ln learn mult` the score read: ln(max(1 + λ·learn, 1e-6)) on a row the old floors passed, 0 on any other. With `[Scoring] bLegacyLearnFeature` off (engine B, the default from 0.24.17) the score read 0 on every row, and that is what is written, also when the legacy pass ran for the D2 shadow |
+| 25 | `um` | int or null | (0.23.56) `util missing` the score read: 0 on a row the old floors passed, 1 on any other; 1 on every row with the switch off (as `lm`) |
 | 26 | `ex` | [k, j], "learned" or null | (0.23.56) the explanation: the need (`head.needs` index) and column (`head.cols` index) of the largest single θ·need·cap term, or `"learned"` when none is positive |
+| 27 | `amu` | float or null | (0.24.17) the D2 engine in shadow ([below](#the-d2-engine-in-shadow-02417)): engine A's mu for the row (no kappa, no slot feature) |
+| 28 | `ar` | int or null | (0.24.17) the row's rank under A, 1 = first |
+| 29 | `br` | int or null | (0.24.17) the row's rank under the live ranking (B), 1 = first |
+| 30 | `ak` | int or null | (0.24.17) the key A's stateless page shows the row on, -1 = off that page |
+| 31 | `bk` | int or null | (0.24.17) the key the live ranking's stateless page shows the row on, -1 = off (the control: see below) |
 
 | Flag | Bit | Meaning |
 |---|---|---|
@@ -275,6 +280,98 @@ the context (`tools/fit/export_scores.py` does that from fitlib). The shadow
 learner's state at the time is not logged (no cosave yet: every load resets it
 to the bootstrap, so `mu` is the bootstrap's model after the picks of the same
 load).
+
+### The D2 engine in shadow (0.24.17)
+
+R6's offline fit could not tell D2 ("engine A": θ + b + recent + the old learner's `ln learn
+mult`) from the same model without the old learner ("engine B": `lm` 0, `um` 1 on every row),
+because every pick in the logs it read was made on a page the old engine built (display bias).
+The user's call (2026-10-30): run **B live** and mirror **A in the background**, and judge B by
+feel with A's numbers as context, not a gate. So from 0.24.17 `[Scoring] bLegacyLearnFeature`
+defaults to 0, and with `[Scoring] bShadowLegacy` = 1 (the default; both hot-reloadable) every
+pipeline run that ranks on the choice score also computes A's view of the same run, logged on
+the eligible rows and never shown:
+
+| Column | What | How (`PipelineCoordinator`) |
+|---|---|---|
+| `amu` | A's mu | `RankOnChoice`: B's own extras (attrs, covered, b, the eligible feature) copied BEFORE B's pass, the D2 feature put back with `Choice::LegacyFeature(true, ...)` -- the call the live pass makes with the switch on -- then the same upgrade gate and score (`core/ChoiceLive.h` `RankMu`). Exactly the mu the live pass computes with `bLegacyLearnFeature` = 1 (host test `ShadowCompareTests.cpp`, bit for bit, the summon gate included) |
+| `ar`, `br` | the row's rank under A and under B | `ShadowLegacyPages`: `core/ShadowCompare.h` `RanksOf`, ordered as `UtilityScorer::Rank` orders (score, then the weapon DPS tie-break), exact ties in B's order |
+| `ak`, `bk` | its key on A's and on B's **stateless** page | `ShadowLegacyPages`: the allocator hands back the input of the live allocation (the display page's layout, its candidates -- the wheel page's uid filter applied -- and the overrides); `core/SlotAllocStateless.h` builds a page from it ranked on A's mu and one ranked on B's, each with the memory taken out: no slot hold, seating or home keys, no Remembrance hold, no wildcard (the seat fills by rank), no slot lock. A row the page shows by an override counts as on it |
+
+**Why two stateless pages.** The live page (the `shown` flag, `slot`) carries memory: the slot
+hold keeps a seated item against a near-tied challenger, Remembrance holds what a press took off,
+the wildcard key shows a draw, the combat freeze and the locks keep keys still. A's page cannot
+have that history (A never displayed anything), so "A's page held it, the live page did not" would
+mix D2 with statelessness. B's stateless page is the control: A's and B's stateless pages differ
+only by the ranking. Read a menu reach-in (the fair comparison: the player went to the menu
+because the page lacked the item) as `ak >= 0` (A would have had it) against `bk >= 0`.
+
+**What does not change.** Nothing the player sees (the live allocation, the locks, the push), the
+slot state (the stateless pages run the pure core on the handed-back copy: no seating memory
+written, no events reported, no capture), either learner (ChoiceLearner trains on `lm` / `um`,
+what the live score read -- from 0.24.17 it no longer reads them off whether `util` is set -- and
+the old learner trains as before), the cosave. How that is kept mechanically
+(`tools/prune/r8_check.py`): A's values are computed in pure core, `core/LegacyShadowPass.h`
+(no game access, so it cannot reach the slot state, a learner or the display; it reads the live run
+through const arguments), and outside it they travel only under names with the `legacyShadow`
+prefix: the run `ctx.legacyShadow`; the feature vector A reads; the allocation input the pass
+builds A's page on in place (`ctx.legacyShadowAllocInput` and its two pointers, cleared right
+after the pass and on every run's reset, since the pass leaves A's order and mu in it); the
+eligible rows' and the v3 rows' fields; and the `[Soak]` tally's pick and counts
+(`legacyShadowPick`, `legacyShadowWindowTally`, `legacyShadowTally`). Every line naming one is a
+LEGACY line, allowed only in its exact form in the pipeline's calls and copies, the log's copies
+and the heartbeat; an alias or a copy of A's values is itself such a line, and the old untagged
+names (`allocInput`, `shadowExtras`, `scoresA`, ...) are pruned from the pipeline. The switch the
+live score reads (`legacyLive`) is LEGACY too, in its exact forms, and REQUIRED pins it: set from
+`bLegacyLearnFeature` alone, read by RankOnChoice, false by default and on reset. REQUIRED also
+keeps CaptureEligible's guarded `lm` / `um` block whole through its end, and ChoiceLearner's `um` /
+`lm` read; the legacy row's `util missing` (`lg.utilMissing`) may be copied only there. The probes
+(`tools/prune/test_r8_check.py`) plant live reads of A's values and changes to that plumbing --
+the live scores, the allocation, the page, the live pass's features, the allocation input after
+the pass, the switch, the learner, the subscriber, the slot locker, a display backend, the
+heartbeat, an alias or a copy -- and each must fail the check. What it does not catch: B's own
+values handed to the pass (the live order, mu and tie-breaks) are not tagged; the pure helpers
+`ShadowCompare::RanksOf` / `ClassifyPick` and the stateless allocation are generic (they compute
+from whatever scores they are given, B's included; reading A through them needs a tagged name);
+a new helper inside the allowlisted pure pass can only compute (a caller still needs a tagged
+line); and a deliberate evasion (a macro, a cast away of const inside the pure pass) is out of its
+scope.
+
+**With the shadow on, the legacy pass runs**, so on B's rows the old engine's columns are set
+again as they were under D2: `util` and the `scored` flag on rows the old floors kept, `fl`, the
+old parts `est`..`wu`, `ctx.old`. They describe the old floors, not the live score: a fit of the
+live engine on 0.24.17+ logs must take the D2 feature from `lm` / `um` (0 / 1 under B), not from
+`util`. With `bShadowLegacy` = 0 and B live, the legacy pass does not run (no old columns, no
+shadow columns). With `bLegacyLearnFeature` = 1, A is the live engine, the shadow does not run
+and the columns are null (the `[Soak]` field says `moot`).
+
+**Who reads it.** `tools/shadow/shadow_compare.py` (menu reach-ins A's page would have caught,
+key and wheel picks A's page also had, the chosen item's rank under each; split by combat -- the
+context's `in_combat` need >= 0.5 -- and by kind), and the `[Soak]` heartbeat's last field,
+`| shadowA keys= keysOnA= keysOnB0= reach= reachOnA= reachOnB0= reachAonly= reachB0only= nodata=`
+(per window; a reach-in is a `menu` pick whose `via` names the inventory, magic or favourites
+menu, repeats left out; `nodata` = a pick whose context carries no shadow; a pick with no chosen
+row is counted by neither the heartbeat nor the script).
+
+**Reading the numbers: a selection bias.** A reach-in happens only when the live page lacked the
+item, and B's stateless page follows the live page closely (same ranking, only the memory
+removed), so on reach-ins `reachAonly` against `reachB0only` leans toward A: the cases B0 would
+have caught are mostly the ones the live page already showed, which never became reach-ins. Key
+and wheel picks lean the other way: the player picked from B's page, so B0 holds them by
+construction more often than A. Neither count is a fair estimate of A against B on its own; read
+the two sides together, and treat both as context for the feel test, not a gate. A Huginn wheel
+pick on a page other than the display page is judged against the display page's shadow pages
+(the only ones built), so it can read off both.
+
+**Cost** (host, Release, 500 rows: `ShadowCompareTests.cpp`, reported): A's mu about 35 us; the
+ranks and the two stateless pages about 0.8 ms (a live `Allocate` of the same input about 0.2 ms).
+Runs only on a pipeline run that ranks (the skip gate already holds back the rest). On top of
+that, against plain B (`bShadowLegacy` = 0), the shadow turns the legacy pass back on: the old
+context rules, the prior, the correlations, the potion multiplier and the floors per candidate,
+and CaptureEligible's OldScoreCapture of every candidate and filter drop -- the work every run did
+under 0.24.8's default (`bLegacyLearnFeature` = 1), so no worse than that, but extra against B
+alone. In game: the Tracy zones
+`Pipeline::ShadowLegacyMu` and `Pipeline::ShadowLegacyPages`, the plot `Shadow pages us per run`.
 
 ### The old engine's score parts (0.23.53)
 

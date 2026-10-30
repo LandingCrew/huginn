@@ -393,6 +393,7 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
     {
         const auto choiceSettings = Learning::ChoiceSettings::FromIni(mainIni);
         Scoring::Legacy::SetEnabled(choiceSettings.legacyLearnFeature);
+        Scoring::Legacy::SetShadowEnabled(choiceSettings.shadowLegacy);
         const bool firstTime = !g_choiceLearner;
         if (firstTime) g_choiceLearner = std::make_unique<Learning::ChoiceLearner>();
         g_choiceLearner->SetSettings(choiceSettings);
@@ -403,10 +404,12 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
             static std::optional<Learning::ChoiceSubscriber> s_choiceSub;
             s_choiceSub.emplace(*g_choiceLearner);
             Learning::EquipEventBus::GetSingleton().Subscribe(&*s_choiceSub);
-            logger::info("[Choice] bLegacyLearnFeature = {} (R8.3: a live score input, w = the bootstrap's), "
+            logger::info("[Choice] bLegacyLearnFeature = {} ({}), bShadowLegacy = {}, "
                          "fCoveredPrior = {:.3g}, fThetaProcessNoise = {:.3g}, fFavoriteLifeMult = {:.3g}, sBootstrapBias = {}, "
                          "bDiscoveryBoost = {} (x{:.3g}, half-life {:.0f} s)"sv,
-                choiceSettings.legacyLearnFeature, choiceSettings.coveredPrior, choiceSettings.thetaProcessNoise,
+                choiceSettings.legacyLearnFeature,
+                choiceSettings.legacyLearnFeature ? "D2 live, engine A" : "engine B live, no D2 feature",
+                choiceSettings.shadowLegacy, choiceSettings.coveredPrior, choiceSettings.thetaProcessNoise,
                 choiceSettings.favoriteLifeMult, Core::Bootstrap::BiasModeName(choiceSettings.biasMode),
                 choiceSettings.discovery.enabled, choiceSettings.discovery.varMult, choiceSettings.discovery.halfLifeSec);
             // R8.3: the bootstrap's curves replace the [Needs] lines of the

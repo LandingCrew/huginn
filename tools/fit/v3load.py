@@ -52,7 +52,13 @@ before); and the decision's `rid` (the id its v2 record carries; None when it
 has none, and before 0.23.53). main() also checks each row's floor `fl`
 against the context's `old` floors (floor_check) and prints the violations: the
 floors are derived by hand from UtilityScorer::ScoreCandidates' tests, and a
-real log is where the two would be seen to drift apart."""
+real log is where the two would be seen to drift apart.
+
+0.24.17 appended the D2 engine in shadow beside the live one: row columns amu,
+ar, br, ak, bk (engine A's mu, the row's rank under A and under the live
+ranking, its key on A's and on the live ranking's stateless page), kept as the
+row tuple's SHADOW_A element (common.A_MU..A_BK), None on a row with none of
+them. The fit reads none of it; tools/shadow/shadow_compare.py does."""
 import argparse
 import json
 import pickle
@@ -72,6 +78,8 @@ OLD_COLS = ('est', 'a', 'n', 'ucb', 'rec', 'prior', 'cw', 'fl', 'wu', 'hk')
 # mu, sd, lm (ln learn mult), um (util missing), ex ((need id, column id) by
 # the loader's global indices, or "learned"). None on older rows.
 SHADOW_COLS = ('mu', 'sd', 'lm', 'um', 'ex')
+# 0.24.17: the D2 engine in shadow (common.SHADOW_A, A_MU..A_BK).
+SHADOW_A_COLS = ('amu', 'ar', 'br', 'ak', 'bk')
 # A nothing record's episode fields 0.23.51 added (see the module docstring);
 # epSec defaults to the record's own durSec.
 EP_DEFAULTS = {'why': 'end', 'lap': 0}
@@ -131,6 +139,7 @@ def load(paths):
                 iold = [rnames.index(n) if n in rnames else None for n in OLD_COLS]   # 0.23.53
                 ifl = OLD_COLS.index('fl')
                 ishadow = [rnames.index(n) if n in rnames else None for n in SHADOW_COLS]   # 0.23.56
+                ishadow_a = [rnames.index(n) if n in rnames else None for n in SHADOW_A_COLS]   # 0.24.17
                 iex = SHADOW_COLS.index('ex')
 
                 def row_tuple(f):
@@ -154,10 +163,13 @@ def load(paths):
                         elif ex != 'learned':
                             sh[iex] = None
                         sh = tuple(sh)
+                    sa = tuple(f[i] if i is not None and i < len(f) else None for i in ishadow_a)
+                    if all(v is None for v in sa):
+                        sa = None
                     return (form, uid, None if kind is None else kinds[kind], None if src is None else srcs[src],
                             -1 if cap == -1 else segcaps[cap], flags, slot, util,
                             tuple((hcross[i], v) for i, v in x), wp,
-                            None if fb is None else hfilters[fb], cr, old, sh)
+                            None if fb is None else hfilters[fb], cr, old, sh, sa)
             elif t == 'cap':
                 c = tuple(sorted((hcol[i], v) for i, v in r['c']))
                 if c not in capkey:
