@@ -1,6 +1,7 @@
 #pragma once
 
 #include "candidate/CandidateTypes.h"
+#include "core/CapFacets.h"
 #include "core/SlotScoreMath.h"
 #include <array>
 #include <cmath>
@@ -133,6 +134,13 @@ namespace Huginn::Scoring
         // (PipelineCoordinator::ScoreCandidates). Nothing but that hold may
         // place it -- the fill and the slot hold skip it.
         bool isRememberedOnly = false;
+        // R11: what the effect catalog says of the candidate (core/CapFacets.h),
+        // for the slot classes, the label and the display: filled once per
+        // pipeline run (PipelineCoordinator::ScoreCandidates). A row built
+        // elsewhere leaves hasSubject false and is looked up on demand
+        // (Slot::SlotClassifier::SubjectOf).
+        Core::Facets::Subject subject;
+        bool hasSubject = false;
 
         // ---------------------------------------------------------------------
         // Accessors for common candidate properties

@@ -1,5 +1,7 @@
 # Performance and Timing
 
+> **R11 (0.24.4):** the budgets below were measured on the old engine. Since R8.3 the hand-tuned engine (context weights × the bandit's learning score × multipliers) no longer ranks: every candidate is ranked on the choice score μ (θ over need × effect columns, b per item; doc 9, [9-implementation-map.md](../architecture/9-implementation-map.md)), and the old engine runs only for the D2 feature `ln learn mult` (`[Scoring] bLegacyLearnFeature`, confined by `tools/prune/r8_check.py`); the scoring zone is `Pipeline::RankOnChoice` (plus `Pipeline::ScoreShadow` for the v3 rows), and the legacy pass runs behind `bLegacyLearnFeature`.
+
 **Applies to v0.19.x.** Code claims verified against `src/` on 2026-08-29; the
 measurements are from the captures named below and nowhere else.
 
@@ -536,7 +538,7 @@ none has been needed.
 | Document | Contents |
 |---|---|
 | [../architecture/0-pipeline.md](../architecture/0-pipeline.md) | Data flow: context → candidates → scoring → slots |
-| [../architecture/4-contextual-bandits.md](../architecture/4-contextual-bandits.md) | The learner's update rule and feature vector |
+| [../architecture/archive/4-contextual-bandits.md](../architecture/archive/4-contextual-bandits.md) | The learner's update rule and feature vector |
 | [../architecture/5-slots.md](../architecture/5-slots.md) | Slot classification, overrides, wildcards, locking |
 | [../profiling/tracy-traces.md](../profiling/tracy-traces.md) | Capture log — the source for every number above |
 | [../testing/performance-profiling-guide.md](../testing/performance-profiling-guide.md) | How to build with Tracy and take a capture |

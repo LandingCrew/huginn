@@ -22,10 +22,8 @@
 #include "learning/LearningSettings.h"
 #include "learning/ExternalEquipLearner.h"
 #include "spell/SpellRegistry.h"
-#include "learning/item/ItemClassifier.h"
-#include "scroll/ScrollClassifier.h"
-#include "apparel/ApparelClassifier.h"
-#include "weapon/WeaponClassifier.h"
+#include "effect/Facets.h"
+#include "core/Bootstrap.h"
 #include "util/InventoryUtil.h"
 #include "util/FormRead.h"
 #include "effect/CrossFeatures.h"
@@ -50,6 +48,7 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <chrono>
 #include <string>
 #include <string_view>
 
@@ -472,6 +471,187 @@ namespace Huginn::Console
       }
    }
 
+   // =========================================================================
+   // THETA (R11, map Phase 9): the choice learner from the console
+   // =========================================================================
+   // `hg theta` with no argument: what ranks, and how far the live weights
+   // moved from the bootstrap (core/ThetaDrift.h, the [Soak] drift fields).
+   // `hg theta <FormID>`: one item -- its b, its cap(i), the need x column
+   // terms the live need vector gives it now (the [Recs] terms, all of them),
+   // and its largest weights under any need. `hg dump theta` writes every
+   // moved theta weight and every b to Huginn_Theta.csv. To the console and
+   // the log. (`hg weights` shows the OLD learner, kept for D2.)
+
+   static bool OpenDumpFile(std::string_view fileName, std::ofstream& out, std::filesystem::path& filePath);
+
+   static std::string NeedColName(std::size_t k, std::size_t j)
+   {
+      return std::format("{}x{}",
+         k < Core::Needs::kNeedCount ? Core::Needs::kNeeds[k].id : std::string_view("?"),
+         j < Core::Effect::kColumnCount ? Core::Effect::kColumns[j].id : std::string_view("?"));
+   }
+
+   static void PrintAndLog(const std::string& line)
+   {
+      Print(line.c_str());
+      logger::info("[Console] {}"sv, line);
+   }
+
+   static void Cmd_ThetaSummary()
+   {
+      if (!g_choiceLearner || !g_choiceLearner->Ready()) {
+         PrintAndLog("hg theta: the choice learner is off (no usable Huginn_Bootstrap.json); ranking on the old utility");
+         return;
+      }
+      const auto st = g_choiceLearner->GetStats();
+      const auto d = g_choiceLearner->GetDrift();
+      const auto [utc, sha] = g_choiceLearner->FileIdentity();
+      PrintAndLog(std::format("hg theta: bootstrap {} {}; {} keyed weights, {} moved; {} picks learned, {} onsets ({} answered)",
+         utc.empty() ? "?" : utc, sha.substr(0, 12), st.thetaEntries, st.thetaMoved, st.picksLearned, st.onsets,
+         st.onsetsCounted));
+      std::string at = "-";
+      if (d.theta.maxSlot < Core::Choice::K * Core::Choice::J) {
+         at = NeedColName(d.theta.maxSlot / Core::Choice::J, d.theta.maxSlot % Core::Choice::J);
+      }
+      PrintAndLog(std::format("  theta: {} of {} means moved, mean |d| {:.4f}, rms {:.4f}, largest {:+.4f} at {}; "
+                              "{} variances moved, mean ln(var/boot) {:+.3f}",
+         d.theta.meanMoved, d.theta.weights, d.theta.meanAbsDelta, d.theta.rmsDelta, d.theta.maxDelta, at,
+         d.theta.varMoved, d.theta.meanLnVar));
+      if (d.strength.weights > 0) {
+         PrintAndLog(std::format("  strength: {} means moved, mean |d| {:.4f}, largest {:+.4f}",
+            d.strength.meanMoved, d.strength.meanAbsDelta, d.strength.maxDelta));
+      }
+      PrintAndLog(std::format("  b: {} items, mean |mu| {:.3f}, largest {:.3f} ({:08X}); covered {:+.3f} (prior {:+.3f})",
+         d.b.entries, d.b.meanAbsMu, d.b.maxAbsMu, d.b.maxForm, d.covered.mu, d.coveredBoot.mu));
+      // The outside option at the live need vector (outcomes "three").
+      if (const auto snap = g_choiceLearner->GetSnapshot(); snap && snap->model.three) {
+         const auto live = Needs::ReadLiveNeeds();
+         const auto n = snap->Needs(live.vector.value, live.vector.input);
+         // The tick's own u0 (intercept + need terms + recent terms), as the
+         // ranking pass computes it.
+         const double nowSec = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+         const auto recent = g_choiceLearner->RecentValues(*snap, nowSec, g_loadGeneration.load(std::memory_order_relaxed));
+         const auto tick = Core::Choice::MakeTick(snap->model, n, recent);
+         PrintAndLog(std::format("  outside option now: u0 = {:+.3f} (intercept {:+.3f})", tick.u0, snap->model.u0Bias));
+      }
+      Print("  hg theta <FormID> for one item; hg dump theta writes every moved weight");
+   }
+
+   static void Cmd_Theta(std::string_view arg)
+   {
+      if (arg.empty()) {
+         Cmd_ThetaSummary();
+         return;
+      }
+      if (!g_choiceLearner || !g_choiceLearner->Ready()) {
+         PrintAndLog("hg theta: the choice learner is off (no usable Huginn_Bootstrap.json)");
+         return;
+      }
+      std::string_view hex = arg;
+      if (hex.starts_with("0x") || hex.starts_with("0X")) hex.remove_prefix(2);
+      RE::FormID formID = 0;
+      if (std::from_chars(hex.data(), hex.data() + hex.size(), formID, 16).ec != std::errc{}) {
+         Print("Usage: hg theta [hex FormID]  (e.g. hg theta 12FCC)");
+         return;
+      }
+      auto* form = RE::TESForm::LookupByID(formID);
+      const char* name = form ? form->GetName() : "???";
+      const auto snap = g_choiceLearner->GetSnapshot();
+      if (!snap) return;
+
+      // b, as the score reads it now (the battery applied; not the favourite
+      // life, which needs the candidate).
+      const auto bIt = snap->b.find(formID);
+      const auto bRead = snap->B(formID, false, g_choiceLearner->GetPlaySeconds());
+      if (bIt != snap->b.end()) {
+         PrintAndLog(std::format("{:08X} '{}': b mu {:+.3f} sd {:.3f} (read now {:+.3f}, kept {:.0f}%), {:.1f} picks, "
+                                 "last {:.0f} min of play ago",
+            formID, name, bIt->second.mu, std::sqrt(std::max(bIt->second.var, 0.0)), bRead.mu, 100.0 * bRead.retention,
+            bIt->second.n, std::max(0.0, g_choiceLearner->GetPlaySeconds() - bIt->second.chosenAt) / 60.0));
+      } else {
+         PrintAndLog(std::format("{:08X} '{}': no b entry (prior: mu 0, sd {:.2f})", formID, name,
+            std::sqrt(Core::Choice::kPriorVarB)));
+      }
+
+      auto& catalog = Effect::EffectCatalog::GetSingleton();
+      const auto* entry = catalog.Ready() ? catalog.FindOrMapId(formID) : nullptr;
+      if (!entry) {
+         PrintAndLog("  no catalog entry: the score reads only b for it");
+         return;
+      }
+      PrintAndLog(std::format("  {} cap: {}", Core::Effect::KindName(entry->kind), Core::Effect::FormatCap(entry->cap)));
+      PrintAndLog(std::format("  facets: {}", Core::Facets::Names(Core::Facets::FromCap(entry->cap, entry->kind))));
+      const auto attr = Core::Choice::MakeAttr(snap->model.grading, &entry->cap,
+         std::array<float, Core::DecisionLog::kCrossCount>{});
+      if (snap->model.theta.size() != Core::Choice::K * Core::Choice::J) return;
+
+      // The terms now: n_k * mu_kj * a_j over the needs that are on.
+      const auto live = Needs::ReadLiveNeeds();
+      const auto n = snap->Needs(live.vector.value, live.vector.input);
+      struct Term { std::size_t k, j; double value, mu, var, a; };
+      std::vector<Term> now;
+      for (std::size_t k = 0; k < Core::Choice::K; ++k) {
+         if (n[k] == 0.0) continue;
+         for (const auto& [j, a] : attr.a) {
+            const auto& w = snap->model.Th(k, j);
+            const double v = n[k] * w.mu * a;
+            if (v != 0.0) now.push_back(Term{ k, j, v, w.mu, w.var, a });
+         }
+      }
+      std::sort(now.begin(), now.end(), [](const Term& x, const Term& y) { return std::fabs(x.value) > std::fabs(y.value); });
+      double needMu = 0.0;
+      for (const auto& t : now) needMu += t.value;
+      PrintAndLog(std::format("  now: need part {:+.3f} from {} term(s){}", needMu, now.size(),
+         now.empty() ? " (no need it answers is on)" : ":"));
+      for (std::size_t i = 0; i < now.size() && i < 10; ++i) {
+         const auto& t = now[i];
+         PrintAndLog(std::format("    {} = n {:.2f} * theta {:+.3f} (sd {:.3f}) * a {:.2f} = {:+.3f}",
+            NeedColName(t.k, t.j), n[t.k], t.mu, std::sqrt(std::max(t.var, 0.0)), t.a, t.value));
+      }
+
+      // Its largest weights under any need (theta mu * a, the need at 1).
+      std::vector<Term> any;
+      for (std::size_t k = 0; k < Core::Choice::K; ++k) {
+         for (const auto& [j, a] : attr.a) {
+            const auto& w = snap->model.Th(k, j);
+            if (w.mu != 0.0) any.push_back(Term{ k, j, w.mu * a, w.mu, w.var, a });
+         }
+      }
+      std::sort(any.begin(), any.end(), [](const Term& x, const Term& y) { return std::fabs(x.value) > std::fabs(y.value); });
+      PrintAndLog(std::format("  largest weights for it (need at 1): {} of {}", std::min<std::size_t>(any.size(), 8), any.size()));
+      for (std::size_t i = 0; i < any.size() && i < 8; ++i) {
+         const auto& t = any[i];
+         PrintAndLog(std::format("    {} theta {:+.3f} (sd {:.3f}) * a {:.2f} = {:+.3f}",
+            NeedColName(t.k, t.j), t.mu, std::sqrt(std::max(t.var, 0.0)), t.a, t.value));
+      }
+   }
+
+   static void Cmd_DumpTheta(std::string_view /*arg*/)
+   {
+      if (!g_choiceLearner || !g_choiceLearner->Ready()) {
+         Print("The choice learner is off (no usable Huginn_Bootstrap.json)");
+         return;
+      }
+      std::ofstream out;
+      std::filesystem::path filePath;
+      if (!OpenDumpFile("Huginn_Theta.csv"sv, out, filePath)) return;
+      const auto rows = g_choiceLearner->ThetaRows(/*movedOnly=*/true);
+      out << "block,need,column,mu,var,bootMu,bootVar,formID,name,n,minutesSinceChosen\n";
+      for (const auto& r : rows) {
+         out << std::format("theta,{},{},{:.6g},{:.6g},{:.6g},{:.6g},,,,\n", Core::Needs::kNeeds[r.need].id,
+            Core::Effect::kColumns[r.col].id, r.live.mu, r.live.var, r.boot.mu, r.boot.var);
+      }
+      const auto bs = g_choiceLearner->ExportB();
+      for (const auto& b : bs) {
+         auto* form = RE::TESForm::LookupByID(b.form);
+         const char* name = form ? form->GetName() : nullptr;
+         out << std::format("b,,,{:.6g},{:.6g},0,{:.6g},{:08X},{},{:.2f},{}\n", b.mu, b.var, Core::Choice::kPriorVarB,
+            b.form, CsvQuote(name ? name : ""), b.n, b.minutesSinceChosen);
+      }
+      out.close();
+      PrintAndLog(std::format("Wrote {} moved theta weights and {} b entries to Huginn_Theta.csv", rows.size(), bs.size()));
+   }
+
    static void Cmd_Rebuild(std::string_view /*arg*/)
    {
       // Run under the update mutex to prevent data races with the update loop.
@@ -539,425 +719,13 @@ namespace Huginn::Console
    }
 
    // =========================================================================
-   // SPELL CATALOGUE DUMP — DEBUG BUILDS ONLY, AND TEMPORARY
+   // DUMPS
    // =========================================================================
-   // THROWAWAY (0.20.40). Delete this function and its kCommands entry together
-   // once the curated test-spell lists exist and the classifier gaps it found
-   // are filed. It is a workbench tool, not a feature: it writes a 400 KB file
-   // from a console command and nothing in the plugin reads it back.
-   //
-   // Debug-gated rather than shipped-and-undocumented, so a release build has no
-   // command that writes half a megabyte to the player's SKSE folder.
-   //
-   // Writes every castable spell in the LOAD ORDER to a CSV, with Huginn's own
-   // classification beside each one.
-   //
-   // Two uses. Building test characters: pick FormIDs out of the CSV and feed
-   // them to `player.addspell` in a console batch file, instead of guessing at
-   // IDs that may not exist in this load order. And checking the classifier
-   // against a big modlist: sort by huginnType and the Unknowns are the spells
-   // no rule caught, which is the list worth fixing.
-   //
-   // Spells only -- abilities, diseases, enchantments and the rest of the SPEL
-   // record's other uses are not things a player can be given. Powers and lesser
-   // powers are kept, marked as such, since they ARE grantable.
-#ifndef NDEBUG
-   static void Cmd_DumpSpells(std::string_view /*arg*/)
-   {
-      auto* dataHandler = RE::TESDataHandler::GetSingleton();
-      if (!dataHandler) {
-         Print("Data handler unavailable");
-         return;
-      }
-      if (!g_spellRegistry) {
-         Print("Spell registry not initialized - load a game first");
-         return;
-      }
-
-      const auto logDir = SKSE::log::log_directory();
-      if (!logDir) {
-         Print("No SKSE log directory - cannot write the dump");
-         return;
-      }
-      const auto filePath = *logDir / "Huginn_Spells.csv";
-
-      std::ofstream out(filePath, std::ios::trunc);
-      if (!out) {
-         Print("Could not open Huginn_Spells.csv for writing");
-         logger::error("[Console] Failed to open {} for writing"sv, filePath.string());
-         return;
-      }
-
-      // Quote every name: spell names carry commas often enough, and a quote
-      // occasionally ("Conjure Dremora Lord \"Grand\"" exists in some mods).
-      auto csvQuote = [](std::string_view text) {
-         std::string quoted;
-         quoted.reserve(text.size() + 2);
-         quoted += '"';
-         for (const char c : text) {
-            // A newline inside a quoted field is legal RFC 4180 and illegal to
-            // most of what actually reads these files -- awk, sort, Select-String
-            // all count lines, and one multi-line description would silently
-            // shift every count in an audit. Authored descriptions do contain
-            // them. Fold to a space.
-            if (c == '\r' || c == '\n') {
-               quoted += ' ';
-               continue;
-            }
-            if (c == '"') quoted += '"';  // doubled, per RFC 4180
-            quoted += c;
-         }
-         quoted += '"';
-         return quoted;
-      };
-
-      auto castTypeName = [](RE::MagicSystem::SpellType type) -> std::string_view {
-         switch (type) {
-         case RE::MagicSystem::SpellType::kSpell:        return "Spell"sv;
-         case RE::MagicSystem::SpellType::kPower:        return "Power"sv;
-         case RE::MagicSystem::SpellType::kLesserPower:  return "LesserPower"sv;
-         case RE::MagicSystem::SpellType::kScroll:       return "Scroll"sv;
-         default:                                        return "Other"sv;
-         }
-      };
-
-      const auto& classifier = g_spellRegistry->GetClassifier();
-      auto* player = RE::PlayerCharacter::GetSingleton();
-
-      // Which spells can a player actually LEARN? A spell tome teaching it is
-      // the only honest answer available here, and it is the column that makes
-      // this dump worth reading: a load order this size is mostly NPC and
-      // creature spells that happen to be kSpell, so an unclassified count over
-      // the whole array says nothing about what a player would ever be offered.
-      std::unordered_set<RE::FormID> taughtByTome;
-      for (auto* book : dataHandler->GetFormArray<RE::TESObjectBOOK>()) {
-         if (!book || !book->TeachesSpell()) {
-            continue;
-         }
-         if (auto* taught = book->GetSpell()) {
-            taughtByTome.insert(taught->GetFormID());
-         }
-      }
-
-      out << "formID,name,castType,huginnType,school,element,tags,tagsExt,"
-             "cost,concentration,range,known,tome,hostile,detrimental,recover,archetype,primaryAV,secondaryAV,delivery,castingType,effects,retry,assocForm,assocKind,assocSpell,evidence,description,resistedElement\n";
-
-      size_t written = 0;
-      size_t skipped = 0;
-      size_t unknownType = 0;
-      size_t unknownLearnable = 0;
-      size_t learnableCount = 0;
-      // Both form arrays. GetFormArray keys on T::FORMTYPE, and ScrollItem's is
-      // FormType::Scroll where SpellItem's is FormType::Spell -- so widening
-      // the cast-type filter above was necessary and not sufficient, and the
-      // first dump after it came back byte-identical. ScrollItem IS-A
-      // SpellItem, so the pointers go in the same list and the loop body does
-      // not care which array they came from.
-      std::vector<RE::SpellItem*> toDump;
-      const auto& spellForms = dataHandler->GetFormArray<RE::SpellItem>();
-      const auto& scrollForms = dataHandler->GetFormArray<RE::ScrollItem>();
-      toDump.reserve(spellForms.size() + scrollForms.size());
-      for (auto* form : spellForms) toDump.push_back(form);
-      for (auto* form : scrollForms) toDump.push_back(form);
-
-      for (auto* spell : toDump) {
-         if (!spell) {
-            continue;
-         }
-         // Scrolls too, since v0.21.7. ScrollItem IS-A SpellItem and
-         // ScrollClassifier delegates straight to SpellClassifier, so a scroll
-         // is classified by exactly these rules -- and LoreRim ships throwing
-         // knives as scrolls, which come out Debuff while their own tooltip
-         // says "deals 24 physical damage". There was no way to ask which rule
-         // did that: this command filtered them out, and the scroll registry
-         // dump prints the answer without the inputs.
-         const auto castType = spell->GetSpellType();
-         if (castType != RE::MagicSystem::SpellType::kSpell &&
-             castType != RE::MagicSystem::SpellType::kPower &&
-             castType != RE::MagicSystem::SpellType::kLesserPower &&
-             castType != RE::MagicSystem::SpellType::kScroll) {
-            ++skipped;
-            continue;
-         }
-         const char* rawName = spell->GetName();
-         if (!rawName || !*rawName) {
-            ++skipped;  // unnamed: a template or a scripted internal, not castable content
-            continue;
-         }
-
-         const auto data = classifier.ClassifySpell(spell);
-         const bool learnable = taughtByTome.contains(spell->GetFormID());
-
-         // The inputs DetermineSpellType actually reads, dumped raw. Names would
-         // need a 50-case switch in a throwaway command; the numbers map back to
-         // the CommonLibSSE enums offline, and grouping by them is the point --
-         // "these 40 spells are archetype 27" is a rule, "Ash Rune, Bend Time,
-         // Burden" is a list.
-         int archetype = -1, primaryAV = -1, secondaryAV = -1, effectCount = 0;
-         bool hostile = false, detrimental = false, recover = false;
-
-         // Report the effect the CLASSIFIER used, not merely the costliest one.
-         //
-         // ClassifySpell retries with the costliest non-script effect when the
-         // costliest is a script, so for those ~66 spells the dump used to print
-         // archetype=1 beside a type derived from a different effect entirely --
-         // and "group by archetype to find the rule" then mis-attributed that
-         // whole cohort. This command exists to drive exactly that analysis.
-         // Ask the classifier rather than restating its condition; the two
-         // disagreed, and the dump was the one that was wrong.
-         //
-         // And only when an EFFECT decided the type at all. RetryDecidedType
-         // and the chosen-effect block below both reproduce the
-         // DetermineSpellType path and neither knows about the layers above it,
-         // so a spell typed from the override file, from tags or from its name
-         // still printed a full archetype/AV/flag row describing an effect that
-         // decided nothing -- and "group by archetype to find the rule" then
-         // mis-attributes that cohort. Which is the exact failure this column
-         // was added to fix, one layer up.
-         const bool typedFromEffect =
-            data.typeEvidence == Spell::TypeEvidence::Archetype ||
-            data.typeEvidence == Spell::TypeEvidence::Applied ||
-            data.typeEvidence == Spell::TypeEvidence::SchoolOnly ||
-            data.typeEvidence == Spell::TypeEvidence::SchoolGuess;
-
-         const int usedRetry =
-            (typedFromEffect && classifier.RetryDecidedType(spell)) ? 1 : 0;
-
-         // A cloak and a hazard both delegate their behaviour to another form,
-         // and the classifier follows that link to type them. When its answer
-         // looks wrong -- Guardian Circle as a Buff, Holy Fire as a Debuff --
-         // the first question is whether the link points where the plugin
-         // records say it does. Dump it rather than infer it.
-         RE::FormID assocForm = 0;
-         RE::FormID assocSpell = 0;
-         std::string_view assocKind = "-"sv;
-
-         auto* chosen = typedFromEffect ? classifier.GetCostliestEffect(spell) : nullptr;
-         if (chosen && chosen->baseEffect &&
-             chosen->baseEffect->GetArchetype() == RE::EffectSetting::Archetype::kScript) {
-            if (auto* readable = classifier.GetCostliestNonScriptEffect(spell)) {
-               chosen = readable;
-            }
-         }
-         if (chosen) {
-            if (auto* setting = chosen->baseEffect) {
-               archetype = static_cast<int>(setting->GetArchetype());
-               primaryAV = static_cast<int>(setting->data.primaryAV);
-               secondaryAV = static_cast<int>(setting->data.secondaryAV);
-               hostile = setting->data.flags.any(
-                  RE::EffectSetting::EffectSettingData::Flag::kHostile);
-               detrimental = setting->data.flags.any(
-                  RE::EffectSetting::EffectSettingData::Flag::kDetrimental);
-               recover = setting->data.flags.any(
-                  RE::EffectSetting::EffectSettingData::Flag::kRecover);
-
-               if (auto* linked = setting->data.associatedForm) {
-                  assocForm = linked->GetFormID();
-                  if (linked->As<RE::SpellItem>()) {
-                     assocKind = "SPEL"sv;
-                  } else if (auto* hazard = linked->As<RE::BGSHazard>()) {
-                     // The chain is effect -> hazard -> spell, and the peek reads
-                     // the far end. Guardian Circle and Supernova both reach a
-                     // real hazard and still come back Unknown, so the open
-                     // question is whether that last link is set at all.
-                     assocKind = "HAZD"sv;
-                     if (hazard->data.spell) {
-                        assocSpell = hazard->data.spell->GetFormID();
-                     }
-                  } else {
-                     assocKind = "other"sv;
-                  }
-               }
-            }
-         }
-         effectCount = static_cast<int>(spell->effects.size());
-         // The authored text, from EVERY effect, joined in record order.
-         //
-         // This is the only place a spell says what it DOES in words a player
-         // reads, and on the evidence it outranks the effect data. Guardian
-         // Circle and Circle of Protection are identical in every field this
-         // classifier reads -- same archetype, same flags, same actor value,
-         // both reaching a kTurnUndead spell through a hazard -- and only the
-         // text says one of them also heals 20 health per second. Circle of
-         // Death reads as a non-hostile health value modifier, which is the
-         // single most reliable rule in the classifier, and its text says it
-         // instantly kills.
-         //
-         // Dumped as a CORPUS, not read by the classifier. A rule that can
-         // overturn effect data across 1,107 spells gets written from the
-         // strings that are actually there, and measured, before it is written
-         // from memory.
-         std::string description;
-         for (const auto* effect : spell->effects) {
-            if (!effect || !effect->baseEffect) continue;
-            const char* text = effect->baseEffect->magicItemDescription.c_str();
-            if (!text || !*text) continue;
-            if (!description.empty()) description += " | ";
-            description += text;
-         }
-
-         if (data.type == Spell::SpellType::Unknown) {
-            ++unknownType;
-            if (learnable) {
-               ++unknownLearnable;
-            }
-         }
-
-         out << std::format("{:08X},{},{},{},{},{},{:08X},{:04X},{},{},{:.0f},{},{},{},{},{},{},{},{},{},{},{},{},{:08X},{},{:08X},{},{},{}\n",
-            spell->GetFormID(),
-            csvQuote(rawName),
-            castTypeName(castType),
-            Spell::SpellTypeToString(data.type),
-            Spell::MagicSchoolToString(data.school),
-            Spell::ElementTypeToString(data.element),
-            static_cast<uint32_t>(data.tags),
-            static_cast<uint16_t>(data.tagsExt),
-            data.baseCost,
-            data.isConcentration ? 1 : 0,
-            data.range,
-            (player && player->HasSpell(spell)) ? 1 : 0,
-            learnable ? 1 : 0,
-            hostile ? 1 : 0,
-            detrimental ? 1 : 0,
-            recover ? 1 : 0,
-            archetype,
-            primaryAV,
-            secondaryAV,
-            static_cast<int>(spell->GetDelivery()),
-            static_cast<int>(spell->GetCastingType()),
-            effectCount,
-            usedRetry,
-            assocForm,
-            assocKind,
-            assocSpell,
-            csvQuote(Spell::TypeEvidenceToString(data.typeEvidence)),
-            csvQuote(description),
-            // What the spell protects against, by its resist actor value --
-            // the only source a Defensive spell's element may come from. Beside
-            // `element`, it shows which spells lost a name-derived element.
-            Spell::ElementTypeToString(Spell::SpellClassifier::ResistedElement(spell)));
-         ++written;
-         if (learnable) {
-            ++learnableCount;
-         }
-      }
-      out.close();
-
-      // This pass touched every spell in the load order, so it is the only
-      // reconciliation that can honestly say an override matched nothing.
-      classifier.ReportOverrideUsage("after dump (whole load order)"sv);
-
-      auto msg = std::format(
-         "Wrote {} spells to Huginn_Spells.csv - {} learnable from tomes, {} of those unclassified "
-         "({} unclassified overall, {} non-spell forms skipped)",
-         written, learnableCount, unknownLearnable, unknownType, skipped);
-      Print(msg.c_str());
-      logger::info("[Console] {} -> {}"sv, msg, filePath.string());
-   }
-
-   // `hg dump food` -- every food and drink in the LOAD ORDER to a CSV, with
-   // the survival tags Huginn gives it and every effect's raw inputs beside
-   // them: display name, editor ID (empty without po3 Tweaks), archetype,
-   // actor values and keywords.
-   //
-   // Survival tagging has to work across load orders that mark hunger and
-   // warmth three different ways -- LoreRim on effect keywords, vanilla CC by
-   // an unkeyworded effect, mods by their own conventions -- and a registry
-   // dump only shows what one character carries (2026-09-29).
-   //
-   // A fresh classifier, not the registry's: the dump must not touch the
-   // registry's cache, and overrides are beside the point here. Classifying
-   // logs a debug line per effect, so expect the log to grow by a few
-   // thousand lines.
-   static void Cmd_DumpFood(std::string_view /*arg*/)
-   {
-      auto* dataHandler = RE::TESDataHandler::GetSingleton();
-      if (!dataHandler) {
-         Print("Data handler unavailable");
-         return;
-      }
-      const auto logDir = SKSE::log::log_directory();
-      if (!logDir) {
-         Print("No SKSE log directory - cannot write the dump");
-         return;
-      }
-      const auto filePath = *logDir / "Huginn_Food.csv";
-      std::ofstream out(filePath, std::ios::trunc);
-      if (!out) {
-         Print("Could not open Huginn_Food.csv for writing");
-         logger::error("[Console] Failed to open {} for writing"sv, filePath.string());
-         return;
-      }
-
-      // Same quoting rules as the spell dump.
-      auto csvQuote = [](std::string_view text) {
-         std::string quoted;
-         quoted.reserve(text.size() + 2);
-         quoted += '"';
-         for (const char c : text) {
-            if (c == '\r' || c == '\n') { quoted += ' '; continue; }
-            if (c == '"') quoted += '"';
-            quoted += c;
-         }
-         quoted += '"';
-         return quoted;
-      };
-
-      Item::ItemClassifier classifier;
-      out << "formID,plugin,name,huginnType,hunger,cold,tags,effects\n";
-
-      size_t written = 0, hunger = 0, cold = 0;
-      for (auto* item : dataHandler->GetFormArray<RE::AlchemyItem>()) {
-         if (!item || !item->IsFood()) continue;
-         const char* rawName = item->GetName();
-         if (!rawName || !*rawName) continue;
-
-         const auto data = classifier.ClassifyItem(item);
-         const bool isHunger = Item::HasTag(data.tags, Item::ItemTag::SatisfiesHunger);
-         const bool isCold = Item::HasTag(data.tags, Item::ItemTag::SatisfiesCold);
-
-         // One field per item: effects joined by " / ", each as
-         // 'name'{edid} arch/pAV [kw;kw].
-         std::string effects;
-         for (const auto* effect : item->effects) {
-            if (!effect || !effect->baseEffect) continue;
-            const auto* base = effect->baseEffect;
-            std::string keywords;
-            for (uint32_t k = 0; k < base->GetNumKeywords(); ++k) {
-               if (auto kw = base->GetKeywordAt(k); kw && *kw) {
-                  if (!keywords.empty()) keywords += ';';
-                  keywords += (*kw)->GetFormEditorID();
-               }
-            }
-            if (!effects.empty()) effects += " / ";
-            const char* full = base->GetFullName();
-            effects += std::format("'{}'{{{}}} {}/{} [{}]",
-               full ? full : "", base->GetFormEditorID(),
-               static_cast<int>(base->GetArchetype()),
-               static_cast<int>(base->data.primaryAV), keywords);
-         }
-
-         const auto* file = item->GetFile(0);
-         out << std::format("{:08X},{},{},{},{},{},{:08X},{}\n",
-            item->GetFormID(),
-            csvQuote(file ? file->GetFilename() : ""sv),
-            csvQuote(rawName),
-            Item::ItemTypeToString(data.type),
-            isHunger ? 1 : 0,
-            isCold ? 1 : 0,
-            static_cast<uint32_t>(data.tags),
-            csvQuote(effects));
-         ++written;
-         if (isHunger) ++hunger;
-         if (isCold) ++cold;
-      }
-      out.close();
-
-      auto msg = std::format("Wrote {} foods/drinks to Huginn_Food.csv - {} satisfy hunger, {} satisfy cold",
-         written, hunger, cold);
-      Print(msg.c_str());
-      logger::info("[Console] {} -> {}"sv, msg, filePath.string());
-   }
+   // R11: the per-type dumps (spells, food, potions, scrolls, weapons,
+   // apparel, diseases) are gone with the classifiers they printed:
+   // `hg dump all` is the one load-order dump, in every build since R11 (mod
+   // authors write effect overrides from it), with the effect catalog's view
+   // and the slot class derived from it.
 
    // Shared by the three dumps below: open <SKSE log dir>/<fileName>, or say
    // why not on the console and return false.
@@ -980,157 +748,37 @@ namespace Huginn::Console
       return true;
    }
 
-   // CsvQuote and PluginOf live in util/FormRead.h (shared with src/effect/).
-
-   // The one sub-classification an item carries, whichever field its type
-   // fills: element for resists, school/skill for fortifies. "-" if none.
-   static std::string_view ItemSubclass(const Item::ItemData& data)
+   // `hg dump all` -- every item-like form in the LOAD ORDER in ONE schema, a
+   // row per item x effect, and since 0.23.12 the effect catalog's view of it
+   // (R2): each row's effect column, each item's cap(i), today's slot class,
+   // and the doc 9 dump gaps. The writer and the column list live in
+   // effect/EffectDump.*; tests/tools/EffectReport.cpp re-maps a dump on the
+   // host. Ingredients are left out: Huginn dropped them (the user,
+   // 2026-10-07) -- they matter only at an alchemy lab.
+   static void Cmd_DumpAll(std::string_view /*arg*/)
    {
-      if (data.element != Item::ElementType::None)      return Item::ElementTypeToString(data.element);
-      if (data.school != Item::MagicSchool::None)       return Item::MagicSchoolToString(data.school);
-      if (data.combatSkill != Item::CombatSkill::None)  return Item::CombatSkillToString(data.combatSkill);
-      if (data.utilitySkill != Item::UtilitySkill::None) return Item::UtilitySkillToString(data.utilitySkill);
-      return "-"sv;
-   }
-
-   // `hg dump diseases` -- every disease, plus every other spell with an
-   // effect resisted by Resist Disease, one row each: whether Huginn's
-   // isDiseased check can see it, and whether it is on the player now.
-   //
-   // Why (2026-10-03): Huginn flagged no disease on LoreRim in two sessions.
-   // StateManager_MagicEffects sets isDiseased only for a detrimental effect
-   // resisted by Resist Disease that reaches the walk's DEFAULT branch, and
-   // the value-modifier archetypes -- how most diseases work -- have branches
-   // of their own that break out first. `huginnSees` mirrors that walk, so
-   // the dump shows what the check misses before the rule changes.
-   static void Cmd_DumpDiseases(std::string_view /*arg*/)
-   {
-      auto* dataHandler = RE::TESDataHandler::GetSingleton();
-      if (!dataHandler) {
-         Print("Data handler unavailable");
+      Huginn_ZONE_NAMED("hg dump all");
+      const auto logDir = SKSE::log::log_directory();
+      if (!logDir) {
+         Print("No SKSE log directory - cannot write the dump");
          return;
       }
-      std::ofstream out;
-      std::filesystem::path filePath;
-      if (!OpenDumpFile("Huginn_Diseases.csv"sv, out, filePath)) return;
-
-      // The spells behind the player's live active effects.
-      std::unordered_set<RE::FormID> onPlayer;
-      if (auto* player = RE::PlayerCharacter::GetSingleton()) {
-         if (auto* target = player->AsMagicTarget()) {
-            if (auto* list = target->GetActiveEffectList()) {
-               for (auto* ae : *list) {
-                  if (ae && ae->spell && !ae->flags.any(RE::ActiveEffect::Flag::kInactive)) {
-                     onPlayer.insert(ae->spell->GetFormID());
-                  }
-               }
-            }
-         }
-      }
-
-      // Mirrors the active-effect walk: these archetypes take their own
-      // branch and never reach the disease check.
-      auto reachesDiseaseCheck = [](const RE::EffectSetting* base) {
-         using A = RE::EffectSetting::Archetype;
-         switch (base->GetArchetype()) {
-         case A::kNightEye:
-         case A::kLight:
-         case A::kInvisibility:
-         case A::kValueModifier:
-         case A::kPeakValueModifier:
-         case A::kDualValueModifier:
-         case A::kCloak:
-         case A::kSummonCreature:
-            return false;
-         default:
-            return base->IsDetrimental() &&
-                   base->data.resistVariable == RE::ActorValue::kResistDisease;
-         }
-      };
-
-      out << "formID,plugin,name,diseaseType,spellType,huginnSees,onPlayer,effects\n";
-
-      size_t written = 0, diseases = 0, seen = 0, active = 0;
-      std::string missedNow;
-      for (auto* spell : dataHandler->GetFormArray<RE::SpellItem>()) {
-         if (!spell) continue;
-         const auto spellType = spell->GetSpellType();
-         const bool isDisease = spellType == RE::MagicSystem::SpellType::kDisease;
-
-         bool resistedByDisease = false;
-         bool sees = false;
-         std::string effects;
-         for (const auto* effect : spell->effects) {
-            if (!effect || !effect->baseEffect) continue;
-            const auto* base = effect->baseEffect;
-            if (base->data.resistVariable == RE::ActorValue::kResistDisease) resistedByDisease = true;
-            if (reachesDiseaseCheck(base)) sees = true;
-
-            std::string keywords;
-            for (uint32_t k = 0; k < base->GetNumKeywords(); ++k) {
-               if (auto kw = base->GetKeywordAt(k); kw && *kw) {
-                  if (!keywords.empty()) keywords += ';';
-                  keywords += (*kw)->GetFormEditorID();
-               }
-            }
-            if (!effects.empty()) effects += " / ";
-            const char* full = base->GetFullName();
-            effects += std::format("'{}'{{{}}} arch={} pAV={} resist={} det={} [{}]",
-               full ? full : "", base->GetFormEditorID(),
-               static_cast<int>(base->GetArchetype()),
-               static_cast<int>(base->data.primaryAV),
-               static_cast<int>(base->data.resistVariable),
-               base->IsDetrimental() ? 1 : 0, keywords);
-         }
-         if (!isDisease && !resistedByDisease) continue;
-
-         // The walk skips abilities and addictions before any effect.
-         if (spellType == RE::MagicSystem::SpellType::kAbility ||
-             spellType == RE::MagicSystem::SpellType::kAddiction) {
-            sees = false;
-         }
-         const bool now = onPlayer.contains(spell->GetFormID());
-         const char* name = spell->GetName();
-
-         out << std::format("{:08X},{},{},{},{},{},{},{}\n",
-            spell->GetFormID(), CsvQuote(PluginOf(spell)), CsvQuote(name ? name : ""),
-            isDisease ? 1 : 0, static_cast<int>(spellType),
-            sees ? 1 : 0, now ? 1 : 0, CsvQuote(effects));
-         ++written;
-         if (isDisease) ++diseases;
-         if (sees) ++seen;
-         if (now) {
-            ++active;
-            if (!sees) {
-               if (!missedNow.empty()) missedNow += ", ";
-               missedNow += name ? name : "?";
-            }
-         }
-      }
-      out.close();
-
-      auto msg = std::format("Wrote {} spells to Huginn_Diseases.csv - {} diseases, {} Huginn can see, {} on you now",
-         written, diseases, seen, active);
-      Print(msg.c_str());
-      logger::info("[Console] {} -> {}"sv, msg, filePath.string());
-      if (!missedNow.empty()) {
-         auto missed = std::format("On you now but invisible to Huginn: {}", missedNow);
-         Print(missed.c_str());
-         logger::info("[Console] {}"sv, missed);
-      }
+      const auto filePath = *logDir / "Huginn_All.csv";
+      std::string summary;
+      const bool ok = Effect::WriteDumpAll(filePath, summary);
+      Print(summary.c_str());
+      if (ok) logger::info("[Console] {} -> {}"sv, summary, filePath.string());
+      else logger::error("[Console] dump all failed: {}"sv, summary);
    }
 
-   // `hg dump weights` -- every item the learner holds, one row each: what
-   // it is (kind / class / subclass), how much it has been trained, how
-   // stale it is, and its full weight vector.
+#ifndef NDEBUG
+   // `hg dump weights` -- every item the OLD learner holds (kept for the D2
+   // legacy feature, BNDW), one row each: what it is, how much it has been
+   // trained, how stale it is, and its full weight vector.
    //
-   // The pre-check for pooling (roadmap, "Share learning across similar
-   // items"): pooling seeds an item from its class, which only helps if the
-   // classes actually differ from each other. Group this file by class and
-   // subclass and compare -- the potion classes are the doubtful ones.
-   //
-   // Classified with fresh classifiers (the spell registry's when loaded, for
-   // its overrides), so the registries' caches are untouched.
+   // R11: `kind` is the effect catalog's form kind and `class` its facets
+   // (core/CapFacets.h); the old classifiers no longer describe items here.
+   // `subclass` is kept, empty ("-"), so the column order holds.
    static void Cmd_DumpWeights(std::string_view /*arg*/)
    {
       if (!g_featureBanditLearner) {
@@ -1150,11 +798,6 @@ namespace Huginn::Console
          },
          totalTrains);
 
-      Spell::SpellClassifier fallbackSpells;
-      const auto& spellClassifier = g_spellRegistry ? g_spellRegistry->GetClassifier() : fallbackSpells;
-      const Scroll::ScrollClassifier scrollClassifier(spellClassifier);
-      Item::ItemClassifier itemClassifier;
-      Weapon::WeaponClassifier weaponClassifier;
 
       out << "formID,plugin,name,kind,class,subclass,trainCount,confidence,minutesSinceChosen,retention,weightNorm";
       for (const char* feature : kFeatureNames) out << ',' << feature;
@@ -1163,7 +806,7 @@ namespace Huginn::Console
       size_t unresolved = 0;
       for (const auto& entry : entries) {
          std::string_view kind = "unresolved"sv, cls = "-"sv, sub = "-"sv;
-         std::string clsOwned, subOwned;  // for classifier strings built at runtime
+         std::string clsOwned;  // for class strings built at runtime
          auto* form = RE::TESForm::LookupByID(entry.formID);
          const char* name = form ? form->GetName() : nullptr;
 
@@ -1171,35 +814,14 @@ namespace Huginn::Console
             // Pseudo-items (Unarmed and the like) and forms from a plugin
             // that is no longer loaded.
             ++unresolved;
-         } else if (auto* scroll = form->As<RE::ScrollItem>()) {
-            const auto data = scrollClassifier.ClassifyScroll(scroll);
-            kind = "Scroll"sv;
-            cls = Spell::SpellTypeToString(data.type);
-            sub = Spell::ElementTypeToString(data.element);
-         } else if (auto* spell = form->As<RE::SpellItem>()) {
-            const auto data = spellClassifier.ClassifySpell(spell);
-            kind = "Spell"sv;
-            cls = Spell::SpellTypeToString(data.type);
-            sub = data.element != Spell::ElementType::None
-               ? Spell::ElementTypeToString(data.element)
-               : Spell::MagicSchoolToString(data.school);
-         } else if (auto* alchemy = form->As<RE::AlchemyItem>()) {
-            const auto data = itemClassifier.ClassifyItem(alchemy);
-            kind = alchemy->IsFood() ? "Food"sv : (data.isHostile ? "Poison"sv : "Potion"sv);
-            cls = Item::ItemTypeToString(data.type);
-            sub = ItemSubclass(data);
-         } else if (auto* weapon = form->As<RE::TESObjectWEAP>()) {
-            kind = "Weapon"sv;
-            cls = Weapon::WeaponTypeToString(weaponClassifier.ClassifyWeapon(weapon).type);
-         } else if (auto* ammo = form->As<RE::TESAmmo>()) {
-            kind = "Ammo"sv;
-            cls = Weapon::AmmoTypeToString(weaponClassifier.ClassifyAmmo(ammo).type);
-         } else if (form->As<RE::TESSoulGem>()) {
-            kind = "SoulGem"sv;
-         } else if (form->As<RE::TESObjectARMO>()) {
-            kind = "Apparel"sv;
-         } else if (form->As<RE::TESObjectLIGH>()) {
-            kind = "Light"sv;
+         } else if (const auto ff = Effect::FacetsOfForm(entry.formID); ff.known) {
+            kind = Core::Effect::KindName(ff.kind);
+            clsOwned = Core::Facets::Names(ff.facets);
+            cls = clsOwned;
+         } else if (form->As<RE::SpellItem>() || form->As<RE::ScrollItem>() || form->As<RE::AlchemyItem>() ||
+                    form->As<RE::TESObjectWEAP>() || form->As<RE::TESAmmo>() || form->As<RE::TESSoulGem>() ||
+                    form->As<RE::TESObjectARMO>() || form->As<RE::TESObjectLIGH>()) {
+            kind = "uncatalogued"sv;
          } else {
             clsOwned = std::format("formType {}", static_cast<int>(form->GetFormType()));
             kind = "Other"sv;
@@ -1228,278 +850,6 @@ namespace Huginn::Console
          entries.size(), totalTrains, unresolved);
       Print(msg.c_str());
       logger::info("[Console] {} -> {}"sv, msg, filePath.string());
-   }
-
-   // `hg dump potions` -- every potion and poison in the LOAD ORDER (food has
-   // its own dump), with the classification Huginn gives it, the numbers that
-   // tell two potions of one class apart (magnitude, duration, value), how
-   // many the player carries and how often the learner has trained on it.
-   // The question it answers: how differentiated are potions, really?
-   static void Cmd_DumpPotions(std::string_view /*arg*/)
-   {
-      auto* dataHandler = RE::TESDataHandler::GetSingleton();
-      if (!dataHandler) {
-         Print("Data handler unavailable");
-         return;
-      }
-      std::ofstream out;
-      std::filesystem::path filePath;
-      if (!OpenDumpFile("Huginn_Potions.csv"sv, out, filePath)) return;
-
-      auto* player = RE::PlayerCharacter::GetSingleton();
-      Item::ItemClassifier classifier;
-      out << "formID,plugin,name,type,subclass,hostile,magnitude,duration,value,tags,tagsExt,"
-             "playerCount,trainCount,effects\n";
-
-      size_t written = 0, unknown = 0, carried = 0;
-      for (auto* item : dataHandler->GetFormArray<RE::AlchemyItem>()) {
-         if (!item || item->IsFood()) continue;
-         const char* rawName = item->GetName();
-         if (!rawName || !*rawName) continue;
-
-         const auto data = classifier.ClassifyItem(item);
-         const auto count = player ? Util::GetItemCountSafe(player, item) : 0;
-
-         // 'name' magnitude/duration per effect, joined by " / ".
-         std::string effects;
-         for (const auto* effect : item->effects) {
-            if (!effect || !effect->baseEffect) continue;
-            const char* full = effect->baseEffect->GetFullName();
-            if (!effects.empty()) effects += " / ";
-            effects += std::format("'{}' {:g}/{}s", full ? full : "",
-               effect->effectItem.magnitude, effect->effectItem.duration);
-         }
-
-         out << std::format("{:08X},{},{},{},{},{},{:g},{:g},{},{:08X},{:04X},{},{},{}\n",
-            item->GetFormID(),
-            CsvQuote(PluginOf(item)),
-            CsvQuote(rawName),
-            Item::ItemTypeToString(data.type),
-            ItemSubclass(data),
-            data.isHostile ? 1 : 0,
-            data.magnitude,
-            data.duration,
-            data.value,
-            static_cast<uint32_t>(data.tags),
-            static_cast<uint32_t>(data.tagsExt),
-            count,
-            g_featureBanditLearner ? g_featureBanditLearner->GetTrainCount(item->GetFormID()) : 0.0f,
-            CsvQuote(effects));
-         ++written;
-         if (data.type == Item::ItemType::Unknown) ++unknown;
-         if (count > 0) ++carried;
-      }
-      out.close();
-
-      auto msg = std::format("Wrote {} potions/poisons to Huginn_Potions.csv - {} unclassified, {} carried",
-         written, unknown, carried);
-      Print(msg.c_str());
-      logger::info("[Console] {} -> {}"sv, msg, filePath.string());
-   }
-
-   // `hg dump scrolls` -- every scroll in the LOAD ORDER, as the scroll
-   // registry sees it. `hg dump spells` already lists scrolls (since v0.21.8)
-   // with the classifier's INPUTS; this one is the scroll side of the
-   // cold-start question instead: what ScrollData keeps (magnitude, duration,
-   // cost), how many the player carries, and whether the learner has ever
-   // trained on one.
-   static void Cmd_DumpScrolls(std::string_view /*arg*/)
-   {
-      auto* dataHandler = RE::TESDataHandler::GetSingleton();
-      if (!dataHandler) {
-         Print("Data handler unavailable");
-         return;
-      }
-      if (!g_spellRegistry) {
-         Print("Spell registry not initialized - load a game first");
-         return;
-      }
-      std::ofstream out;
-      std::filesystem::path filePath;
-      if (!OpenDumpFile("Huginn_Scrolls.csv"sv, out, filePath)) return;
-
-      auto* player = RE::PlayerCharacter::GetSingleton();
-      const Scroll::ScrollClassifier classifier(g_spellRegistry->GetClassifier());
-      out << "formID,plugin,name,type,school,element,tags,tagsExt,magnitude,duration,baseCost,"
-             "playerCount,trainCount\n";
-
-      size_t written = 0, unknown = 0, carried = 0;
-      for (auto* scroll : dataHandler->GetFormArray<RE::ScrollItem>()) {
-         if (!scroll) continue;
-         const char* rawName = scroll->GetName();
-         if (!rawName || !*rawName) continue;
-
-         const auto data = classifier.ClassifyScroll(scroll);
-         const auto count = player ? Util::GetItemCountSafe(player, scroll) : 0;
-
-         out << std::format("{:08X},{},{},{},{},{},{:08X},{:04X},{:g},{:g},{},{},{}\n",
-            scroll->GetFormID(),
-            CsvQuote(PluginOf(scroll)),
-            CsvQuote(rawName),
-            Spell::SpellTypeToString(data.type),
-            Spell::MagicSchoolToString(data.school),
-            Spell::ElementTypeToString(data.element),
-            static_cast<uint32_t>(data.tags),
-            static_cast<uint16_t>(data.tagsExt),
-            data.magnitude,
-            data.duration,
-            data.baseCost,
-            count,
-            g_featureBanditLearner ? g_featureBanditLearner->GetTrainCount(scroll->GetFormID()) : 0.0f);
-         ++written;
-         if (data.type == Spell::SpellType::Unknown) ++unknown;
-         if (count > 0) ++carried;
-      }
-      out.close();
-
-      auto msg = std::format("Wrote {} scrolls to Huginn_Scrolls.csv - {} unclassified, {} carried",
-         written, unknown, carried);
-      Print(msg.c_str());
-      logger::info("[Console] {} -> {}"sv, msg, filePath.string());
-   }
-
-   // An enchantment's effects as 'name' AV=n, joined by " / " -- the inputs
-   // the weapon and apparel classifiers read.
-   static std::string EnchantmentEffects(const RE::EnchantmentItem* enchantment)
-   {
-      std::string effects;
-      if (!enchantment) return effects;
-      for (const auto* effect : enchantment->effects) {
-         if (!effect || !effect->baseEffect) continue;
-         const char* full = effect->baseEffect->GetFullName();
-         if (!effects.empty()) effects += " / ";
-         effects += std::format("'{}' AV={}", full ? full : "",
-            static_cast<int>(effect->baseEffect->data.primaryAV));
-      }
-      return effects;
-   }
-
-   // `hg dump weapons` -- every weapon and ammo in the LOAD ORDER with the
-   // classifier's verdict and its inputs (base damage, speed, enchantment
-   // effects), carried and train counts. The roadmap's "no dump at all"
-   // entry: WeaponClassifier's rules had only been checked against what one
-   // character carried.
-   static void Cmd_DumpWeapons(std::string_view /*arg*/)
-   {
-      auto* dataHandler = RE::TESDataHandler::GetSingleton();
-      if (!dataHandler) {
-         Print("Data handler unavailable");
-         return;
-      }
-      std::ofstream out;
-      std::filesystem::path filePath;
-      if (!OpenDumpFile("Huginn_Weapons.csv"sv, out, filePath)) return;
-
-      auto* player = RE::PlayerCharacter::GetSingleton();
-      Weapon::WeaponClassifier classifier;
-      out << "formID,plugin,name,kind,type,tags,baseDamage,speed,enchantment,playerCount,trainCount,effects\n";
-
-      auto trains = [](RE::FormID id) {
-         return g_featureBanditLearner ? g_featureBanditLearner->GetTrainCount(id) : 0.0f;
-      };
-      size_t weapons = 0, ammo = 0, unknown = 0;
-      for (auto* weapon : dataHandler->GetFormArray<RE::TESObjectWEAP>()) {
-         if (!weapon) continue;
-         const char* rawName = weapon->GetName();
-         if (!rawName || !*rawName) continue;
-         const auto data = classifier.ClassifyWeapon(weapon);
-         const auto* enchantment = weapon->formEnchanting;
-         out << std::format("{:08X},{},{},Weapon,{},{:08X},{:g},{:g},{},{},{},{}\n",
-            weapon->GetFormID(), CsvQuote(PluginOf(weapon)), CsvQuote(rawName),
-            Weapon::WeaponTypeToString(data.type), static_cast<uint32_t>(data.tags),
-            data.baseDamage, data.speed,
-            CsvQuote(enchantment && enchantment->GetName() ? enchantment->GetName() : ""),
-            player ? Util::GetItemCountSafe(player, weapon) : 0, trains(weapon->GetFormID()),
-            CsvQuote(EnchantmentEffects(enchantment)));
-         ++weapons;
-         if (data.type == Weapon::WeaponType::Unknown) ++unknown;
-      }
-      for (auto* item : dataHandler->GetFormArray<RE::TESAmmo>()) {
-         if (!item) continue;
-         const char* rawName = item->GetName();
-         if (!rawName || !*rawName) continue;
-         const auto data = classifier.ClassifyAmmo(item);
-         out << std::format("{:08X},{},{},Ammo,{},{:08X},{:g},,,{},{},\n",
-            item->GetFormID(), CsvQuote(PluginOf(item)), CsvQuote(rawName),
-            Weapon::AmmoTypeToString(data.type), static_cast<uint32_t>(data.tags),
-            data.baseDamage,
-            player ? Util::GetItemCountSafe(player, item) : 0, trains(item->GetFormID()));
-         ++ammo;
-      }
-      out.close();
-
-      auto msg = std::format("Wrote {} weapons and {} ammo to Huginn_Weapons.csv - {} weapons unclassified",
-         weapons, ammo, unknown);
-      Print(msg.c_str());
-      logger::info("[Console] {} -> {}"sv, msg, filePath.string());
-   }
-
-   // `hg dump apparel` -- every armour piece in the LOAD ORDER that carries an
-   // enchantment, with the craft skill and slot ApparelClassifier gives it
-   // and the enchantment's effects beside them. Unenchanted gear is skipped:
-   // apparel is classified BY its enchantment, so it has nothing to show.
-   // Base-form enchantments only; a player-applied one lives on the stack.
-   static void Cmd_DumpApparel(std::string_view /*arg*/)
-   {
-      auto* dataHandler = RE::TESDataHandler::GetSingleton();
-      if (!dataHandler) {
-         Print("Data handler unavailable");
-         return;
-      }
-      std::ofstream out;
-      std::filesystem::path filePath;
-      if (!OpenDumpFile("Huginn_Apparel.csv"sv, out, filePath)) return;
-
-      auto* player = RE::PlayerCharacter::GetSingleton();
-      Apparel::ApparelClassifier classifier;
-      out << "formID,plugin,name,slot,craftSkill,magnitude,enchantment,playerCount,effects\n";
-
-      size_t written = 0, craft = 0;
-      for (auto* armor : dataHandler->GetFormArray<RE::TESObjectARMO>()) {
-         if (!armor || !armor->formEnchanting) continue;
-         const char* rawName = armor->GetName();
-         if (!rawName || !*rawName) continue;
-         auto* enchantment = armor->formEnchanting;
-         const auto data = classifier.ClassifyApparel(armor, enchantment);
-         out << std::format("{:08X},{},{},{},{},{:g},{},{},{}\n",
-            armor->GetFormID(), CsvQuote(PluginOf(armor)), CsvQuote(rawName),
-            Apparel::ApparelSlotToString(data.slot), Apparel::CraftSkillToString(data.craftSkill),
-            data.magnitude,
-            CsvQuote(enchantment->GetName() ? enchantment->GetName() : ""),
-            player ? Util::GetItemCountSafe(player, armor) : 0,
-            CsvQuote(EnchantmentEffects(enchantment)));
-         ++written;
-         if (data.IsCraftRelevant()) ++craft;
-      }
-      out.close();
-
-      auto msg = std::format("Wrote {} enchanted apparel pieces to Huginn_Apparel.csv - {} fortify a craft",
-         written, craft);
-      Print(msg.c_str());
-      logger::info("[Console] {} -> {}"sv, msg, filePath.string());
-   }
-
-   // `hg dump all` -- every item-like form in the LOAD ORDER in ONE schema, a
-   // row per item x effect, and since 0.23.12 the effect catalog's view of it
-   // (R2): each row's effect column, each item's cap(i), today's slot class,
-   // and the doc 9 dump gaps. The writer and the column list live in
-   // effect/EffectDump.*; tests/tools/EffectReport.cpp re-maps a dump on the
-   // host. Ingredients are left out: Huginn dropped them (the user,
-   // 2026-10-07) -- they matter only at an alchemy lab.
-   static void Cmd_DumpAll(std::string_view /*arg*/)
-   {
-      Huginn_ZONE_NAMED("hg dump all");
-      const auto logDir = SKSE::log::log_directory();
-      if (!logDir) {
-         Print("No SKSE log directory - cannot write the dump");
-         return;
-      }
-      const auto filePath = *logDir / "Huginn_All.csv";
-      std::string summary;
-      const bool ok = Effect::WriteDumpAll(filePath, summary);
-      Print(summary.c_str());
-      if (ok) logger::info("[Console] {} -> {}"sv, summary, filePath.string());
-      else logger::error("[Console] dump all failed: {}"sv, summary);
    }
 
    // `hg cap <FormID>` -- one item's cap(i) from the effect catalog: the
@@ -1735,20 +1085,15 @@ namespace Huginn::Console
       { "hands",         "Show where each hand's weapon model hangs (invisible weapons)", false, Cmd_Hands },
       { "unlock",        "Clear all slot locks",                        false, Cmd_Unlock },
       { "status",        "Show system status",                          false, Cmd_Status },
-      { "weights",       "Show learner weight vector for FormID",          true,  Cmd_Weights },
+      { "theta",         "Show the choice learner (drift), or one item's b and terms: hg theta [FormID]", true, Cmd_Theta },
+      { "dump theta",    "Write every moved theta weight and every b to Huginn_Theta.csv", false, Cmd_DumpTheta },
+      { "weights",       "Show the OLD learner's weights for FormID (kept for D2)", true,  Cmd_Weights },
       { "rebuild",       "Force rebuild all registries",                false, Cmd_Rebuild },
       { "reload",        "Hot-reload all settings from INI",            false, Cmd_Reload },
       { "page",          "Switch to page N (or show current)",          true,  Cmd_Page },
+      { "dump all",      "Write every item and effect, with the effect catalog's view, to Huginn_All.csv", false, Cmd_DumpAll },
 #ifndef NDEBUG
-      { "dump spells",   "Write every castable spell to Huginn_Spells.csv (debug builds)", false, Cmd_DumpSpells },
-      { "dump food",     "Write every food and drink to Huginn_Food.csv (debug builds)", false, Cmd_DumpFood },
-      { "dump potions",  "Write every potion and poison to Huginn_Potions.csv (debug builds)", false, Cmd_DumpPotions },
-      { "dump scrolls",  "Write every scroll to Huginn_Scrolls.csv (debug builds)", false, Cmd_DumpScrolls },
-      { "dump weights",  "Write every learner entry to Huginn_Weights.csv (debug builds)", false, Cmd_DumpWeights },
-      { "dump weapons",  "Write every weapon and ammo to Huginn_Weapons.csv (debug builds)", false, Cmd_DumpWeapons },
-      { "dump apparel",  "Write every enchanted armour piece to Huginn_Apparel.csv (debug builds)", false, Cmd_DumpApparel },
-      { "dump diseases", "Write every disease to Huginn_Diseases.csv (debug builds)", false, Cmd_DumpDiseases },
-      { "dump all",      "Write every item and effect, with the effect catalog's view, to Huginn_All.csv (debug builds)", false, Cmd_DumpAll },
+      { "dump weights",  "Write every OLD learner entry to Huginn_Weights.csv (debug builds)", false, Cmd_DumpWeights },
       { "cap",           "Show one item's effect columns and runtime cross-features (debug builds)", true, Cmd_Cap },
       { "dump races",    "Write every race, its keywords and NPC count to Huginn_Races.csv (debug builds)", false, Cmd_DumpRaces },
 #endif

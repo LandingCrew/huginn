@@ -1,5 +1,7 @@
 # Huginn State Model
 
+> **R11 (0.24.4):** the state model below is current; what reads it changed. Since R8.3 the hand-tuned engine (context weights × the bandit's learning score × multipliers) no longer ranks: every candidate is ranked on the choice score μ (θ over need × effect columns, b per item; doc 9, [9-implementation-map.md](9-implementation-map.md)), and the old engine runs only for the D2 feature `ln learn mult` (`[Scoring] bLegacyLearnFeature`, confined by `tools/prune/r8_check.py`). The states feed the need vector (NeedMonitor, `core/NeedEvaluator.h`) and the hard gates (`context/ContextFacts.h`); the context rules that turned them into weights are D2's input only.
+
 This document describes the state management architecture using the StateManager
 system. **Verified against `src/` at v0.19.10 (2026-08-29).** The state layer has
 been structurally stable since v0.6.x; the drift since the v0.13.x snapshot is in
@@ -967,7 +969,7 @@ uint32_t stateHash = gameState.GetHash();  // 0-48,383
 There is **no tabular Q-table**. The hash exists for two things only: the
 pipeline's hash-skip gate, and `LogStateTransition`'s change diff. Learning is
 keyed on the continuous `StateFeatures` vector instead — see
-[4-contextual-bandits.md](4-contextual-bandits.md).
+[archive/4-contextual-bandits.md](archive/4-contextual-bandits.md).
 
 **Combined Utility** (`UtilityScorer::ComputeUtility`, the single source of truth
 for the formula):
@@ -1425,7 +1427,7 @@ scene.
 
 - [0-pipeline.md](0-pipeline.md) - Recommendation pipeline using state models
 - [2-classifiers.md](2-classifiers.md) - How candidates are typed and classified
-- [4-contextual-bandits.md](4-contextual-bandits.md) - `StateFeatures` and the learning update rule
+- [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) - `StateFeatures` and the learning update rule
 - [5-slots.md](5-slots.md) - Slot allocation and locking
 - [../README.md](../README.md) - Overall system design
 - [../profiling/tracy-traces.md](../profiling/tracy-traces.md) - Measured poll costs

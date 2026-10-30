@@ -1,5 +1,7 @@
 # Huginn Classification System (v0.20.x)
 
+> **R11 (0.24.4):** **these classifiers no longer drive the live engine.** The slot classes, candidate filters, override finders, the label and the widget styling read the effect catalog (`EffectCatalog`, cap(i)) through `core/CapFacets.h`. The spell, item and scroll classifiers still run, and their tags and types still exist, ONLY because the D2 feature needs the old context weights, which read them; `tools/prune/r8_check.py` (CLASSIFIER) confines every read to the classifiers' files and D2's inputs. The per-type dumps (`hg dump spells`, `food`, `potions`, `scrolls`, `weapons`, `apparel`, `diseases`) are gone; `hg dump all` is the load-order dump. `Huginn_Overrides.ini` (type / tag corrections) therefore reaches only D2; corrections the live engine sees go in the effect override files (`Huginn/EffectOverrides/*.ini`, `Huginn_EffectOverrides.ini`).
+
 > See also:
 > - [0-pipeline.md](0-pipeline.md) - Overall pipeline flow
 > - [3-candidate-filtering.md](3-candidate-filtering.md) - What happens to a classified form next
@@ -1234,7 +1236,7 @@ Each registry stores classification results in its own data struct:
 
 These are populated directly by the classifier at registration time — no cache,
 no external persistence layer. (The only persisted state is the contextual
-bandit's weights; see [4-contextual-bandits.md](4-contextual-bandits.md).)
+bandit's weights; see [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md).)
 
 ---
 

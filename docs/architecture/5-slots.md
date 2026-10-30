@@ -6,7 +6,7 @@ locking, overrides and wildcards — as implemented in **v0.19.x**.
 > **Related documentation:**
 > - [0-pipeline.md](0-pipeline.md) - Overall pipeline flow including slot allocation
 > - [1-states.md](1-states.md) - State models used for override detection
-> - [2-classifiers.md](2-classifiers.md) - Spell/item/weapon tags the classifier reads
+> - [2-classifiers.md](2-classifiers.md) - The old classifiers (since R11 an input to the D2 feature only; the slot classes read cap(i))
 > - [6-ui-ux.md](6-ui-ux.md) - How assignments are rendered (widget, Wheeler)
 
 ---
@@ -94,43 +94,68 @@ the old default and six archetypes -- and a set of five test pages live in
 
 ## Slot Classification System
 
-`SlotClassification` (`src/slot/SlotConfig.h`) has 24 values. `SlotClassifier`
-(`src/slot/SlotClassifier.cpp`) dispatches on the candidate variant — spell,
-item, scroll, weapon or ammo — so the same classification means different things
-per source type.
+`SlotClassification` (`src/core/SlotClassification.h` since R11; it was in
+`src/slot/SlotConfig.h`) has 24 values, unchanged: players name them in their
+INI layouts (`sClassification = HealingAny`). **What each one matches was
+re-derived from cap(i) in R11 (0.24.4)**: `SlotClassifier`
+(`src/slot/SlotClassifier.cpp`) asks `core/CapFacets.h`'s `Matches` and
+`Classify` (pure, host-tested in `tests/core/CapFacetsTests.cpp`, including
+real spells, potions, poisons and food from the three dump fixtures) about the
+candidate's subject: its source (the candidate variant), its school and weapon
+type (form facts), and the effect catalog's facets of its form. The old spell,
+item and scroll classifiers' types and tags are not read for this any more;
+they feed only the D2 legacy feature (`tools/prune/r8_check.py` CLASSIFIER).
+Each ranked row carries its subject (`ScoredCandidate::subject`, filled once per
+pipeline run); a row built elsewhere is looked up on demand.
 
-### Effect-Based Classifications
+### Slot classes, re-derived from cap(i) (R11): the review
 
-| Classification | Spells / scrolls match on | Items match on |
-|---|---|---|
-| **DamageAny** | `SpellType::Damage` | `ItemType::Poison` (weapon candidates also match) |
-| **DamageMagic** | `SpellType::Damage` | — (no items, no weapons): the "attack magic" key |
-| **HealingAny** | `SpellType::Healing`, or the `RestoreHealth` tag | `HealthPotion`, or the `RestoreHealth` tag |
-| **BuffsAny** | `SpellType::Buff`, or `Armor` / `Invisibility` / `Muffle` tags | `BuffPotion`, or any `Fortify*` / `Invisibility` tag |
-| **DefensiveAny** | `SpellType::Defensive`, or `Ward` / `Armor` tags | `ResistPotion`, or any `Resist*` tag |
-| **SummonsAny** | `SpellType::Summon`, or `Conjuration` / `SummonDaedra` / `SummonUndead` / `SummonCreature` / `BoundWeapon` tags | — (no item summons) |
-| **Utility** | `SpellType::Utility`, or `Light` / `DetectLife` / `Telekinesis` tags, or the `Unlock` extended tag | `CurePotion`, or `Waterbreathing` / `CureDisease` / `CurePoison` tags |
+The roadmap asked for the classes to be reviewed as a whole when they were
+re-derived. Per class, the facets it reads (`core/CapFacets.h` names the
+columns), what changed against the classifier version, and why.
 
-### Item-Type-Based Classifications
+| Class | Spells / scrolls (R11) | Items (R11) | Change against the classifiers |
+|---|---|---|---|
+| **DamageAny** | Damage (the damage or absorb family) | a poison (catalog kind Poison) | Weapons still match, as before. A spell is damage by its effects, not by the classifier's costliest-effect type: a cloak or a rune that deals damage now matches; a Fear does not |
+| **DamageMagic** | Damage | -- | as DamageAny, spells and scrolls only |
+| **HealingAny** | RestoreHealth (restore_health or restore_health_other) or RegenHealth | not a poison, and RestoreHealth or RegenHealth | food that restores health still matches; a regeneration potion now does |
+| **BuffsAny** | not hostile, and Fortify (vital, skill or combat), Regen, Stealth (invisibility, muffle, disguise) or ArmorBuff | not a poison, and Fortify or Invisibility | a Fortify Smithing potion (fortify_skill) now matches (the classifier left utility skills out); food with a fortify rider (LoreRim's "Fortify Magicka" pies) matches |
+| **DefensiveAny** | not hostile, and the defense family (armour, ward, spell absorb, reflect, ...) or the resist family | not a poison, and the resist family | Resist Disease counts now; a resist rider on food matches, as the tag did |
+| **SummonsAny** | the summon family (creatures, reanimation, bound weapons) | -- | the classifier's `Conjuration` tag arm (any conjuration spell) is gone: a Soul Trap is not a summon |
+| **Utility** | not hostile, and vision, utility, movement or cure | not a poison, and cure, utility or vision | slow fall / water walking (movement) and a cure SPELL now count; torches still match |
+| **PotionsAny** | -- | catalog kind Potion or Poison | unchanged in intent: not food, not soul gems |
+| **PoisonsAny** | -- | kind Poison | unchanged |
+| **ScrollsAny** / **SpellsAny** | any scroll / any spell | -- | unchanged |
+| **Spells&lt;School&gt;** | the candidate's school (form fact) | -- | unchanged (spells and scrolls) |
+| **WeaponsAny** / **WeaponsMelee** / **WeaponsRanged** | -- | -- | from the weapon's type (bow, crossbow, staff = ranged; blades, axes, maces, daggers = melee), the same split the weapon tag encoded |
+| **FoodAny** | -- | kind Food | **now takes every food, alcohol included** (it excluded alcohol before; no food leaves a food key) |
+| **AlcoholAny** | -- | food that intoxicates (survival_intoxication) or carries a cost that is not a vital drain (DrinkCost: an ale's Damage Stamina Regeneration, LoreRim's Inebriation) | the catalog has no alcohol column, so this is the nearest reading; known strays: food whose cost is a paralysis or a weakness (raw fish, M'aiq's Broth). Raw food's Weak Stomach (a stamina drain) does not count |
+| **AmmoAny** / **ApparelAny** | -- | ammo / apparel candidates | unchanged |
+| **Regular** | everything | everything | unchanged |
 
-| Classification | Matches |
-|---|---|
-| **PotionsAny** | Health, magicka, stamina, resist, buff and cure potions plus poisons — **not** food, alcohol or soul gems |
-| **PoisonsAny** | `ItemType::Poison` only |
-| **ScrollsAny** | Any scroll |
-| **SpellsAny** | Any spell (scrolls do **not** match) |
-| **SpellsDestruction / SpellsRestoration / SpellsConjuration / SpellsIllusion / SpellsAlteration** | Spells whose `MagicSchool` is that school |
-| **WeaponsAny** | Any weapon candidate |
-| **WeaponsMelee** | Weapons carrying the `Melee` tag |
-| **WeaponsRanged** | Weapons carrying the `Ranged` tag |
-| **FoodAny** | `ItemType::Food` |
-| **AlcoholAny** | `ItemType::Alcohol` (ale, mead, wine, skooma) |
-| **AmmoAny** | Ammo candidates (arrows, bolts) |
-| **ApparelAny** | Fortify-crafting gear (scores only at a workstation) |
+**No catalog entry** (an out-of-scope form, or before the catalog is ready):
+a candidate matches only what its source decides -- Regular, SpellsAny /
+ScrollsAny, the school classes, the weapon classes, AmmoAny, ApparelAny,
+PotionsAny / FoodAny from its source type -- and no effect class. The choice
+score reads only b for such an item too.
 
-The classes overlap in ways a player cannot guess (DamageAny takes weapons,
-HealingAny and PotionsAny both take health potions, …). A review of them as a
-whole is on the roadmap.
+**The overlaps, reviewed.** They remain, on purpose: a class is a filter on a
+key, not a partition of the items. DamageAny takes weapons and poisons
+(an "anything that hurts" key); HealingAny and PotionsAny both take a health
+potion; FoodAny and AlcoholAny both take ale. A layout that wants disjoint keys
+names the narrower class (DamageMagic, PoisonsAny, AlcoholAny). What matters is
+that each class now means its effects, so a player can predict it from what an
+item does, and that the slot classes, the filters and the override finders read
+the same facets and cannot disagree.
+
+**Classify()** (the class cap's group, the v2 log's and the dump's class) walks
+`core/CapFacets.h`'s `kClassPriority`, most specific first: HealingAny,
+DamageMagic, PoisonsAny, DamageAny, DefensiveAny, BuffsAny, SummonsAny,
+Utility, AlcoholAny (R11: before FoodAny, which takes alcohol too now), FoodAny,
+PotionsAny, ScrollsAny, the weapon classes, AmmoAny, ApparelAny, the school
+classes, SpellsAny, then Regular. A weapon classifies as DamageAny, as before
+(the class cap groups all weapons there); the class cap still groups all food
+(source type Food) as FoodAny.
 
 ### Regular (Unrestricted)
 
@@ -139,15 +164,6 @@ that accepts soul gems, which have no dedicated classification — relevant
 because the `WeaponCharge` override surfaces a soul gem and therefore needs a
 `Regular` slot that also accepts its category (see
 [Override placement](#override-placement)).
-
-### Classify()
-
-`SlotClassifier::Classify()` returns a single best-fit classification for
-display and debugging. It walks a fixed most-specific-first order: the effect
-classifications, then `FoodAny` before `AlcoholAny` before `PotionsAny`, then
-`ScrollsAny`, then `WeaponsMelee` / `WeaponsRanged` before `WeaponsAny`, then
-`AmmoAny`, then the per-school spell filters before `SpellsAny`, falling back to
-`Regular`.
 
 ---
 
@@ -245,8 +261,18 @@ it differs, the **shipped INI value**.
 `charge < threshold`, and a drained enchanted weapon keeps a small unusable
 charge remainder rather than exactly 0, so a 0.0 threshold would never fire.
 
-Drowning surfaces only a potion. Waterbreathing *spells* have no dedicated tag
-and reach the player through normal contextual scoring instead.
+Drowning surfaces an item (a potion, or food that carries waterbreathing; never
+a poison): the longest-lasting one with the catalog's Waterbreathing facet
+(R11). Waterbreathing *spells* reach the player through the score (the
+`underwater` and `deep_water_ahead` needs).
+
+**R11: the finders read the effect catalog.** Which items each override may
+surface is decided by `core/CapFacets.h` facets of the item's form, not by the
+old classifiers' types and tags: a restore potion is catalog kind Potion with
+the RestoreHealth / RestoreMagicka / RestoreStamina facet; the restore-spell
+fallback takes the spells with that facet (and its effect walk still measures
+the amount); the Poisoned cure is CurePoison and not a poison. An item the
+catalog has no entry for is not offered by an override.
 
 **Override category** (`src/override/OverrideConditions.h:38`):
 ```cpp
@@ -266,7 +292,9 @@ stamp is loud rather than silently aliasing another condition's latch entry.
 
 **Potion selection.** All three vitals finders share one policy
 (`SelectPotion`): prefer the best *pure* potion from
-`ItemRegistry::GetBestPotion`, and fall back to one with harmful side effects
+`BestRestorePotion` (R11: the potions with the restore facet, ranked by what
+they restore within the urgent window, `ItemData::RestoredWithin`; it replaced
+`ItemRegistry`'s pick by classifier type), and fall back to one with harmful side effects
 (skooma and friends) only when `bAllowImpurePotions = true` (default true). If
 neither exists the condition still reports as active but carries no candidate,
 and the allocator skips it.
@@ -1457,9 +1485,9 @@ Wheeler Callback Thread
 
 - [0-pipeline.md](0-pipeline.md) - Overall recommendation pipeline
 - [1-states.md](1-states.md) - State models for override detection
-- [2-classifiers.md](2-classifiers.md) - Spell/item/weapon tags the classifier reads
+- [2-classifiers.md](2-classifiers.md) - The old classifiers (since R11 an input to the D2 feature only)
 - [3-candidate-filtering.md](3-candidate-filtering.md) - What reaches the allocator
-- [4-contextual-bandits.md](4-contextual-bandits.md) - Learning system (EquipEventBus, reward signals)
+- [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) - Learning system (EquipEventBus, reward signals)
 - [6-ui-ux.md](6-ui-ux.md) - Intuition widget and Wheeler display
 - [7-dmenu-integration.md](7-dmenu-integration.md) - dMenu-owned settings
 - [8-future-work.md](8-future-work.md) - Planned work

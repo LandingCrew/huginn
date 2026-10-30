@@ -515,6 +515,8 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
 #ifndef NDEBUG
     if (!isNewGame) {
         g_spellRegistry->LogAllSpells();
+        // R11: the made-up candidates' facets (Tests.cpp), for the suites only.
+        InstallSyntheticFacetResolver();
         HUGINN_RUN_SUITE(RunSpellRegistryTests);
         HUGINN_RUN_SUITE(RunItemClassifierTests);
         HUGINN_RUN_SUITE(RunItemRegistryTests);
@@ -535,6 +537,7 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
         HUGINN_RUN_SUITE(RunHomeKeyTest);                 // [SlotLocker] home keys
         HUGINN_RUN_SUITE(RunBuffElementResistTest);       // THROWAWAY (0.20.63): buff element != resist
         HUGINN_RUN_SUITE(RunNeedVectorTests);             // R3: the need vector on the live game
+        RemoveSyntheticFacetResolver();
         logger::info("Debug build ready. Console command functions available for hotkey integration"sv);
         // One RESULT line for the batch; in test mode this ends the run.
         TestHarness::EndPhase(TestHarness::Phase::Load, loadSucceeded);
@@ -761,7 +764,9 @@ static void OnDataLoaded()
     // ever leaves NDEBUG undefined while still excluding Tests.cpp, this call becomes
     // an unresolved symbol. Standard MSVC Debug/Release presets keep them aligned.
 #ifndef NDEBUG
+    InstallSyntheticFacetResolver();   // R11: the made-up candidates' facets (Tests.cpp)
     HUGINN_RUN_SUITE(RunUnitTests);
+    RemoveSyntheticFacetResolver();
     // One RESULT line; in test mode, arms the auto-load (or ends the run when
     // no save is named).
     TestHarness::EndPhase(TestHarness::Phase::Menu);

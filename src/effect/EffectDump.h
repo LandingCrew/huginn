@@ -1,7 +1,8 @@
 #pragma once
 
 // =============================================================================
-// EFFECT DUMP -- `hg dump all`, the catalog view (Debug builds)
+// EFFECT DUMP -- `hg dump all`, the catalog view (every build since R11: mod
+// authors write effect overrides from it)
 // =============================================================================
 // One row per item x effect, as before 0.23.12 (every old column, same order,
 // so the doc 9 analysis scripts keep working), then the dump gaps of doc 9 and
@@ -22,8 +23,9 @@
 //   effectKept                       found, and whether it counts in cap(i): 1, 0, or (0.23.30)
 //                                    "perk" (beside cap(i), with a perk) / "bane" (a target-family row)
 //   inScope, slotClass, cap          per item, on its first row only: in the
-//                                    catalog's scope; today's slot class (the
-//                                    legacy classifiers + SlotClassifier); cap(i)
+//                                    catalog's scope; the slot class it would
+//                                    have as a candidate (R11: core/CapFacets.h
+//                                    over cap(i), no longer the old classifiers); cap(i)
 //
 // Gap 7 ("taught by shout") is moot: shouts are out of scope (2026-10-08).
 // tests/tools/EffectReport.cpp (huginn_effect_report) re-maps the raw columns

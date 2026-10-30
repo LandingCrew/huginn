@@ -2,8 +2,8 @@
 
 #include "SlotAssignment.h"
 #include "SlotLocker.h"
+#include "SlotClassifier.h"
 #include "ui/SlotTypes.h"
-#include "learning/item/ItemData.h"
 #include "weapon/WeaponData.h"
 #include <set>
 #include <spdlog/spdlog.h>
@@ -72,18 +72,17 @@ namespace Huginn::Slot
         // Handle by assignment type first
         if (assignment.IsOverride()) {
             // Override potions get specific styling for health/magicka/stamina
+            // R11: the restore it carries, from the effect catalog (core/CapFacets.h).
             if (candidate.Is<Candidate::ItemCandidate>()) {
-                const auto& item = candidate.As<Candidate::ItemCandidate>();
-                if (item.type == Item::ItemType::HealthPotion ||
-                    Item::HasTag(item.tags, Item::ItemTag::RestoreHealth)) {
+                const auto f = SlotClassifier::SubjectOf(candidate).facets;
+                using F = Core::Facets::F;
+                if (f.Has(F::RestoreHealth)) {
                     return UI::SlotContent::HealthPotion(name, formID);
                 }
-                if (item.type == Item::ItemType::MagickaPotion ||
-                    Item::HasTag(item.tags, Item::ItemTag::RestoreMagicka)) {
+                if (f.Has(F::RestoreMagicka)) {
                     return UI::SlotContent::MagickaPotion(name, formID);
                 }
-                if (item.type == Item::ItemType::StaminaPotion ||
-                    Item::HasTag(item.tags, Item::ItemTag::RestoreStamina)) {
+                if (f.Has(F::RestoreStamina)) {
                     return UI::SlotContent::StaminaPotion(name, formID);
                 }
             }
@@ -111,16 +110,22 @@ namespace Huginn::Slot
             case Candidate::SourceType::Potion:
             case Candidate::SourceType::Food:
                 // Check potion type for specific styling
+                // R11: a potion (not food, not a poison) styled by the restore
+                // it carries, read off the effect catalog (core/CapFacets.h).
                 if (candidate.Is<Candidate::ItemCandidate>()) {
-                    const auto& item = candidate.As<Candidate::ItemCandidate>();
-                    if (item.type == Item::ItemType::HealthPotion) {
-                        return UI::SlotContent::HealthPotion(name, formID);
-                    }
-                    if (item.type == Item::ItemType::MagickaPotion) {
-                        return UI::SlotContent::MagickaPotion(name, formID);
-                    }
-                    if (item.type == Item::ItemType::StaminaPotion) {
-                        return UI::SlotContent::StaminaPotion(name, formID);
+                    const auto subject = SlotClassifier::SubjectOf(candidate);
+                    const auto f = subject.facets;
+                    using F = Core::Facets::F;
+                    if (subject.kind == Core::Effect::Kind::Potion) {
+                        if (f.Has(F::RestoreHealth)) {
+                            return UI::SlotContent::HealthPotion(name, formID);
+                        }
+                        if (f.Has(F::RestoreMagicka)) {
+                            return UI::SlotContent::MagickaPotion(name, formID);
+                        }
+                        if (f.Has(F::RestoreStamina)) {
+                            return UI::SlotContent::StaminaPotion(name, formID);
+                        }
                     }
                 }
                 // All other potions (resist, buff, cure, etc.) use generic Potion type
@@ -134,7 +139,9 @@ namespace Huginn::Slot
                 // told which one rather than left to the engine.
                 if (candidate.Is<Candidate::WeaponCandidate>()) {
                     const auto& weapon = candidate.As<Candidate::WeaponCandidate>();
-                    if (Weapon::HasTag(weapon.tags, Weapon::WeaponTag::Ranged)) {
+                    // The weapon's own type (a form fact), not the old weapon tag.
+                    if (weapon.type == Weapon::WeaponType::Bow || weapon.type == Weapon::WeaponType::Crossbow ||
+                        weapon.type == Weapon::WeaponType::Staff) {
                         return UI::SlotContent::RangedWeapon(name, formID, candidate.GetUniqueID());
                     }
                 }

@@ -9,10 +9,11 @@
 // whole load order, not the player's inventory), and the catalog keeps the
 // static cap of every in-scope item, keyed by FormID.
 //
-// NOTHING READS IT FOR SCORING YET (R2 changes no scores). Today its readers
-// are `hg dump all` (the catalog view) and `hg cap <FormID>` (one item, its
-// per-instance cap and its runtime cross-features). The scorer (R8) and the
-// selection log (R4) are its future readers.
+// Its readers (R11): the choice scorer and the selection log v3 (cap(i) per
+// candidate, PipelineCoordinator), the slot classes, the candidate filters, the
+// override finders and the label (through core/CapFacets.h and
+// effect/Facets.h, in place of the old classifiers' tags), `hg dump all`, `hg
+// cap <FormID>` and `hg theta <FormID>`.
 //
 // Static vs runtime (implementation map, Phase 1): the catalog holds what is
 // fixed per base form. A tempered or player-enchanted weapon (or a
@@ -21,10 +22,11 @@
 // weapon_charge, stack_count, ammo_matches_launcher, school_fortified) are
 // computed from the live state (effect/CrossFeatures.h).
 //
-// Overrides (doc 9's layer 2): an optional Data/SKSE/Plugins/
-// Huginn_EffectOverrides.ini, section [Overrides], keys "<plugin>|<local
-// FormID hex>" = <effects.csv column id>; checked before any other rule. None
-// ships yet.
+// Overrides (doc 9's layer 2; a directory since R11, core/OverrideFiles.h):
+// every Data/SKSE/Plugins/Huginn/EffectOverrides/*.ini, alphabetically, then
+// the player's Data/SKSE/Plugins/Huginn_EffectOverrides.ini last; section
+// [Overrides], keys "<plugin>|<local FormID hex>" = <effects.csv column id>,
+// [Huginn] iFormatVersion = 1. Checked before any other rule. None ships.
 //
 // Built once: game data changed at runtime after that -- a Papyrus
 // AddKeywordToForm or SetNthEffectMagnitude after a save loads -- is not seen;

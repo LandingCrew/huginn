@@ -2,6 +2,7 @@
 
 #include "context/ContextReason.h"
 #include "slot/SlotAssignment.h"
+#include "slot/SlotClassifier.h"
 
 #include <string>
 #include <string_view>
@@ -116,13 +117,12 @@ namespace Huginn::Display
         // A spell or scroll for someone else (Healing Touch, Oakflesh on
         // Target) is on the page only with a follower near, so it says who it
         // is for -- on the widget and on the Wheeler entry alike (the user,
-        // 2026-10-04).
-        if (const auto* spell = std::get_if<Candidate::SpellCandidate>(&candidate);
-            spell && Spell::HasTagExt(spell->tagsExt, Spell::SpellTagExt::TargetsOthers)) {
-            return "Ally Support";
-        }
-        if (const auto* scroll = std::get_if<Candidate::ScrollCandidate>(&candidate);
-            scroll && Spell::HasTagExt(scroll->tagsExt, Spell::SpellTagExt::TargetsOthers)) {
+        // 2026-10-04). R11: "for someone else" is the effect catalog's
+        // TargetsOthers facet (core/CapFacets.h), the same one the no_follower
+        // filter reads.
+        if ((std::holds_alternative<Candidate::SpellCandidate>(candidate) ||
+             std::holds_alternative<Candidate::ScrollCandidate>(candidate)) &&
+            Slot::SlotClassifier::SubjectOf(*assignment.candidate).facets.Has(Core::Facets::F::TargetsOthers)) {
             return "Ally Support";
         }
 

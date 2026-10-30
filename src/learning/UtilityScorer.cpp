@@ -62,7 +62,8 @@ namespace Huginn::Scoring
     // =========================================================================
 
     void UtilityScorer::LogTopCandidates(
-        const ScoredCandidateList& ranked, size_t count, bool detail, bool force, bool fallback) const
+        const ScoredCandidateList& ranked, size_t count, bool detail, bool force, bool fallback,
+        double outsideU0) const
     {
         size_t numToLog = std::min(count, ranked.size());
 
@@ -95,10 +96,13 @@ namespace Huginn::Scoring
         // utility on these lines; with `detail` (hg recs), the inputs lm was
         // computed from on a kept row (ctx, λ, learn and its parts). The
         // fallback ranking (no bootstrap) prints the old line, flagged.
-        // Phase 9 / R11 expand this.
-        logger::info("[Recs] === Top {}/{} candidates | {} ==="sv, numToLog, ranked.size(),
+        // R11 (map Phase 9): the header carries the outside option u0 of the
+        // run (the "nothing pressed" utility the page competes with), and
+        // `hg theta <FormID>` lists every term of one item.
+        logger::info("[Recs] === Top {}/{} candidates | {}{} ==="sv, numToLog, ranked.size(),
             fallback ? "FALLBACK: s = ln u, u = ctx*(1+λ*learn)*mults"
-                     : "mu = Σ θ·n·cap + b + w·lm (+ recent, covered); terms need×col");
+                     : "mu = Σ θ·n·cap + b + w·lm (+ recent, covered); terms need×col",
+            !fallback && std::isfinite(outsideU0) ? fmt::format(" | outside u0={:+.3f}", outsideU0) : std::string{});
 
         for (size_t i = 0; i < numToLog; ++i) {
             const auto& scored = ranked[i];

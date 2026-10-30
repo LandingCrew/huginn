@@ -28,6 +28,7 @@
 #include "core/Coverage.h"
 #include "effect/CrossFeatures.h"
 #include "effect/EffectCatalog.h"
+#include "effect/Facets.h"
 #include "needs/NeedMonitor.h"
 #include "telemetry/SoakMetrics.h"
 #include "ui/DebugSettings.h"
@@ -547,6 +548,14 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
         if (!addHeld(candidates)) {
             addHeld(heldAside);
         }
+    }
+
+    // R11: what the effect catalog says of each row (core/CapFacets.h), once
+    // per run, for the slot classes, the class cap, the label and the display
+    // (they used to read the old classifiers' tags off the candidate).
+    for (auto& sc : ctx.scoredCandidates) {
+        sc.subject = Effect::SubjectOf(sc.candidate);
+        sc.hasSubject = true;
     }
 
     CaptureEligible(ctx, candidates);
@@ -1337,9 +1346,13 @@ bool PipelineCoordinator::ResolveDisplayPage(PipelineContext& ctx)
 
 void PipelineCoordinator::LogRecommendations(PipelineContext& ctx)
 {
+    // R11: the run's outside option (outcomes "three"), for the [Recs] header.
+    const double outsideU0 = ctx.choiceRun && ctx.choiceRun->snap && ctx.choiceRun->snap->model.three
+                                 ? ctx.choiceRun->tick.u0
+                                 : std::numeric_limits<double>::quiet_NaN();
     if (size_t dumpN = m_recDumpRequest.exchange(0, std::memory_order_relaxed); dumpN > 0) {
         g_utilityScorer->LogTopCandidates(ctx.scoredCandidates, dumpN,
-            /*detail=*/true, /*force=*/true, /*fallback=*/!ctx.choiceLive);
+            /*detail=*/true, /*force=*/true, /*fallback=*/!ctx.choiceLive, outsideU0);
 
         // Label with the tick's snapshot page, not a live re-read, so the dump
         // matches the assignments it prints.
@@ -1364,7 +1377,7 @@ void PipelineCoordinator::LogRecommendations(PipelineContext& ctx)
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(ctx.now - m_lastRecLog);
     if (elapsed.count() >= 5000) {
         g_utilityScorer->LogTopCandidates(ctx.scoredCandidates, 5,
-            /*detail=*/verbosity >= 2, /*force=*/false, /*fallback=*/!ctx.choiceLive);
+            /*detail=*/verbosity >= 2, /*force=*/false, /*fallback=*/!ctx.choiceLive, outsideU0);
         m_lastRecLog = ctx.now;
     }
 }

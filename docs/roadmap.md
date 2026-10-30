@@ -1563,6 +1563,110 @@ delete the classifiers and per-type dumps; rewrite `CLAUDE.md`,
 `docs/README.md`, the architecture docs and the Nexus page; archive
 `4-contextual-bandits.md`. Review the slot classes as a whole here (below).
 
+**Built in 0.24.4 (R11, `r11-retire` on `rewrite-r8`), SMALLER than the map's
+list on purpose: the D2 deviation again.** The map says "delete
+`SpellClassifier`, `ItemClassifier`, the tag enums, the scroll classifier".
+They cannot go while D2 stays: D2's `ln learn mult` applies on the rows the
+old floors keep, the floors need the old context weight, and the context
+weight (`ContextWeightForCandidate`), the correlations and the potion
+multiplier read the classifiers' tags and types. Deleting them would change
+which rows carry the feature, so D2 would no longer be R6's D2. **So R11
+retires the classifiers from the live engine and confines them to D2**, the
+way R8.4 confined the old learner; they go when D2 goes (R8's retirement
+condition: a refit on 0.23.53+ logs where a variant without the old scorer
+passes R6's gate, or the user's call).
+- [x] **Re-derived from cap(i):** one pure module, `core/CapFacets.h` (facets:
+      the yes/no questions, each from named effects.csv columns; the 24 slot
+      classes' `Matches` and the `Classify` order), read through
+      `effect/Facets.h` (the catalog's `FindOrMapId`). Its readers: the slot
+      classes (`SlotClassifier`, the class cap, the slot settings' override
+      probes, the snapshot's match masks), the candidate filters (full vitals,
+      the active buffs, the resist check -- one `IsResistRedundant` for potions
+      and spells -- and the no_follower gate), the override finders (the three
+      restore potions by facet and `ItemData::RestoredWithin`,
+      `ItemRegistry::GetBestPotion` deleted; the restore-spell fallback; the
+      cure; waterbreathing), the "Ally Support" label (TargetsOthers) and the
+      widget's potion styling. Every ranked row carries its subject
+      (`ScoredCandidate::subject`, filled once per run). The ammo / charge
+      display reads `WeaponType` and the stack, form facts, unchanged.
+      Host tests: `CapFacetsTests` (each facet's columns, each class arm, no
+      dead class, and real items from the three dump fixtures).
+- [x] **Review of the slot classes as a whole:**
+      [5-slots.md](architecture/5-slots.md), "Slot classes, re-derived from
+      cap(i)": per class, the facets, the change against the classifiers and
+      why. The enum stays (players name it). Visible changes: FoodAny takes
+      every food, alcohol included; AlcoholAny is food that intoxicates or
+      costs its drinker something that is not a vital drain (the catalog has
+      no alcohol column; raw fish's paralysis is a known stray); SummonsAny no
+      longer takes every Conjuration spell; BuffsAny takes a Fortify
+      <craft> potion; Utility takes slow fall and cure spells; a damage
+      cloak or rune is DamageAny by its effect. An item the catalog does not
+      map matches only what its source decides.
+- [x] **Confined, mechanically:** `tools/prune/r8_check.py` gains CLASSIFIER
+      (the classifiers, the tag and type enums, `HasTag`, the override
+      loaders, `.tags` / `.tagsExt` / `.element` reads; code only, comments
+      stripped) allowed only in the classifiers' own files, the candidate
+      types that copy them, D2's inputs (the context rules and weight, the
+      correlations, the potion multiplier, the prior, the legacy module), the
+      override-section parser, the Debug registry widget, and budgets (the
+      soul gem split in `CandidateGenerator.cpp`, 2 exact lines; `Tests.cpp`,
+      counted); PRUNED gains the per-type dumps and the live helpers they
+      replaced; REQUIRED keeps the facet readers wired. 14 new mutation probes
+      (60 in all), each of which must fail it.
+- [x] **Per-type dumps deleted** (`hg dump spells / food / potions / scrolls /
+      weapons / apparel / diseases`); `hg dump all` ships in every build and
+      its slot class is the cap-derived one; `hg dump weights` (the old
+      learner, D2) describes items by the catalog's kind and facets.
+- [x] **The override layer as a directory** (`core/OverrideFiles.h`):
+      `Data/SKSE/Plugins/Huginn/EffectOverrides/*.ini` alphabetically, the
+      player's `Huginn_EffectOverrides.ini` last; plugin-relative keys
+      (`<plugin>|<local FormID>` = an effects.csv column); a file that does not
+      parse, or says it is a newer format (`[Huginn] iFormatVersion`), is
+      skipped and named; entries for plugins not loaded are skipped quietly;
+      later files' replacements are counted. `Huginn_Overrides.ini` (type /
+      tag) is NOT replaced: it corrects the classifiers, so it now reaches D2
+      only, and its one shipped fix (Arcane Mass Inhibition, Debuff) is part
+      of what keeps D2 exact.
+- [x] **Console:** `hg theta` (what ranks, θ / b counts, the drift from the
+      bootstrap, b's spread, the outside option now), `hg theta <FormID>`
+      (b, cap, facets, every θ·n·a term at the live need vector, the largest
+      weights under any need), `hg dump theta` (every moved θ beside the
+      bootstrap's, every b); `[Recs]`'s header carries the run's outside
+      option u0; `hg weights` is labelled the old learner's. The dMenu reset
+      button's text and toast say what it does now.
+- [x] **Telemetry:** `[Soak]` appends `drift` (means moved, mean / rms /
+      largest |Δμ| and where, variances moved, mean ln variance ratio, b's
+      spread, θ_covered; `core/ThetaDrift.h`, host-tested); every field before
+      it keeps its place (docs/playtest/LongPlaySoak.md).
+- [x] **Docs:** CLAUDE.md and docs/README.md describe the new pipeline;
+      `4-contextual-bandits.md` archived (`architecture/archive/`, banner);
+      R11 banners on the pre-rewrite pages (0, 1, 2, 3, 6, 7, 8, Performance,
+      classifier-coverage, candidate-system, TESTING-INDEX) say what changed;
+      5-slots.md's class section rewritten; the Nexus page (bbcode) rewritten
+      where it described the old engine (how Huginn decides, effect overrides,
+      the class list, the console, darkness); `page.md` flagged as not
+      regenerated.
+- [ ] Not in R11: the classifiers' deletion (with D2, above); lifting
+      `ApparelClassifier`'s scope guard (all armour as candidates: a decision
+      of 2026-10-08, not an R11 item); a full rewrite of the pre-rewrite
+      architecture pages' bodies (they carry banners).
+- **Behaviour against 0.24.3:** μ is computed as before (it reads cap(i) as
+  before; the D2 pass reads the same tags), so it moves only through the
+  candidate set (the D2 floors' cold start counts the rows that pass). What
+  moves: the candidate set the filters pass, which slots accept
+  an item (the review above), which candidates the filters drop (by facet:
+  e.g. an armour-spell filter no longer drops a ward; a multi-resist spell is
+  redundant when any one of its resists is covered; Resist Magic counts for
+  spells), which items an override may surface, and the "Ally Support" label;
+  the v3 rows' `fb` follows the filters.
+- **In game (you):** see the R11 PR: a typed page (page 2 on the shipped
+  layout) fills as before with the reviewed classes; `hg theta`, `hg theta
+  <FormID>`, `hg dump theta`, `hg dump all` in a Release build; the `[Soak]`
+  drift section; the dMenu reset text; an effect override file in
+  `Huginn/EffectOverrides/` loads (log line); the critical-health override
+  still finds a potion and the poisoned override a cure.
+
+
 ### R12. Baseline soak and release (in game, you)
 
 A multi-hour soak on the rewrite as the new baseline; merge `engine-rewrite`
@@ -1644,8 +1748,8 @@ start before R8 unless it blocks play.
 - **Remembrance follow-ups:** a pair pseudo-item, external equips, instance
   tracking, Wheeler `Empty` policy, a dMenu toggle. Design in
   [architecture/5-slots.md](architecture/5-slots.md).
-- **Review the slot classes as a whole** -- do it in R11, when they are
-  re-derived from cap.
+- **Review the slot classes as a whole** -- done in R11 (0.24.4):
+  [5-slots.md](architecture/5-slots.md), "Slot classes, re-derived from cap(i)".
 - **Workstation gear holds its key at the bench**, and the bench flicker
   standing still (confirm with a still camera first). Recheck after R9.
 - **`ApparelRegistry` copies half of `FormRegistry`** -- refactor when R2
@@ -1771,8 +1875,11 @@ first: a different default; [modifier keys](#modifier-key-bindings); a
 read-only widget mode. The double-fire counts as a reach-in for metric 1.
 
 ### An overrides directory, so mod authors can ship their own
-**Status:** open (the user, 2026-10-02); lands with R11's per-list override
-layer. `Huginn_Overrides.ini` becomes a directory, SPID `_DISTR.ini` style.
+**Status:** built in 0.24.4 (R11) for the effect overrides
+(`core/OverrideFiles.h`: `Huginn/EffectOverrides/*.ini`, the player's file
+last); the notes below were the brief. `Huginn_Overrides.ini` (the old
+classifiers' type / tag file) stays a single file: it reaches only D2.
+(The user, 2026-10-02.) `Huginn_Overrides.ini` becomes a directory, SPID `_DISTR.ini` style.
 Plugin-relative keys (`[Spell:0x800~Mod.esp]`), never runtime FormIDs, names
 or editor IDs; alphabetical precedence, the player's file last; missing plugins
 skipped quietly; one bad file cannot break the rest; a documented vocabulary

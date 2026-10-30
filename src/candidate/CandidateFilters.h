@@ -6,6 +6,7 @@
 #include "state/PlayerActorState.h"
 #include "core/FilterReason.h"
 #include "core/HardGates.h"     // R8.1: the hard gates' inputs
+#include "core/CapFacets.h"     // R11: the resist check reads facets
 #include <optional>
 #include <span>
 #include <vector>
@@ -186,17 +187,11 @@ namespace Huginn::Candidate
             const Core::Gate::Inputs& gates
         ) const;
 
-        // Helper: Check resist potion against current resistances (an element
-        // whose block is due for its refresh, R8.1, is not redundant)
-        [[nodiscard]] bool IsResistPotionRedundant(
-            const ItemCandidate& item,
-            const State::ActorResistances& resistances,
-            Core::Refresh::DueBits refreshDue
-        ) const;
-
-        // Helper: Check resist spell against current resistances (as above)
-        [[nodiscard]] bool IsResistSpellRedundant(
-            const SpellCandidate& spell,
+        // Helper (R11): an item whose resist facets (core/CapFacets.h) the
+        // player already covers; an element whose block is due for its
+        // refresh (R8.1) is not redundant. Potions and spells alike.
+        [[nodiscard]] bool IsResistRedundant(
+            Core::Facets::Set facets,
             const State::ActorResistances& resistances,
             Core::Refresh::DueBits refreshDue
         ) const;

@@ -31,6 +31,7 @@
 #include "context/ReasonHold.h"
 #include "context/ContextWeightForCandidate.h"
 #include "display/ExplanationLabel.h"
+#include "effect/Facets.h"             // R11: the synthetic candidates' facets (InstallSyntheticFacetResolver)
 #include "IniLoad.h"                   // MatchOverrideSection (override namespacing tests)
 #include "slot/SlotLocker.h"          // THROWAWAY: RunSlotLockerResetTest (0.19.21)
 #include "slot/SlotAllocator.h"       // THROWAWAY: RunSlotSeatingTest (0.20.30)
@@ -54,6 +55,130 @@
 #endif
 
 using namespace Huginn;
+
+// =============================================================================
+// SYNTHETIC CANDIDATES' FACETS (R11)
+// =============================================================================
+// The suites below build candidates with made-up FormIDs (0x0BAD....) and
+// state what they are in the old classifiers' vocabulary (a spell typed
+// Healing, a potion tagged RestoreHealth). Since R11 the slot classes, the
+// filters, the override finders and the label read the effect catalog's
+// facets (core/CapFacets.h), which has no entry for a made-up form. This
+// resolver answers for such a candidate from its legacy fields, the way the
+// catalog would read the real item, so each suite keeps testing what it was
+// written for. Tests only: the plugin never reads the legacy fields for this
+// (tools/prune/r8_check.py). Installed around the suite runs (Main.cpp).
+namespace
+{
+#ifndef NDEBUG
+    std::optional<Effect::FormFacets> SyntheticFacets(const Candidate::CandidateVariant& v)
+    {
+        using F = Core::Facets::F;
+        using K = Core::Effect::Kind;
+        Effect::FormFacets ff;
+        ff.known = true;
+        auto& f = ff.facets;
+        const auto spellLike = [&f](Spell::SpellType type, Spell::SpellTag tags, Spell::SpellTagExt ext) {
+            using ST = Spell::SpellType;
+            using T = Spell::SpellTag;
+            using X = Spell::SpellTagExt;
+            const auto has = [tags](T t) { return Spell::HasTag(tags, t); };
+            const auto hasX = [ext](X t) { return Spell::HasTagExt(ext, t); };
+            if (type == ST::Damage) { f.Add(F::Damage); f.Add(F::Hostile); }
+            if (type == ST::Healing || has(T::RestoreHealth)) f.Add(F::RestoreHealth);
+            if (has(T::RestoreMagicka)) f.Add(F::RestoreMagicka);
+            if (has(T::RestoreStamina)) f.Add(F::RestoreStamina);
+            if (type == ST::Buff) f.Add(F::Fortify);
+            if (type == ST::Defensive) f.Add(F::Defense);
+            if (type == ST::Debuff) f.Add(F::Hostile);
+            if (type == ST::Summon || has(T::SummonDaedra) || has(T::SummonUndead) || has(T::SummonCreature) ||
+                has(T::BoundWeapon)) {
+                f.Add(F::Summon);
+            }
+            if (type == ST::Utility || has(T::Telekinesis) || hasX(X::Unlock)) f.Add(F::Utility);
+            if (has(T::Light) || has(T::DetectLife) || hasX(X::DarkVision)) f.Add(F::Vision);
+            if (has(T::Ward)) { f.Add(F::Ward); f.Add(F::Defense); }
+            if (has(T::Armor)) { f.Add(F::ArmorBuff); f.Add(F::Defense); }
+            if (has(T::Invisibility)) { f.Add(F::Invisibility); f.Add(F::Stealth); }
+            if (has(T::Muffle)) { f.Add(F::Muffle); f.Add(F::Stealth); }
+            if (hasX(X::Waterbreathing)) { f.Add(F::Waterbreathing); f.Add(F::Utility); }
+            if (hasX(X::SlowFall)) f.Add(F::Movement);
+            if (hasX(X::Warming)) f.Add(F::Warming);
+            if (hasX(X::TargetsOthers)) f.Add(F::TargetsOthers);
+            if (hasX(X::HealsOverTime)) f.Add(F::HealsOverTime);
+        };
+        bool handled = std::visit([&](const auto& c) -> bool {
+            using T = std::decay_t<decltype(c)>;
+            if constexpr (std::is_same_v<T, Candidate::SpellCandidate>) {
+                ff.kind = K::Spell;
+                spellLike(c.type, c.tags, c.tagsExt);
+                return true;
+            }
+            else if constexpr (std::is_same_v<T, Candidate::ScrollCandidate>) {
+                ff.kind = K::Scroll;
+                spellLike(c.type, c.tags, c.tagsExt);
+                return true;
+            }
+            else if constexpr (std::is_same_v<T, Candidate::ItemCandidate>) {
+                using IT = Item::ItemType;
+                using G = Item::ItemTag;
+                const auto has = [&c](G t) { return Item::HasTag(c.tags, t); };
+                switch (c.type) {
+                    case IT::Poison: ff.kind = K::Poison; f.Add(F::Damage); f.Add(F::Hostile); break;
+                    case IT::Food: ff.kind = K::Food; break;
+                    case IT::Alcohol: ff.kind = K::Food; f.Add(F::Intoxicating); break;
+                    case IT::SoulGem: ff.kind = K::SoulGem; break;
+                    default: ff.kind = c.sourceType == Candidate::SourceType::Food ? K::Food : K::Potion; break;
+                }
+                if (c.type == IT::HealthPotion || has(G::RestoreHealth)) f.Add(F::RestoreHealth);
+                if (c.type == IT::MagickaPotion || has(G::RestoreMagicka)) f.Add(F::RestoreMagicka);
+                if (c.type == IT::StaminaPotion || has(G::RestoreStamina)) f.Add(F::RestoreStamina);
+                if (c.type == IT::ResistPotion) f.Add(F::Resist);
+                if (c.type == IT::BuffPotion || has(G::FortifyHealth) || has(G::FortifyMagicka) || has(G::FortifyStamina) ||
+                    has(G::FortifyMagicSchool) || has(G::FortifyCombatSkill) || has(G::FortifyUtilitySkill)) {
+                    f.Add(F::Fortify);
+                }
+                if (c.type == IT::CurePotion) f.Add(F::Cure);
+                const std::pair<G, F> resists[] = { { G::ResistFire, F::ResistFire }, { G::ResistFrost, F::ResistFrost },
+                    { G::ResistShock, F::ResistShock }, { G::ResistPoison, F::ResistPoison }, { G::ResistMagic, F::ResistMagic } };
+                for (const auto& [tag, facet] : resists) {
+                    if (has(tag)) { f.Add(F::Resist); f.Add(facet); }
+                }
+                if (has(G::ResistDisease)) f.Add(F::Resist);
+                if (has(G::RegenHealth)) { f.Add(F::Regen); f.Add(F::RegenHealth); }
+                if (has(G::RegenMagicka) || has(G::RegenStamina)) f.Add(F::Regen);
+                if (has(G::CureDisease)) { f.Add(F::Cure); f.Add(F::CureDisease); }
+                if (has(G::CurePoison)) { f.Add(F::Cure); f.Add(F::CurePoison); }
+                if (has(G::Invisibility)) { f.Add(F::Invisibility); f.Add(F::Stealth); }
+                if (has(G::Waterbreathing)) { f.Add(F::Waterbreathing); f.Add(F::Utility); }
+                if (has(G::FortifyCarryWeight)) f.Add(F::Utility);
+                if (has(G::SatisfiesCold)) f.Add(F::Warming);
+                if (has(G::DamageHealth) || has(G::DamageMagicka) || has(G::DamageStamina)) f.Add(F::Damage);
+                return true;
+            }
+            else {
+                return false;   // weapons, ammo, apparel, torches: their class needs no facet
+            }
+        }, v);
+        if (!handled) return std::nullopt;
+        return ff;
+    }
+#endif
+}
+
+void InstallSyntheticFacetResolver()
+{
+#ifndef NDEBUG
+    Effect::SetTestResolver(&SyntheticFacets);
+#endif
+}
+
+void RemoveSyntheticFacetResolver()
+{
+#ifndef NDEBUG
+    Effect::SetTestResolver({});
+#endif
+}
 
 namespace
 {

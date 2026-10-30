@@ -660,33 +660,6 @@ namespace Huginn::Item
       [](const InventoryItem& i) { return i.data.magnitude; });
    }
 
-   ItemRegistry::BestPotionPick ItemRegistry::GetBestPotion(ItemType type, float windowSec) const noexcept
-   {
-      std::shared_lock lock(m_mutex);
-      BestPotionPick pick;
-      float anyBest = 0.0f;
-      float pureBest = 0.0f;
-
-      // Single pass, no allocation/sort — called per-tick by override evaluation.
-      // Two tracked bests (pure + any) means this doesn't reduce to a single FindBest.
-      for (const auto& item : m_entries) {
-      if (item.data.type != type || item.count <= 0) {
-        continue;
-      }
-      const float restored = item.data.RestoredWithin(windowSec);
-      if (!pick.any || restored > anyBest) {
-        pick.any = &item;
-        anyBest = restored;
-      }
-      if ((!pick.pure || restored > pureBest) && !item.data.HasHarmfulSideEffects()) {
-        pick.pure = &item;
-        pureBest = restored;
-      }
-      }
-
-      return pick;
-   }
-
    void ItemRegistry::LogAllItems() const
    {
       std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety

@@ -43,6 +43,7 @@
 #include "core/ChoiceUpdate.h"
 #include "core/DecisionLog.h"
 #include "core/NeedEvaluator.h"
+#include "core/ThetaDrift.h"
 
 #include <SimpleIni.h>
 
@@ -203,6 +204,34 @@ namespace Huginn::Learning
         std::pair<std::size_t, std::size_t> ReplaceDynamicB(const std::vector<BEntry>& saved);
 
         [[nodiscard]] Stats GetStats() const;
+
+        /// R11: how far the live weights moved from the bootstrap
+        /// (core/ThetaDrift.h): the theta block (need x column), the strength
+        /// block when the file has one, b's spread, and theta_covered. For the
+        /// [Soak] heartbeat's drift fields and `hg theta`.
+        struct DriftReport
+        {
+            bool ready = false;
+            Core::Choice::Drift theta;      // maxSlot = need * J + column
+            Core::Choice::Drift strength;   // empty without a strength block
+            Core::Choice::BDrift b;
+            Core::Choice::Weight covered;
+            Core::Choice::Weight coveredBoot;
+        };
+        [[nodiscard]] DriftReport GetDrift() const;
+
+        /// R11 (`hg dump theta`, `hg theta`): one theta weight, live and as the
+        /// bootstrap has it.
+        struct ThetaRow
+        {
+            std::uint16_t need = 0;
+            std::uint16_t col = 0;
+            Core::Choice::Weight live;
+            Core::Choice::Weight boot;
+        };
+        /// The theta block, need-major; `movedOnly` keeps the weights whose
+        /// mean or variance differ from the bootstrap's.
+        [[nodiscard]] std::vector<ThetaRow> ThetaRows(bool movedOnly) const;
         /// The file's created_utc and SHA-256 (the v3 head's "bootstrap").
         [[nodiscard]] std::pair<std::string, std::string> FileIdentity() const;
         [[nodiscard]] std::vector<Core::Bootstrap::BuildCurve> Curves() const;

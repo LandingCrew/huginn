@@ -4,16 +4,10 @@
 #include "EffectReader.h"
 #include "ScriptNames.h"
 
-#include "apparel/ApparelClassifier.h"
-#include "candidate/CandidateTypes.h"
-#include "learning/ScoredCandidate.h"
-#include "learning/item/ItemClassifier.h"
-#include "scroll/ScrollClassifier.h"
-#include "slot/SlotClassifier.h"
-#include "spell/SpellClassifier.h"
+#include "core/CapFacets.h"
+#include "slot/SlotConfig.h"
 #include "util/FormRead.h"
 #include "util/InventoryUtil.h"
-#include "weapon/WeaponClassifier.h"
 
 #include <fstream>
 
@@ -45,58 +39,44 @@ namespace Huginn::Effect
             return out;
         }
 
-        // ---- today's slot class -------------------------------------------------
-        struct Legacy
+        // ---- the slot class (R11: re-derived from cap(i)) -----------------------
+        // The class core/CapFacets.h gives the item as a candidate: the
+        // catalog's facets, the school the catalog read and the weapon's type.
+        // Before R11 this ran the old spell / item / weapon / scroll / apparel
+        // classifiers over every form; they feed only the D2 legacy feature now.
+        std::string_view ClassOf(const ItemRecord& it, const CatalogEntry* entry)
         {
-            Spell::SpellClassifier spells;
-            Item::ItemClassifier items;
-            Weapon::WeaponClassifier weapons;
-            Apparel::ApparelClassifier apparel;
-            std::unique_ptr<Scroll::ScrollClassifier> scrolls;
-
-            Legacy()
-            {
-                // The registries load the same file at kPostLoadGame.
-                const auto overrides = std::filesystem::path("Data/SKSE/Plugins/Huginn_Overrides.ini");
-                spells.LoadOverrides(overrides);
-                items.LoadOverrides(overrides);
-                scrolls = std::make_unique<Scroll::ScrollClassifier>(spells);
+            using Core::Facets::Source;
+            Core::Facets::Subject s;
+            switch (it.kind) {
+                case Kind::Spell: s.source = Source::Spell; break;
+                case Kind::Scroll: s.source = Source::Scroll; break;
+                case Kind::Weapon: s.source = Source::Weapon; break;
+                case Kind::Ammo: s.source = Source::Ammo; break;
+                case Kind::Armour: s.source = Source::Apparel; break;
+                case Kind::Light: s.source = Source::Torch; break;
+                default: s.source = Source::Item; break;
             }
-
-            std::string_view ClassOf(const RE::TESBoundObject* form)
-            {
-                using namespace Candidate;
-                auto classify = [](CandidateVariant v) {
-                    Scoring::ScoredCandidate sc;
-                    sc.candidate = std::move(v);
-                    return Slot::SlotClassificationToString(Slot::SlotClassifier::Classify(sc));
-                };
-                auto* f = const_cast<RE::TESBoundObject*>(form);
-                switch (form->GetFormType()) {
-                    case RE::FormType::Spell:
-                        return classify(SpellCandidate::FromSpellData(spells.ClassifySpell(static_cast<RE::SpellItem*>(f))));
-                    case RE::FormType::Scroll:
-                        return classify(ScrollCandidate::FromScrollData(scrolls->ClassifyScroll(static_cast<RE::ScrollItem*>(f)), 1));
-                    case RE::FormType::AlchemyItem:
-                        return classify(ItemCandidate::FromItemData(items.ClassifyItem(static_cast<RE::AlchemyItem*>(f)), 1));
-                    case RE::FormType::SoulGem:
-                        return classify(ItemCandidate::FromItemData(Item::ItemClassifier::ClassifySoulGem(static_cast<RE::TESSoulGem*>(f)), 1));
-                    case RE::FormType::Weapon:
-                        return classify(WeaponCandidate::FromWeaponData(weapons.ClassifyWeapon(static_cast<RE::TESObjectWEAP*>(f)), false));
-                    case RE::FormType::Ammo:
-                        return classify(AmmoCandidate::FromAmmoData(weapons.ClassifyAmmo(static_cast<RE::TESAmmo*>(f)), 1));
-                    case RE::FormType::Armor: {
-                        // Only craft gear is a candidate today (ApparelClassifier's scope guard).
-                        auto* armor = static_cast<RE::TESObjectARMO*>(f);
-                        return apparel.ClassifyApparel(armor, armor->formEnchanting).IsCraftRelevant()
-                                   ? classify(ApparelCandidate{})
-                                   : std::string_view{};
-                    }
-                    case RE::FormType::Light: return classify(TorchCandidate{});
-                    default: return {};
+            s.kind = it.kind;
+            if (entry) {
+                s.known = true;
+                s.facets = Core::Facets::FromCap(entry->cap, entry->kind);
+                using CS = Core::Effect::School;
+                using FS = Core::Facets::School;
+                switch (entry->school) {
+                    case CS::Alteration: s.school = FS::Alteration; break;
+                    case CS::Conjuration: s.school = FS::Conjuration; break;
+                    case CS::Destruction: s.school = FS::Destruction; break;
+                    case CS::Illusion: s.school = FS::Illusion; break;
+                    case CS::Restoration: s.school = FS::Restoration; break;
+                    default: break;
                 }
             }
-        };
+            // The record's weaponType (EffectRecords.h): 1-6 melee, 7 bow, 8 staff, 9 crossbow.
+            s.melee = it.weaponType >= 1 && it.weaponType <= 6;
+            s.ranged = it.weaponType >= 7 && it.weaponType <= 9;
+            return Slot::SlotClassificationToString(Core::Facets::Classify(s));
+        }
 
         // The old columns keep the old dump's {:g}.
         std::string Num(float v) { return std::format("{:g}", v); }
@@ -132,7 +112,6 @@ namespace Huginn::Effect
         ScriptNameStats scriptStats;
         const auto scripts = ReadScriptNames(scripted, &scriptStats);
 
-        Legacy legacy;
         auto* player = RE::PlayerCharacter::GetSingleton();
 
         out << "kind,formID,plugin,winningPlugin,name,playable,value,weight,playerCount,keywords,"
@@ -159,7 +138,7 @@ namespace Huginn::Effect
             if (m.inScope) {
                 ++inScope;
                 tally += m.tally;
-                slotClass = std::string(legacy.ClassOf(form));
+                slotClass = std::string(ClassOf(it, entry));
                 if (!slotClass.empty() && slotClass != "Regular") {
                     ++withClass;
                     if (!entry || !DescribesItem(entry->cap, it.kind)) ++undescribed;
@@ -273,7 +252,7 @@ namespace Huginn::Effect
         const double cov = tally.counted ? 100.0 * tally.mapped / tally.counted : 100.0;
         summary = std::format(
             "Wrote {} forms as {} rows to {}: {} in scope, coverage {:.2f}% ({} of {} visible effect rows); "
-            "{} have a slot class today, {} of them with no description in cap; scripts read for {} of {} script "
+            "{} have a slot class (from cap, R11), {} of them with no description in cap; scripts read for {} of {} script "
             "effects ({} plugin files, {} unreadable)",
             read.items.size(), rows, path.filename().string(), inScope, cov, tally.mapped, tally.counted, withClass,
             undescribed, scriptStats.withScripts, scriptStats.wanted, scriptStats.filesRead, scriptStats.filesFailed);

@@ -1,4 +1,4 @@
-"""R8's 'Done when', mechanically (R8.4, 0.24.1): the prune grep and the D2 allowlist.
+"""R8's and R11's 'Done when', mechanically: the prune grep, the D2 allowlist, the retired classifiers.
 
 R8 prunes the old ranking layer, but R6 chose D2, whose `ln learn mult` feature needs the old
 learner's learning score on the rows the old floors pass. So two lists:
@@ -42,6 +42,25 @@ learner's learning score on the rows the old floors pass. So two lists:
   STALE   phrases that describe a pruned behaviour as live (the display reason derived from the
           context weights), in code and comments, two lines at a time.
   REQUIRED code that must stay, verbatim up to whitespace: the bootstrap's ln util refusal.
+
+R11 (0.24.4) adds, for the retired classifiers (map Phase 10):
+  PRUNED   the per-type dumps and the live helpers that read the classifiers (Cmd_DumpSpells ...,
+           ItemRegistry::GetBestPotion, the two resist-redundancy checks, SlotClassifier's
+           Matches* arms, SpellClassifier::RetryDecidedType), each with an `R11:` reason.
+  CLASSIFIER the old spell / item / scroll classifiers' judgements -- their classes, the tag and
+           type enums (SpellTag, ItemTag, WeaponTag, SpellType, ItemType, ...), HasTag, the
+           override loaders, a member read of a candidate's `.tags` / `.tagsExt` / `.element` --
+           may appear only in the classifiers' own files, the candidate types that copy them, the
+           D2 legacy feature's inputs (the context rules, correlations, potion multiplier, prior,
+           the legacy module) and a few allowlisted readers, or in a budgeted file in its exact
+           form. CODE ONLY: comments are stripped first (they name the classifiers to say what
+           R11 replaced), unlike LEGACY. The live engine (slot classes, filters, overrides, label,
+           display) reads the effect catalog's facets instead (core/CapFacets.h).
+  REQUIRED the facets' readers stay wired: SlotClassifier asks core/CapFacets.h, the filters
+           take the candidate's facets from effect/Facets.h, the override finders read them.
+The D2 legacy feature (`ln learn mult` behind [Scoring] bLegacyLearnFeature) is kept exactly:
+it needs the old floors, which need the old context weight, which reads the classifiers' tags.
+So the classifiers stay, confined to it; they go when D2 goes (the LEGACY retirement below).
 
 What the check is: a guard against ACCIDENTAL reintroduction, by name and by plain member read.
 It does not try to defeat a deliberate evasion (a structured binding, a macro, a new accessor
@@ -120,6 +139,20 @@ PRUNED = {
     'ChoiceTarget': 'tools/replay old learner policy',
     'UsefulLife': 'tools/replay old learner policy',
     'pseudo_confidence': 'tools/replay old learner helper',
+    # R11 (map Phase 10): the per-type dumps, gone with the classifiers they printed
+    # (`hg dump all` is the one load-order dump, from the effect catalog)
+    'Cmd_DumpSpells': 'R11: hg dump spells', 'Cmd_DumpFood': 'R11: hg dump food',
+    'Cmd_DumpPotions': 'R11: hg dump potions', 'Cmd_DumpScrolls': 'R11: hg dump scrolls',
+    'Cmd_DumpWeapons': 'R11: hg dump weapons', 'Cmd_DumpApparel': 'R11: hg dump apparel',
+    'Cmd_DumpDiseases': 'R11: hg dump diseases', 'ItemSubclass': 'R11: the potion dump\'s classifier subclass',
+    'RetryDecidedType': 'R11: SpellClassifier\'s dump-only probe',
+    # R11: live readers of the classifiers, replaced by the effect catalog's facets
+    'GetBestPotion': 'R11: ItemRegistry\'s potion pick by classifier type (OverrideManager::BestRestorePotion)',
+    'IsResistPotionRedundant': 'R11: the resist filter by classifier tags (CandidateFilters::IsResistRedundant)',
+    'IsResistSpellRedundant': 'R11: the resist filter by classifier type and element',
+    'MatchesSpell': 'R11: SlotClassifier\'s tag arms (core/CapFacets.h Matches)',
+    'MatchesItem': 'R11: SlotClassifier\'s tag arms', 'MatchesScroll': 'R11: SlotClassifier\'s tag arms',
+    'MatchesWeapon': 'R11: SlotClassifier\'s tag arms',
 }
 # Words too common to search repo-wide: pruned only in the files that had them.
 PRUNED_SCOPED = [
@@ -152,6 +185,19 @@ REQUIRED = [
      r'if \(w != 0\.0\) \+\+rep\.featuresRefused;\s*continue;\s*\}',
      'the bootstrap refuses a weight on `ln util` (R8.4): without it a refit weighing the old '
      'utility would rank on it'),
+]
+# R11: the facets' readers stay wired (a deleted call would let the classifiers back by default).
+REQUIRED += [
+    ('src/slot/SlotClassifier.cpp', r'return\s+Core::Facets::Matches\(\s*SubjectOf\(candidate\),\s*classification\);',
+     'R11: SlotClassifier answers from core/CapFacets.h over the effect catalog'),
+    ('src/slot/SlotClassifier.cpp', r'return\s+Core::Facets::Classify\(\s*SubjectOf\(candidate\)\);',
+     'R11: the class (class cap, v2 log, dump) from core/CapFacets.h'),
+    ('src/candidate/CandidateFilters.cpp', r'const auto subject = Effect::SubjectOf\(candidate\);\s*const auto f = subject\.facets;',
+     'R11: the filters read the candidate\'s facets'),
+    ('src/override/OverrideManager.cpp', r'Effect::FacetsOfForm\(sd\.formID\)\.facets\.Has\(restore\)',
+     'R11: the restore-spell fallback reads the restore facet'),
+    ('src/pipeline/PipelineCoordinator.cpp', r'sc\.subject = Effect::SubjectOf\(sc\.candidate\);\s*sc\.hasSubject = true;',
+     'R11: every ranked row carries its facets for the slot code'),
 ]
 # Searched for those keys by name: a missing one is a violation (a move would hide a key).
 REQUIRED_INI = ['configs/Huginn.ini', 'Data/SKSE/Plugins/dmenu/customSettings/Huginn.json']
@@ -406,8 +452,9 @@ BUDGET = {
     'tests/core/BootstrapTests.cpp': (1, [r'^\s*CHECK\(m\.model\.w\[static_cast<std::size_t>\(C::Feature::ln_util\)\] == 0\.0\);$'],
                                       'the ln util refusal\'s host test'),
     # Construction, settings and the legacy commands and tests (counted, not whole-file).
-    'src/console/ConsoleCommands.cpp': (34, None, 'hg weights, hg dump weights, the dumps\' train-count '
-                                                   'columns, hg status counts and the switch, hg reset'),
+    # R11: 31, down from 34: the per-type dumps and their train-count columns went.
+    'src/console/ConsoleCommands.cpp': (31, None, 'hg weights, hg dump weights, hg status counts and the '
+                                                   'switch, hg reset'),
     'src/Main.cpp': (24, None, 'construction, the equip-bus registration and the switch'),
     'src/Globals.h': (9, None, 'construction'),
     'src/Globals.cpp': (6, None, 'construction and the reset'),
@@ -415,6 +462,123 @@ BUDGET = {
     'src/settings/SettingsReloader.h': (2, None, 'settings loader: the reset-weights doc comment'),
     'src/Tests.cpp': (294, None, 'the in-game Debug suite\'s legacy and slot-harness tests'),
 }
+
+
+# ---------------------------------------------------------------------------------------------
+# CLASSIFIER (R11): the old classifiers' judgements, confined to their own files and D2's inputs.
+# ---------------------------------------------------------------------------------------------
+CLASSIFIER = [
+    # the classifiers and their override loaders (Huginn_Overrides.ini: type/tag corrections)
+    'SpellClassifier', 'ItemClassifier', 'ScrollClassifier', 'ClassifySpell', 'ClassifyItem', 'ClassifyScroll',
+    'ClassifySoulGem', 'SpellOverrides', 'ItemOverrides',
+    # the tag and type vocabulary they produce
+    'SpellTag', 'SpellTagExt', 'ItemTag', 'ItemTagExt', 'WeaponTag', 'ScrollTag', 'ScrollTagExt',
+    'HasTag', 'HasTagExt', 'ItemType', 'ScrollType', 'ElementType',
+    'SpellTypeToString', 'ItemTypeToString', 'ElementTypeToString',
+    # the registries' views by classifier type
+    'GetItemsByType', 'GetSpellCountByType',
+]
+# C++ patterns (code only): the spell type enum (not the game's RE::MagicSystem::SpellType), and a
+# member read of a candidate's or a registry entry's classifier fields. `.element` is not looked
+# for in src/core (the effect mapper's own `raw.element`; core cannot see the candidate types).
+CLASSIFIER_CPP_PATTERNS = {
+    'SpellType': r'(?<!MagicSystem::)(?<![A-Za-z0-9_])SpellType(?![A-Za-z0-9_])',
+    '.tags': r'(?:\.|->)\s*(?:tags|tagsExt)\b',
+    '.element': r'(?:\.|->)\s*element\b',
+}
+CLASSIFIER_ALLOW = [
+    ('src/spell/*', 'the spell classifier, its data, overrides and registry (the D2 inputs\' producer)'),
+    ('src/learning/item/*', 'the item classifier, its data, overrides and registry'),
+    ('src/scroll/*', 'the scroll classifier, its data and registry'),
+    ('src/weapon/*', 'the weapon classifier, its data and registry (WeaponTag)'),
+    ('src/candidate/CandidateTypes.*', 'the candidates\' copies of the classifier fields (the legacy pass reads them)'),
+    ('src/context/ContextWeightForCandidate.*', 'D2: the old context weight per candidate (the floors\' input)'),
+    ('src/context/ContextRuleEngine.*', 'D2: the old context rules'),
+    ('src/learning/CorrelationBooster.*', 'D2: the old correlations'),
+    ('src/learning/PotionDiscriminator.*', 'D2: the old potion multiplier'),
+    ('src/learning/PriorCalculator.*', 'D2: the old prior'),
+    ('src/learning/legacy/*', 'D2: the legacy module'),
+    ('src/IniLoad.h', 'the Huginn_Overrides.ini section parser the classifiers\' override loaders share'),
+    ('src/ui/RegistryDebugWidget.cpp', 'the Debug registry widget: shows the registries\' classifier fields, places nothing'),
+]
+# Files allowed a fixed number of CLASSIFIER lines (code only), each in one of its exact forms.
+CLASSIFIER_BUDGET = {
+    # The soul gem split: the registry's own form-kind decision (TESSoulGem, or a mod's soul-gem
+    # alchemy item), which routes gems to their own candidate path; not an effect judgement.
+    'src/candidate/CandidateGenerator.cpp': (2, [
+        r'^\s*if \(invItem\.data\.type == Item::ItemType::SoulGem\) \{$',
+        r'^\s*if \(item\.data\.type != Item::ItemType::SoulGem\) return;$',
+    ], 'the soul gem split (the registry\'s form kind)'),
+    # The in-game Debug suite: the classifier and D2 tests, the synthetic candidates stated in the
+    # old vocabulary, and their facet resolver (InstallSyntheticFacetResolver). Counted.
+    'src/Tests.cpp': (153, None, 'the Debug suite: classifier and D2 tests, synthetic candidates and their resolver'),
+}
+
+
+def strip_comments(text):
+    """C++ text without // and /* */ comments (line count kept; string literals not parsed)."""
+    out = re.sub(r'/\*.*?\*/', lambda m: '\n' * m.group(0).count('\n'), text, flags=re.S)
+    return '\n'.join(re.sub(r'//.*$', '', ln) for ln in out.split('\n'))
+
+
+def classifier_allowed(path):
+    for pat, why in CLASSIFIER_ALLOW:
+        if fnmatch.fnmatch(path, pat):
+            return why
+    return None
+
+
+def check_classifier(tree, out, verbose=False):
+    """R11: (violations, paths, allowed counts)."""
+    rx_words = word_rx(CLASSIFIER)
+    rx_pats = [(name, re.compile(p)) for name, p in CLASSIFIER_CPP_PATTERNS.items()]
+    per_file = defaultdict(list)
+    for path, text in tree.items():
+        cpp = matches(path, CPP_ROOTS, CPP_GLOBS)
+        code = strip_comments(text) if cpp else re.sub(r'#.*$', '', text, flags=re.M)
+        for i, line in enumerate(code.splitlines(), 1):
+            tags = [m.group(0) for m in rx_words.finditer(line)]
+            if cpp:
+                for name, prx in rx_pats:
+                    if name == '.element' and path.startswith('src/core/'):
+                        continue
+                    if prx.search(line):
+                        tags.append(name)
+            if tags:
+                per_file[path].append((path, i, sorted(set(tags)), line))
+    violations, allowed_counts = [], {}
+    for path, fh in sorted(per_file.items()):
+        why = classifier_allowed(path)
+        if why:
+            allowed_counts[path] = (len(fh), why)
+            continue
+        if path in CLASSIFIER_BUDGET:
+            n, pats, why = CLASSIFIER_BUDGET[path]
+            cps = [re.compile(p) for p in pats] if pats else None
+            off = [h for h in fh if cps is not None and not any(c.search(h[3]) for c in cps)]
+            if len(fh) <= n and not off:
+                allowed_counts[path] = (len(fh), f'budget {n}{", patterned" if cps else ""}; {why}')
+                continue
+            if len(fh) > n:
+                out(f'CLASSIFIER budget: {path} has {len(fh)} line(s), budget {n} ({why}); all listed below')
+                violations += fh
+            else:
+                out(f'CLASSIFIER budget: {path}: {len(off)} line(s) match none of its allowed forms ({why})')
+                violations += off
+            continue
+        violations += fh
+    if violations:
+        out(f'CLASSIFIER: {len(violations)} hit(s) of the retired classifiers outside their files and D2\'s inputs:')
+        for path, i, tags, line in violations:
+            out(f'  {path}:{i}: [{", ".join(tags)}] {line.strip()[:160]}')
+    else:
+        out(f'CLASSIFIER: 0 hits outside the allowlist ({len(CLASSIFIER)} symbols and {len(CLASSIFIER_CPP_PATTERNS)} '
+            f'patterns, code only; {sum(c for c, _ in allowed_counts.values())} allowed lines in '
+            f'{len(allowed_counts)} files, {len(CLASSIFIER_BUDGET)} budgeted)')
+    if verbose:
+        for path, (n, why) in sorted(allowed_counts.items()):
+            out(f'  {n:4d}  {path}  ({why})')
+    return violations, sorted({v[0] for v in violations})
 
 
 # ---------------------------------------------------------------------------------------------
@@ -604,6 +768,11 @@ def check(tree, ini, verbose=False, out=print):
     if verbose:
         for path, (n, why) in sorted(allowed_counts.items()):
             out(f'  {n:4d}  {path}  ({why})')
+
+    # --- CLASSIFIER (R11) ---
+    cv, cpaths = check_classifier(tree, out, verbose)
+    bad += len(cv)
+    bad_paths += cpaths
     return bad, sorted(set(bad_paths))
 
 

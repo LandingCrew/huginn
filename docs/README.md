@@ -17,12 +17,7 @@ It is a just-in-time affordance surface.
 
 > **Core Principle:** Only recommend based on information the player already has or could easily perceive. This is a convenience tool, not a cheat tool.
 
-> **Architecture Version:** verified against **v0.20.0** (`CMakeLists.txt:5`). `StateManager` runs 11 poll methods (`GetPollTable()` in `src/state/StateManager.cpp`) producing 6 state types (3 core: WorldState, PlayerActorState, TargetCollection; 3 tracking: HealthTrackingState, StaminaTrackingState, MagickaTrackingState). The recommendation tick is orchestrated by `PipelineCoordinator` (`src/pipeline/PipelineCoordinator.cpp`). The legacy ContextSensor system has been fully removed. See [docs/architecture/1-states.md](architecture/1-states.md) for the full state model reference.
-
-> **The learner:** a linear contextual bandit with implicit feedback, per-action linear reward models, UCB-style exploration, and heuristic priors. The learned values are immediate preference scores — nothing here plans over a horizon. See [4-contextual-bandits.md](architecture/4-contextual-bandits.md) for the update rule.
->
-> **Upgrading to 0.20.0 resets learning.** The cosave record tag changed to `BNDW` when the learner's identifiers were renamed, and nothing reads the old tag. Saves written before 0.20.0 lose their learned weights and start over; nothing else in the save is affected.
-
+> **Architecture version:** verified against **v0.24.4** (R11, `CMakeLists.txt:5`), the engine rewrite on the `rewrite-r8` integration branch: the hand-tuned `ctx × (1 + λ·learn) × multipliers` engine was replaced by a learned choice model over needs and effects ([doc 9](architecture/9-context-as-learner-input.md), its [implementation map](architecture/9-implementation-map.md), the [roadmap](roadmap.md)'s R0-R12). The old learner's page is [archived](architecture/archive/4-contextual-bandits.md).
 
 ---
 
@@ -37,307 +32,136 @@ It is a just-in-time affordance surface.
 | Looking at locked chest (Adept) | Menu -> Magic -> Find spell | "Press [hotkey] Open Lock" |
 | On cliff edge, looking down | Hope you prepared earlier | "Press [hotkey] Slow Fall" |
 
-> **Note:** Number of hotkeys is configurable (up to 10 per page, up to 10 pages). Integration with [Wheeler](https://www.nexusmods.com/skyrimspecialedition/mods/97345) — via [wheelerAPI](https://github.com/LandingCrew/wheelerAPI), which exports the API base Wheeler lacks — provides radial menu support.
-> **Note:** Note the issue is not with searching the menus or duration. the issue is with the frequency of access or the disruption when you are in a flow-state
----
+> **Note:** Number of hotkeys is configurable (up to 10 per page, up to 10 pages). Integration with [Wheeler](https://www.nexusmods.com/skyrimspecialedition/mods/97345), via [wheelerAPI](https://github.com/LandingCrew/wheelerAPI), which exports the API base Wheeler lacks, provides radial menu support.
+> **Note:** The issue is not searching the menus or their duration; it is the frequency of access, the disruption when you are in a flow state.
 
-## Architecture Overview
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                     StateManager (11 Poll Methods)                          │
-│                    (Observable state only - no cheating)                    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│  PollWorldObjects()        -> WorldState                                    │
-│    - isLookingAtLock, lockLevel, isLookingAtOreVein                         │
-│    - isLookingAtWorkstation, workstationType                                │
-│    - timeOfDay, lightLevel, isInterior                                      │
-│                                                                             │
-│  PollPlayerVitals()        -> PlayerActorState.vitals                       │
-│    - health%, magicka%, stamina% (current and max)                          │
-│                                                                             │
-│  PollPlayerMagicEffects()  -> PlayerActorState.effects + .buffs             │
-│    - DOTs: fire, frost, shock, poison, disease, health drain                │
-│    - Buffs: waterbreathing, invisible, muffle, armor, cloaks, summons       │
-│                                                                             │
-│  PollPlayerEquipment()     -> PlayerActorState.equipment                    │
-│    - weapons (left/right hand), shield, staff                               │
-│    - weaponChargePercent, arrowCount, boltCount                             │
-│                                                                             │
-│  PollPlayerSurvival()      -> PlayerActorState.survival                     │
-│    - hungerLevel, coldLevel, fatigueLevel (CC Survival Mode)                │
-│                                                                             │
-│  PollPlayerPosition()      -> PlayerActorState.position                     │
-│    - isUnderwater, isSneaking, isInCombat, isMounted, isFalling             │
-│                                                                             │
-│  PollTargets()             -> TargetCollection                              │
-│    - primaryTarget (crosshair > combat), up to 50 tracked actors            │
-│    - per-target: vitals, distance, hostility, casting state                 │
-│    - (50 is stress-test max; 8-12 recommended for production)               │
-│                                                                             │
-│  PollPlayerResistances()   -> PlayerActorState.resistances                  │
-│    - fire, frost, shock, poison, magic resistance percentages               │
-│                                                                             │
-│  PollHealthTracking()      -> HealthTrackingState                           │
-│    - damage/healing events, rates, elemental damage timers                  │
-│                                                                             │
-│  PollStaminaTracking()     -> StaminaTrackingState                          │
-│    - stamina usage events, rates, source classification                     │
-│                                                                             │
-│  PollMagickaTracking()     -> MagickaTrackingState                          │
-│    - magicka usage events, rates, casting state                             │
-└────────────────────────────────────┬────────────────────────────────────────┘
-                                     │
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                     6 State Types (3 core + 3 tracking)                     │
-│           (Structured representation of observable game state)              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│  WorldState           - Environment, interactables (locks, ore, stations)   │
-│  PlayerActorState     - Vitals, effects, buffs, equipment, survival, pos    │
-│  TargetCollection     - Primary + secondary targets with priority scoring   │
-│  HealthTrackingState  - Recent damage/healing events, elemental timers      │
-│  StaminaTrackingState - Stamina usage events, rates, source classification  │
-│  MagickaTrackingState - Magicka usage events, rates, casting state          │
-│                                                                             │
-│  StateEvaluator converts raw state -> GameState (48,384 hash states)        │
-│    - health/magicka buckets (6 levels each), stamina (6, excluded from hash)│
-│    - distance bucket (3 levels), targetType (7 types)                       │
-│    - enemyCount (4), allyStatus (3, hashed as 1 bit: injured or not)       │
-│    - anyCasting (hostile casting), inCombat, isSneaking (boolean)           │
-│                                                                             │
-│  See: docs/architecture/1-states.md for full state model reference          │
-└────────────────────────────────────┬────────────────────────────────────────┘
-                                     │
-        ┌────────────────────────────┼────────────────────────────┐
-        │                            │                            │
-        ▼                            ▼                            ▼
-┌──────────────────┐     ┌──────────────────────┐   ┌──────────────────────────┐
-│ Spell Classifier │     │   Item Classifier    │   │    State Models          │
-│                  │     │                      │   │   (StateManager)         │
-├──────────────────┤     ├──────────────────────┤   ├──────────────────────────┤
-│ Classifies spell │     │ Classifies items by  │   │ Provides context for     │
-│ effects by type: │     │ effect/use:          │   │ filtering:               │
-│                  │     │                      │   │                          │
-│ - RestoreHealth  │     │ - Healing potions    │   │ - Health% low?           │
-│ - DamageFire     │     │ - Resist potions     │   │ - In combat?             │
-│ - Summon         │     │ - Food (survival)    │   │ - Underwater?            │
-│ - Ward           │     │ - Soul gems          │   │ - Looking at lock?       │
-│ - Invisibility   │     │ - Scrolls            │   │ - Enemy distance?        │
-│ - etc.           │     │ - etc.               │   │ - Ally injured?          │
-│                  │     │                      │   │                          │
-│ See architecture/│     │ See architecture/    │   │ See architecture/        │
-│ 2-classifiers.md │     │ 2-classifiers.md     │   │ 1-states.md              │
-└────────┬─────────┘     └──────────┬───────────┘   └────────────┬─────────────┘
-         │                          │                            │
-         └──────────────────────────┼────────────────────────────┘
-                                    │
-                                    ▼
-         ┌──────────────────────────────────────────────────────────┐
-         │                   PipelineCoordinator                    │
-         │      Orchestrates 11 pipeline steps per update tick      │
-         ├──────────────────────────────────────────────────────────┤
-         │   1. GatherState           - Copy state snapshots        │
-         │   2. ResolveDisplayPage    - Snapshot the active page    │
-         │   3. CheckHashSkip         - Skip if nothing changed     │
-         │   4. LogStateTransition    - Log the GameState diff      │
-         │   5. EnrichElementalDamage - Elemental hit detection     │
-         │   6. ScoreCandidates       - CandidateGenerator ->       │
-         │                                ContextRuleEngine ->      │
-         │                                UtilityScorer             │
-         │   7. AllocateAndLock       - OverrideManager ->          │
-         │                                SlotAllocator ->          │
-         │                                SlotLocker                │
-         │   8. DeriveDisplayLabels   - Subtext label per slot      │
-         │   9. UpdateCaches          - PipelineStateCache          │
-         │  10. PushDisplay           - IDisplayBackend             │
-         │  11. LogRecommendations    - Top-N log / `hg recs`       │
-         │                                                          │
-         │  A step may abandon the tick: CheckHashSkip when nothing │
-         │  changed, AllocateAndLock on a mid-tick page switch.     │
-         │                                                          │
-         │  See: docs/architecture/0-pipeline.md for details        │
-         └────────────────────────────┬─────────────────────────────┘
-                                      │
-              ┌───────────────────────┼───────────────────────┐
-              │                       │                       │
-              ▼                       ▼                       ▼
-┌──────────────────────┐  ┌────────────────────┐  ┌────────────────────────┐
-│  Utility Scorer      │  │  Override Manager  │  │   Slot Allocator       │
-│  (Step 6)            │  │  (Step 7)          │  │   + SlotLocker         │
-├──────────────────────┤  ├────────────────────┤  ├────────────────────────┤
-│  utility = context   │  │ Hard overrides for │  │ Best-scoring           │
-│   × (1 + λ × learn)  │  │ critical states:   │  │ candidate per slot,    │
-│   × correlation      │  │ - Critical HP      │  │ by classification      │
-│   × potionMult       │  │ - Critical MP / SP │  │                        │
-│   × favoritesMult    │  │ - Drowning         │  │ Multi-page: up to      │
-│                      │  │ - Low ammo         │  │ 10 pages × 10 slots    │
-│  learningScore =     │  │ - Low weapon charge│  │                        │
-│  α·Q + (1-α)·prior   │  │                    │  │ SlotLocker: temporal   │
-│  + β·UCB + recency   │  │ Hysteresis-based   │  │ stability (3s locks,   │
-│                      │  │ enter/exit with    │  │ priority-based break)  │
-│ See: architecture/   │  │ priority levels    │  │                        │
-│ 4-contextual-        │  │                    │  │ See: architecture/     │
-│ bandits.md           │  │ See: 5-slots.md    │  │ 5-slots.md             │
-└──────────┬───────────┘  └────────┬───────────┘  └──────────┬─────────────┘
-           │                       │                         │
-           └───────────────────────┼─────────────────────────┘
-                                   │
-                                   ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    IDisplayBackend (Step 10: PushDisplay)                   │
-│              Renders slot assignments to player-facing displays             │
-├─────────────────────────────────────────────────────────────────────────────┤
-│  ┌─────────────────────────────────┐  ┌──────────────────────────────┐      │
-│  │ IntuitionBackend                │  │ WheelerBackend               │      │
-│  │ (Scaleform HUD — Primary)       │  │ (Radial Menu — Optional)     │      │
-│  │  IntuitionMenu -> Intuition.as  │  │  WheelerClient -> API        │      │
-│  │  12 slot content types          │  │  API v1-v4 compatible        │      │
-│  │  Slide/fade/instant animations  │  │  Subtext labels (v2+)        │      │
-│  │  See: architecture/             │  │  See: architecture/          │      │
-│  │  6-ui-ux.md                     │  │  6-ui-ux.md                  │      │
-│  └─────────────────────────────────┘  └──────────────────────────────┘      │
-│                                                                             │
-│  ImGui Debug Widgets (debug builds only):                                   │
-│    UtilityScorerDebugWidget, StateManagerDebugWidget,                       │
-│    RegistryDebugWidget                                                      │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+How Huginn is measured (the user, 2026-10-01): **did the player reach into the inventory** for something Huginn could have offered, and **did they need a labelled slot or a custom page** to get it. Both are counted in the `[Soak]` heartbeat (`goals`).
 
 ---
 
-## Feedback Loop
+## The engine, one tick
 
 ```
-Player selects item ──► SelectionTracker (pending: press-time state + bar)
-                          │  confirms: consumable's count drops / equip still worn at 3 s
-                          ▼
-                      EquipEventBus ──► Subscribers:
-                                          ├── BanditSubscriber (FeatureBanditLearner weight update)
-                                          └── UsageMemorySubscriber (recency tracking)
-
-Selection sources (all equal -- the source is a label, not a weight):
-  Huginn key / Huginn wheel
-  Menu, vanilla hotkey, own Wheeler wheel  ──► ExternalEquipLearner (needs player input)
-One confirmed selection ──► +8.0 EQUIP_REWARD or +5.0 CONSUME_REWARD, once
-
-Weight decay:
-  L2 regularization (FeatureBanditLearner::L2_LAMBDA = 0.01) folded into each weight update
-  Time-based MaybeDecay() — 2%/hr exponential decay on items idle > 5 min
-
-Update rule (FeatureBanditLearner::Update):
-  error = reward - w·φ            (no bootstrapped successor term — see "The learner")
-  w[i] += α·error·φ[i] - α·λ·w[i] (18-float φ, clamped)
-
-See: docs/architecture/4-contextual-bandits.md for full learning system details
+Game (SKSE)
+  |  StateManager: 11 polls -> 6 state types (world, player, targets, 3 trackers)   [observable state only]
+  v
+NeedMonitor: the need vector n -- K needs (health_deficit, poisoned, underwater, drop_ahead, encumbered, ...),
+  each a response curve over a sensor ([Needs], docs/architecture/9-data/needs.csv)
+  |
+Registries: what the player knows and carries (spells, alchemy, scrolls, weapons/ammo, apparel, torches)
+  |  CandidateGenerator
+  v
+Candidates --> CandidateFilters: hard gates (no follower, no workstation, not dark, suppressed favourite),
+  |            full vitals, active buffs (with the refresh pass), redundant resists, the summon limit
+  |            -- each read off the candidate's FACETS (core/CapFacets.h over cap(i))
+  v
+D2 legacy pass (bLegacyLearnFeature): the old learner's ln learn mult on the rows the old floors keep
+  |
+RankOnChoice: every candidate ranked on mu = sum_j (sum_k n_k theta[k][j] + recent) a_j + b + theta_cov covered + w lm
+  |            a = cap(i) (EffectCatalog) + runtime cross-features (overshoot, charge, stack, ...)
+  v
+SlotAllocator: pages and slots; slot classes and the class cap from facets; one wildcard key per page
+  |            (relevance x sd, R10); overrides (urgent restore, cure, ammo, waterbreathing, soul gem)
+SlotLocker: the hold -- a challenger replaces a key only past Delta / sigma_Delta (R9); Remembrance; home keys
+  v
+Display: Intuition widget (Scaleform) + Wheeler wheels; the explanation label (the largest theta n cap term)
+  |
+Logs: [Recs], [Soak], the selection log v3 (one row per candidate per decision: the fit's data)
 ```
 
-Constants live in `src/Config.h` (`EQUIP_REWARD`, `CONSUME_REWARD`,
-`SELECTION_CONFIRM_MS`, `CONSUMPTION_HUGINN_WINDOW_MS`, `DECAY_RATE_PER_HOUR`,
-`DECAY_THRESHOLD_MINUTES`); the selection path in `src/learning/SelectionTracker.h`;
-the subscribers in `src/learning/EquipSubscribers.h`; the attribution labels in
-`src/learning/ExternalEquipLearner.h`.
+Picks come back through the equip event bus: a press on a key, a Wheeler pick, a menu pick. `ChoiceLearner::OnPick` updates θ (the need × column weights of what was picked and of what was passed over on the page; Plackett-Luce for co-picks) and b, with the variance as the step; a need onset the page answered grows its need's variances (opportunity counting); the menu is a second choice set at a learned cost κ.
+
+### What an item is: the effect catalog
+
+`EffectCatalog` reads every spell, scroll, potion, food, poison, weapon, ammo, armour piece, soul gem and light in the load order when the main menu first opens (in slices, one per frame), maps each effect (MGEF) to a column of [effects.csv](architecture/9-data/effects.csv) and grades it against the load order's population: cap(i), 243 columns (26 families, 136 specifics, modifiers, item features, weapon and armour stats). Tempered and player-enchanted stacks get a per-instance cap; player-made potions and spells no tome teaches are mapped late. `hg dump all` writes the catalog's view of the whole load order; `hg cap <FormID>` one item.
+
+Since **R11** the live engine asks every yes/no question of an item through this catalog, in one place, `src/core/CapFacets.h`: the slot classes (`sClassification = HealingAny` still names the same classes; their rules are re-derived from cap(i), reviewed in [5-slots.md](architecture/5-slots.md)), the candidate filters, the override finders, the "Ally Support" label and the widget's potion styling.
+
+**Effect overrides**, the per-load-order layer (doc 9's layer 2): a mod ships `Data/SKSE/Plugins/Huginn/EffectOverrides/<name>.ini`, the player keeps `Data/SKSE/Plugins/Huginn_EffectOverrides.ini` (applied last); each line pins an effect to a column by plugin and local FormID (`MyMod.esp|0x800 = resist_frost`), under `[Overrides]`, with `[Huginn] iFormatVersion = 1`. A file that does not parse is skipped and named; entries for plugins not loaded are skipped quietly (`src/core/OverrideFiles.h`).
+
+### What the situation needs: the need vector
+
+Each need is a curve (`linear`, `logistic`, `gaussian`, ...) over a sensor reading -- a vital's deficit, a damage rate, a timer since combat began, the drop ahead of the player, encumbrance, the light level, survival stages -- in [0, 1]. `hg needs` prints the non-zero ones. The R6 bootstrap may carry its own curve for a need (encumbrance does), which then overrides the INI line.
+
+### The learner
+
+`ChoiceLearner` holds the model (`src/core/ChoiceScore.h`, `src/core/ChoiceUpdate.h`):
+- θ[k][j]: one Gaussian belief {μ, σ²} per need × effect column (and per `recent_<family>` × column), shared by every item that carries the column;
+- b(i): one belief per item, prior N(0, 0.25), with a battery: it fades with play time since the item was last chosen;
+- κ, the feature weights and the outside option u0 (θ[need, out] and an intercept): fixed by the file (format v1 gives them no precision).
+
+It starts from `Huginn_Bootstrap.json`, R6's offline fit on the logged decisions ([9-bootstrap-format.md](architecture/9-bootstrap-format.md)), and is saved in the cosave as THTA (θ by stable key, only the weights that moved) and BIAS (b per form). `hg reset weights` returns it to the bootstrap. `hg theta` shows it: the drift from the bootstrap, and one item's terms.
+
+### D2: the one part of the old engine kept
+
+R6 (the offline fit, [roadmap](roadmap.md) R6) found that no variant without the old learner passed its gate, and chose **D2**: θ + b + recent **plus the old learner's learning score**, `ln learn mult = ln(1 + λ(α)·learningScore)`, on the rows the old floors keep, weight 1.36. So behind `[Scoring] bLegacyLearnFeature` (default on) the old engine still runs, in `src/learning/legacy/`, for that one feature: the FeatureBanditLearner (an 18-float contextual bandit, [archived page](architecture/archive/4-contextual-bandits.md)), UsageMemory, the prior, correlations and potion multiplier, the old context rules as a binary gate, the floors and the cold start, and -- because the context rules read their tags -- the old spell, item and scroll classifiers ([2-classifiers.md](architecture/2-classifiers.md)). None of it ranks or places anything by itself; `tools/prune/r8_check.py` confines it to its files (LEGACY, and CLASSIFIER since R11) and its mutation probes prove the check bites. It retires when a refit on newer logs passes the gate without it. Without a usable bootstrap the pipeline falls back to ranking on the old utility, and says so.
 
 ---
 
-## Settings Management
+## Feedback and telemetry
 
-Huginn settings are split across two INI files to support dMenu integration:
+- **The selection log v3** ([9-selection-log-v3.md](architecture/9-selection-log-v3.md)): one decision per pick or need episode, every eligible candidate a row (its cap, cross-features, covered, μ, sd, b, the D2 feature, the filter that dropped it), the need vector, the page as shown. The offline fit (`tools/fit`) and the replay (`tools/replay`) read it.
+- **`[Soak]`** every 5 minutes ([playtest/LongPlaySoak.md](playtest/LongPlaySoak.md)): equips and accepts, slot churn and its causes, the goals (reach-ins, presses), the reach split, the choice learner's counts, rates (pipeline runs, wildcard share, Wheeler pushes, wildcards rolled / relevant / picked), churn per press, and since R11 **θ drift**: weights whose mean moved, the mean and largest |μ - μ_boot| and where, the mean ln(σ² / σ²_boot), b's spread, θ_covered.
+- **`[Recs]`** (`hg recs`): the top of the ranking, each with μ, sd, its three largest terms, b and the D2 feature; the header carries the outside option u0.
 
-- **Main INI** (`Data/SKSE/Plugins/Huginn.ini`, shipped as `configs/Huginn.ini`) — `[Overrides]`, `[Candidates]`, `[Scoring]`, `[Favorites]`, `[ContextWeights]`, `[Wildcards]`, `[Subtexts]`, `[Wheeler]`, `[Pages]` + `[PageN]` / `[PageN.SlotM]`, `[Learning]`, `[SlotLocker]`, `[Keybindings]`
-- **dMenu INI** (`Data/SKSE/Plugins/dmenu/customSettings/ini/Huginn.ini`) — `[Widget]` and `[Debug]` only, when dMenu is installed (`GetDMenuIniPath()` in `src/Globals.cpp`). `[Keybindings]` stays in the main INI
+## Settings management
 
-One key, one home: dMenu owns `[Widget]` and `[Debug]`; nothing is overlaid from both files. `SettingsReloader` handles hot-reload via the SKSE `ModCallbackEvent`s `dmenu_updateSettings` and `dmenu_buttonCallback`, serializing itself through `UpdateHandler::RunExclusive`. See [docs/architecture/7-dmenu-integration.md](architecture/7-dmenu-integration.md) for details.
+`Data/SKSE/Plugins/Huginn.ini` holds every section; dMenu edits a second INI for the panels it exposes (`[Widget]`, `[Debug]`, ...) and `hg reload` / the dMenu "Reload INI" button re-read both ([7-dmenu-integration.md](architecture/7-dmenu-integration.md)). CLAUDE.md lists the sections.
 
 ---
 
-For detailed documentation on specific subsystems, see [docs/architecture/](architecture/):
+## Documentation map
 
 | Document | Contents |
 |----------|----------|
-| [0-pipeline.md](architecture/0-pipeline.md) | Full recommendation pipeline with data flow |
+| [9-context-as-learner-input.md](architecture/9-context-as-learner-input.md) | The engine's design: context as the learner's input (shared need × effect weights, response curves) |
+| [9-implementation-map.md](architecture/9-implementation-map.md) | What was built, phase by phase (Phases 0-10, with "as built" notes) |
+| [9-bootstrap-format.md](architecture/9-bootstrap-format.md) | The bootstrap file (format version 1): θ, u0, κ, recent, b, curves; the score and the reader's rules |
+| [9-selection-log-v3.md](architecture/9-selection-log-v3.md) | The selection log v3 format |
+| [11-sequences-and-redundancy.md](architecture/11-sequences-and-redundancy.md) | covered(i), the refresh prior, the summon limit, anticipatory resists |
+| [0-pipeline.md](architecture/0-pipeline.md) | The tick in detail (pre-rewrite body; the banner says what changed) |
 | [1-states.md](architecture/1-states.md) | State models and StateManager polling |
-| [2-classifiers.md](architecture/2-classifiers.md) | Spell, item, scroll, weapon classification |
+| [2-classifiers.md](architecture/2-classifiers.md) | The old spell / item / scroll / weapon classifiers: since R11 an input to D2 only |
 | [3-candidate-filtering.md](architecture/3-candidate-filtering.md) | Candidate generation and filtering |
-| [4-contextual-bandits.md](architecture/4-contextual-bandits.md) | Feature-based contextual bandit learning and reward system |
-| [5-slots.md](architecture/5-slots.md) | Slot types, overrides, wildcards, multi-page |
+| [5-slots.md](architecture/5-slots.md) | Slots, classes (re-derived from cap(i) in R11), overrides, wildcards, multi-page, the hold |
 | [6-ui-ux.md](architecture/6-ui-ux.md) | Intuition widget and Wheeler integration |
-| [7-dmenu-integration.md](architecture/7-dmenu-integration.md) | dMenu integration and two-INI architecture |
-| [8-future-work.md](architecture/8-future-work.md) | Deferred ideas: temporal prediction, urgency multipliers, HMM combat states |
-| [9-context-as-learner-input.md](architecture/9-context-as-learner-input.md) | Proposal: context as the learner's input (shared need × effect weights, response curves) |
-| [9-bootstrap-format.md](architecture/9-bootstrap-format.md) | The R8 bootstrap file (format version 1): the offline fit's θ, u0, κ, recent weights, b by plugin + local FormID, curves; the score and the reader rules |
-| [10-client-api.md](architecture/10-client-api.md) | Proposal: Huginn as a recommendation server; UIs connect, read a snapshot on their own thread, and report what they showed and what was picked |
+| [7-dmenu-integration.md](architecture/7-dmenu-integration.md) | dMenu integration and the two-INI architecture |
+| [8-future-work.md](architecture/8-future-work.md) | Deferred ideas |
+| [10-client-api.md](architecture/10-client-api.md) | Proposal: Huginn as a recommendation server |
+| [archive/4-contextual-bandits.md](architecture/archive/4-contextual-bandits.md) | ARCHIVED: the old learner (FeatureBanditLearner), kept for D2's arithmetic |
 
-And the reference material in [docs/reference/](reference/), plus the console
-command reference now on the wiki:
+### Reference
 
 | Document | Contents |
 |----------|----------|
-| [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) | The `hg` console commands |
+| Console commands | The table in CLAUDE.md is the reference |
 | [candidate-system.md](reference/candidate-system.md) | Candidate registries and generation |
 | [Performance.md](reference/Performance.md) | Performance budget and measurements |
-| [classifier-coverage.md](reference/classifier-coverage.md) | How much of each load order the classifiers type, from the `hg dump` commands |
+| [classifier-coverage.md](reference/classifier-coverage.md) | How much of each load order the old classifiers typed (historical; the catalog's coverage is in `hg dump all`'s summary) |
 | [intuition-scaleform-build.md](reference/intuition-scaleform-build.md) | Building `Intuition.swf` from `src/swf/Intuition.as` |
 | [WheelerAPI_minimal.h](reference/WheelerAPI_minimal.h), [WheelerAPIClient.h](reference/WheelerAPIClient.h) | Vendored Wheeler API headers for reference |
 
-And the rest of the tree. Player-facing material — compatibility guides, the
-console command reference, the changelog and the Nexus page copy — lives on the
-[wiki](https://github.com/LandingCrew/huginn/wiki), which anyone can edit; the
-docs that cite source files and change with commits stay here.
-
+### Elsewhere
 
 | Path | Contents |
 |---|---|
 | [Compatibility (wiki)](https://github.com/LandingCrew/huginn/wiki/Mod-Compatibility) | LoreRim, Survival Mode, unknown-spell handling, general mod compatibility |
-| [Changelog (wiki)](https://github.com/LandingCrew/huginn/wiki/Home#changelog) | v0.5 through v0.13 release notes |
-| [testing/](testing/) | Test index and profiling guide |
+| [testing/](testing/) | Test index (host tests, in-game suites, the unattended runner) and profiling guide |
 | [refactor/](refactor/) | Fix patterns, form registry, performance work, Wheeler push spikes |
-| [limitations/](limitations/) | Known limits (soul gems) |
-| [reviews/](reviews/) | Magic classification review |
-| [profiling/](profiling/), [playtest/](playtest/) | Tracy captures, long-play soak protocol |
+| [profiling/](profiling/), [playtest/](playtest/) | Tracy captures, long-play soak protocol and reports |
 | [roadmap.md](roadmap.md) | Open work |
 
 ---
 
 ## Provenance and staleness
 
-**Read this before trusting anything in the deep-dive docs.**
+**Read this before trusting a deep-dive doc.** Much of `architecture/` was recovered on 2026-08-29 from an untracked snapshot describing v0.13-v0.14, and several pages predate the engine rewrite. Where a doc and the code disagree, the code is right.
 
-Most of this tree was recovered on 2026-08-29 from an untracked `docs copy/`
-directory sitting beside `docs/` in the working tree. It had never been
-committed — `git log --diff-filter=D` finds no trace of it — so CLAUDE.md had
-been linking to files that existed on exactly one machine and nowhere in the
-repository. That is what [roadmap.md](roadmap.md) #59 was about.
+Maintained alongside the work, so current:
 
-Two files in the snapshot were deliberately NOT imported:
+- This page and CLAUDE.md, verified against v0.24.4 (R11)
+- [roadmap.md](roadmap.md) and the doc 9 set (9-*.md, 11-*.md)
+- [5-slots.md](architecture/5-slots.md)'s R11 section on the slot classes
+- [profiling/tracy-traces.md](profiling/tracy-traces.md), [playtest/LongPlaySoak.md](playtest/LongPlaySoak.md), [playtest/Soak-2026-10-LoreRim.md](playtest/Soak-2026-10-LoreRim.md)
 
-| Snapshot file | Why |
-|---|---|
-| `architecture/0-pipeline.md` | Snapshot was v0.14.x; the tracked copy is v0.18.x and newer |
-| `ROADMAP.md` | A v0.13.x roadmap dated 2026-02-27, superseded by [roadmap.md](roadmap.md). On a case-insensitive filesystem it would also have clobbered it |
-
-Still missing, referenced but never found: `reviews/architecture-critique.md`.
-The roadmap's whole "Architecture Critique" section points at it.
-
-The snapshot describes **v0.13.x–v0.14.x** (roughly 2026-02). The plugin is at
-**0.19.x**. Six months of pipeline, slot, Wheeler and display work are not
-reflected in the imported files, and no accuracy pass has been done — importing
-them put them under version control so that drift becomes *visible*, which is
-not the same as making them correct.
-
-Treat every imported document as a starting point to verify against `src/`, not
-as a specification. Where a doc and the code disagree, the code is right.
-
-Known-current, because they are maintained alongside the work:
-
-- This page, verified against v0.20.0
-- [roadmap.md](roadmap.md)
-- [profiling/tracy-traces.md](profiling/tracy-traces.md)
-- [playtest/LongPlaySoak.md](playtest/LongPlaySoak.md)
-- [playtest/Soak-2026-10-LoreRim.md](playtest/Soak-2026-10-LoreRim.md) -- the Phase 2 soak run's report
-- [architecture/0-pipeline.md](architecture/0-pipeline.md) (v0.20.0)
-- [refactor/wheeler-push-spikes.md](refactor/wheeler-push-spikes.md)
-
-The docs moved to contextual-bandit vocabulary on 2026-08-29 and the code
-identifiers followed in 0.20.0; see "The learner" above for the cosave break
-that came with it.
+The pre-rewrite pages (0, 1, 3, 6, 7, 8 and the reference pages) carry an R11 banner saying what of them the rewrite changed; their body text still describes the old engine where it speaks of context weights, utility or the bandit.

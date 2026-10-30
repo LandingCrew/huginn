@@ -1,5 +1,7 @@
 # Huginn UI/UX Architecture
 
+> **R11 (0.24.4):** since R8.3 the hand-tuned engine (context weights × the bandit's learning score × multipliers) no longer ranks: every candidate is ranked on the choice score μ (θ over need × effect columns, b per item; doc 9, [9-implementation-map.md](9-implementation-map.md)), and the old engine runs only for the D2 feature `ln learn mult` (`[Scoring] bLegacyLearnFeature`, confined by `tools/prune/r8_check.py`). On the widget: the Verbose mode shows μ and the explanation term, the label is the largest θ·n·cap term's need (or "Ally Support", from the TargetsOthers facet since R11), potion styling reads the restore facets; the wildcard has a key of its own (R10).
+
 How recommendations reach the player: the **display backend layer** that fans a
 tick's slot assignments out to every display target, the **Intuition Widget**
 (Scaleform HUD), the **Wheeler backend** (radial menu), and the **ImGui debug

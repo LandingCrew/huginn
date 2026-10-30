@@ -423,14 +423,10 @@ namespace Huginn::Item
          const InventoryItem* any = nullptr;   // Restores most overall
       };
 
-      /**
-       * @brief Get the potion of the given type that restores the most within
-       *        `windowSec` (count > 0) -- see ItemData::RestoredWithin
-       * @param type Potion type to search (HealthPotion, MagickaPotion, StaminaPotion)
-       * @param windowSec How soon the restore has to land to count
-       * @return Pure and overall best picks (nullptr fields when none available)
-       */
-      [[nodiscard]] BestPotionPick GetBestPotion(ItemType type, float windowSec) const noexcept;
+      // R11: the restore potion pick by the old classifier's type
+      // is gone; OverrideManager picks by the effect catalog's restore facet
+      // and ItemData::RestoredWithin (BestRestorePotion), into this struct.
+
 
       // Thin forwarders keeping the historical public names (zero call-site churn).
       // Count / copy-out / loading-flag / iteration all live in the shared core.

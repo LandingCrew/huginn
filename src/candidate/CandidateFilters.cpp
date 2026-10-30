@@ -1,5 +1,5 @@
 #include "CandidateFilters.h"
-#include "spell/SpellData.h"  // For Spell::HasTag (ScrollTag is alias)
+#include "effect/Facets.h"     // R11: the facets the filters read (core/CapFacets.h)
 #include "core/Coverage.h"     // SummonLimitReached (0.23.46)
 #include "core/RefreshPass.h"  // the refresh pass (R8.1)
 #include <algorithm>
@@ -37,19 +37,17 @@ namespace Huginn::Candidate
             };
         }
 
+        // R11: `targetsOthers` is the effect catalog's TargetsOthers facet
+        // (core/CapFacets.h), read once per candidate by RunVisitorFilters.
         template <class T>
-        [[nodiscard]] std::optional<R> HardGate(const T& c, const Core::Gate::Inputs& g) noexcept
+        [[nodiscard]] std::optional<R> HardGate(const T& c, const Core::Gate::Inputs& g, bool targetsOthers) noexcept
         {
             // A favourite under Suppress (IsFavoritedCandidate: the one test
             // Candidate::IsFavorited and the scorer read too).
             if (Core::Gate::FavoriteSuppressed(IsFavoritedCandidate(c), g.suppressFavorites))
                 return R::favorite_suppressed;
-            if constexpr (std::is_same_v<T, SpellCandidate>) {
-                if (Core::Gate::NoFollower(Spell::HasTagExt(c.tagsExt, Spell::SpellTagExt::TargetsOthers), g.followerNear))
-                    return R::no_follower;
-            }
-            else if constexpr (std::is_same_v<T, ScrollCandidate>) {
-                if (Core::Gate::NoFollower(Spell::HasTagExt(c.tagsExt, Spell::SpellTagExt::TargetsOthers), g.followerNear))
+            if constexpr (std::is_same_v<T, SpellCandidate> || std::is_same_v<T, ScrollCandidate>) {
+                if (Core::Gate::NoFollower(targetsOthers, g.followerNear))
                     return R::no_follower;
             }
             else if constexpr (std::is_same_v<T, ApparelCandidate>) {
@@ -85,6 +83,14 @@ namespace Huginn::Candidate
         const bool checkBuffs = m_config.filterActiveBuffs;
         const bool checkResists = m_config.filterRedundantResists;
         using B = Core::Refresh::Block;
+        // R11: what the effect catalog says the candidate does (core/CapFacets.h),
+        // in place of the old classifiers' tags and types. No catalog entry: no
+        // facet, so no effect filter drops it (the affordability, equipped and
+        // hard-gate tests still run).
+        const auto subject = Effect::SubjectOf(candidate);
+        const auto f = subject.facets;
+        using F = Core::Facets::F;
+        const bool isFood = subject.kind == Core::Effect::Kind::Food;
 
         // 0.23.46: each drop names its filter (Core::Filter::Reason) for the
         // selection log v3's `filtered_by`; which candidates are dropped is
@@ -116,29 +122,30 @@ namespace Huginn::Candidate
                 // someone else, nor one that works over time (an aura is cast
                 // ahead of the hit).
                 if (m_config.filterHealingWhenFull &&
-                    Spell::HasTag(c.tags, Spell::SpellTag::RestoreHealth) &&
-                    !Spell::HasTagExt(c.tagsExt, Spell::SpellTagExt::TargetsOthers) &&
-                    !Spell::HasTagExt(c.tagsExt, Spell::SpellTagExt::HealsOverTime) &&
+                    f.Has(F::RestoreHealth) && !f.Has(F::TargetsOthers) && !f.Has(F::HealsOverTime) &&
                     player.vitals.health >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
                     return R::full_health;
                 if (m_config.filterMagickaWhenFull &&
-                    Spell::HasTag(c.tags, Spell::SpellTag::RestoreMagicka) &&
+                    f.Has(F::RestoreMagicka) &&
                     player.vitals.magicka >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
                     return R::full_magicka;
 
                 // 4. Hard gates (R8.1): a suppressed favourite, a spell for
                 // someone else with no follower near.
-                if (const auto gate = HardGate(c, gates)) return gate;
+                if (const auto gate = HardGate(c, gates, f.Has(F::TargetsOthers))) return gate;
 
                 // 5. Active Buff (R8.1: each passes in its buff's last seconds)
                 if (checkBuffs) {
-                    if (Spell::HasTag(c.tags, Spell::SpellTag::Invisibility) && player.buffs.isInvisible &&
+                    if (f.Has(F::Invisibility) && player.buffs.isInvisible &&
                         !Due(player, B::invisibility))
                         return R::invisibility;
-                    if (Spell::HasTag(c.tags, Spell::SpellTag::Muffle) && player.buffs.hasMuffle &&
+                    if (f.Has(F::Muffle) && player.buffs.hasMuffle &&
                         !Due(player, B::muffle))
                         return R::muffle;
-                    if (Spell::HasTag(c.tags, Spell::SpellTag::Armor) && player.buffs.hasArmorBuff &&
+                    // An armour spell, not a ward: a ward's cap carries
+                    // defense_armor too, and an Oakflesh running does not make
+                    // a spell ward redundant.
+                    if (f.Has(F::ArmorBuff) && !f.Has(F::Ward) && player.buffs.hasArmorBuff &&
                         !Due(player, B::armor))
                         return R::armor;
                     // A summon only once the player's summon LIMIT is reached
@@ -147,17 +154,17 @@ namespace Huginn::Candidate
                     // never offered (doc 11, step 4). With the vanilla limit
                     // of 1 this is the old test exactly. R8.1: offered again
                     // once a summon is about to time out and free a place.
-                    if (c.type == Spell::SpellType::Summon &&
+                    if (f.Has(F::Summon) &&
                         Core::Coverage::SummonLimitReached(player.buffs.summonCount, player.buffs.summonLimit) &&
                         !Due(player, B::summon_limit))
                         return R::summon_limit;
                     // Warming aura already running: do not offer it again.
                     // Warm FOOD stays: it restores cold outright.
-                    if (Spell::HasTagExt(c.tagsExt, Spell::SpellTagExt::Warming) &&
+                    if (f.Has(F::Warming) &&
                         player.buffs.hasWarmingEffect && !Due(player, B::warming))
                         return R::warming;
                 }
-                if (checkResists && IsResistSpellRedundant(c, player.resistances, player.buffs.refreshDue))
+                if (checkResists && IsResistRedundant(f, player.resistances, player.buffs.refreshDue))
                     return R::resist;
 
                 return std::nullopt;
@@ -170,18 +177,19 @@ namespace Huginn::Candidate
                 if (c.count <= 0)
                     return R::affordability;
 
-                // 3. Full Vitals (skip for food/alcohol)
-                if (c.type != Item::ItemType::Food && c.type != Item::ItemType::Alcohol) {
+                // 3. Full Vitals (skip for food and drink: the catalog's Food
+                // kind, alcohol included)
+                if (!isFood) {
                     if (m_config.filterHealingWhenFull &&
-                        Item::HasTag(c.tags, Item::ItemTag::RestoreHealth) &&
+                        f.Has(F::RestoreHealth) &&
                         player.vitals.health >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
                         return R::full_health;
                     if (m_config.filterMagickaWhenFull &&
-                        Item::HasTag(c.tags, Item::ItemTag::RestoreMagicka) &&
+                        f.Has(F::RestoreMagicka) &&
                         player.vitals.magicka >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
                         return R::full_magicka;
                     if (m_config.filterStaminaWhenFull &&
-                        Item::HasTag(c.tags, Item::ItemTag::RestoreStamina) &&
+                        f.Has(F::RestoreStamina) &&
                         player.vitals.stamina >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
                         return R::full_stamina;
                 }
@@ -191,15 +199,14 @@ namespace Huginn::Candidate
                 // 5. Active Buff. Not the resist check for food/alcohol: it
                 // is eaten for hunger, and a stew's side resist (LoreRim) let
                 // a poison-immunity necklace strip every stew from the list.
-                if (checkResists &&
-                    c.type != Item::ItemType::Food && c.type != Item::ItemType::Alcohol &&
-                    IsResistPotionRedundant(c, player.resistances, player.buffs.refreshDue))
+                if (checkResists && !isFood &&
+                    IsResistRedundant(f, player.resistances, player.buffs.refreshDue))
                     return R::resist;
                 if (checkBuffs) {
-                    if (Item::HasTag(c.tags, Item::ItemTag::Waterbreathing) && player.buffs.hasWaterBreathing &&
+                    if (f.Has(F::Waterbreathing) && player.buffs.hasWaterBreathing &&
                         !Due(player, B::waterbreathing))
                         return R::waterbreathing;
-                    if (Item::HasTag(c.tags, Item::ItemTag::Invisibility) && player.buffs.isInvisible &&
+                    if (f.Has(F::Invisibility) && player.buffs.isInvisible &&
                         !Due(player, B::invisibility))
                         return R::invisibility;
                 }
@@ -216,21 +223,19 @@ namespace Huginn::Candidate
 
                 // 3. Full Vitals (as for spells: not for others, not over time)
                 if (m_config.filterHealingWhenFull &&
-                    Spell::HasTag(c.tags, Spell::SpellTag::RestoreHealth) &&
-                    !Spell::HasTagExt(c.tagsExt, Spell::SpellTagExt::TargetsOthers) &&
-                    !Spell::HasTagExt(c.tagsExt, Spell::SpellTagExt::HealsOverTime) &&
+                    f.Has(F::RestoreHealth) && !f.Has(F::TargetsOthers) && !f.Has(F::HealsOverTime) &&
                     player.vitals.health >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
                     return R::full_health;
 
                 // 4. Hard gates (R8.1): a scroll for someone else, no follower near.
-                if (const auto gate = HardGate(c, gates)) return gate;
+                if (const auto gate = HardGate(c, gates, f.Has(F::TargetsOthers))) return gate;
 
                 // 5. Active Buff
                 if (checkBuffs) {
-                    if (Spell::HasTag(c.tags, Spell::SpellTag::Invisibility) && player.buffs.isInvisible &&
+                    if (f.Has(F::Invisibility) && player.buffs.isInvisible &&
                         !Due(player, B::invisibility))
                         return R::invisibility;
-                    if (Spell::HasTag(c.tags, Spell::SpellTag::Muffle) && player.buffs.hasMuffle &&
+                    if (f.Has(F::Muffle) && player.buffs.hasMuffle &&
                         !Due(player, B::muffle))
                         return R::muffle;
                 }
@@ -251,7 +256,7 @@ namespace Huginn::Candidate
             else if constexpr (std::is_same_v<T, WeaponCandidate>) {
                 // Weapons pass the other visitor filters (equipped-skip is
                 // per-slot in SlotAllocator); a suppressed favourite is gated.
-                return HardGate(c, gates);
+                return HardGate(c, gates, false);
             }
             // =================================================================
             // TORCH
@@ -260,14 +265,14 @@ namespace Huginn::Candidate
                 if (c.count <= 0) return R::affordability;
                 if (c.isEquipped) return R::equipped;
                 // R8.1: no torch while darkness does not apply.
-                return HardGate(c, gates);
+                return HardGate(c, gates, false);
             }
             // =================================================================
             // APPAREL (R8.1: no arm before; the gather skips worn pieces)
             // =================================================================
             else if constexpr (std::is_same_v<T, ApparelCandidate>) {
                 // No station up for any craft the piece fortifies.
-                return HardGate(c, gates);
+                return HardGate(c, gates, false);
             }
             else {
                 static_assert(always_false_v<T>, "Unhandled CandidateVariant alternative in RunVisitorFilters");
@@ -523,81 +528,35 @@ namespace Huginn::Candidate
     }
 
     // =========================================================================
-    // HELPER: RESIST POTION REDUNDANCY CHECK
+    // HELPER: RESIST REDUNDANCY CHECK (a potion or a spell)
     // =========================================================================
-    // R8.1: an element whose resistance block is due for its refresh (it falls
-    // to the threshold within fRefreshPriorSec, ActorBuffs::refreshDue) does
-    // not make the potion redundant.
-    bool CandidateFilters::IsResistPotionRedundant(
-        const ItemCandidate& item,
+    // R11: one check over the effect catalog's resist facets (core/CapFacets.h)
+    // for potions and spells alike. An item that resists an element the player
+    // already resists above the threshold is redundant -- unless that element's
+    // resistance block is due for its refresh (R8.1: it falls to the threshold
+    // within fRefreshPriorSec, ActorBuffs::refreshDue). Any one blocked element
+    // makes it redundant, as the potion check always did. Before R11 the spell
+    // check read the old classifier's type (Defensive) and element (the first
+    // of fire, frost, shock, poison); resist_* columns are set only by a
+    // resistance the item GIVES, so a poison aura (Strider's Shroud: damage,
+    // not resist_poison) still passes, and Resist Magic now counts for spells
+    // as it did for potions.
+    bool CandidateFilters::IsResistRedundant(
+        Core::Facets::Set facets,
         const State::ActorResistances& resistances,
         Core::Refresh::DueBits refreshDue) const
     {
         const float threshold = m_config.resistThresholdToFilter;
         using E = Core::Refresh::Element;
+        using F = Core::Facets::F;
         const auto blocked = [&](float resist, E e) {
             return resist > threshold && !Core::Refresh::IsDue(refreshDue, Core::Refresh::ResistBlock(e));
         };
-
-        if (Item::HasTag(item.tags, Item::ItemTag::ResistFire) && blocked(resistances.fire, E::fire)) {
-            return true;
-        }
-        if (Item::HasTag(item.tags, Item::ItemTag::ResistFrost) && blocked(resistances.frost, E::frost)) {
-            return true;
-        }
-        if (Item::HasTag(item.tags, Item::ItemTag::ResistShock) && blocked(resistances.shock, E::shock)) {
-            return true;
-        }
-        if (Item::HasTag(item.tags, Item::ItemTag::ResistPoison) && blocked(resistances.poison, E::poison)) {
-            return true;
-        }
-        if (Item::HasTag(item.tags, Item::ItemTag::ResistMagic) && blocked(resistances.magic, E::magic)) {
-            return true;
-        }
-
-        return false;
-    }
-
-    // =========================================================================
-    // HELPER: RESIST SPELL REDUNDANCY CHECK
-    // =========================================================================
-    bool CandidateFilters::IsResistSpellRedundant(
-        const SpellCandidate& spell,
-        const State::ActorResistances& resistances,
-        Core::Refresh::DueBits refreshDue) const
-    {
-        const float threshold = m_config.resistThresholdToFilter;
-        using E = Core::Refresh::Element;
-        const auto blocked = [&](float resist, E e) {
-            return resist > threshold && !Core::Refresh::IsDue(refreshDue, Core::Refresh::ResistBlock(e));
-        };
-
-        // Defensive only. A Defensive spell's element is what it protects
-        // against, so already having that resistance makes it redundant.
-        //
-        // Buff was accepted here too, for the same stale reason as in
-        // ContextWeightForCandidate: before #128 an elemental resist spell was
-        // typed Buff. It is Defensive now, and the Buffs that carry an element
-        // carry it to describe damage they DEAL. Suppressing Strider's Shroud
-        // because the player already resists poison withheld a poison aura on
-        // the grounds that they did not need protection it was not offering.
-        if (spell.type == Spell::SpellType::Defensive) {
-            // Use element to determine resist type
-            switch (spell.element) {
-                case Spell::ElementType::Fire:
-                    return blocked(resistances.fire, E::fire);
-                case Spell::ElementType::Frost:
-                    return blocked(resistances.frost, E::frost);
-                case Spell::ElementType::Shock:
-                    return blocked(resistances.shock, E::shock);
-                case Spell::ElementType::Poison:
-                    return blocked(resistances.poison, E::poison);
-                default:
-                    break;
-            }
-        }
-
-        return false;
+        return (facets.Has(F::ResistFire) && blocked(resistances.fire, E::fire)) ||
+               (facets.Has(F::ResistFrost) && blocked(resistances.frost, E::frost)) ||
+               (facets.Has(F::ResistShock) && blocked(resistances.shock, E::shock)) ||
+               (facets.Has(F::ResistPoison) && blocked(resistances.poison, E::poison)) ||
+               (facets.Has(F::ResistMagic) && blocked(resistances.magic, E::magic));
     }
 
 }  // namespace Huginn::Candidate
