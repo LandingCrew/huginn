@@ -1163,15 +1163,30 @@ spells (no b yet) -- all through sd; and only those close enough to the page
 to matter, through rel.
 
 **The manager** (`src/learning/WildcardManager.{h,cpp}`) owns, per page, the
-cached wildcard, its propensity and its clocks, and nothing else:
+cached wildcard, its propensity and its clocks, and nothing else. Its
+decisions are `Core::Wildcard::Gate` (`src/core/WildcardGate.h`, host-tested
+in `tests/core/WildcardTests.cpp`); the manager adds the clock, the uniforms,
+the uid check on the ranked list, the logs and the heartbeat:
 
 - `Plan(page, list)`, before the page's allocation: pin the cached wildcard,
   or -- nothing cached, the refractory over, not in combat, the displayed
   page -- ask for a roll with two uniforms;
-- `Commit(page, result)`, after it: cache a drawn wildcard (info line
-  `[Wildcard] Page P key K: 'name' (p=..: roll .. x draw .. of N; rel= sd= w=
-  ..)`), drop a refused one;
+- `Commit(page, result)`, after it (and only for an allocation the pipeline
+  keeps: after the page-race check, so an abandoned tick caches, logs and
+  counts nothing): cache a drawn wildcard (info line `[Wildcard] Page P key
+  K: 'name' (p=..: roll .. x draw .. of N; rel= sd= w= ..)`), drop a refused
+  one, and spend a roll that drew nothing;
 - `UpdateExpiry()`, every tick, across all pages.
+
+**One roll per window.** Once `fRefractorySeconds` have passed since the
+page's last wildcard ended, the next run whose seat can take one rolls; a roll
+that fails (or comes up with an empty pool) is spent and the refractory
+restarts. A run whose seat an override or a hold has never evaluates the roll,
+and the next run in the window tries. So P(roll) is the chance per window that
+a wildcard appears and the uncertainty term governs how often they do: with
+the shipped clocks a page shows one about every 30 + 60 / P(roll) seconds
+(150 s at the max, about 6.5 minutes at the base). Before this a failed roll
+tried again on the next run, and P(roll) only set a delay of a few runs.
 
 **Per-page cache (v0.19.6, kept).** Each page owns its wildcard and its own
 cooldown and refractory clocks, keyed by the page shape (`slotCount`, `seat`):
@@ -1187,16 +1202,17 @@ flags included, so the displayed page's wildcard leaked onto the other wheels.
 **Persistence and cooldowns:**
 
 - Once drawn, a page's wildcard stays `fCooldownSeconds` (30 s default).
-- After it expires (or the seat refuses it), that page waits
-  `fRefractorySeconds` before rolling again (code default 5 s; the shipped INI
-  sets 60 s).
+- After it expires (or the seat refuses it, or a roll draws nothing), that
+  page waits `fRefractorySeconds` before rolling again (code default 5 s; the
+  shipped INI sets 60 s).
 - Combat (0.23.40, unchanged): none placed, every page's dropped at onset, the
   refractory restarted on every page when it ends.
 - `UpdateExpiry()` returns `true` if any page's wildcard lapsed, and the caller
   forces a pipeline run.
 
 **Logged:** the v3 log's `wp` on the row shown as the wildcard is
-P(roll) x P(the draw shows its form) (two stacks of one form: both shares);
+P(roll) x P(the draw shows its form) (two stacks of one form: both shares),
+the chance per window that the window shows that form;
 the `[Soak]` heartbeat appends `wildcards rolled= relevant= picked=` (relevant:
 the row had a positive theta n cap term when drawn; picked: a pick whose chosen
 row was shown as the wildcard).
@@ -1335,7 +1351,7 @@ fBaseProbability = 0.165         ; P(roll) with nothing uncertain near the page
 fMaxProbability = 0.5            ; P(roll) with an unknown item at the page's edge
 fUniformShare = 0.1              ; the draw's uniform share (every row keeps share/N)
 fCooldownSeconds = 30            ; How long a page's wildcard stays once drawn
-fRefractorySeconds = 60          ; Shipped; code default 5. Wait after expiry before re-rolling
+fRefractorySeconds = 60          ; Shipped; code default 5. The window: one roll per window, a failed roll restarts it
 ```
 
 ### [Keybindings] (page cycling)

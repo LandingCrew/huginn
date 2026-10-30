@@ -992,32 +992,21 @@ Huginn explores in two independent places, and it is worth keeping them apart:
 | | UCB term | Wildcards |
 |---|---|---|
 | Owner | `FeatureBanditLearner::ComputeUCB` | `WildcardManager` (`src/learning/WildcardManager.h/.cpp`) |
-| Granularity | Per item, continuous | Per slot, stochastic |
-| Where it acts | Inside `learningScore` (β·UCB) and the cold-start context floor | *After* the top-N sort, by swapping a lower-ranked candidate up into a slot |
+| Granularity | Per item, continuous | One wildcard key per page, stochastic |
+| Where it acts | Inside `learningScore` (β·UCB) and the cold-start context floor | In the slot allocation: the wildcard key shows an item drawn from what the page does not show |
 | Decays with | Per-item train count | A cooldown timer, not learning |
 
-`WildcardManager::ApplyWildcards` runs at the end of `ScoreCandidates`, against
-the `WildcardPage` the *pipeline snapshot* says this tick allocates — never a
-live `SlotAllocator` read, because a page switch landing mid-tick would
-otherwise roll wildcards against one page while the pipeline allocates another.
-
-Since v0.19.6 the wildcard cache is **per page**: each page owns its slot array,
-its cooldown and its refractory timer, and each array records the page *shape*
-(`slotCount`, `wildcardSlots`) it was rolled against, so an INI hot-reload that
-resizes a page or toggles `bWildcardsEnabled` discards that page's cache
-wholesale. This closed a family of "a cached wildcard nothing can display" bugs
-that suppressed re-rolls.
-
-Configured in `[Wildcards]`:
-
-```ini
-; P(slot i) = fBaseProbability * i, capped at fMaxProbability.
-; Slot 0 is always excluded (it is the top-scored pick).
-fBaseProbability = 0.165
-fMaxProbability = 0.5
-fCooldownSeconds = 30
-fRefractorySeconds = 60
-```
+**Superseded by R10 (0.24.3).** The rank swap described here before
+(`ApplyWildcards`, per-slot odds `base × i`) is gone. Each page has one
+wildcard key (`Core::SlotAlloc::SeatOf`: the last key in fill order with
+`bWildcardsEnabled`); `WildcardManager::Plan` says, before the page's
+allocation, whether to pin the page's cached wildcard there or roll, and the
+allocation draws from the ranked rows the page does not show, weighted by
+relevance × sd plus a uniform share (`src/core/WildcardPick.h`). The decisions
+around it (one roll per refractory window, only the displayed page rolls, the
+per-page cache and its shape, combat) are `Core::Wildcard::Gate`
+(`src/core/WildcardGate.h`). See [5-slots.md](5-slots.md) and the `[Wildcards]`
+section of `configs/Huginn.ini`.
 
 Slot classification and the multi-page layout are covered in
 [5-slots.md](5-slots.md).
@@ -1443,7 +1432,7 @@ opinion is weighted in only as it earns it.
 |---|---|
 | `hg status` | Learner item count and total trains |
 | `hg weights <hex FormID>` | Per-feature weights, train count, live Q / confidence / UCB |
-| `hg recs [N]` | Top-N breakdown (N = 1–50, default 10), plus the current slot assignments; `[WC]` marks wildcards, `[COLD]` cold-start boosts |
+| `hg recs [N]` | Top-N breakdown (N = 1–50, default 10), plus the current slot assignments; `[COLD]` marks cold-start boosts. Since R10 a wildcard is a placement, not a row's flag, so the `[Recs]` rows no longer mark it; the `[Wildcard]` info line names each one when it is drawn (page, key, item, propensity) |
 
 `hg recs` queues a **one-shot full-detail dump** that bypasses the verbosity
 gate, the 5-second throttle and the membership-change dedup applied to the

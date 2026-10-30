@@ -413,7 +413,7 @@ BUDGET = {
     'src/Globals.cpp': (6, None, 'construction and the reset'),
     'src/settings/SettingsReloader.cpp': (9, None, 'settings loader: hot reload, the switch and the dMenu reset'),
     'src/settings/SettingsReloader.h': (2, None, 'settings loader: the reset-weights doc comment'),
-    'src/Tests.cpp': (295, None, 'the in-game Debug suite\'s legacy and slot-harness tests'),
+    'src/Tests.cpp': (294, None, 'the in-game Debug suite\'s legacy and slot-harness tests'),
 }
 
 

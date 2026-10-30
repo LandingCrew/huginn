@@ -1411,8 +1411,11 @@ wildcard picks against the soak's 8 of 333.
         with little evidence); the random term is a uniform share of the draw
         (`[Wildcards] fUniformShare = 0.1`), so the propensity stays exact;
         P(roll) runs from `fBaseProbability` (nothing uncertain near the page)
-        to `fMaxProbability` (an unknown item at its edge).
-      - **Propensity logged:** v3 `wp` = P(roll) × P(the draw shows the form).
+        to `fMaxProbability` (an unknown item at its edge), once per refractory
+        window (a failed roll restarts it), so it sets how often wildcards
+        appear (`core/WildcardGate.h`, host-tested).
+      - **Propensity logged:** v3 `wp` = P(roll) × P(the draw shows the form),
+        per window.
       - **Flags per page:** an off-screen Wheeler page shows its own cached
         wildcard and never rolls; it no longer inherits the displayed page's.
       - **Discovery (R5's note, newly learned spells not on the HUD):** a new

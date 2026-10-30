@@ -8,10 +8,9 @@
 // the page in and carries the request and the result across.
 #include "../slot/SlotSettings.h"
 #include "../slot/WildcardKey.h"
+#include "core/WildcardGate.h"   // the per-page cache and clocks (host-tested)
 #include <algorithm>  // std::clamp below
-#include <array>      // m_pages below
-#include <chrono>
-#include <limits>
+#include <cstdint>
 #include <random>
 
 namespace Huginn::Scoring
@@ -50,8 +49,10 @@ namespace Huginn::Scoring
     // =============================================================================
     // Each page has ONE wildcard key, the seat (Core::SlotAlloc::SeatOf: the
     // last key in fill order with bWildcardsEnabled; key 8 on the shipped
-    // pages). This class owns, per page, the cached wildcard and its clocks; the
-    // allocation places and draws it (core/SlotAllocCore.h, PASS 1w and 4w):
+    // pages). This class owns, per page, the cached wildcard and its clocks
+    // (the decisions are Core::Wildcard::Gate's, core/WildcardGate.h, host-
+    // tested); the allocation places and draws it (core/SlotAllocCore.h,
+    // PASS 1w and 4w):
     //
     //   Plan(page, list)   before the page's allocation: the cached wildcard to
     //                      pin on the seat, or -- nothing cached, the refractory
@@ -59,7 +60,8 @@ namespace Huginn::Scoring
     //                      with its two uniforms and the [Wildcards] odds.
     //   Commit(page, res)  after it: a drawn wildcard is cached for
     //                      fCooldownSeconds with its propensity; a pinned one
-    //                      the seat refused is dropped.
+    //                      the seat refused is dropped; a roll that drew
+    //                      nothing is spent (one roll per refractory window).
     //   UpdateExpiry()     every tick: cooldowns lapse on every page.
     //
     // What a roll draws (core/WildcardPick.h): from the ranked rows the finished
@@ -68,8 +70,10 @@ namespace Huginn::Scoring
     // probability that the player prefers the row to the seat's occupant,
     // times the row's posterior sd), plus a uniform share (fUniformShare); the
     // roll's chance runs from fBaseProbability (nothing uncertain near the
-    // page) to fMaxProbability (an unknown item at its edge). The propensity
-    // (P(roll) x P(the draw shows its form)) is exact and logged (v3 `wp`).
+    // page) to fMaxProbability (an unknown item at its edge), once per
+    // refractory window, so it sets how often wildcards appear. The propensity
+    // (P(roll) x P(the draw shows its form): the chance per window that the
+    // window shows that form) is exact and logged (v3 `wp`).
     //
     // Replaces the rank swap (v0.12.0 to R8.4): per-slot rolls at
     // base x slot index, a uniform draw among rows of the top row's type, and
@@ -92,7 +96,10 @@ namespace Huginn::Scoring
         /// Call once per allocation of the page, then Commit with its result.
         [[nodiscard]] Slot::WildcardRequest Plan(const WildcardPage& page, const ScoredCandidateList& ranked);
 
-        /// What `page`'s allocation did with the request Plan made.
+        /// What `page`'s allocation did with the request Plan made. A roll
+        /// that drew nothing is spent: the refractory restarts (one roll per
+        /// window, core/WildcardGate.h). Not called for an allocation the
+        /// pipeline abandons.
         void Commit(const WildcardPage& page, const Slot::WildcardResult& result);
 
         /// Unconditional per-tick expiry check, across ALL pages: a wildcard on a
@@ -109,19 +116,19 @@ namespace Huginn::Scoring
         [[nodiscard]] bool UpdateExpiry();
 
         // Configuration ([Wildcards], Globals.cpp LoadWildcardConfigFromINI)
-        void SetEnabled(bool enabled) { m_enabled = enabled; }
+        void SetEnabled(bool enabled) { m_gate.settings.enabled = enabled; }
         void SetBaseProbability(float probability) { m_params.baseRoll = std::clamp(probability, 0.0f, 1.0f); }
         void SetMaxProbability(float probability) { m_params.maxRoll = std::clamp(probability, 0.0f, 1.0f); }
         void SetUniformShare(float share) { m_params.uniformShare = std::clamp(share, 0.0f, 1.0f); }
-        void SetCooldown(float seconds) { m_cooldownSeconds = std::max(0.0f, seconds); }
-        void SetRefractoryPeriod(float seconds) { m_refractorySeconds = std::max(0.0f, seconds); }
+        void SetCooldown(float seconds) { m_gate.settings.cooldownSec = std::max(0.0f, seconds); }
+        void SetRefractoryPeriod(float seconds) { m_gate.settings.refractorySec = std::max(0.0f, seconds); }
 
-        [[nodiscard]] bool IsEnabled() const noexcept { return m_enabled; }
+        [[nodiscard]] bool IsEnabled() const noexcept { return m_gate.settings.enabled; }
         [[nodiscard]] float GetBaseProbability() const noexcept { return static_cast<float>(m_params.baseRoll); }
         [[nodiscard]] float GetMaxProbability() const noexcept { return static_cast<float>(m_params.maxRoll); }
         [[nodiscard]] float GetUniformShare() const noexcept { return static_cast<float>(m_params.uniformShare); }
-        [[nodiscard]] float GetCooldown() const noexcept { return m_cooldownSeconds; }
-        [[nodiscard]] float GetRefractoryPeriod() const noexcept { return m_refractorySeconds; }
+        [[nodiscard]] float GetCooldown() const noexcept { return static_cast<float>(m_gate.settings.cooldownSec); }
+        [[nodiscard]] float GetRefractoryPeriod() const noexcept { return static_cast<float>(m_gate.settings.refractorySec); }
 
         // Query the current wildcard state. Page-scoped.
         [[nodiscard]] bool HasActiveWildcard(size_t pageIndex) const;
@@ -130,50 +137,22 @@ namespace Huginn::Scoring
         [[nodiscard]] size_t GetActiveWildcardCount(size_t pageIndex) const { return HasActiveWildcard(pageIndex) ? 1 : 0; }
 
         /// R4, logging only: the propensity of `formID`'s cached wildcard on
-        /// `pageIndex` -- P(the roll came up) x P(the draw showed that form),
-        /// as the allocation computed it (core/WildcardPick.h). NaN when it is
-        /// not that page's cached wildcard. Read on the update thread.
+        /// `pageIndex` -- P(the window's roll came up) x P(the draw showed that
+        /// form), as the allocation that drew it computed them
+        /// (core/WildcardPick.h; per window, core/WildcardGate.h). NaN when it
+        /// is not that page's cached wildcard. Read on the update thread.
         [[nodiscard]] float GetWildcardPropensity(size_t pageIndex, RE::FormID formID) const;
 
         /// Reset wildcards on every page (e.g., on save load)
         void Reset();
 
     private:
-        static constexpr size_t MAX_WILDCARD_PAGES = Slot::MAX_PAGES;
+        using Gate = Core::Wildcard::Gate<Slot::MAX_PAGES>;
 
-        // One page's wildcard: the item, the shape it was rolled against, and
-        // its own cooldown/refractory clocks (per page: a shared clock would let
-        // page A's expiry impose a refractory on page B).
-        struct PageWildcard
-        {
-            RE::FormID formID = 0;
-            uint16_t uniqueID = 0;
-            float propensity = 0.0f;   // R4: logged only (GetWildcardPropensity)
+        [[nodiscard]] static std::int64_t NowNs();
 
-            // Shape this cache was rolled against: a change (an INI reload
-            // resizing the page or moving its seat) drops the wildcard. SIZE_MAX
-            // so a never-populated page mismatches a real shape on first use.
-            size_t slotCount = SIZE_MAX;
-            size_t seat = SIZE_MAX;
-
-            std::chrono::steady_clock::time_point rolledAt{};
-            std::chrono::steady_clock::time_point endedAt{};
-
-            [[nodiscard]] bool Active() const noexcept { return formID != 0; }
-            void Clear() noexcept { formID = 0; uniqueID = 0; propensity = 0.0f; }
-        };
-
-        void ExpireIfDue(PageWildcard& cache, std::chrono::steady_clock::time_point now);
-
-        bool m_enabled = true;
         Core::Wildcard::Params m_params{};
-        float m_cooldownSeconds = Config::WILDCARD_COOLDOWN_SECONDS;
-        float m_refractorySeconds = 5.0f;
-
-        std::array<PageWildcard, MAX_WILDCARD_PAGES> m_pages;
-
-        // The combat flag the last displayed-page Plan saw (core::StepWildcardsForCombat).
-        bool m_wasInCombat = false;
+        Gate m_gate;
 
         // Random number generator (update thread only)
         std::mt19937& GetRNG();

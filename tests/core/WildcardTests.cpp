@@ -5,10 +5,13 @@
 // slot core (src/core/SlotAllocCore.h: SeatOf, PlaceCachedWildcard,
 // DrawWildcard): a reserved key per page, the cached wildcard pinned there,
 // a roll that draws from what the page does not show weighted by
-// relevance x sd plus a uniform share, and an exact propensity.
+// relevance x sd plus a uniform share, and an exact propensity. And the gate
+// around them (src/core/WildcardGate.h): each page's cache and clocks, one
+// roll per refractory window, only the displayed page rolling.
 // =============================================================================
 
 #include "SlotAllocTestSupport.h"
+#include "core/WildcardGate.h"
 #include "core/WildcardPick.h"
 
 #include <doctest/doctest.h>
@@ -448,4 +451,334 @@ TEST_CASE("wildcard roll: an empty seat has nothing to draw -- the fill already 
     CHECK(out.wildcard.rollAsked);
     CHECK(out.wildcard.pool == 0u);
     CHECK(out.wildcard.drawn == SA::kNone);
+}
+
+TEST_CASE("wildcard key: a pinned wildcard whose item has a seat elsewhere stays on the wildcard key; no other key moves")
+{
+    // The pin's guard (SlotState::IsPinned counts Kind::Wildcard): seating
+    // never moves a pinned row and it claims no seat. Item 3 is seated on key
+    // 3, then pinned as the wildcard (in play: a departed item that home keys
+    // would bring back). Seating must not carry the wildcard home to key 3,
+    // which would leave key 8 to the ranked fill.
+    auto in = Page(MainPage(), Ranked(12));
+    in.settings.keepSlotPositions = true;
+    in.settings.holdSeatedItems = true;
+    SA::PageMemory memory;
+    bool generation = false;
+    auto pass = [&](std::uint32_t pinned) {
+        in.memory = memory;
+        in.generationMatches = generation;
+        in.nowNs += 500'000'000LL;
+        in.wildcard.pinned = pinned;
+        const auto out = Allocate(in);
+        memory = out.memory;
+        generation = out.generationMatches;
+        return SA::PageOf(in, out);
+    };
+    for (int k = 0; k < 2; ++k) {
+        const auto before = pass(SA::kNone);
+        for (std::size_t j = 0; j < 8; ++j) CHECK(before[j].formID == j + 1);
+    }
+    const auto three = static_cast<std::uint32_t>(IndexOf(in, 3));
+    for (int k = 0; k < 4; ++k) {
+        const auto during = pass(three);
+        CHECK(during[7].formID == 3u);
+        CHECK(during[7].kind == SA::Kind::Wildcard);
+        CHECK(during[2].formID != 3u);
+        CHECK(during[2].kind == SA::Kind::Normal);
+        // Every other key keeps its item.
+        for (const std::size_t j : { 0u, 1u, 3u, 4u, 5u, 6u }) CHECK(during[j].formID == j + 1);
+    }
+    // The wildcard ends: item 3 comes home to key 3, and key 8's owner to key 8.
+    const auto after = pass(SA::kNone);
+    for (std::size_t j = 0; j < 8; ++j) CHECK(after[j].formID == j + 1);
+    CHECK(after[7].kind == SA::Kind::Normal);
+}
+
+TEST_CASE("wildcard roll: with seating off the roll still draws, onto the seat of the final page")
+{
+    // bKeepSlotPositions = false: no seating, so the draw runs straight after
+    // the fill (PASS 4w in the no-seating branch).
+    auto in = Page(MainPage(), Ranked(12, 0.5));
+    in.settings.keepSlotPositions = false;
+    in.wildcard.roll = true;
+    in.wildcard.params = { 0.165, 0.5, 0.1 };
+    in.wildcard.uRoll = 0.0;
+    for (int k = 0; k < 20; ++k) {
+        in.wildcard.uDraw = (k + 0.5) / 20.0;
+        const auto out = Allocate(in);
+        REQUIRE(out.wildcard.rolled);
+        REQUIRE(out.wildcard.drawn != SA::kNone);
+        CHECK(out.wildcard.pool == 4u);
+        const auto page = SA::PageOf(in, out);
+        const auto form = in.candidates[out.wildcard.drawn].formID;
+        CHECK(form >= 9u);
+        CHECK(page[7].kind == SA::Kind::Wildcard);
+        CHECK(page[7].formID == form);
+        for (std::size_t j = 0; j < 7; ++j) CHECK(page[j].formID == j + 1);
+    }
+    // ...and with the job-key pull on (the other no-seating branch).
+    in.settings.fillJobKeysFromRegular = true;
+    in.wildcard.uDraw = 0.5;
+    const auto out = Allocate(in);
+    REQUIRE(out.wildcard.drawn != SA::kNone);
+    CHECK(SA::PageOf(in, out)[7].kind == SA::Kind::Wildcard);
+}
+
+TEST_CASE("wildcard roll: a row named like one the page shows is not drawn (a second enchanted copy)")
+{
+    // Row 10 is another form with row 3's name (two enchanted copies of one
+    // weapon): the fill dedups by name, and so does the draw's pool.
+    auto in = Page(MainPage(), Ranked(12, 0.5));
+    in.candidates[IndexOf(in, 10)].name = "R3";
+    in.wildcard.roll = true;
+    in.wildcard.uRoll = 0.0;
+    for (const bool keep : { true, false }) {
+        in.settings.keepSlotPositions = keep;
+        for (int k = 0; k < 40; ++k) {
+            in.wildcard.uDraw = (k + 0.5) / 40.0;
+            const auto out = Allocate(in);
+            REQUIRE(out.wildcard.drawn != SA::kNone);
+            CHECK_MESSAGE(out.wildcard.pool == 3u, "keep=", keep);   // rows 9, 11, 12
+            CHECK(in.candidates[out.wildcard.drawn].formID != 10u);
+            const auto page = SA::PageOf(in, out);
+            int named = 0;
+            for (const auto& p : page) named += p.name == "R3" ? 1 : 0;
+            CHECK(named == 1);
+        }
+    }
+    // A pinned wildcard named like a ranked row is placed before the fill
+    // (PASS 1w), so the fill passes the twin over: the name is shown once,
+    // on the wildcard key.
+    in.settings.keepSlotPositions = true;
+    in.wildcard.roll = false;
+    in.wildcard.pinned = static_cast<std::uint32_t>(IndexOf(in, 10));
+    const auto out = Allocate(in);
+    CHECK(out.wildcard.pin == SA::PinFate::Placed);
+    const auto page = SA::PageOf(in, out);
+    CHECK(page[7].formID == 10u);
+    for (std::size_t j = 0; j < 7; ++j) CHECK(page[j].name != "R3");
+}
+
+// -----------------------------------------------------------------------------
+// The gate: each page's cached wildcard and its clocks (core/WildcardGate.h)
+// -----------------------------------------------------------------------------
+
+namespace
+{
+    using Gate = W::Gate<4>;
+    constexpr std::int64_t kSec = 1'000'000'000LL;
+
+    auto UseAll()
+    {
+        return [](std::uint32_t) { return Huginn::Core::CachedWildcardFate::Use; };
+    }
+
+    W::CommitIn Drew(std::uint32_t form, double p = 0.25)
+    {
+        W::CommitIn c;
+        c.rollAsked = true;
+        c.drawnForm = form;
+        c.drawnUniqueID = 3;
+        c.propensity = p;
+        return c;
+    }
+
+    W::CommitIn Missed()
+    {
+        W::CommitIn c;
+        c.rollAsked = true;
+        return c;
+    }
+
+    Gate Fresh(double cooldown = 30.0, double refractory = 60.0)
+    {
+        Gate g;
+        g.settings = { true, cooldown, refractory };
+        g.Reset(0);
+        return g;
+    }
+
+    constexpr W::GatePage kMain{ .index = 0, .slotCount = 8, .seat = 7 };
+}  // namespace
+
+TEST_CASE("wildcard gate: the displayed page rolls once the refractory is over; a drawn wildcard is pinned for its cooldown")
+{
+    auto g = Fresh();
+    CHECK_FALSE(g.Plan(kMain, 59 * kSec, UseAll()).roll);   // the first window runs from the reset
+    auto plan = g.Plan(kMain, 60 * kSec, UseAll());
+    CHECK(plan.roll);
+    CHECK(plan.pinForm == 0u);
+    CHECK(g.Commit(0, Drew(0x1008), 60 * kSec) == W::CommitFate::Cached);
+    REQUIRE(g.Page(0) != nullptr);
+    CHECK(g.Page(0)->formID == 0x1008u);
+    CHECK(g.Page(0)->propensity == doctest::Approx(0.25));
+    // Pinned, never rolled, until the cooldown lapses.
+    plan = g.Plan(kMain, 89 * kSec, UseAll());
+    CHECK_FALSE(plan.roll);
+    CHECK(plan.pinForm == 0x1008u);
+    CHECK(plan.pinUniqueID == 3u);
+    plan = g.Plan(kMain, 90 * kSec, UseAll());
+    CHECK(plan.expired == 0x1008u);
+    CHECK(plan.pinForm == 0u);
+    CHECK_FALSE(plan.roll);   // the refractory restarts at the expiry
+    CHECK(g.Plan(kMain, 150 * kSec, UseAll()).roll);
+}
+
+TEST_CASE("wildcard gate: one roll per refractory window -- a roll that draws nothing is spent")
+{
+    auto g = Fresh();
+    REQUIRE(g.Plan(kMain, 60 * kSec, UseAll()).roll);
+    CHECK(g.Commit(0, Missed(), 60 * kSec) == W::CommitFate::RollSpent);
+    // No retry on the next runs: the window is over.
+    CHECK_FALSE(g.Plan(kMain, 61 * kSec, UseAll()).roll);
+    CHECK_FALSE(g.Plan(kMain, 119 * kSec, UseAll()).roll);
+    CHECK(g.Plan(kMain, 120 * kSec, UseAll()).roll);
+    // A run whose seat was busy (an override) never evaluated the roll: not
+    // spent, the next run in the window rolls.
+    CHECK(g.Commit(0, W::CommitIn{}, 120 * kSec) == W::CommitFate::None);
+    CHECK(g.Plan(kMain, 121 * kSec, UseAll()).roll);
+
+    // The window, not the run, is what P(roll) is per: over many windows the
+    // share that show a wildcard is P(roll), whatever the run rate.
+    auto h = Fresh(30.0, 60.0);
+    const double pRoll = 0.3;
+    int windows = 0;
+    int shown = 0;
+    std::int64_t now = 60 * kSec;
+    for (int run = 0; run < 200000; ++run, now += kSec / 10) {
+        const auto plan2 = h.Plan(kMain, now, UseAll());
+        if (!plan2.roll) continue;
+        ++windows;
+        // A deterministic low-discrepancy uniform for the roll.
+        const double u = std::fmod(windows * 0.6180339887498949, 1.0);
+        if (u < pRoll) {
+            ++shown;
+            (void)h.Commit(0, Drew(0x2000, pRoll), now);
+        } else {
+            (void)h.Commit(0, Missed(), now);
+        }
+    }
+    REQUIRE(windows > 100);
+    CHECK(static_cast<double>(shown) / windows == doctest::Approx(pRoll).epsilon(0.05));
+}
+
+TEST_CASE("wildcard gate: only the displayed page rolls; an off-screen page pins only its own wildcard (the Wheeler leak)")
+{
+    auto g = Fresh(1000.0, 0.0);
+    REQUIRE(g.Plan(kMain, kSec, UseAll()).roll);
+    (void)g.Commit(0, Drew(0x1008), kSec);
+    // Page 1 off screen: no roll, and not page 0's wildcard.
+    const W::GatePage wheel{ .index = 1, .slotCount = 8, .seat = 7, .display = false };
+    auto plan = g.Plan(wheel, 2 * kSec, UseAll());
+    CHECK_FALSE(plan.roll);
+    CHECK(plan.pinForm == 0u);
+    // Page 1 on screen rolls its own; off screen again it pins that one.
+    const W::GatePage shown1{ .index = 1, .slotCount = 8, .seat = 7 };
+    REQUIRE(g.Plan(shown1, 3 * kSec, UseAll()).roll);
+    (void)g.Commit(1, Drew(0x3000), 3 * kSec);
+    plan = g.Plan(wheel, 4 * kSec, UseAll());
+    CHECK(plan.pinForm == 0x3000u);
+    CHECK(g.Plan(kMain, 4 * kSec, UseAll()).pinForm == 0x1008u);
+    // A page with no wildcard key: nothing; past the page count: nothing.
+    plan = g.Plan({ .index = 2, .slotCount = 1, .seat = W::kNoSeat }, 5 * kSec, UseAll());
+    CHECK_FALSE(plan.roll);
+    CHECK(plan.pinForm == 0u);
+    CHECK_FALSE(g.Plan({ .index = 9, .slotCount = 8, .seat = 7 }, 5 * kSec, UseAll()).roll);
+    CHECK(g.Commit(9, Drew(1), 5 * kSec) == W::CommitFate::None);
+    // Disabled: nothing.
+    g.settings.enabled = false;
+    CHECK(g.Plan(kMain, 6 * kSec, UseAll()).pinForm == 0u);
+}
+
+TEST_CASE("wildcard gate: combat drops every page's wildcard and places none; its end restarts every refractory")
+{
+    auto g = Fresh(1000.0, 10.0);
+    REQUIRE(g.Plan(kMain, 10 * kSec, UseAll()).roll);
+    (void)g.Commit(0, Drew(0x1008), 10 * kSec);
+    const W::GatePage shown1{ .index = 1, .slotCount = 8, .seat = 7 };
+    REQUIRE(g.Plan(shown1, 20 * kSec, UseAll()).roll);
+    (void)g.Commit(1, Drew(0x3000), 20 * kSec);
+
+    W::GatePage fight = kMain;
+    fight.inCombat = true;
+    auto plan = g.Plan(fight, 30 * kSec, UseAll());
+    CHECK_FALSE(plan.roll);
+    CHECK(plan.pinForm == 0u);
+    CHECK(plan.combatDropped.size() == 2u);
+    CHECK_FALSE(g.Page(0)->Active());
+    CHECK_FALSE(g.Page(1)->Active());
+    // Off-screen pages in combat: nothing either.
+    const W::GatePage wheelFight{ .index = 1, .slotCount = 8, .seat = 7, .inCombat = true, .display = false };
+    CHECK(g.Plan(wheelFight, 31 * kSec, UseAll()).pinForm == 0u);
+    // Long after the fight began, still nothing.
+    CHECK_FALSE(g.Plan(fight, 100 * kSec, UseAll()).roll);
+    // Combat over: the refractory restarts on every page, so no roll yet.
+    plan = g.Plan(kMain, 101 * kSec, UseAll());
+    CHECK(plan.combatOver);
+    CHECK_FALSE(plan.roll);
+    CHECK_FALSE(g.Plan(kMain, 110 * kSec, UseAll()).roll);
+    CHECK(g.Plan(kMain, 111 * kSec, UseAll()).roll);
+}
+
+TEST_CASE("wildcard gate: a reshape, a refusal and an unshowable stack drop the wildcard")
+{
+    auto g = Fresh(1000.0, 10.0);
+    REQUIRE(g.Plan(kMain, 10 * kSec, UseAll()).roll);
+    (void)g.Commit(0, Drew(0x1008), 10 * kSec);
+    // The seat moves under an INI reload: dropped, no refractory owed.
+    const W::GatePage moved{ .index = 0, .slotCount = 8, .seat = 6 };
+    auto plan = g.Plan(moved, 11 * kSec, UseAll());
+    CHECK(plan.reshapeDropped == 0x1008u);
+    CHECK(plan.roll);
+
+    // The key refused the pinned wildcard (now in hand under skip-equipped):
+    // dropped, and the refractory restarts.
+    (void)g.Commit(0, Drew(0x1009), 11 * kSec);
+    REQUIRE(g.Plan(moved, 12 * kSec, UseAll()).pinForm == 0x1009u);
+    W::CommitIn refused;
+    refused.pinFound = true;
+    refused.pin = SA::PinFate::Refused;
+    CHECK(g.Commit(0, refused, 12 * kSec) == W::CommitFate::Refused);
+    CHECK_FALSE(g.Page(0)->Active());
+    CHECK_FALSE(g.Plan(moved, 21 * kSec, UseAll()).roll);
+    CHECK(g.Plan(moved, 22 * kSec, UseAll()).roll);
+    // A refusal for a wildcard whose row was not in the list is not one.
+    (void)g.Commit(0, Drew(0x100A), 22 * kSec);
+    refused.pinFound = false;
+    CHECK(g.Commit(0, refused, 23 * kSec) == W::CommitFate::None);
+    CHECK(g.Page(0)->Active());
+    // SeatBusy keeps it.
+    W::CommitIn busy;
+    busy.pinFound = true;
+    busy.pin = SA::PinFate::SeatBusy;
+    CHECK(g.Commit(0, busy, 24 * kSec) == W::CommitFate::None);
+    CHECK(g.Page(0)->formID == 0x100Au);
+
+    // The page's wheel cannot show any row of it (uid-less gear): dropped, and
+    // a roll may follow at once; a form absent from the list is kept.
+    plan = g.Plan(moved, 25 * kSec, [](std::uint32_t) { return Huginn::Core::CachedWildcardFate::Absent; });
+    CHECK(plan.pinForm == 0x100Au);
+    plan = g.Plan(moved, 26 * kSec, [](std::uint32_t) { return Huginn::Core::CachedWildcardFate::Drop; });
+    CHECK(plan.uidDropped == 0x100Au);
+    CHECK(plan.pinForm == 0u);
+}
+
+TEST_CASE("wildcard gate: expiry reaches every page, and a reset starts a fresh window")
+{
+    auto g = Fresh(30.0, 0.0);
+    const W::GatePage shown1{ .index = 1, .slotCount = 8, .seat = 7 };
+    REQUIRE(g.Plan(shown1, kSec, UseAll()).roll);
+    (void)g.Commit(1, Drew(0x3000), kSec);
+    CHECK_FALSE(g.UpdateExpiry(30 * kSec));
+    CHECK(g.UpdateExpiry(31 * kSec));
+    CHECK_FALSE(g.Page(1)->Active());
+    CHECK_FALSE(g.UpdateExpiry(32 * kSec));
+
+    (void)g.Commit(1, Drew(0x3001), 40 * kSec);
+    g.settings.refractorySec = 60.0;
+    g.Reset(50 * kSec);
+    CHECK_FALSE(g.Page(1)->Active());
+    CHECK_FALSE(g.Plan(kMain, 109 * kSec, UseAll()).roll);
+    CHECK(g.Plan(kMain, 110 * kSec, UseAll()).roll);
 }

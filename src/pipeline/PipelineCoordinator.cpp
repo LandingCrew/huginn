@@ -903,24 +903,6 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
     ctx.rawAssignments = slotAllocator.AllocateSlotsForPage(
         ctx.displayPageIndex, pageCandidates, ctx.overrides, ctx.playerState, ctx.worldState,
         &wildcardRequest, &wildcardResult);
-    wildcards.Commit(wildcardPage, wildcardResult);
-    // The v3 log's propensity (wp) on the eligible row the page's wildcard is
-    // (its form and stack), NaN on every other: read after the commit, so a
-    // wildcard drawn on this run carries its own.
-    {
-        const RE::FormID wildForm = wildcards.GetWildcard(ctx.displayPageIndex);
-        const float wildP = wildcards.GetWildcardPropensity(ctx.displayPageIndex, wildForm);
-        const uint16_t wildUid = wildcards.GetWildcardUniqueID(ctx.displayPageIndex);
-        // Its own stack; failing that (the allocation pinned another stack of
-        // the form, SlotAllocator), every stack of the form.
-        const bool stackListed = std::ranges::any_of(ctx.eligible,
-            [&](const auto& row) { return row.formID == wildForm && row.uniqueID == wildUid; });
-        for (auto& row : ctx.eligible) {
-            const bool it = wildForm != 0 && row.formID == wildForm && (!stackListed || row.uniqueID == wildUid);
-            row.wildcardPropensity = it ? wildP : std::numeric_limits<float>::quiet_NaN();
-        }
-    }
-
     // If an off-thread page mutation landed since the snapshot (Wheeler callback,
     // page-cycle keys, `hg page`, or a full SlotAllocator::Reset), abandon before
     // locking. SlotLocker is keyed by slot index only, so applying locks for THIS
@@ -947,6 +929,27 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
         logger::debug("[Pipeline] Page changed mid-tick ({} -> {}); abandoning tick to avoid stale locks"sv,
             ctx.displayPageIndex, livePage);
         return false;
+    }
+
+    // R10: the wildcard result is kept only for an allocation that is used --
+    // after the page-race check above, so an abandoned tick neither caches a
+    // drawn wildcard (nor logs or counts it) nor spends the window's roll.
+    wildcards.Commit(wildcardPage, wildcardResult);
+    // The v3 log's propensity (wp) on the eligible row the page's wildcard is
+    // (its form and stack), NaN on every other: read after the commit, so a
+    // wildcard drawn on this run carries its own.
+    {
+        const RE::FormID wildForm = wildcards.GetWildcard(ctx.displayPageIndex);
+        const float wildP = wildcards.GetWildcardPropensity(ctx.displayPageIndex, wildForm);
+        const uint16_t wildUid = wildcards.GetWildcardUniqueID(ctx.displayPageIndex);
+        // Its own stack; failing that (the allocation pinned another stack of
+        // the form, SlotAllocator), every stack of the form.
+        const bool stackListed = std::ranges::any_of(ctx.eligible,
+            [&](const auto& row) { return row.formID == wildForm && row.uniqueID == wildUid; });
+        for (auto& row : ctx.eligible) {
+            const bool it = wildForm != 0 && row.formID == wildForm && (!stackListed || row.uniqueID == wildUid);
+            row.wildcardPropensity = it ? wildP : std::numeric_limits<float>::quiet_NaN();
+        }
     }
 
     // Apply slot locking for temporal stability. ApplyLocks also dedups
