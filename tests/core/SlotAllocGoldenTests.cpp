@@ -37,6 +37,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <format>
 #include <map>
 #include <set>
@@ -120,6 +121,27 @@ namespace
             if (!forms.insert(p.formID).second) return std::format("form {:08X} shown twice", p.formID);
         }
         if (wildcards > 1) return std::format("{} wildcards", wildcards);
+        // A drawn wildcard is never a form a slot lock holds; a row the
+        // wildcard moved is shown on the key it moved to, and the row that
+        // left in its place is not on the page.
+        const auto& w = out.wildcard;
+        if (w.drawn != SA::kNone) {
+            const auto& held = in.wildcard.heldForms;
+            if (std::find(held.begin(), held.end(), in.candidates[w.drawn].formID) != held.end()) {
+                return std::format("drew {:08X}, which a lock holds", in.candidates[w.drawn].formID);
+            }
+        }
+        if (w.movedTo != SA::npos) {
+            if (w.movedTo >= page.size() || w.moved == SA::kNone || w.left == SA::kNone) return "a bad move record";
+            if (page[w.movedTo].formID != in.candidates[w.moved].formID) {
+                return std::format("the moved row is not on key {}", w.movedTo);
+            }
+            for (const auto& p : page) {
+                if (p.kind != SA::Kind::Empty && p.formID == in.candidates[w.left].formID) {
+                    return "the row the move put off the page is still on it";
+                }
+            }
+        }
         if (out.wildcard.seat != seat) return "WildcardOut::seat is not SeatOf";
         return {};
     }
@@ -427,7 +449,7 @@ TEST_CASE("slot golden: old and new arithmetic agree on synthetic snapshots (shi
              "slot hold: holder gave way", "slot hold: gave way under the cap", "job key pulled from Regular",
              "returner: home", "returner: taken", "returner: waits", "returner: class",
              "class cap kept an item off", "stale generation cleared", "seatMoved", "wildcard shown",
-             "remembered shown" }) {
+             "wildcard: the seat's row moved to the weakest key", "remembered shown" }) {
         CHECK_MESSAGE(acc.cov.counts[path] > 0, path);
     }
 }

@@ -914,7 +914,37 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
         .hideUidlessGear = ctx.hideUidlessGear,
         .display = true,
     };
-    const auto wildcardRequest = wildcards.Plan(wildcardPage, ctx.scoredCandidates);
+    // Plan steps the gate's clocks before the page-race check below (expiry,
+    // the combat drop and refractory restart, a reshape, the uid drop); only
+    // Commit waits for it. So a tick abandoned after asking for a roll leaves
+    // the window open, and the next run rolls with fresh uniforms: with page
+    // races (about none in play) the logged per-window propensity runs a
+    // little low against the true chance of a wildcard in that window.
+    auto wildcardRequest = wildcards.Plan(wildcardPage, ctx.scoredCandidates);
+    // A roll on a key the lock still holds would draw a wildcard the player
+    // does not see (ApplyLocks keeps the locked item), yet cache, log and
+    // count it: the roll waits for a run with the seat unlocked, in the same
+    // window (not spent: Commit sees no rollAsked). And what a lock holds on
+    // any key is kept out of the draw: the post-lock dedup would clear the
+    // wildcard as a second copy, and the rows just under the cut -- the
+    // likeliest draws -- are the ones that just left a key and are still
+    // held there. A lock with no time left lets go in ApplyLocks this run.
+    if (wildcardRequest.roll) {
+        const auto locks = Slot::SlotLocker::GetSingleton().GetLockSnapshot();
+        const auto holding = [](const Slot::SlotLocker::SlotLockView& v) {
+            return v.isLocked && (v.frozen || v.remainingMs > 0.0f);
+        };
+        const size_t seat = ctx.displayWildcardSeat;
+        if (seat < locks.size() && holding(locks[seat])) {
+            wildcardRequest.roll = false;
+        } else {
+            for (size_t s = 0; s < locks.size() && s < ctx.displaySlotCount; ++s) {
+                if (holding(locks[s]) && locks[s].previousFormID != 0) {
+                    wildcardRequest.heldForms.push_back(locks[s].previousFormID);
+                }
+            }
+        }
+    }
     Slot::WildcardResult wildcardResult;
     ctx.rawAssignments = slotAllocator.AllocateSlotsForPage(
         ctx.displayPageIndex, pageCandidates, ctx.overrides, ctx.playerState, ctx.worldState,

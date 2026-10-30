@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 namespace Huginn::Slot
 {
@@ -28,6 +29,9 @@ namespace Huginn::Slot
         double uRoll = 1.0;              // uniforms in [0, 1)
         double uDraw = 0.0;
         Core::Wildcard::Params params;
+        // Forms a slot lock holds on the page's keys (PipelineCoordinator, from
+        // SlotLocker::GetLockSnapshot): kept out of the draw's pool.
+        std::vector<RE::FormID> heldForms;
     };
 
     /// ...and what the allocation did with it.

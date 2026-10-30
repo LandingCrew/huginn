@@ -329,6 +329,7 @@ TEST_CASE("wildcard roll: draws from what the page does not show, onto the seat,
         CHECK(page[7].kind == SA::Kind::Wildcard);
         CHECK(page[7].formID == form);
         for (std::size_t j = 0; j < 7; ++j) CHECK(page[j].formID == j + 1);
+        CHECK(out.wildcard.movedTo == SA::npos);   // row 8 is the weakest: it leaves, nothing moves
         // Against the seat's occupant (row 8, mu 5): w = logistic(mu - 5) * 0.5.
         const double mu = in.candidates[out.wildcard.drawn].score;
         CHECK(out.wildcard.rel == doctest::Approx(W::Logistic(mu - 5.0)));
@@ -558,6 +559,145 @@ TEST_CASE("wildcard roll: a row named like one the page shows is not drawn (a se
     const auto page = SA::PageOf(in, out);
     CHECK(page[7].formID == 10u);
     for (std::size_t j = 0; j < 7; ++j) CHECK(page[j].name != "R3");
+}
+
+TEST_CASE("wildcard key: the page's best row seated on the wildcard key is not pushed off the page")
+{
+    // With seating the seat's owner is whoever got there first, and the slot
+    // hold (R9's challenger rule) keeps it: it can be the page's best row.
+    // The wildcard takes the seat, not that row's place on the page: the row
+    // moves to the key of the weakest row shown, and that row leaves instead.
+    // Before this, the page lost row 1 for the whole cooldown while rows 2-8
+    // kept keys 1-7 (the verifier's probe on PR #230).
+    auto base = Page(MainPage(), Ranked(12, 0.5));
+    base.settings.keepSlotPositions = true;
+    base.settings.holdSeatedItems = true;
+    base.memory.seats[7] = 1;                                            // row 1, the best, owns key 8
+    for (std::size_t j = 0; j < 7; ++j) base.memory.seats[j] = j + 2;    // rows 2..8 own keys 1..7
+    const auto one = static_cast<std::uint32_t>(IndexOf(base, 1));
+    const auto seven = static_cast<std::uint32_t>(IndexOf(base, 7));
+    const auto eight = static_cast<std::uint32_t>(IndexOf(base, 8));
+
+    // No wildcard: the page as seated.
+    CHECK(Shown(base, Allocate(base)) == std::vector<std::uint32_t>{ 2, 3, 4, 5, 6, 7, 8, 1 });
+
+    SUBCASE("a cached wildcard pinned: row 1 takes key 7 from row 8, held there, home when it ends")
+    {
+        auto in = base;
+        in.wildcard.pinned = static_cast<std::uint32_t>(IndexOf(in, 12));
+        const auto out = Allocate(in);
+        CHECK(out.wildcard.pin == SA::PinFate::Placed);
+        CHECK(Shown(in, out) == std::vector<std::uint32_t>{ 2, 3, 4, 5, 6, 7, 1, 12 });
+        CHECK(out.wildcard.movedTo == 6u);
+        CHECK(out.wildcard.moved == one);
+        CHECK(out.wildcard.left == eight);
+        // The next run holds it where it moved to (a guest): nothing moves.
+        in.memory = out.memory;
+        in.generationMatches = out.generationMatches;
+        in.nowNs += 500'000'000LL;
+        const auto out2 = Allocate(in);
+        CHECK(Shown(in, out2) == std::vector<std::uint32_t>{ 2, 3, 4, 5, 6, 7, 1, 12 });
+        CHECK(out2.wildcard.movedTo == SA::npos);
+        // The wildcard ends: row 1 goes home to key 8, row 8 back to key 7.
+        in.memory = out2.memory;
+        in.generationMatches = out2.generationMatches;
+        in.nowNs += 500'000'000LL;
+        in.wildcard.pinned = SA::kNone;
+        const auto out3 = Allocate(in);
+        CHECK(Shown(in, out3) == std::vector<std::uint32_t>{ 2, 3, 4, 5, 6, 7, 8, 1 });
+    }
+
+    SUBCASE("a roll: the same move, and the cut is row 8 (mu 5), the row that leaves")
+    {
+        auto in = base;
+        in.wildcard.roll = true;
+        in.wildcard.uRoll = 0.0;
+        in.wildcard.params = { 0.165, 0.5, 0.1 };
+        for (int k = 0; k < 20; ++k) {
+            in.wildcard.uDraw = (k + 0.5) / 20.0;
+            const auto out = Allocate(in);
+            REQUIRE(out.wildcard.drawn != SA::kNone);
+            const auto form = in.candidates[out.wildcard.drawn].formID;
+            CHECK(form >= 9u);
+            CHECK(out.wildcard.pool == 4u);
+            const auto page = SA::PageOf(in, out);
+            for (std::size_t j = 0; j < 6; ++j) CHECK(page[j].formID == j + 2);
+            CHECK(page[6].formID == 1u);
+            CHECK(page[6].kind == SA::Kind::Normal);
+            CHECK(page[7].kind == SA::Kind::Wildcard);
+            CHECK(page[7].formID == form);
+            CHECK(out.wildcard.movedTo == 6u);
+            CHECK(out.wildcard.moved == one);
+            CHECK(out.wildcard.left == eight);
+            const double mu = in.candidates[out.wildcard.drawn].score;
+            CHECK(out.wildcard.rel == doctest::Approx(W::Logistic(mu - 5.0)));
+            CHECK(out.wildcard.weight == doctest::Approx(0.5 * W::Logistic(mu - 5.0)));
+        }
+    }
+
+    SUBCASE("a key whose row a slot lock holds is passed over, and a held form is never drawn")
+    {
+        // Row 8 is lock-held on key 7, and row 9 on some key of the page (the
+        // lock shows it, not the allocation): row 1 takes key 6 from row 7
+        // (mu 6), the cut is 6, and the pool is rows 10-12.
+        auto in = base;
+        in.wildcard.roll = true;
+        in.wildcard.uRoll = 0.0;
+        in.wildcard.heldForms = { 8u, 9u };
+        for (int k = 0; k < 20; ++k) {
+            in.wildcard.uDraw = (k + 0.5) / 20.0;
+            const auto out = Allocate(in);
+            REQUIRE(out.wildcard.drawn != SA::kNone);
+            const auto form = in.candidates[out.wildcard.drawn].formID;
+            CHECK(form >= 10u);
+            CHECK(out.wildcard.pool == 3u);
+            const auto page = SA::PageOf(in, out);
+            CHECK(page[5].formID == 1u);
+            CHECK(page[6].formID == 8u);
+            CHECK(out.wildcard.movedTo == 5u);
+            CHECK(out.wildcard.left == seven);
+            const double mu = in.candidates[out.wildcard.drawn].score;
+            CHECK(out.wildcard.rel == doctest::Approx(W::Logistic(mu - 6.0)));
+        }
+    }
+}
+
+TEST_CASE("wildcard roll: the cut is the row that leaves the page -- the seat's occupant when no other key takes it")
+{
+    // Key 8 is a class-3 job key and row 3 is class 3 only, so no other key
+    // takes it: it stands on key 8 though it is the page's third-best row,
+    // and a wildcard puts it off the page. The weights read against row 3
+    // (mu 10), not against the page's lowest row (row 8, mu 5) -- with
+    // seating off and on (the seat's occupant then sits there by seating).
+    for (const bool keep : { false, true }) {
+        auto in = Page(MainPage(), Ranked(12, 0.5));
+        in.settings.keepSlotPositions = keep;
+        in.settings.holdSeatedItems = keep;
+        in.slots[7].classIndex = 3;
+        in.slots[7].regular = false;
+        in.candidates[IndexOf(in, 3)].matchMask = 1u << 3;
+        for (const std::uint32_t f : { 9u, 10u }) in.candidates[IndexOf(in, f)].matchMask |= 1u << 3;
+        in.wildcard.roll = true;
+        in.wildcard.uRoll = 0.0;
+        in.wildcard.params = { 0.165, 0.5, 0.1 };
+        for (int k = 0; k < 20; ++k) {
+            in.wildcard.uDraw = (k + 0.5) / 20.0;
+            const auto out = Allocate(in);
+            REQUIRE(out.wildcard.drawn != SA::kNone);
+            const auto form = in.candidates[out.wildcard.drawn].formID;
+            CHECK_MESSAGE((form == 9u || form == 10u), "keep=", keep);
+            CHECK(out.wildcard.pool == 2u);
+            CHECK(out.wildcard.movedTo == SA::npos);
+            const auto page = SA::PageOf(in, out);
+            const std::uint32_t expect[7] = { 1, 2, 4, 5, 6, 7, 8 };
+            for (std::size_t j = 0; j < 7; ++j) CHECK(page[j].formID == expect[j]);
+            CHECK(page[7].formID == form);
+            const double mu = in.candidates[out.wildcard.drawn].score;
+            CHECK_MESSAGE(out.wildcard.rel == doctest::Approx(W::Logistic(mu - 10.0)), "keep=", keep);
+            CHECK(out.wildcard.weight == doctest::Approx(0.5 * W::Logistic(mu - 10.0)));
+            CHECK(out.wildcard.topWeight == doctest::Approx(0.5 * W::Logistic(4.0 - 10.0)));   // row 9, mu 4
+        }
+    }
 }
 
 // -----------------------------------------------------------------------------

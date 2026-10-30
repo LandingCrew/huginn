@@ -453,6 +453,7 @@ namespace Huginn::Slot
             w.uRoll = wildcard->uRoll;
             w.uDraw = wildcard->uDraw;
             w.params = wildcard->params;
+            w.heldForms.assign(wildcard->heldForms.begin(), wildcard->heldForms.end());
             if (wildcard->pinForm != 0) {
                 uint32_t first = SA::kNone;
                 for (uint32_t i = 0; i < in.candidates.size(); ++i) {

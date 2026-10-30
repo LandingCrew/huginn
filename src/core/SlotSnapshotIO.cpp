@@ -312,6 +312,11 @@ namespace Huginn::Core::SlotAlloc
                 w.pinned == kNone ? std::string("-") : std::format("{}", w.pinned), Bit(w.roll), Num(w.uRoll),
                 Num(w.uDraw), Num(w.params.baseRoll), Num(w.params.maxRoll), Num(w.params.uniformShare));
         }
+        if (!in.wildcard.heldForms.empty()) {
+            out += "WHELD";
+            for (const auto f : in.wildcard.heldForms) out += std::format(" {:x}", f);
+            out += '\n';
+        }
         for (const auto& o : in.overrides) {
             out += std::format("OVR {:x} {} {:x} {} {} {} {} {} {:x} {} {}\n", o.formID, o.uniqueID, o.dedupKey,
                 o.condition, o.category, Bit(o.pinnedToSlot), Bit(o.isEquipped), Bit(o.playerEquipped), o.matchMask,
@@ -521,6 +526,8 @@ namespace Huginn::Core::SlotAlloc
                 if (!ReadMemoryLine(tk, cur.memoryAfter)) return fail("bad OMEM");
             } else if (tag == "ODEP") {
                 if (!ReadDepLine(tk, cur.memoryAfter)) return fail("bad ODEP");
+            } else if (tag == "WHELD") {
+                while (!tk.Done() && tk.ok) in.wildcard.heldForms.push_back(tk.Int<std::uint32_t>(16));
             } else if (tag == "KEPT") {
                 while (!tk.Done() && tk.ok) cur.keptOff.push_back(tk.Int<std::uint32_t>(16));
             } else if (tag == "EVENTS") {

@@ -16,10 +16,12 @@
 //           where an active need meets the row's effects), for an item never
 //           picked or whose battery has run down (b back at its prior
 //           N(0, 0.25)), for a newly learned spell (no b yet);
-//   mu_cut  the score of the row the wildcard displaces (the seat's ranked
-//           occupant), so rel_i is the model's own probability that the
-//           player prefers i to what the key would otherwise show: logistic of
-//           a logit difference is the pairwise choice probability.
+//   mu_cut  the score of the row the wildcard puts off the page (the seat's
+//           ranked occupant, or the weaker row whose key that occupant moves
+//           to: SlotAllocCore.h RehomeFor), so rel_i is the model's own
+//           probability that the player prefers i to what the page would
+//           otherwise show: logistic of a logit difference is the pairwise
+//           choice probability.
 //
 // "Relevance x sigma" (roadmap R10) read that way: an item close to the page
 // that the model is unsure of scores high; a sure loser (low mu, low sd) and a

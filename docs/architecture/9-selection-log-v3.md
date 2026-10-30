@@ -392,13 +392,17 @@ the draw's shares of every pool row of that FormID (two stacks of one weapon
 are two rows), the shares being `fUniformShare` / N plus the rest in
 proportion to relevance × sd. It is a **per-window** propensity: each page
 rolls once per refractory window (the first run after `fRefractorySeconds`
-whose wildcard key can take one), and a roll that fails or draws nothing
+whose wildcard key can take one: not held by an override, a Remembrance hold
+or a slot lock), and a roll that fails or draws nothing
 restarts the refractory instead of trying again on the next run. So `wp` is
 the probability that this window shows that FormID on the wildcard key, given
 the state on the run that rolled; its complement for the window, 1 − P(roll),
 is the chance the window showed no wildcard (not logged: a window without one
 writes nothing). An inverse-propensity reader weights a wildcard pick by 1 /
-`wp` per window, not per pipeline run. Before 0.24.3: P(its slot rolled a
+`wp` per window, not per pipeline run. One known leak: a tick abandoned by a
+page race after its roll (the page changed mid-tick, about never in play)
+leaves the window open, and the next run rolls again, so with page races the
+true chance per window runs a little above `wp`. Before 0.24.3: P(its slot rolled a
 wildcard) × (the entries of its FormID in the pool) / (the pool it was drawn
 from), given the earlier rolls of the same pass, the pool holding one entry
 per candidate row of the top row's type; those rolls retried on every run, so

@@ -182,6 +182,7 @@ namespace Huginn::Test
             if (!out.skipped.empty()) ++counts["class cap passed an item over"];
             if (!SA::KeptOff(in, out).empty()) ++counts["class cap kept an item off"];
             if (out.clearedAllPages) ++counts["stale generation cleared"];
+            if (out.wildcard.movedTo != SA::npos) ++counts["wildcard: the seat's row moved to the weakest key"];
             for (const auto& s : out.slots) {
                 if (s.seatMoved) ++counts["seatMoved"];
                 if (s.kind == SA::Kind::Wildcard) ++counts["wildcard shown"];
@@ -362,6 +363,11 @@ namespace Huginn::Test
                 in.wildcard.uRoll = std::uniform_real_distribution<double>(0.0, 1.0)(m_rng);
                 in.wildcard.uDraw = std::uniform_real_distribution<double>(0.0, 1.0)(m_rng);
                 if (Chance(30)) in.wildcard.params = { 1.0, 1.0, Chance(50) ? 0.0 : 0.1 };
+                // A form a slot lock holds (kept out of the draw), with no draw
+                // of the generator's own, so every later input stays as it was.
+                if (in.wildcard.uDraw < 0.3 && in.candidates.size() > 2) {
+                    in.wildcard.heldForms = { in.candidates[1].formID };
+                }
             }
             return in;
         }

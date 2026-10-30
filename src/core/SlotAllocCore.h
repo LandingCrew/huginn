@@ -193,6 +193,12 @@ namespace Huginn::Core::SlotAlloc
             double uRoll = 1.0;             // uniforms in [0, 1): the roll, then the draw
             double uDraw = 0.0;
             Core::Wildcard::Params params;
+            /// Forms a slot lock holds on some key of this page (SlotLocker:
+            /// a lock shows its item whatever the allocation says). Never
+            /// drawn: the post-lock dedup would clear the wildcard as a second
+            /// copy, and the rows just under the cut -- the likeliest draws --
+            /// are the ones that just left a key and are still held there.
+            std::vector<std::uint32_t> heldForms;
         } wildcard;
 
         /// R9: the ranking run's beliefs, which CandidateRec::beliefRow
@@ -237,6 +243,12 @@ namespace Huginn::Core::SlotAlloc
         bool rollAsked = false;           // Input::WildcardIn::roll, and the seat showed a ranked row (or none)
         bool rolled = false;              // ...and uRoll came up under pRoll
         std::uint32_t drawn = kNone;      // the row drawn and shown on the seat (rolled with a pool)
+        // The seat's displaced row, when it outranked the weakest ranked row
+        // on another key that takes it: it moved to that key (RehomeFor) and
+        // that row left the page instead. npos / kNone when nothing moved.
+        std::size_t movedTo = npos;       // the key the displaced row moved to
+        std::uint32_t moved = kNone;      // the displaced row (a candidate index)
+        std::uint32_t left = kNone;       // the row that left the page in its place
         std::uint32_t pool = 0;           // rows it was drawn from
         double pRoll = 0.0;               // P(roll) this run (WildcardPick RollProbability)
         double pDraw = 0.0;               // P(the draw shows the drawn row's form | rolled)
@@ -643,7 +655,10 @@ namespace Huginn::Core::SlotAlloc
             void RecordSeating();
             void PullIntoEmptyJobKeys(std::size_t priorityCount);
             void PlaceCachedWildcard();
+            void RehomeSeatOwner();
             void DrawWildcard();
+            /// The key the seat's displaced row `d` should move to, or npos.
+            [[nodiscard]] std::size_t RehomeFor(std::uint32_t d);
 
             const Input& m_in;
             const Policy& m_p;
@@ -729,6 +744,9 @@ namespace Huginn::Core::SlotAlloc
                 // pass 2's, so this cannot re-place an item already shown.
                 Recount();
                 Fill(priorityCount, /*refill=*/true);
+                // PASS 4p (R10): the pinned wildcard does not push the seat's
+                // owner off the page when it outranks the weakest row shown.
+                RehomeSeatOwner();
                 // PASS 4w (R10): a roll draws the wildcard from what the
                 // finished page does not show and puts it on the seat. Before
                 // the record, so the seat's displaced owner is remembered as
@@ -951,7 +969,10 @@ namespace Huginn::Core::SlotAlloc
             // Sparks landed in slot 3, and it all ran backwards when the
             // override ended -- one override, six slot changes (2026-09-27
             // 19:08:30-37). It is still held where it stands (the guests
-            // below), and goes home when the override ends.
+            // below), and goes home when the override ends. R10: the pinned
+            // wildcard displaces its seat's owner the same way; an owner it
+            // keeps off the page entirely is put back, in place of the weakest
+            // row shown, by RehomeSeatOwner (pass 4p) when it outranks it.
             std::set<std::uint32_t> displacedOwners;
             for (std::size_t j = 0; j < slotCount; ++j) {
                 if (!m_state[j].IsPinned() || seats[j] == 0) continue;
@@ -1531,6 +1552,8 @@ namespace Huginn::Core::SlotAlloc
         // a cache nothing can show block the next roll. An override or a
         // Remembrance hold on the seat, or showing the item, wins for this run
         // (SeatBusy): the manager keeps the wildcard for when they let go.
+        // The seat's owner is not pushed off the page by it while it outranks
+        // the weakest row shown (RehomeSeatOwner, after the refill).
         template <class Policy>
         void Engine<Policy>::PlaceCachedWildcard()
         {
@@ -1557,15 +1580,100 @@ namespace Huginn::Core::SlotAlloc
             w.pin = PinFate::Placed;
         }
 
+        // The key the seat's displaced row d moves to, or npos (it leaves the
+        // page). The wildcard takes the seat, not the place of whatever row
+        // happens to sit there: with seating, the seat's owner is whoever got
+        // there first and the challenger rule keeps it (R9), so it can be the
+        // page's best row -- which the old engine never let a wildcard take
+        // ("slot 0 is always excluded (top-scored pick)"). So d moves to the
+        // key of the weakest ranked row that takes it, and that row leaves
+        // instead, when d outranks it (each after the class cap, with both
+        // out of the count, as the slot hold weighs a holder). One key
+        // changes besides the seat, and the page loses its weakest row, not
+        // an arbitrary one. A key whose row a slot lock holds anyway
+        // (WildcardIn::heldForms) is passed over: the lock would keep that
+        // row and d would be shown nowhere until it let go.
+        template <class Policy>
+        std::size_t Engine<Policy>::RehomeFor(std::uint32_t d)
+        {
+            const auto& w = m_out.wildcard;
+            const auto& slots = m_in.slots;
+            const auto& cands = m_in.candidates;
+            const std::size_t slotCount = std::min(m_state.size(), std::min(slots.size(), kMaxSlots));
+            if (d >= cands.size()) return npos;
+            const SlotState moving{ Kind::Normal, d, false };
+            const auto& held = m_in.wildcard.heldForms;
+
+            // The weakest: lowest raw score; ties to the key filled later.
+            std::size_t to = npos;
+            for (std::size_t k = slotCount; k-- > 0;) {
+                const std::size_t j = m_order[k];
+                if (j >= slotCount || j == w.seat || m_state[j].kind != Kind::Normal) continue;
+                const auto& row = cands[m_state[j].src];
+                if (std::find(held.begin(), held.end(), row.formID) != held.end()) continue;
+                if (!SlotAccepts(slots[j], moving)) continue;
+                if (to == npos || m_p.RawGreater(m_p.Raw(cands[m_state[to].src]), m_p.Raw(row))) to = j;
+            }
+            if (to == npos) return npos;
+
+            const auto& dc = cands[d];
+            const auto& wc = cands[m_state[to].src];
+            Recount();
+            const bool dOnPage = m_state[w.seat].kind == Kind::Normal && m_state[w.seat].src == d;
+            m_cap.Remove(wc.capClass);
+            if (dOnPage) m_cap.Remove(dc.capClass);
+            const bool capped = slots[to].regular;
+            const Cap dCap = capped ? CapOf(dc.capClass) : m_p.NoCap();
+            const Cap wCap = capped ? CapOf(wc.capClass) : m_p.NoCap();
+            Recount();
+            return m_p.Greater(m_p.Apply(m_p.Raw(dc), dCap), m_p.Apply(m_p.Raw(wc), wCap)) ? to : npos;
+        }
+
+        // PASS 4p (R10): the pinned wildcard and the seat's owner. Pinned
+        // before the hold, the wildcard keeps the seat's owner out of it, and
+        // the hold keeps that owner from challenging any other key (an owner
+        // whose seat is pinned is a displaced owner, HoldIncumbents): with
+        // the other keys held, it had no way back on the page, best row or
+        // not. On the run a roll draws, DrawWildcard moves it itself, and on
+        // later runs it is held where it moved to (a guest); this catches the
+        // rest -- the owner the page does not show, while it outranks the
+        // weakest row shown. Seating only: without it there is no owner, and
+        // the fill already gave the other keys the best rows.
+        template <class Policy>
+        void Engine<Policy>::RehomeSeatOwner()
+        {
+            auto& w = m_out.wildcard;
+            if (w.pin != PinFate::Placed || w.seat >= kMaxSlots) return;
+            if (!m_in.memoryAvailable || !m_out.generationMatches) return;
+            const std::uint64_t key = m_out.memory.seats[w.seat];
+            if (key == 0) return;
+            const auto& cands = m_in.candidates;
+            std::uint32_t d = kNone;
+            for (std::uint32_t i = 0; i < cands.size(); ++i) {
+                if (!cands[i].isRememberedOnly && cands[i].dedupKey == key) { d = i; break; }
+            }
+            if (d == kNone || m_ids.contains(cands[d].formID) || m_names.contains(cands[d].name)) return;
+            const std::size_t to = RehomeFor(d);
+            if (to == npos) return;
+            w.movedTo = to;
+            w.moved = d;
+            w.left = m_state[to].src;
+            Place(to, Kind::Normal, d);
+            Assign(cands[d].formID, cands[d].name);
+        }
+
         // PASS 4w (R10): the roll. With nothing cached and the clocks open
         // (WildcardManager), on a finished page whose seat shows a ranked row
         // or nothing: the pool is every ranked row the page does not show
-        // (by formID and by name, as the fill dedups) that the seat takes;
-        // each weighs rel x sd against the seat's occupant (core/WildcardPick.h);
-        // the roll comes up with P(roll) from the pool's top weight, and the
-        // draw puts the row it picks on the seat in the occupant's place. The
-        // scores the weights read are the rows' own (mu), never the policy's
-        // capped ones: the class cap shapes the page, not the wildcard's odds.
+        // (by formID and by name, as the fill dedups) that the seat takes,
+        // less what a slot lock holds (WildcardIn::heldForms). Each weighs
+        // rel x sd against the row the wildcard puts off the page: the seat's
+        // occupant, or the weaker row whose key the occupant moves to
+        // (RehomeFor) (core/WildcardPick.h). The roll comes up with P(roll)
+        // from the pool's top weight, and the draw puts the row it picks on
+        // the seat. The scores the weights read are the rows' own (mu), never
+        // the policy's capped ones: the class cap shapes the page, not the
+        // wildcard's odds.
         template <class Policy>
         void Engine<Policy>::DrawWildcard()
         {
@@ -1578,8 +1686,11 @@ namespace Huginn::Core::SlotAlloc
 
             constexpr double kHuge = std::numeric_limits<double>::infinity();
             double muCut = -kHuge;   // an empty seat with nothing ranked shown: no cut
+            std::size_t moveTo = npos;
             if (occupant.kind == Kind::Normal) {
-                muCut = m_in.candidates[occupant.src].score;
+                moveTo = RehomeFor(occupant.src);
+                const std::uint32_t leaving = moveTo == npos ? occupant.src : m_state[moveTo].src;
+                muCut = m_in.candidates[leaving].score;
             } else {
                 double lowest = kHuge;
                 for (const auto& s : m_state) {
@@ -1596,6 +1707,7 @@ namespace Huginn::Core::SlotAlloc
                 shownIDs.insert(v.formID);
                 shownNames.insert(*v.name);
             }
+            const auto& held = wi.heldForms;
 
             const auto& seat = m_in.slots[w.seat];
             std::vector<std::uint32_t> rows;
@@ -1606,6 +1718,7 @@ namespace Huginn::Core::SlotAlloc
                 const auto& c = m_in.candidates[i];
                 if (c.isRememberedOnly || !std::isfinite(c.score)) continue;
                 if (shownIDs.contains(c.formID) || shownNames.contains(c.name)) continue;
+                if (std::find(held.begin(), held.end(), c.formID) != held.end()) continue;
                 if (!SlotAccepts(seat, SlotState{ Kind::Normal, i, false })) continue;
                 const double rel = Core::Wildcard::Relevance(c.score, muCut);
                 rows.push_back(i);
@@ -1627,6 +1740,12 @@ namespace Huginn::Core::SlotAlloc
             w.weight = weights[k];
             w.rel = rels[k];
             w.sd = m_in.candidates[rows[k]].sd;
+            if (moveTo != npos) {
+                w.movedTo = moveTo;
+                w.moved = occupant.src;
+                w.left = m_state[moveTo].src;
+                Place(moveTo, Kind::Normal, occupant.src);
+            }
             Place(w.seat, Kind::Wildcard, rows[k]);
         }
     }  // namespace Detail

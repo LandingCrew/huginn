@@ -2,6 +2,7 @@
 #include "core/WheelUidGate.h"   // KeptOffWheelPage, FateOfCachedWildcard
 #include "telemetry/SoakMetrics.h"   // R10: the heartbeat's wildcard rolls
 #include <chrono>
+#include <format>
 #include <limits>
 
 namespace Huginn::Scoring
@@ -129,10 +130,15 @@ namespace Huginn::Scoring
         Telemetry::SoakMetrics::GetSingleton().RecordWildcardRolled(relevant);
 
         // A transition (at most one per cooldown + refractory per page): info.
+        // The key's own item, when it outranked the page's weakest row, moved
+        // to that row's key (core RehomeFor): name the key it went to.
+        const std::string moved = w.movedTo == Core::SlotAlloc::npos
+            ? std::string()
+            : std::format("; its item moved to key {}", w.movedTo + 1);
         logger::info("[Wildcard] Page {} key {}: '{}' (p={:.3f}: roll {:.2f} x draw {:.3f} of {}; "
-            "rel={:.3f} sd={:.3f} w={:.3f}, top w={:.3f}{}), {:.0f}s"sv,
+            "rel={:.3f} sd={:.3f} w={:.3f}, top w={:.3f}{}{}), {:.0f}s"sv,
             page.index, w.seat + 1, d.GetName(), w.Propensity(), w.pRoll, w.pDraw, w.pool,
-            w.rel, w.sd, w.weight, w.topWeight, relevant ? ", relevant" : "", m_gate.settings.cooldownSec);
+            w.rel, w.sd, w.weight, w.topWeight, relevant ? ", relevant" : "", moved, m_gate.settings.cooldownSec);
     }
 
     bool WildcardManager::UpdateExpiry()

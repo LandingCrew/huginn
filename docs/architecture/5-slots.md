@@ -158,7 +158,7 @@ classifications, then `FoodAny` before `AlcoholAny` before `PotionsAny`, then
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
 | `classification` | `SlotClassification` | `Regular` | What type of candidate can appear |
-| `wildcardsEnabled` | `bool` | `true` | Allow wildcard exploration picks |
+| `wildcardsEnabled` | `bool` | `true` | May be the page's wildcard key (the last such key in fill order is; R10) |
 | `overrideFilter` | `OverrideFilter` | `Any` | Which override categories accepted (`None`, `Any`, `HP`, `MP`, `SP`, `Other`) |
 | `skipEquipped` | `bool` | `true` | Skip candidates already equipped (show alternatives only). Default on since v0.21.51 |
 | `remembrance` | `bool` | `true` | Pressing this slot holds what the equip took off here (see [Remembrance](#remembrance)) |
@@ -1128,7 +1128,7 @@ whose only wildcard-enabled key is its top one, or a one-key page, has none.
 position, and the slot hold and the fill carried special cases for the swapped
 row (it scored low by design, so the hold had to exempt it; the class-capped
 fill had to keep its position). Both special cases are gone. The allocation
-core has two passes of its own:
+core has passes of its own:
 
 - **PASS 1w** (after overrides and Remembrance, before the hold and the fill):
   the page's cached wildcard is pinned on its seat (`Kind::Wildcard`, which
@@ -1137,6 +1137,18 @@ core has two passes of its own:
   wins the run (`PinFate::SeatBusy`, kept); a seat that no longer takes the
   item (its class; equipped under skip-equipped -- the player has it in hand)
   refuses it (`PinFate::Refused`, the manager drops it).
+- **PASS 4p** (after the refill, seating on): the seat's owner. Pinned before
+  the hold, the wildcard keeps its seat's owner out of it, and the hold keeps
+  that owner from challenging any other key (a displaced owner, as with an
+  override). With the other keys held it had no way back on the page, even as
+  the page's best row: with seating, which row owns the wildcard key is
+  whatever got there first, and R9's challenger rule keeps it there. So an
+  owner the page does not show, while it outranks the weakest ranked row on a
+  key that takes it, moves to that key and the weakest row leaves instead
+  (`RehomeSeatOwner`, `RehomeFor`; each after the class cap, as the hold weighs
+  a holder). The old engine kept the top pick out of the wildcard's reach
+  ("slot 0 is always excluded"); this keeps that promise for any row that
+  would otherwise be shown.
 - **PASS 4w** (on the finished page, before the seating record): the roll.
   The pool is every ranked row the page does not show (by formID and by name)
   that the seat takes -- every item type; the old same-type draw is gone. Each
@@ -1147,13 +1159,29 @@ core has two passes of its own:
   ```
 
   with mu the choice score, sd its posterior standard deviation, and mu_cut
-  the score of the seat's ranked occupant (the row the wildcard displaces), so
-  rel is the model's own probability that the player prefers the row to what
-  the key would show. P(roll) = base + (max - base) * min(1, max_i w_i / 0.25)
+  the score of the row the wildcard puts off the page, so rel is the model's
+  own probability that the player prefers the row to what the page would
+  show. That row is the seat's occupant, unless the occupant outranks the
+  weakest ranked row on another key that takes it: then the occupant moves to
+  that key and the weakest row leaves (`RehomeFor`, as in PASS 4p), and mu_cut
+  is its score. One key changes besides the seat; the `[Wildcard]` line says
+  `its item moved to key J`. P(roll) = base + (max - base) * min(1, max_i w_i / 0.25)
   (0.25 = an item tied with the cut at the prior sd of b, 0.5). The draw is a
   mixture: `fUniformShare` uniform over the pool, the rest in proportion to w.
-  The row drawn replaces the occupant on the seat; the occupant is remembered
-  as departed, and home keys bring it back when the wildcard ends.
+  The row drawn takes the seat. The row that left is remembered as departed,
+  and home keys bring it back when the wildcard ends; a moved occupant keeps
+  its claim on the seat (it is on screen) and goes home then too.
+- **Slot locks** (`PipelineCoordinator::AllocateAndLock`, from
+  `SlotLocker::GetLockSnapshot`). The roll runs before `ApplyLocks`, and a
+  locked key shows its locked item whatever the allocation says. So a roll
+  waits while the seat's lock still holds (not spent: the next unlocked run in
+  the window rolls), and every form a lock holds on the page is kept out of
+  the pool (`WildcardIn::heldForms`): the post-lock dedup would clear such a
+  wildcard as a second copy, and the rows just under the cut -- the likeliest
+  draws -- are the ones that just left a key and are still held there. The
+  move above passes over a key whose row a lock holds. Without this a drawn
+  wildcard could be cached, logged and counted in `rolled=` for up to the lock
+  duration (3 s) before the player saw it, or never.
 
 The math is `src/core/WildcardPick.h`; the host tests are
 `tests/core/WildcardTests.cpp`. Rows with no sd (the fallback ranking, no
@@ -1176,7 +1204,10 @@ the uid check on the ranked list, the logs and the heartbeat:
   page -- ask for a roll with two uniforms;
 - `Commit(page, result)`, after it (and only for an allocation the pipeline
   keeps: after the page-race check, so an abandoned tick caches, logs and
-  counts nothing): cache a drawn wildcard (info line `[Wildcard] Page P key
+  counts nothing; `Plan` itself steps the clocks before that check, so an
+  abandoned tick that asked for a roll leaves the window open and the next run
+  rolls with fresh uniforms -- with page races, about none in play, the logged
+  per-window propensity runs a little low): cache a drawn wildcard (info line `[Wildcard] Page P key
   K: 'name' (p=..: roll .. x draw .. of N; rel= sd= w= ..)`), drop a refused
   one, and spend a roll that drew nothing;
 - `UpdateExpiry()`, every tick, across all pages.
@@ -1184,8 +1215,8 @@ the uid check on the ranked list, the logs and the heartbeat:
 **One roll per window.** Once `fRefractorySeconds` have passed since the
 page's last wildcard ended, the next run whose seat can take one rolls; a roll
 that fails (or comes up with an empty pool) is spent and the refractory
-restarts. A run whose seat an override or a hold has never evaluates the roll,
-and the next run in the window tries. So P(roll) is the chance per window that
+restarts. A run whose seat an override, a hold or a slot lock has never
+evaluates the roll, and the next run in the window tries. So P(roll) is the chance per window that
 a wildcard appears and the uncertainty term governs how often they do: with
 the shipped clocks a page shows one about every 30 + 60 / P(roll) seconds
 (150 s at the max, about 6.5 minutes at the base). Before this a failed roll
@@ -1269,7 +1300,7 @@ iSlotCount = 8            ; 1-10 (clamped). Code default 7 on page 0, 3 elsewher
 
 [Page0.Slot0]
 sClassification = DamageAny   ; SlotClassification enum name (unknown -> Regular + warning)
-bWildcardsEnabled = true      ; Allow wildcard exploration picks in this slot
+bWildcardsEnabled = true      ; May be the page's wildcard key (the last such key in fill order is)
 bOverridesEnabled = HP        ; OverrideFilter: None/Any/HP/MP/SP/Other (true/false also accepted)
 iPriority = 6                 ; Allocation order (higher = filled first)
 bSkipEquipped = true          ; Skip already-equipped candidates (default on)

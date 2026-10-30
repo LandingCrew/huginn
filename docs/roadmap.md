@@ -1510,7 +1510,9 @@ wildcard picks against the soak's 8 of 333.
         rank swap, the hold's and the fill's special cases for it, and the
         same-type draw are gone.
       - **Relevance × σ:** w = logistic(μ − μ_cut) × σ (μ_cut: the row the
-        wildcard displaces; σ: the posterior sd, high for an item never
+        wildcard puts off the page -- the key's own item, or, when that item
+        outranks the weakest row shown, the weakest row, whose key it moves
+        to, so a wildcard never pushes the page's best rows off it; σ: the posterior sd, high for an item never
         picked, one whose battery ran down, a newly learned spell, a pairing
         with little evidence); the random term is a uniform share of the draw
         (`[Wildcards] fUniformShare = 0.1`), so the propensity stays exact;
@@ -1538,6 +1540,10 @@ wildcard picks against the soak's 8 of 333.
       - Out of combat a wildcard appears on key 8 only (never on another key),
         with the Wildcard subtext on the wheel; it stays about 30 s, then key
         8's own item comes back; none in combat.
+      - When key 8's own item is better than the weakest item shown, a
+        wildcard moves it to that item's key (the `[Wildcard]` line ends
+        `its item moved to key J`) rather than taking it off the page; it goes
+        back to key 8 when the wildcard ends.
       - Turn Wheeler to page 2 while page 1 shows a wildcard: page 2's key 8
         shows no wildcard label unless page 2 rolled its own.
       - The heartbeat's `wildcards rolled= relevant= picked=` over the session,
