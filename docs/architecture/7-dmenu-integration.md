@@ -232,7 +232,7 @@ sequenceDiagram
 | Button ID | dMenu label | Action |
 |---|---|---|
 | `Huginn_toggle_widget` | Show/Hide Widget | `IntuitionMenu::ToggleUserHidden()` — deliberately the *same* latch the hotkey flips, not a parallel flag. Resets to shown on load; use `bEnabled` to turn the widget off for good |
-| `Huginn_reset_weights` | Reset Learned Weights | `ResetLearningData()` — clears `FeatureBanditLearner` **and** resets `SlotLocker`, so locked slots stop pinning recommendations scored by the just-cleared table. Shared with `hg reset weights` |
+| `Huginn_reset_weights` | Reset Learned Weights | `ResetLearningData()` — clears `FeatureBanditLearner`, returns the choice learner to the bootstrap (with no bootstrap: empties the THTA / BIAS carried from the load, 0.24.18) **and** resets `SlotLocker`, so locked slots stop pinning recommendations scored by the just-cleared table. Shared with `hg reset weights` |
 | `Huginn_reset_defaults` | Reset to Defaults | `ResetAllToDefaults()` — writes the shipped `Huginn.ini` over the player's and the descriptor's defaults over dMenu's INI (old files kept as timestamped `.bak` copies), then loads the shipped files alone through the same pass as a reload: every setting, the page layout included, as a fresh install. Learned data is untouched. See [Reset to Defaults](#reset-to-defaults) |
 | `Huginn_reload_ini` | Reload INI | `ReloadAllSettings(GetDMenuIniPath())`. dMenu-managed sections still come from the dMenu INI, so a manual reload does **not** reset the player's widget customizations |
 
@@ -427,7 +427,8 @@ kPostLoadGame / kNewGame  ->  InitializeGameSystems()
     |-- LoadMainIni ONCE (shipped + player's), distribute to every loader
     |     WheelerSettings, SlotSettings, ScorerSettings, ContextWeightSettings,
     |     NeedSettings, Override::Settings, LearningSettings, CandidateConfig,
-    |     wildcards, ChoiceSettings (SlotLocker config: ResetPipelineSubsystems)
+    |     wildcards, ChoiceSettings; the SlotLocker config at step 8, after
+    |     ResetPipelineSubsystems (which resets the locks, not the config)
     +-- LoadDMenuIni ONCE (descriptor defaults + dMenu's INI)
           IntuitionSettings (then IntuitionMenu::Show()), DebugSettings + ApplyToWidgets()
 ```

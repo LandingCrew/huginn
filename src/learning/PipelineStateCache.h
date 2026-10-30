@@ -74,6 +74,10 @@ namespace Huginn::Learning
             bool isWildcard = false;
             bool isColdStartBoosted = false;
             bool isRememberedOnly = false;
+            // 0.24.19: the old floors kept the row (pass or cold start), so the
+            // old engine scored it: the v2 log writes only these rows, as it
+            // did before R8.3 ranked every candidate.
+            bool legacyScored = false;
         };
 
         /// One filled slot on the current page.
@@ -243,6 +247,7 @@ namespace Huginn::Learning
                     .isWildcard = wildForm != 0 && sc.GetFormID() == wildForm && firstOfForm,
                     .isColdStartBoosted = sc.isColdStartBoosted,
                     .isRememberedOnly = sc.isRememberedOnly,
+                    .legacyScored = sc.legacyScored,
                 });
             }
 

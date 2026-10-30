@@ -425,8 +425,33 @@ From 0.24.17 the live engine is B (`[Scoring] bLegacyLearnFeature = 0`), and wit
 **D2** reads them as before (fitlib.build derives util missing and ln learn mult
 from `util` and the old parts: right for D2, what the old floors kept). A fit of
 **B** must read the feature the live score read, the `lm` / `um` columns (0 / 1
-on every row under B), not `util`. The shadow's own columns (`amu ar br ak bk`)
-are for tools/shadow/shadow_compare.py; no fit reads them.
+on every row under B), not `util`: the row feature `learn_live` (0.24.19), in
+the cv.py spec `theta + b + recent + learn mult as the live score read it
+(lm/um, B)`, which export.py exports like the D2 spec (the same two weights,
+`ln learn mult` and `util missing`). No row needs telling apart by engine: `lm`
+/ `um` are what the choice score read, on every row since 0.23.56 (in shadow
+then, live from 0.24.0): D2's values under engine A, 0 / 1 under B, whichever
+way the switch stood. A row logged before 0.23.56 has none and reads as
+`learn`. On logs from B alone the
+two columns read 0 / 1 on nearly every row, and a constant cancels within a
+choice set, so their weights stay near the prior; they matter when the data
+spans both engines. The shadow's own columns (`amu ar br ak bk`) are for
+tools/shadow/shadow_compare.py, which reads `ar br ak bk`; no fit reads them,
+and no script reads `amu`, the head's `bootstrap` object or `refreshPriorSec`.
+
+## The v2 log from 0.24.0 to 0.24.18: dropped rows
+
+From R8.3 (0.24.0) the v2 log (`Huginn_Selections.jsonl`) wrote every ranked
+candidate into a record's `cands`, the ones the old floors dropped with the
+default breakdown (`util`, `ctx`, `corr` and the learner's parts 0, `potion`
+and `fav` 1). `fitlib.load_v2` and `tools/replay` read "in `cands`" as "the old
+engine scored it", so those rows gave a zero context weight (the `ctx` and
+`cheap` baselines) and a zero learner state that hid the carried-forward one
+(`learner`, L1). From 0.24.19 the writer logs only the rows the floors kept, as
+before 0.24.0. A v2 record names no build, so both readers skip the rows by
+their values (`fitlib.v2_unscored`, `replay.v2_unscored`): `util`, `ctx` and
+`corr` all 0. `corr` is a multiplier the old scorer starts at 1, so no row it
+scored reads 0 and no record of another build loses a row.
 
 ## R8.2: replay equivalence (`export_scores.py`, 0.23.56)
 

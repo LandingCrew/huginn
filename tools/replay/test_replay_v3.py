@@ -764,6 +764,29 @@ class PythonRoundTrip(unittest.TestCase):
         self.assertIn("nothing: 1 ended episode(s), 1 lapped stretch(es)", out)
 
 
+class V2Load(unittest.TestCase):
+    """The v2 replay's reader (replay.load). 0.24.0..0.24.18 wrote every ranked candidate into
+    the v2 record, the ones the old floors dropped with ScoreBreakdown's defaults (util, ctx,
+    corr 0); load() skips them, so the policies see only the rows the old engine scored."""
+    COLS = ["form", "type", "need", "rank", "util", "ctx", "est", "prior", "ucb", "alpha",
+            "learn", "lambda", "rec", "corr", "potion", "fav", "wildcard", "coldStart", "pred"]
+
+    def test_dropped_rows_are_skipped(self):
+        scored = ["0003EAE3", "Potion", "HealthAny", 1, 0.6, 0.5, 0, 0, 0, 0, 0.2, 1, 0, 1.2, 1, 1, 0, 0, 0]
+        dropped = ["00012EB7", "Weapon", "Melee", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0]
+        # util and ctx 0 but corr set: the old scorer wrote it (corr starts at 1), so it stays
+        zero_ctx = ["0001397D", "Ammo", "Ammo", 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0]
+        rec = {"v": 2, "utc": "2026-10-30 12:00:00.000", "launch": "20261030-110000", "char": "C",
+               "form": "0003EAE3", "src": "Huginn", "phi": [0.0], "shown": [],
+               "cols": self.COLS, "cands": [dropped, scored, zero_ctx]}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "Huginn_Selections.jsonl"
+            path.write_text(json.dumps(rec) + "\n", encoding="utf-8")
+            recs = replay.load(path, "C", None)
+        self.assertEqual([c["form"] for c in recs[0]["_cands"]], ["0003EAE3", "0001397D"])
+        self.assertTrue(replay.v2_unscored(dict(zip(self.COLS, dropped))))
+
+
 if __name__ == "__main__":
     result = unittest.main(exit=False, verbosity=2).result
     sys.exit(0 if result.wasSuccessful() else 1)

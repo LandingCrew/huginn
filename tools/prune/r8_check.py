@@ -582,16 +582,20 @@ BUDGET = {
         r'^\s*scored\.isColdStartBoosted \? " \[COLD\]" : ""\);$',
     ], 'the live scorer: only [Recs] lines log the old parts (lm\'s inputs; the fallback line)'),
     # The v2 selection log's cached rows (PipelineStateCache feeds SelectionLog.cpp).
-    'src/learning/PipelineStateCache.h': (9, [
+    'src/learning/PipelineStateCache.h': (11, [
         r'^\s*\.utility = sc\.utility,$',
         r'^\s*\.breakdown = sc\.breakdown,$',
         r'^\s*bool isColdStartBoosted = false;$',
         r'^\s*\.isColdStartBoosted = sc\.isColdStartBoosted,$',
+        # 0.24.19: the floors' keep, copied for the v2 log's writer (it writes only the kept rows)
+        r'^\s*bool legacyScored = false;$',
+        r'^\s*\.legacyScored = sc\.legacyScored,$',
         # 0.24.17: the eligible row's copy of the D2 shadow, for the v3 log
         r'^\s*float legacyShadowMu = std::numeric_limits<float>::quiet_NaN\(\);$',
         r'^\s*int16_t legacyShadowRank[AB] = 0;$',
         r'^\s*int8_t legacyShadowKey(?:A|B0) = -2;$',
-    ], 'the v2 selection log\'s cached rows; the eligible rows\' D2 shadow fields (0.24.17)'),
+    ], 'the v2 selection log\'s cached rows and their keep flag (0.24.19); the eligible rows\' D2 shadow '
+       'fields (0.24.17)'),
     # 0.24.17: the v3 Row's D2 shadow fields (logged only; ChoiceLearner, which reads the Row,
     # names none: its budget is 0).
     'src/core/DecisionLog.h': (5, [
