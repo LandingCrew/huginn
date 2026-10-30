@@ -753,11 +753,14 @@ namespace Huginn::Slot
                     const double minGap = Core::Challenger::ClampMinGap(set.ChallengerMinGap());
                     const double gap = challenger - holder;
                     const double p = e.sd > 0.0 ? Core::Challenger::NormalCdf((gap - minGap) / e.sd) : 1.0;
+                    // bTestAllChallengers (0.24.13): e.d higher-ranked
+                    // challengers missed the line before this one cleared it.
                     SKSE::log::debug("[Hold] Page {} slot {}: '{}' gives way to '{}' (s={:+.3f} vs {:+.3f}{}: "
-                        "{:+.3f} > ln m {:.3f} + z {:.2f} x sd {:.3f}, P {:.2f})",
+                        "{:+.3f} > ln m {:.3f} + z {:.2f} x sd {:.3f}, P {:.2f}{})",
                         pageIndex, e.a, candidates[e.b].GetName(), candidates[e.c].GetName(), e.y, e.x,
                         e.capped ? std::format("; class cap {:+.3f} vs {:+.3f}", e.w, e.z) : std::string{},
-                        gap, minGap, z, e.sd, p);
+                        gap, minGap, z, e.sd, p,
+                        e.d != SA::kNone ? std::format("; {} higher challenger(s) missed the line", e.d) : std::string{});
                     break;
                 }
                 const double logMargin = Core::LogHoldMargin(SlotSettings::GetSingleton().ChallengerMargin());

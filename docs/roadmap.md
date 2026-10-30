@@ -1397,8 +1397,8 @@ press in the heartbeat against the R8 session.
       to σ_Δ. `fChallengerMargin` now rules only the rows with no belief: the
       FALLBACK ranking (no bootstrap) and the R7 golden snapshots, which is
       why every golden and adversarial test still passes unchanged. The combat
-      upsert's barrier is still `fCombatUpsertMarginMult × ln(1 +
-      fChallengerMargin)` (open question below).
+      upsert's barrier stayed `fCombatUpsertMarginMult × ln(1 +
+      fChallengerMargin)` until 0.24.13 (closed below).
 - [x] **σ_Δ** (`core/ChoiceBeliefs.h`): σ_Δ² = Σⱼ (aⱼ(c) − aⱼ(i))² Wⱼ (+ the
       strength block) + (covered(c) − covered(i))² var(θ_covered) + var(b_c) +
       var(b_i), Wⱼ = Σₖ nₖ² var(θₖⱼ) (+ recent) from the ranking's own tick.
@@ -1480,14 +1480,37 @@ press in the heartbeat against the R8 session.
       key (`[Hold]` lines with P near 0.8 are the rule at work; raise or
       lower `fChallengerConfidence`). Recheck "workstation gear holds its key
       at the bench" (Kept outside the rewrite) here.
-- Open: the combat upsert still uses the fixed margin's multiple (a
-  Bayesian upsert would read z_upsert·σ_Δ); the lock's length is still
-  3 s (map Phase 7: shorten it after measuring the `Expired` buckets, now
-  on Δ/σ_Δ); only the best challenger is asked (a lower one with a narrower
-  σ_Δ that would clear the line waits; the no-swap-back argument holds
-  either way); slot captures (Debug `--capture-slots`) do not record the
-  beliefs, so a capture from a choice-ranked session replays with the
-  fixed margin.
+- Open: the lock's length is still 3 s (map Phase 7: shorten it after
+  measuring the `Expired` buckets, now on Δ/σ_Δ); slot captures (Debug
+  `--capture-slots`) do not record the beliefs, so a capture from a
+  choice-ranked session replays with the fixed margin.
+- [x] **Closed in 0.24.13 (`combat-upsert-bayes`): the combat upsert uses
+  the challenger rule** (the user, 2026-10-30). A frozen key goes to a
+  challenger when μc − μi > ln m + z_combat·σ_Δ, z_combat =
+  Φ⁻¹(`fCombatChallengerConfidence`), its own key at 0.995 (z 2.576):
+  mid-fight swaps cost more than calm ones, and the old upsert was
+  deliberately 3× the calm margin -- 3 × z(0.8) = z(0.9942). The pair's
+  σ_Δ comes from this run's table when the frozen item was scored this
+  run; otherwise (an older run's row) and in the FALLBACK ranking the
+  fixed barrier `fCombatUpsertMarginMult × ln(1 + fChallengerMargin)`
+  stays, and 0 still turns the upsert off in both rankings. The upsert
+  line prints σ_Δ and P like `[Hold]`. Host-tested
+  (`tests/core/CombatUpsertTests.cpp`): no swap-back and every page
+  settles on random fixed beliefs (1,500 worlds), a sure challenger takes
+  the key and an uncertain one does not, and the fallback planner equals
+  the pre-0.24.13 one on 4,000 random pages.
+- [x] **Closed in 0.24.13: "only the best challenger is asked" is a
+  switch.** `[SlotLocker] bTestAllChallengers` (0 = the best challenger
+  only, as before; 1 = in rank order, the first past the line takes the
+  key), for the hold and the combat upsert alike, hot-reloaded by `hg
+  reload`. Under the fixed margin the switch changes nothing (a lower
+  score cannot clear a line the best one missed), so the golden and
+  fallback paths are bit-identical; host-tested on 300 synthetic pages,
+  and the R9 property worlds (unique and duplicate keys) settle with no
+  swap-back with it on. **In game (you):** leave it at 0 for the R9
+  session; to try it, `bTestAllChallengers = 1`, `hg reload`, and look
+  for `[Hold]` / combat upsert lines ending `higher challenger(s) missed
+  the line`.
 - [x] **Closed in 0.24.6 (`sweep-allocator`): two candidates with ONE dedup
   key on a page.** Seating and the hold found a key's owner by the first
   match (the `seats[j]` lookups), so a key already taken could read as free

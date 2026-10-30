@@ -11,6 +11,7 @@
 #include "core/StackIdentity.h"
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <set>
 #include <span>
@@ -146,7 +147,9 @@ namespace Huginn::Slot
                 : m_config.combatLockDurationMs == 0.0f ? std::string("normal lock")
                 : std::format("{:.0f}ms", m_config.combatLockDurationMs),
             m_config.combatUpsertMarginMult > 0.0f
-                ? std::format("x{:.1f} ln m, {:.0f}s per key", m_config.combatUpsertMarginMult, m_config.combatUpsertCooldownSec)
+                ? std::format("P(better) > {:.3f} (fallback: x{:.1f} ln m), {:.0f}s per key",
+                      m_config.combatChallengerConfidence, m_config.combatUpsertMarginMult,
+                      m_config.combatUpsertCooldownSec)
                 : std::string("off"));
     }
 
@@ -1092,25 +1095,56 @@ namespace Huginn::Slot
             return;
         }
         std::vector<std::vector<bool>> fits(n, std::vector<bool>(source.size(), false));
+        // R9 (0.24.13): the pair's sigma_Delta, when this run's beliefs cover
+        // both rows -- the frozen item's row is this run's only when
+        // RefreshHeld put the scored row on the key (else it carries an older
+        // run's table, and the pair falls back to the fixed barrier, as the
+        // hold does for rows of different runs). NaN = no belief. The
+        // fallback ranking carries no table: every pair is NaN.
+        constexpr double kNoBelief = std::numeric_limits<double>::quiet_NaN();
+        std::vector<std::vector<double>> sigma(n, std::vector<double>(source.size(), kNoBelief));
         for (size_t k = 0; k < n; ++k) {
             if (!frozen[k]) continue;
+            const auto* held = result[k].candidate ? &*result[k].candidate : nullptr;
             for (size_t c = 0; c < source.size(); ++c) {
                 const auto& cand = wanted[source[c]];
                 fits[k][c] = source[c] == k || SlotClassifier::Matches(*cand.candidate, result[k].classification);
+                if (held && held->choice.beliefs && held->choice.beliefs == cand.candidate->choice.beliefs) {
+                    sigma[k][c] = Core::Challenger::SigmaDelta(held->choice.beliefs->DeltaVar(
+                        cand.candidate->choice.beliefRow, held->choice.beliefRow));
+                }
             }
         }
 
+        Core::CombatUpsertRule rule;
+        rule.barrier = barrier;
+        rule.minGap = run.challengerMinGap;
+        rule.z = Core::Challenger::ZForConfidence(static_cast<double>(m_config.combatChallengerConfidence));
+        rule.testAll = run.testAllChallengers;
         const double logMargin = Core::LogHoldMargin(run.challengerMargin);
-        for (const auto& pick : Core::PlanCombatUpserts(frozen, scores, fits, barrier, /*maxPicks=*/1)) {
+        for (const auto& pick : Core::PlanCombatUpserts(frozen, scores, fits, sigma, rule, /*maxPicks=*/1)) {
             const size_t k = pick.key;
             auto& slot = m_lockedSlots[k];
             SlotAssignment next = wanted[source[pick.challenger]];
             next.slotIndex = k;
             next.classification = result[k].classification;
             next.seatMoved = false;
-            spdlog::info("[SlotLocker] Slot {} combat upsert: '{}' -> '{}' (s={:+.3f} vs {:+.3f}, {:+.3f} > {:.1f} x ln m {:.3f})",
-                k, result[k].name, next.name, next.score, result[k].score, pick.margin,
-                m_config.combatUpsertMarginMult, logMargin);
+            const std::string passed = pick.passedOver > 0
+                ? std::format("; {} higher challenger(s) missed the line", pick.passedOver) : std::string{};
+            if (pick.sd >= 0.0) {
+                // The challenger rule decided: the gap against ln m + z sd and
+                // P(better), as the [Hold] lines print them.
+                const double p = pick.sd > 0.0
+                    ? Core::Challenger::NormalCdf((pick.margin - rule.minGap) / pick.sd) : 1.0;
+                spdlog::info("[SlotLocker] Slot {} combat upsert: '{}' -> '{}' (s={:+.3f} vs {:+.3f}, "
+                             "{:+.3f} > ln m {:.3f} + z {:.2f} x sd {:.3f}, P {:.3f}{})",
+                    k, result[k].name, next.name, next.score, result[k].score, pick.margin,
+                    rule.minGap, rule.z, pick.sd, p, passed);
+            } else {
+                spdlog::info("[SlotLocker] Slot {} combat upsert: '{}' -> '{}' (s={:+.3f} vs {:+.3f}, {:+.3f} > {:.1f} x ln m {:.3f}, no belief{})",
+                    k, result[k].name, next.name, next.score, result[k].score, pick.margin,
+                    m_config.combatUpsertMarginMult, logMargin, passed);
+            }
             m_upsertMemory.NoteLeft({ result[k].formID, result[k].uniqueID, result[k].name }, nowMs, /*byUpsert=*/true);
             m_upsertMemory.NoteUpsert(nowMs);
             result[k] = next;

@@ -36,10 +36,15 @@ namespace Huginn::Slot
         // as if combat had ended (core::CombatPresence). 0 = follow the game's
         // combat flag alone. Seconds, 0-60.
         float combatNoEnemyReleaseSec = 5.0f;
-        // Combat upsert (core/CombatUpsert.h): a challenger takes a
-        // combat-locked key when its score beats the key's item by this many
-        // times ln(1 + fChallengerMargin). 0 = off (the freeze is absolute).
+        // Combat upsert (core/CombatUpsert.h). Under the choice ranking a
+        // challenger takes a combat-locked key when the challenger rule says
+        // it is better with probability above combatChallengerConfidence
+        // (0.24.13; 0.5-0.999). Where no belief covers the pair (the fallback
+        // ranking) its score must beat the key's item by
+        // combatUpsertMarginMult x ln(1 + fChallengerMargin). A multiplier of
+        // 0 turns the upsert off in both rankings (the freeze is absolute).
         float combatUpsertMarginMult = 3.0f;
+        float combatChallengerConfidence = 0.995f;
         // At most one upsert per key per this many seconds. 0 = no limit.
         float combatUpsertCooldownSec = 10.0f;
     };
@@ -218,6 +223,10 @@ namespace Huginn::Slot
             /// and ln m, as the allocation read them.
             double challengerZ = 0.0;
             double challengerMinGap = 0.0;
+            /// 0.24.13, bTestAllChallengers: the combat upsert asks each key's
+            /// challengers in rank order (the first past the line wins), not
+            /// only the best one.
+            bool testAllChallengers = false;
             /// Key i has an active Remembrance hold of its own, or shows one.
             std::array<bool, MAX_SLOTS_PER_PAGE> remembranceHoldOnKey{};
             /// This run's clock for the upsert and the churn record. Epoch (the
@@ -481,8 +490,10 @@ namespace Huginn::Slot
         void DedupePreferLocked(SlotAssignments& result, const SlotAssignments& wanted);
 
         /// Combat upsert (core/CombatUpsert.h), after dedup: a combat-locked
-        /// key open to it takes a challenger whose score beats the key's own
-        /// item by fCombatUpsertMarginMult x ln(1 + fChallengerMargin).
+        /// key open to it takes a challenger the challenger rule finds better
+        /// with probability above fCombatChallengerConfidence (both rows in
+        /// this run's beliefs), else one whose score beats the key's own item
+        /// by fCombatUpsertMarginMult x ln(1 + fChallengerMargin).
         /// Challengers: what the allocator placed on this page this run
         /// (`wanted`, ordinary picks only) that no key shows, not equipped, not
         /// displaced by an upsert this fight nor gone from a key recently, on

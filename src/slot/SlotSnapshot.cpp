@@ -36,6 +36,7 @@ namespace Huginn::Slot
         out.challengerMargin = s.ChallengerMargin();
         out.challengerConfidence = s.ChallengerConfidence();
         out.challengerMinGap = s.ChallengerMinGap();
+        out.testAllChallengers = s.TestAllChallengers();
         out.fillJobKeysFromRegular = s.FillJobKeysFromRegular();
         out.classDiscount = s.ClassRepeatDiscount();
         out.classFree = s.ClassFreeSlots();
