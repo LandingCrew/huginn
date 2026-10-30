@@ -1220,6 +1220,12 @@ changed in the same PR, and the shipped INI loses the dead keys.
         columns as they were). Stale comments in surviving code that named
         the old engine were edited (the classifiers, GameState.h,
         CandidateGenerator, WeaponData.h and about 30 other files).
+        0.24.20 (the #242 review): a PRUNED or LEGACY name is caught in its
+        house spellings too (`m_` / `g_` / `s_` before it, a `Get` accessor
+        named for it), every name with `legacyShadow` anywhere in it, the v3
+        row's `Flag::Scored` (any qualifier) and its OldScore member reads
+        (`r.old.floor`, `r.old.wouldUtil`, ...; on the live learner's path any
+        `.old` read, an alias included); 20 more probes.
       - **Behaviour against 0.24.0:** none in the ranking (the pruned steps were
         already uncalled since R8.3; `ln util` had weight 0 in the shipped
         bootstrap; the rank prefix constant equals the shipped
