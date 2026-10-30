@@ -273,7 +273,7 @@ actually look at:
 | `PollPlayerMagicEffects` | `src/state/StateManager_MagicEffects.cpp` | Per-tick active-effect scan |
 | `PollTargets` | `src/state/StateManager_Targets.cpp` | Per-tick target scan |
 | `PollPlayerVitals`, `PollPlayerEquipment`, `PollPlayerPosition`, `PollWorldObjects`, `PollPlayerSurvival`, `PollPlayerResistances`, `PollHealthTracking`, `PollMagickaTracking`, `PollStaminaTracking` | `src/state/StateManager_*.cpp` | The remaining sensors |
-| `Inventory::DeltaScan` | `src/UpdateLoop.cpp:281` | Consumption-detector inventory snapshot |
+| `Inventory::DeltaScan` | `src/UpdateLoop.cpp` | Consumption-detector inventory snapshot |
 | `SpellRegistry::Reconcile`, `ItemRegistry::Reconcile`, `ScrollRegistry::Reconcile` | `src/UpdateLoop.cpp` | Registry reconciles |
 | `WeaponRegistry::Refresh`, `::RefreshCharges`, `::ReconcileWeapons` | `src/UpdateLoop.cpp`, `src/weapon/WeaponRegistry.cpp` | Weapon registry work |
 
