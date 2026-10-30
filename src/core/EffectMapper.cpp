@@ -218,7 +218,7 @@ namespace Huginn::Core::Effect
         // Group ids for grouped populations.
         constexpr std::uint32_t kGroupArrow = 1;
         constexpr std::uint32_t kGroupBolt = 2;
-        // Weapon groups: a vanilla type is its column's index (< 243); a
+        // Weapon groups: a vanilla type is its column's index (< the column count, 244); a
         // sub-type is kGroupSubtype | a hash of its name; a type's fallback
         // population (every weapon of the type, sub-types included) is
         // kGroupTypeAll | the type's index.

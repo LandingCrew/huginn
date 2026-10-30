@@ -809,7 +809,7 @@ pipeline run; a held row never gathered costs one learner lookup and a
 20-entry recency scan per context.
 
 What bounds it:
-- **Caps once per segment**, content-addressed: the 243-column vectors are
+- **Caps once per segment**, content-addressed: the 244-column vectors (243 before 0.24.9) are
   written once and referenced by id (the first context of a segment carries
   them all).
 - **Sparse everything**: caps, needs, inputs and cross-features list their
