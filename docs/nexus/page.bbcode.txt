@@ -252,7 +252,7 @@ Each need has a curve that turns what Huginn sees into that 0-to-1 number, one l
 
 [b][Scoring], [ContextWeights] and [Favorites][/b]
 
-[font=Courier New]bLegacyLearnFeature = true[/font] keeps one input from Huginn's old engine (its per-item learning score), which the starting point was fitted with. Leave it on; turning it off is a fallback, not a supported mode. The [font=Courier New][ContextWeights][/font] section and most of [font=Courier New][Scoring][/font] only feed that one input now, so changing them has little visible effect.
+[font=Courier New]bLegacyLearnFeature[/font] decides whether the ranking reads one input from Huginn's old engine (its per-item learning score). Since 0.24.17 it is off by default, and [font=Courier New]bShadowLegacy = true[/font] computes the old-input version in the background for comparison (written to the selection log, never shown). Both settings are supported. The [font=Courier New][ContextWeights][/font] section and most of [font=Courier New][Scoring][/font] only feed that one input now, so changing them has little visible effect.
 
 [font=Courier New][Favorites][/font] decides what your favourites flag means. [font=Courier New]Boost[/font] (the default) makes Huginn remember your favourites longer. [font=Courier New]Suppress[/font] hides them, on the grounds that they are already one keypress away in your favourites menu. [font=Courier New]Off[/font] ignores the flag.
 

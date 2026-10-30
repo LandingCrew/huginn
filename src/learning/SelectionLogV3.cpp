@@ -17,6 +17,9 @@
 #include "core/FilterReason.h"
 #include "core/LapHoldInputs.h"
 #include "core/NeedEpisodes.h"
+#include "core/ReachLog.h"        // IsMenuVia: the [Soak] shadow tally's reach-ins (0.24.17)
+#include "core/ShadowCompare.h"   // the [Soak] shadow tally (0.24.17)
+#include "telemetry/SoakMetrics.h"
 #include "effect/CrossFeatures.h"
 #include "effect/EffectCatalog.h"
 #include "needs/NeedMonitor.h"
@@ -459,6 +462,13 @@ namespace Huginn::Learning::SelectionLogV3
             r.um = e.utilMissing;
             r.exNeed = e.exNeed;
             r.exCol = e.exCol;
+            // 0.24.17: the D2 engine in shadow (PipelineCoordinator::
+            // ShadowLegacyPages), logged only.
+            r.legacyShadowMu = e.legacyShadowMu;
+            r.legacyShadowRankA = e.legacyShadowRankA;
+            r.legacyShadowRankB = e.legacyShadowRankB;
+            r.legacyShadowKeyA = e.legacyShadowKeyA;
+            r.legacyShadowKeyB0 = e.legacyShadowKeyB0;
             if (entry) {
                 r.kind = static_cast<uint8_t>(entry->kind);
                 r.cap = &entry->cap;
@@ -1184,8 +1194,37 @@ namespace Huginn::Learning::SelectionLogV3
             bool m_warnedWrite = false;
         };
 
+        /// 0.24.17: one pick into the [Soak] heartbeat's D2 shadow tally
+        /// (core/ShadowCompare.h): a key or wheel pick, or a menu reach-in,
+        /// with whether A's and the live ranking's stateless pages held the
+        /// chosen item in the run behind its context. Reads the logged rows.
+        void TallyShadowPick(const Decision& d)
+        {
+            const Row* chosen = nullptr;
+            bool shadowRan = false;
+            if (d.ctx) {
+                const auto& rows = d.ctx->rows;
+                for (const auto& r : rows) {
+                    if (r.legacyShadowKeyA != Core::DecisionLog::kNoShadowKey) {
+                        shadowRan = true;
+                        break;
+                    }
+                }
+                if (d.row >= 0 && static_cast<size_t>(d.row) < rows.size()) chosen = &rows[static_cast<size_t>(d.row)];
+                else if (d.row >= 0 && static_cast<size_t>(d.row) - rows.size() < d.added.size())
+                    chosen = &d.added[static_cast<size_t>(d.row) - rows.size()];
+            }
+            const std::int8_t legacyShadowChosenA = chosen ? chosen->legacyShadowKeyA : Core::DecisionLog::kNoShadowKey;
+            const std::int8_t legacyShadowChosenB0 = chosen ? chosen->legacyShadowKeyB0 : Core::DecisionLog::kNoShadowKey;
+            const auto legacyShadowPick = Core::ShadowCompare::ClassifyPick(d.outcome == Outcome::Nothing, d.repeat,
+                d.outcome == Outcome::Key || d.outcome == Outcome::Wheel, Core::Reach::IsMenuVia(d.via), shadowRan,
+                chosen != nullptr, legacyShadowChosenA, legacyShadowChosenB0);
+            Telemetry::SoakMetrics::GetSingleton().RecordShadowPick(legacyShadowPick);
+        }
+
         void Queue(Decision d)
         {
+            TallyShadowPick(d);
             {
                 std::lock_guard lock(g_statsMutex);
                 switch (d.outcome) {

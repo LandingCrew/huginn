@@ -30,6 +30,11 @@ R9 = ('[x][I]: [Soak] up=0h05m00s | equips hit=0 | slotChurn=6 peak5s=1@slot2 (f
 R11 = R9 + (' | drift mu-moved=12 dmean=0.0031 drms=0.0102 dmax=+0.084 at=low_health:restore_health '
             'var-moved=40 lnvar=-0.052 b=7 bmean=0.041 bmax=0.130 covered=-0.012')
 R11_OFF = R9 + ' | drift off'
+# 0.24.17: the D2 shadow's field appended last (SoakMetrics.cpp), and its two words.
+SHADOW = R11 + (' | shadowA keys=3 keysOnA=2 keysOnB0=3 reach=4 reachOnA=1 reachOnB0=0 reachAonly=1 '
+                'reachB0only=0 nodata=0')
+SHADOW_OFF = R11 + ' | shadowA off'
+SHADOW_MOOT = R11 + ' | shadowA moot (bLegacyLearnFeature on: A is live)'
 
 
 def check(cond, what):
@@ -55,7 +60,8 @@ def main():
     check(whole.per_press(whole.churn) == '0.50', 'R9 per press')
 
     # R11: the drift suffix changes nothing the tally reads.
-    for line, what in ((R11, 'R11'), (R11_OFF, 'R11 drift off')):
+    for line, what in ((R11, 'R11'), (R11_OFF, 'R11 drift off'), (SHADOW, '0.24.17 shadowA'),
+                       (SHADOW_OFF, '0.24.17 shadowA off'), (SHADOW_MOOT, '0.24.17 shadowA moot')):
         launches, whole = cpp.read([line])
         check(whole.windows == 1 and whole.churn == 4 and whole.presses == 8,
               '%s churn %d presses %d' % (what, whole.churn, whole.presses))

@@ -328,10 +328,14 @@ namespace Huginn::Console
          if (g_choiceLearner && g_choiceLearner->Ready()) {
             const auto st = g_choiceLearner->GetStats();
             const auto [utc, sha] = g_choiceLearner->FileIdentity();
+            // 0.24.17: engine B (no D2 feature) live by default, D2 in shadow.
+            const char* const engines = Scoring::Legacy::Enabled() ? "on (D2 live: engine A; no shadow)"
+                                      : Scoring::Legacy::ShadowEnabled() ? "off (engine B live), D2 in shadow"
+                                                                         : "off (engine B live), no shadow";
             line = std::format("Ranking: choice score (bootstrap {} {}); theta {} entries, {} moved from the bootstrap; "
                                "b {} items; {} picks learned; legacy feature {}",
                utc.empty() ? "?" : utc, sha.substr(0, 12), st.thetaEntries, st.thetaMoved, st.bEntries,
-               st.picksLearned, Scoring::Legacy::Enabled() ? "on" : "OFF (fallback, not a supported mode)");
+               st.picksLearned, engines);
          } else {
             line = "Ranking: OLD UTILITY (FALLBACK) -- Huginn_Bootstrap.json missing or invalid, see the log";
          }

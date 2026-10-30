@@ -701,7 +701,8 @@ void OnUpdate(float deltaSeconds)
     }
     // Both forget sweeps run here, at most once a minute of play each. The old
     // learner's left UtilityScorer's legacy pass in R8.3, which does not run
-    // with bLegacyLearnFeature off, so BNDW would grow while the switch is off.
+    // with bLegacyLearnFeature and bShadowLegacy both off (0.24.17), so BNDW
+    // would grow while they are.
     Scoring::Legacy::MaybeForgetFaded();
     if (g_choiceLearner) g_choiceLearner->MaybeForgetFaded();
 

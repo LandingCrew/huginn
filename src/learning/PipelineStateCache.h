@@ -119,6 +119,17 @@ namespace Huginn::Learning
             float shadowLogit = std::numeric_limits<float>::quiet_NaN();
             int16_t exNeed = Core::DecisionLog::kExNone;
             int16_t exCol = -1;
+            /// 0.24.17: the D2 engine in shadow (PipelineCoordinator::
+            /// ShadowLegacyPages, core/ShadowCompare.h): engine A's mu, the
+            /// row's rank under A and under the live ranking (1 = first, 0 =
+            /// none), and its key on A's and on the live ranking's stateless
+            /// page (-1 off, -2 none). Logged only (the v3 row columns amu, ar,
+            /// br, ak, bk); none when the shadow did not run.
+            float legacyShadowMu = std::numeric_limits<float>::quiet_NaN();
+            int16_t legacyShadowRankA = 0;
+            int16_t legacyShadowRankB = 0;
+            int8_t legacyShadowKeyA = -2;
+            int8_t legacyShadowKeyB0 = -2;
         };
 
         /// 0.23.53: the old engine's view of a run, for the selection log v3

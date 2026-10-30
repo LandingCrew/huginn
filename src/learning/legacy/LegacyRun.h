@@ -49,7 +49,8 @@ namespace Huginn::State
 namespace Huginn::Scoring::Legacy
 {
     /// One pipeline run's legacy pass (LegacyPass below), or a skipped one
-    /// (bLegacyLearnFeature off with the choice model live).
+    /// (bLegacyLearnFeature and, 0.24.17, bShadowLegacy off with the choice
+    /// model live).
     struct Run
     {
         bool ran = false;

@@ -74,7 +74,8 @@ namespace Huginn::Learning
         double thetaProcessNoise = 1.0e-4;   // [Learning] fThetaProcessNoise (per onset, variance units)
         double coveredPrior = -1.0;          // [Scoring] fCoveredPrior (precision 1)
         double favoriteLifeMult = 2.0;       // [Favorites] fFavoriteLifeMult (Boost mode)
-        bool legacyLearnFeature = true;      // [Scoring] bLegacyLearnFeature (R8.3: live, hot-reloaded)
+        bool legacyLearnFeature = false;     // [Scoring] bLegacyLearnFeature (R8.3: live, hot-reloaded; 0.24.17: off, B live)
+        bool shadowLegacy = true;            // [Scoring] bShadowLegacy (0.24.17: D2 in shadow, hot-reloaded)
         Core::Discovery::Params discovery;   // [Learning] bDiscoveryBoost, fDiscoveryBoostVarMult,
                                              // fDiscoveryBoostHalfLifeSec (0.24.14, hot-reloaded)
 

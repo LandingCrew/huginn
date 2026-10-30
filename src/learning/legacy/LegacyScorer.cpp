@@ -77,7 +77,8 @@ namespace Huginn::Scoring::Legacy
         auto phi = stateFeatures.ToArray();
 
         // The forget sweep runs from UpdateLoop (Legacy::MaybeForgetFaded), so it
-        // keeps running while bLegacyLearnFeature is off and this pass does not.
+        // keeps running while this pass does not (bLegacyLearnFeature and
+        // bShadowLegacy both off).
 
         // Locked readers once for the whole floor loop (~200 lock ops -> 2).
         auto qReader = m_featureLearner.AcquireReader();

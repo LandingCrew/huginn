@@ -326,7 +326,7 @@ def synthetic_D(doc, n_dec=48, seed=5):
             if rng.random() < 0.2:
                 x.append((7, float(np.round(rng.uniform(0, 1), 4))))   # covered: not a column
             rows.append((f, 0, 'Spell', None, cap_of[f], fl, 2 if fl & F['shown'] else -1, util, tuple(x), None,
-                         None, None, None, None))
+                         None, None, None, None, None))
         if not rows:
             continue
         ckey = (launch, k)

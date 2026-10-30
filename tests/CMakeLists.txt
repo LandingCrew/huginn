@@ -108,6 +108,11 @@ if(Python3_Interpreter_FOUND)
    add_test(NAME replay_v3_roundtrip
       COMMAND "${Python3_EXECUTABLE}" -I "${PROJECT_SOURCE_DIR}/tools/replay/test_replay_v3.py")
    set_tests_properties(replay_v3_roundtrip PROPERTIES TIMEOUT 600)   # runs 43-73 s
+   # 0.24.17: the D2 shadow's offline comparison (tools/shadow), on a log the replay
+   # test's schema-doc encoder writes.
+   add_test(NAME shadow_compare
+      COMMAND "${Python3_EXECUTABLE}" -I "${PROJECT_SOURCE_DIR}/tools/shadow/test_shadow_compare.py")
+   set_tests_properties(shadow_compare PROPERTIES TIMEOUT 120)
 else()
    message(STATUS "Python 3 not found: the replay_v3_roundtrip test is not registered")
 endif()

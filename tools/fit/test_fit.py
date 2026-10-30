@@ -336,8 +336,8 @@ class OldEngineColumns(TempWork):
         self.assertIsNone(rows[2][common.OLD])        # a row with none of the columns
         self.assertEqual(rows[3][common.FB], 'cooldown')   # the earlier columns unchanged
         self.assertTrue(all(r[common.OLD] is None for r in old['rows']))
-        self.assertEqual(len(rows[0]), 14)          # 0.23.56: SHADOW appended
-        self.assertEqual(len(old['rows'][0]), 14)
+        self.assertEqual(len(rows[0]), 15)          # 0.23.56: SHADOW appended; 0.24.17: SHADOW_A
+        self.assertEqual(len(old['rows'][0]), 15)
         self.assertEqual(new['old']['topN'], 10)       # kept as written
         self.assertIsNone(old['old'])
         rids = {(d['launch'], d['out']): d['rid'] for d in D['decs']}
@@ -367,6 +367,43 @@ class OldEngineColumns(TempWork):
         self.assertEqual(new[0]['ctx']['rows'][1]['hk'], 0)
         self.assertEqual(new[0]['rid'], 7)
         self.assertTrue(all(r['est'] is None and r['hk'] is None for d in old for r in d['rows']))
+
+
+class ShadowAColumns(TempWork):
+    """0.24.17: the D2 engine in shadow (row columns amu, ar, br, ak, bk). v3load keeps them as
+    the row tuple's SHADOW_A element (None on older rows and on rows with none of them); the fit
+    builds the same thing with or without them."""
+
+    def text(self):
+        def older(r):                # a 0.24.16 writer: no D2 shadow columns
+            if r['t'] == 'head':
+                r['row'] = r['row'][:27]
+            elif r['t'] == 'ctx':
+                r['rows'] = [row[:27] for row in r['rows']]
+            elif r['t'] == 'dec':
+                r['add'] = [row[:27] for row in r['add']]
+        old = edit_lines(session('20261028-100000', CHAR_A, '0.24.16 (abc1234)', minute=1), older)
+        new = session('20261029-100000', CHAR_A, '0.24.17 (abc1234)', minute=2)
+        return old + new
+
+    def test_v3load(self):
+        D = v3load.load([self.write('v3.jsonl', self.text())])
+        new = D['ctxs'][('20261029-100000', 10)]['rows']
+        old = D['ctxs'][('20261028-100000', 10)]['rows']
+        self.assertEqual(new[0][common.SHADOW_A], (1.125, 1, 3, 0, -1))
+        self.assertEqual(new[0][common.SHADOW_A][common.A_AK], 0)
+        self.assertIsNone(new[1][common.SHADOW_A])
+        self.assertTrue(all(r[common.SHADOW_A] is None for r in old))
+        self.assertEqual(new[0][common.SHADOW][:4], (0.875, 0.25, 0.125, 0))   # the columns before, unchanged
+
+    def test_build_ignores_them(self):
+        self.quiet(v3load.main, [str(self.write('v3.jsonl', self.text()))])
+        S = fitlib.build(common.load(), include_nothing=True)
+        new = np.array([m['launch'] == '20261029-100000' for m in S['meta']])
+        self.assertGreater(new.sum(), 0)
+        for key in ('N', 'Y'):
+            if key in S and isinstance(S[key], np.ndarray) and len(S[key]) == len(new):
+                self.assertTrue(np.array_equal(S[key][new], S[key][~new]), key)
 
 
 class ShadowColumns(TempWork):

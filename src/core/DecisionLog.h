@@ -122,6 +122,7 @@ namespace Huginn::Core::DecisionLog
     inline constexpr std::int8_t kNoHotkey = -1;
     inline constexpr std::int16_t kExNone = -2;     // no shadow score on the row
     inline constexpr std::int16_t kExLearned = -1;  // a shadow score with no positive need term
+    inline constexpr std::int8_t kNoShadowKey = -2; // 0.24.17: no D2 shadow page key on the row (-1 = off that page)
 
     /// One item the player could have chosen.
     struct Row
@@ -162,6 +163,18 @@ namespace Huginn::Core::DecisionLog
         std::int8_t um = -1;                 // -1 = none
         std::int16_t exNeed = kExNone;
         std::int16_t exCol = -1;
+        /// 0.24.17, row columns "amu", "ar", "br", "ak", "bk": the D2 engine
+        /// in shadow beside the live one (core/ShadowCompare.h), on a
+        /// candidate of a run the shadow ran on: engine A's mu; the row's
+        /// rank under A and under the live ranking (1 = first, 0 = none); its
+        /// key on A's stateless page and on the live ranking's stateless page
+        /// (core/SlotAllocStateless.h; -1 off, kNoShadowKey none). Logged
+        /// only: the live learner does not read them (tools/prune/r8_check.py).
+        float legacyShadowMu = kNone;
+        std::int16_t legacyShadowRankA = 0;
+        std::int16_t legacyShadowRankB = 0;
+        std::int8_t legacyShadowKeyA = kNoShadowKey;
+        std::int8_t legacyShadowKeyB0 = kNoShadowKey;
         /// cap(i): the catalog's static entry (immutable, process lifetime) or
         /// a per-instance entry owned by capOwner. nullptr = not in the catalog.
         const Effect::Cap* cap = nullptr;

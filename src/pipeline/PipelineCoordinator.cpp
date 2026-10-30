@@ -26,6 +26,7 @@
 #include "core/ChoiceBeliefs.h"   // the run's beliefs for the challenger rule (R9)
 #include "core/ChoiceLive.h"
 #include "core/Coverage.h"
+#include "core/LegacyShadowPass.h"    // the D2 shadow (0.24.17)
 #include "effect/CrossFeatures.h"
 #include "effect/EffectCatalog.h"
 #include "effect/Facets.h"
@@ -118,6 +119,7 @@ bool PipelineCoordinator::RunPipeline(
         // stale page. The switch raised m_pageChanged, so next tick re-runs on it.
         return false;
     }
+    ShadowLegacyPages(m_ctx);   // 0.24.17: D2 in shadow (no-op unless it runs)
     DeriveDisplayLabels(m_ctx);
     UpdateCaches(m_ctx);
     PushDisplay(m_ctx);
@@ -386,7 +388,8 @@ void PipelineCoordinator::EnrichElementalDamage(PipelineContext& ctx)
 // keep. The old floors no longer drop rows from the ranking; they only decide
 // where that feature applies. The legacy pass (the old context rules, learner,
 // prior, correlations, potion multiplier and floors; learning/legacy/) runs
-// only for it, behind [Scoring] bLegacyLearnFeature. R8.4: this file names the
+// only for it, behind [Scoring] bLegacyLearnFeature (0.24.17: default off,
+// engine B; and for the D2 shadow, bShadowLegacy). R8.4: this file names the
 // old engine in exactly one call (the pass, below); everything else it reads
 // of it comes through learning/legacy/LegacyRun.h (tools/prune/r8_check.py).
 //
@@ -472,13 +475,19 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     ctx.hideUidlessGear = Display::HidesUidlessGear(ctx.displayPageIndex);
 
     // Which model ranks, and whether the legacy pass runs. Logged on change.
+    // 0.24.17: engine B (no D2 feature) is the default live engine and D2
+    // (engine A) runs in shadow beside it: the legacy pass runs for the live
+    // score (bLegacyLearnFeature on), for the shadow (off, bShadowLegacy on),
+    // or for the fallback, which ranks on the old utility.
     ctx.choiceLive = g_choiceLearner && g_choiceLearner->Ready();
     const bool legacyOn = Scoring::Legacy::Enabled();
-    const bool runLegacy = legacyOn || !ctx.choiceLive;   // the fallback needs the utility
+    const bool shadowOn = !legacyOn && ctx.choiceLive && Scoring::Legacy::ShadowEnabled();
+    const bool runLegacy = legacyOn || shadowOn || !ctx.choiceLive;   // the fallback needs the utility
+    ctx.legacyLive = legacyOn;
     {
         // NOTE: Single-threaded (pipeline runs on the update thread only)
         static int s_lastMode = -1;
-        const int mode = (ctx.choiceLive ? 1 : 0) | (runLegacy ? 2 : 0);
+        const int mode = (ctx.choiceLive ? 1 : 0) | (legacyOn ? 2 : 0) | (shadowOn ? 4 : 0);
         if (mode != s_lastMode) {
             if (!ctx.choiceLive) {
                 logger::error("[Pipeline] Ranking on the OLD UTILITY (fallback): the bootstrap is missing or invalid "
@@ -486,8 +495,11 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
             }
             else {
                 logger::info("[Pipeline] Ranking on the choice score{}"sv,
-                    runLegacy ? " with the D2 legacy feature (bLegacyLearnFeature on)"
-                                  : " WITHOUT the legacy feature (bLegacyLearnFeature off: plain theta + b + recent)");
+                    legacyOn   ? " with the D2 legacy feature (engine A: bLegacyLearnFeature on; no shadow)"
+                    : shadowOn ? " without the legacy feature (engine B: bLegacyLearnFeature off), D2 in shadow "
+                                 "(bShadowLegacy on: logged, never shown)"
+                               : " without the legacy feature (engine B: bLegacyLearnFeature off), no shadow "
+                                 "(bShadowLegacy off)");
             }
             s_lastMode = mode;
         }
@@ -607,7 +619,10 @@ Scoring::ScoredCandidateList PipelineCoordinator::RankOnChoice(PipelineContext& 
     auto& sm = State::StateManager::GetSingleton();
     const auto coverage = sm.GetCoverage();
     const float refreshPriorSec = sm.GetRefreshPriorSec();
-    const bool legacyOn = ctx.legacy.ran;   // == bLegacyLearnFeature here (the model is live)
+    // What the live score reads (0.24.17: engine B by default), and whether
+    // the D2 shadow scores the run beside it (ScoreCandidates decided both).
+    const bool legacyOn = ctx.legacyLive;
+    const bool shadowA = !legacyOn && ctx.legacy.ran;
 
     const size_t rows = candidates.size();
     std::vector<C::Attr> attrs(rows);
@@ -619,6 +634,9 @@ Scoring::ScoredCandidateList PipelineCoordinator::RankOnChoice(PipelineContext& 
     double leftOut = 1.0;
     size_t outIdx = SIZE_MAX;
 
+    // 0.24.17: the D2 feature engine A reads on each row (the shadow).
+    std::vector<C::LegacyValues> legacyShadowFeat(shadowA ? rows : 0);
+
     Scoring::ScoredCandidateList out;
     out.reserve(rows + 8);
     for (size_t i = 0; i < rows; ++i) {
@@ -626,6 +644,7 @@ Scoring::ScoredCandidateList PipelineCoordinator::RankOnChoice(PipelineContext& 
         const RE::FormID form = Candidate::GetFormID(c);
         Scoring::ScoredCandidate sc;
         sc.candidate = c;
+        sc.runRow = static_cast<uint32_t>(i);
         // The legacy pass's utility and parts on a row the floors kept.
         const Scoring::Legacy::Row lg = ctx.legacy.RowFor(i);
         if (const auto* L = ctx.legacy.KeptFor(i)) {
@@ -653,6 +672,9 @@ Scoring::ScoredCandidateList PipelineCoordinator::RankOnChoice(PipelineContext& 
             }
         }
         C::SetLegacy(x.feat, C::LegacyFeature(legacyOn, lg.Scored(), static_cast<double>(lg.lnLearnMult)));
+        // Engine A's: the same call with the switch on, as the live score
+        // reads it under bLegacyLearnFeature = 1 (only A's mu reads it).
+        if (shadowA) legacyShadowFeat[i] = C::LegacyFeature(true, lg.Scored(), static_cast<double>(lg.lnLearnMult));
         // R8.4: no `ln util` feature. D2 reads only ln learn mult and util
         // missing; the old utility does not enter the choice score (the
         // bootstrap reader zeroes an `ln util` weight, core/Bootstrap.cpp).
@@ -680,6 +702,20 @@ Scoring::ScoredCandidateList PipelineCoordinator::RankOnChoice(PipelineContext& 
             gateRows.push_back(C::GateRow{});
             outIdx = attrs.size() - 1;
         }
+    }
+
+    // 0.24.17, engine A in shadow (core/LegacyShadowPass.h ScoreMu): B's
+    // extras, read BEFORE the live pass (its upgrade gate writes covered into
+    // `extras`, and A's gate must read A's s-hat), copied inside the pure
+    // pass with the D2 feature put back, then the same gate and score:
+    // exactly the mu the live pass computes with bLegacyLearnFeature on. The
+    // gate's comparison entry past the rows keeps util missing 1 in both (the
+    // old floors never scored it). Nothing reads A's mu but the pure pass's
+    // pages and the log.
+    if (shadowA) {
+        Huginn_ZONE_NAMED("Pipeline::ShadowLegacyMu");
+        Core::LegacyShadow::ScoreMu(model, tick, attrs, extras, gateRows, atLimit ? outIdx : SIZE_MAX, leftOut, rows,
+            legacyShadowFeat, ctx.legacyShadow);
     }
 
     std::vector<C::LiveScore> scores;
@@ -764,8 +800,10 @@ Scoring::ScoredCandidateList PipelineCoordinator::RankOnChoice(PipelineContext& 
 // the ranking read. The choice score's mu, sd and explanation come from the
 // ranking pass (ctx.choiceScores, index-aligned); LogChoiceRows adds the
 // page's part after the allocation. With [Scoring] bLegacyLearnFeature off
-// the legacy pass did not run: no old parts are captured (run.valid false,
-// as the v3 reader already handles), lm 0 and um 1 on every row.
+// lm is 0 and um 1 on every row (what the live score read), whether or not
+// the legacy pass ran for the D2 shadow (0.24.17); with both it and
+// bShadowLegacy off the legacy pass did not run: no old parts are captured
+// (run.valid false, as the v3 reader already handles).
 
 void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
     const std::vector<Candidate::CandidateVariant>& candidates)
@@ -841,15 +879,18 @@ void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
         else {
             row.old.favorite = Candidate::IsFavorited(c);   // the v3 Favorite flag reads it
         }
+        // lm / um: what the live score read (0.24.17: with engine B live and
+        // the legacy pass run for the D2 shadow, that is 0 / 1, whatever the
+        // floors kept; ChoiceLearner trains on these).
+        row.lnLearnMult = 0.0f;
+        row.utilMissing = 1;
         if (haveLegacy) {
             const auto lg = ctx.legacy.RowFor(ci);
-            row.lnLearnMult = lg.Scored() ? lg.lnLearnMult : 0.0f;
-            row.utilMissing = lg.utilMissing ? 1 : 0;
+            if (ctx.legacyLive) {
+                row.lnLearnMult = lg.Scored() ? lg.lnLearnMult : 0.0f;
+                row.utilMissing = lg.utilMissing ? 1 : 0;
+            }
             if (static_cast<uint8_t>(lg.floor) != row.old.floor) ++floorMismatch;
-        }
-        else {
-            row.lnLearnMult = 0.0f;   // the switch is off: what the score read
-            row.utilMissing = 1;
         }
         if (haveChoice) {
             // the ranking's mu; LogChoiceRows adds the page's part
@@ -972,9 +1013,20 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
         }
     }
     Slot::WildcardResult wildcardResult;
+    // 0.24.17: on a run the D2 shadow runs on, the allocator hands back its
+    // input (it reads nothing of it), and each page row's run row, for the
+    // shadow's stateless pages (ShadowLegacyPages).
+    Core::SlotAlloc::Input* const legacyShadowInput = ctx.legacyShadow.ran ? &ctx.legacyShadowAllocInput : nullptr;
+    if (legacyShadowInput) {
+        *legacyShadowInput = {};   // an allocation of a page with no keys leaves it empty
+        ctx.pageRunRows.clear();
+        for (const auto& sc : pageCandidates) ctx.pageRunRows.push_back(sc.isRememberedOnly ? UINT32_MAX : sc.runRow);
+    }
     ctx.rawAssignments = slotAllocator.AllocateSlotsForPage(
         ctx.displayPageIndex, pageCandidates, ctx.overrides, ctx.playerState, ctx.worldState,
-        &wildcardRequest, &wildcardResult);
+        &wildcardRequest, &wildcardResult, legacyShadowInput);
+    ctx.haveAllocInput = legacyShadowInput != nullptr && !ctx.legacyShadowAllocInput.slots.empty() &&
+                         ctx.legacyShadowAllocInput.candidates.size() == ctx.pageRunRows.size();
     // If an off-thread page mutation landed since the snapshot (Wheeler callback,
     // page-cycle keys, `hg page`, or a full SlotAllocator::Reset), abandon before
     // locking. SlotLocker is keyed by slot index only, so applying locks for THIS
@@ -1182,6 +1234,69 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
         }
     }
     return true;
+}
+
+// -----------------------------------------------------------------------------
+// ShadowLegacyPages -- 0.24.17: the D2 engine in shadow, after the allocation
+// -----------------------------------------------------------------------------
+// RankOnChoice left A's mu per candidate in the shadow run. Here, off the
+// same run and touching nothing the player sees (the work is the pure pass,
+// core/LegacyShadowPass.h RanksAndPages, on const views of the live run):
+//   - each candidate's rank under A and under B (core/ShadowCompare.h RanksOf:
+//     the live sort's order, ties broken as B broke them);
+//   - its key on A's page and on B's page, both built WITHOUT memory from the
+//     live allocation's own input (core/SlotAllocStateless.h): the same
+//     layout, candidates (the wheel page's uid filter applied) and overrides,
+//     no slot hold, seating, Remembrance hold, wildcard or lock. B's
+//     stateless page is the control: A's page differs from it only by the
+//     ranking, while the live page also carries the memory;
+// then copies them onto the eligible rows (the v3 log's amu, ar, br, ak, bk).
+// The live slot state is not touched: the stateless pages run the pure core
+// on a copy of the input (no seating memory, no events reported, no capture).
+
+void PipelineCoordinator::ShadowLegacyPages(PipelineContext& ctx)
+{
+    if (!ctx.legacyShadow.ran) return;
+    Huginn_ZONE_NAMED("Pipeline::ShadowLegacyPages");
+    const auto t0 = std::chrono::steady_clock::now();
+    const size_t rows = ctx.choiceScores.size();
+
+    // B's order, scores and tie-breaks off the ranked list (remembered-only
+    // rows were added after the sort and are not ranked): the live run's
+    // values, read here and handed to the pure pass as const.
+    std::vector<uint32_t> liveOrder;
+    liveOrder.reserve(rows);
+    std::vector<double> liveMu(rows, Core::kUnrankedScore);
+    std::vector<float> tie(rows, 0.0f);
+    for (const auto& sc : ctx.scoredCandidates) {
+        if (sc.isRememberedOnly || sc.runRow >= rows) continue;
+        liveOrder.push_back(sc.runRow);
+        liveMu[sc.runRow] = sc.score;
+        tie[sc.runRow] = sc.TieBreakDps();
+    }
+    // The allocation's handed-over input is spent by the pass (it builds both
+    // stateless pages in place on it).
+    Core::SlotAlloc::Input* const legacyShadowPageInput = ctx.haveAllocInput ? &ctx.legacyShadowAllocInput : nullptr;
+    ctx.haveAllocInput = false;
+    Core::LegacyShadow::RanksAndPages(liveOrder, liveMu, tie, legacyShadowPageInput, ctx.pageRunRows, ctx.legacyShadow);
+    // The pass left A's order and A's mu in the input: drop it now, so
+    // nothing after this point (nor the next run) can read it.
+    ctx.legacyShadowAllocInput = {};
+
+    // Onto the eligible rows (index-aligned with the candidates), for the v3 log.
+    if (ctx.eligible.size() == ctx.legacyShadow.mu.size() && ctx.legacyShadow.keyA.size() == ctx.eligible.size()) {
+        for (size_t r = 0; r < ctx.eligible.size(); ++r) {
+            auto& e = ctx.eligible[r];
+            e.legacyShadowMu = static_cast<float>(ctx.legacyShadow.mu[r]);
+            e.legacyShadowRankA = ctx.legacyShadow.rankA[r];
+            e.legacyShadowRankB = ctx.legacyShadow.rankB[r];
+            e.legacyShadowKeyA = ctx.legacyShadow.keyA[r];
+            e.legacyShadowKeyB0 = ctx.legacyShadow.keyB0[r];
+        }
+    }
+
+    [[maybe_unused]] const double us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+    Huginn_PLOT("Shadow pages us per run", static_cast<int64_t>(us));
 }
 
 // -----------------------------------------------------------------------------

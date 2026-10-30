@@ -40,6 +40,17 @@ learner's learning score on the rows the old floors pass. So two lists:
           learner trains on: patterned).
           The old utility's row feature (`ln_util`) is LEGACY too: the bootstrap refuses a weight
           on it, and nothing but that refusal, its enum line and its host test may name it.
+          0.24.17, the D2 engine in shadow (engine A beside the live engine B): every name with
+          `legacyShadow` / `LegacyShadow` in it is LEGACY, C++ only. A's values are computed in
+          pure core (core/LegacyShadowPass.h, allowlisted: no game access, const inputs) and
+          travel outside it only under such names -- the run (ctx.legacyShadow), the feature
+          vector A reads, the eligible rows' and the v3 rows' fields, the [Soak] tally's locals --
+          so an alias or a copy is itself a LEGACY line. They appear in the pipeline's calls and
+          copies and the log's copies (PipelineStateCache, SelectionLogV3, DecisionLog), each in
+          its exact form; a read anywhere else -- a live score, an allocation, a lock, the display,
+          the learner -- fails. ChoiceLearner may name none, and REQUIRED keeps the two guards that
+          keep engine B's learner on B's features (CaptureEligible's ctx.legacyLive, the learner's
+          um / lm read).
   STALE   phrases that describe a pruned behaviour as live (the display reason derived from the
           context weights), in code and comments, two lines at a time.
   REQUIRED code that must stay, verbatim up to whitespace: the bootstrap's ln util refusal.
@@ -171,6 +182,18 @@ PRUNED_SCOPED = [
     # the filter's input, and the legacy scorer's fav = 0 arm, which keeps the v3 OldScore
     # columns of a filter drop as they were.
     ('Suppress', 'src/learning/UtilityScorer.*', 'the scorer\'s Suppress branches (now a filter)'),
+    # 0.24.17 (review round 1): the untagged names engine A's values once had in the pipeline,
+    # before the pure pass (core/LegacyShadowPass.h) took them; a revival would carry A's values
+    # past the legacyShadow tag.
+    ('shadowExtras', 'src/pipeline/PipelineCoordinator.*', '0.24.17: A\'s extras now live in the pure pass'),
+    ('shadowFeat', 'src/pipeline/PipelineCoordinator.*', '0.24.17: A\'s features are legacyShadowFeat'),
+    ('scoresA', 'src/pipeline/PipelineCoordinator.*', '0.24.17: A\'s page scores now live in the pure pass'),
+    ('scoresANow', 'src/pipeline/PipelineCoordinator.*', '0.24.17: A\'s page scores now live in the pure pass'),
+    # 0.24.17 (review round 2): the allocation input the pass leaves holding A's order and mu, under
+    # its old untagged names (it is legacyShadowAllocInput, legacyShadowInput, legacyShadowPageInput)
+    ('allocInput', 'src/pipeline/PipelineCoordinator.*', '0.24.17: the shadow\'s input is legacyShadowAllocInput'),
+    ('shadowInput', 'src/pipeline/PipelineCoordinator.*', '0.24.17: it is legacyShadowInput'),
+    ('pageInput', 'src/pipeline/PipelineCoordinator.*', '0.24.17: it is legacyShadowPageInput'),
 ]
 PRUNED_INI_KEYS = ['sPotionTierPreference', 'fFavoritesBoostMin']
 # Phrases that describe a pruned behaviour as live (comments included): (name, regex, why).
@@ -195,6 +218,41 @@ REQUIRED = [
      r'if \(w != 0\.0\) \+\+rep\.featuresRefused;\s*continue;\s*\}',
      'the bootstrap refuses a weight on `ln util` (R8.4): without it a refit weighing the old '
      'utility would rank on it'),
+]
+# 0.24.17: what keeps the D2 shadow out of the live learner. CaptureEligible writes lm / um as the
+# live score read them (0 / 1 under engine B, also while the legacy pass runs for the shadow), and
+# ChoiceLearner trains on um / lm, not on whether the old floors set `util`.
+REQUIRED += [
+    ('src/pipeline/PipelineCoordinator.cpp',
+     r'row\.lnLearnMult = 0\.0f;\s*row\.utilMissing = 1;\s*if \(haveLegacy\) \{\s*'
+     r'const auto lg = ctx\.legacy\.RowFor\(ci\);\s*if \(ctx\.legacyLive\) \{\s*'
+     r'row\.lnLearnMult = lg\.Scored\(\) \? lg\.lnLearnMult : 0\.0f;\s*'
+     r'row\.utilMissing = lg\.utilMissing \? 1 : 0;\s*\}\s*'
+     r'if \(static_cast<uint8_t>\(lg\.floor\) != row\.old\.floor\) \+\+floorMismatch;\s*\}',
+     '0.24.17: the v3 rows\' lm / um are what the live score read: the floors\' values only under '
+     'ctx.legacyLive (bLegacyLearnFeature on), never under engine B with the shadow running'),
+    ('src/learning/ChoiceLearner.cpp',
+     r'const bool scored = r\.um == 0;\s*f\[static_cast<std::size_t>\(C::Feature::util_missing\)\] = '
+     r'scored \? 0\.0 : 1\.0;\s*if \(scored\) \{\s*if \(std::isfinite\(r\.lm\)\) '
+     r'f\[static_cast<std::size_t>\(C::Feature::ln_learn_mult\)\] = r\.lm;\s*\}',
+     '0.24.17: the live learner reads util missing / ln learn mult off the row\'s um / lm (what the live '
+     'score read), not off whether the old floors set util'),
+    ('src/pipeline/PipelineCoordinator.cpp',
+     r'const bool legacyOn = Scoring::Legacy::Enabled\(\);\s*'
+     r'const bool shadowOn = !legacyOn && ctx\.choiceLive && Scoring::Legacy::ShadowEnabled\(\);\s*'
+     r'const bool runLegacy = legacyOn \|\| shadowOn \|\| !ctx\.choiceLive;[^\n]*\n\s*'
+     r'ctx\.legacyLive = legacyOn;',
+     '0.24.17: the run\'s legacyLive is the switch itself, never the legacy pass running (the shadow runs it too)'),
+    ('src/pipeline/PipelineCoordinator.cpp', r'\n\s*const bool legacyOn = ctx\.legacyLive;\s*\n\s*const bool shadowA = !legacyOn && ctx\.legacy\.ran;',
+     '0.24.17: RankOnChoice reads the D2 feature live only under the run\'s legacyLive'),
+    ('src/pipeline/PipelineCoordinator.h', r'\n\s*bool legacyLive = false;',
+     '0.24.17: legacyLive defaults off (engine B) in the run context'),
+    ('src/pipeline/PipelineCoordinator.h', r'\n\s*legacy\.Clear\(\);\s*legacyLive = false;\s*legacyShadow\.Clear\(\);\s*'
+     r'legacyShadowAllocInput = \{\};',
+     '0.24.17: Reset clears the switch, the shadow run and the input that held A\'s order'),
+    ('src/pipeline/PipelineCoordinator.cpp',
+     r'Core::LegacyShadow::RanksAndPages\([^\n]*\);\s*(?://[^\n]*\n\s*)*ctx\.legacyShadowAllocInput = \{\};',
+     '0.24.17: the input the pass left holding A\'s order and mu is cleared right after the pass'),
 ]
 # R11: the facets' readers stay wired (a deleted call would let the classifiers back by default).
 REQUIRED += [
@@ -254,6 +312,10 @@ LEGACY_CPP = [
     'bowArrowBonus', 'crossbowBoltBonus', 'meleeDefensiveBonus', 'silverUndeadBonus', 'fortifySchoolBonus',
     'staffLowMagickaBonus', 'twoHandedDefensiveBonus',
     'combatStartWindow', 'regenPotionCombatStartMult', 'flatRestoreLowResourceMult',
+    # 0.24.17: whether the live score reads the D2 feature this run (PipelineContext::legacyLive),
+    # set once from the switch, read by RankOnChoice and CaptureEligible. Another form of either
+    # makes engine A live (or B's learner train on A) while the log still says engine B.
+    'legacyLive',
 ]
 # Patterns, C++ only: the facade and the member reads of the old utility (see the docstring).
 LEGACY_CPP_PATTERNS = {
@@ -269,6 +331,11 @@ LEGACY_CPP_PATTERNS = {
     '.util': r'(?:\.|->)\s*util\b',
     # the old floors' keep test on a legacy module Row (Legacy::Row::Scored)
     '.Scored()': r'(?:\.|->)\s*Scored\s*\(',
+    # 0.24.17: the D2 engine in shadow -- engine A's mu, ranks and page keys (the pipeline's
+    # LegacyShadowRun, ctx.legacyShadow, the eligible rows' and the v3 rows' legacyShadow*
+    # fields). A line that names one is the shadow's writer or its log copy; anywhere else it
+    # is A's ranking read live (a score, an allocation, the learner).
+    'legacy shadow': r'\b[Ll]egacyShadow\w*',
     'breakdown part': r'(?:\.|->|::)\s*(?:contextWeight|rewardEstimate|learningScore|recencyBoost|correlationBonus'
                       r'|potionMultiplier|favoritesMultiplier|ToCompactString|ToDetailString)\b',
 }
@@ -285,6 +352,9 @@ FILE_PATTERNS = {
     # would be a skip put back.
     'src/pipeline/PipelineCoordinator.cpp': {
         'Suppress': r'\bSuppress\b',
+        # 0.24.17: the legacy row's util missing, which only CaptureEligible's guarded block may copy
+        # into the v3 row (a second copy re-feeds D2's feature to engine B's learner)
+        'lg.utilMissing': r'\blg\.utilMissing\b',
     },
 }
 
@@ -315,6 +385,10 @@ ALLOW = [
     ('src/context/ContextWeightSettings.*', 'settings loader: [ContextWeights]'),
     ('tests/core/LegacyFloorPassTests.cpp', 'the host test of the moved floor loop (bit for bit)'),
     ('tests/core/LegacyRunTests.cpp', 'the host test of the legacy module\'s row resolution'),
+    # 0.24.17: the D2 shadow's pass computes engine A's values in pure core (no game, no slot
+    # state, no learner) from const views of the live run; its host test names them too.
+    ('src/core/LegacyShadowPass.h', 'the D2 shadow pass: engine A\'s mu, ranks and stateless pages, pure core, const inputs'),
+    ('tests/core/ShadowCompareTests.cpp', 'the D2 shadow pass\'s host test'),
     # The R7 slot math states slot scores as utilities through the bridge: the golden snapshot
     # format (utility tokens), the Debug capture harness and the host slot tests. The bridge's
     # definitions (core/SlotScoreMath.h) and ScoredCandidate.h hold live ranking code (RanksBefore,
@@ -334,12 +408,14 @@ ALLOW = [
 COMMENT = r'^\s*//'
 BUDGET = {
     # The live pipeline (PipelineCoordinator): the legacy pass and everything it reads off it.
-    'src/pipeline/PipelineCoordinator.cpp': (30, [
+    'src/pipeline/PipelineCoordinator.cpp': (58, [
         COMMENT,
         # the pass (or its skip with the switch off), and the switch
         r'^\s*ctx\.legacy = Scoring::Legacy::LegacyPass\(',
         r'^\s*ctx\.legacy\.Skip\(candidates\.size\(\)\);$',
         r'^\s*const bool legacyOn = Scoring::Legacy::Enabled\(\);$',
+        # 0.24.17: the D2 shadow's switch (B live, the choice score ranking)
+        r'^\s*const bool shadowOn = !legacyOn && ctx\.choiceLive && Scoring::Legacy::ShadowEnabled\(\);$',
         # the fallback ranking (no bootstrap): built in the legacy module
         r'^\s*ctx\.scoredCandidates = ctx\.legacy\.FallbackRanking\(\);$',
         # the old learner's weights-changed latch: a trained pick moves lm, so the run re-scores
@@ -347,7 +423,41 @@ BUDGET = {
         r'^\s*return Scoring::Legacy::WeightsChanged\(\) \|\|$',
         # RankOnChoice: the D2 feature per candidate, and the kept row's old parts copied for
         # the v2 log (they rank nothing)
-        r'^\s*const bool legacyOn = ctx\.legacy\.ran;',
+        # 0.24.17: the D2 shadow. Engine A's values exist in this file only under legacyShadow*
+        # names, every line naming one in an exact form here: the pass's include, the feature
+        # vector A reads (the live call with the switch on), the pure pass's two calls, the
+        # allocation-input hand-back, and the copy onto the eligible rows (the v3 log).
+        r'^#include "core/LegacyShadowPass\.h"',
+        r'^\s*const bool shadowA = !legacyOn && ctx\.legacy\.ran;$',
+        r'^\s*std::vector<C::LegacyValues> legacyShadowFeat\(shadowA \? rows : 0\);$',
+        r'^\s*if \(shadowA\) legacyShadowFeat\[i\] = C::LegacyFeature\(true, lg\.Scored\(\), '
+        r'static_cast<double>\(lg\.lnLearnMult\)\);$',
+        r'^\s*Core::LegacyShadow::ScoreMu\(model, tick, attrs, extras, gateRows, atLimit \? outIdx : SIZE_MAX, '
+        r'leftOut, rows,$',
+        r'^\s*legacyShadowFeat, ctx\.legacyShadow\);$',
+        r'^\s*Core::SlotAlloc::Input\* const legacyShadowInput = ctx\.legacyShadow\.ran \? '
+        r'&ctx\.legacyShadowAllocInput : nullptr;$',
+        r'^\s*if \(legacyShadowInput\) \{$',
+        r'^\s*\*legacyShadowInput = \{\};\s+// ',
+        r'^\s*&wildcardRequest, &wildcardResult, legacyShadowInput\);$',
+        r'^\s*ctx\.haveAllocInput = legacyShadowInput != nullptr && !ctx\.legacyShadowAllocInput\.slots\.empty\(\) &&$',
+        r'^\s*ctx\.legacyShadowAllocInput\.candidates\.size\(\) == ctx\.pageRunRows\.size\(\);$',
+        r'^\s*Core::SlotAlloc::Input\* const legacyShadowPageInput = ctx\.haveAllocInput \? '
+        r'&ctx\.legacyShadowAllocInput : nullptr;$',
+        r'^\s*ctx\.legacyShadowAllocInput = \{\};$',
+        # 0.24.17: the switch as this run read it, and its two readers (REQUIRED below pins them too)
+        r'^\s*ctx\.legacyLive = legacyOn;$',
+        r'^\s*const bool legacyOn = ctx\.legacyLive;$',
+        r'^\s*if \(ctx\.legacyLive\) \{$',
+        r'^\s*row\.utilMissing = lg\.utilMissing \? 1 : 0;$',
+        r'^\s*if \(!ctx\.legacyShadow\.ran\) return;$',
+        r'^\s*Core::LegacyShadow::RanksAndPages\(liveOrder, liveMu, tie, legacyShadowPageInput, ctx\.pageRunRows, '
+        r'ctx\.legacyShadow\);$',
+        r'^\s*if \(ctx\.eligible\.size\(\) == ctx\.legacyShadow\.mu\.size\(\) && '
+        r'ctx\.legacyShadow\.keyA\.size\(\) == ctx\.eligible\.size\(\)\) \{$',
+        r'^\s*e\.legacyShadowMu = static_cast<float>\(ctx\.legacyShadow\.mu\[r\]\);$',
+        r'^\s*e\.legacyShadow(?:RankA = ctx\.legacyShadow\.rankA|RankB = ctx\.legacyShadow\.rankB'
+        r'|KeyA = ctx\.legacyShadow\.keyA|KeyB0 = ctx\.legacyShadow\.keyB0)\[r\];$',
         r'^\s*const Scoring::Legacy::Row lg = ctx\.legacy\.RowFor\(i\);$',
         r'^\s*if \(const auto\* L = ctx\.legacy\.KeptFor\(i\)\) \{$',
         r'^\s*sc\.utility = L->utility;$',
@@ -373,13 +483,24 @@ BUDGET = {
         r'^\s*\[\]\(const Scoring::ScoredCandidate& sc\) \{ return sc\.legacyScored && !sc\.isRememberedOnly; \}\)\)\);$',
         r'^\s*row\.lnLearnMult = lg\.Scored\(\) \? lg\.lnLearnMult : 0\.0f;$',
     ], 'the legacy pass, the switch, the fallback, the weights latch, the D2 feature per candidate, '
-       'the v2 / v3 log copies, the Suppress filter input, the Debug widget cold-start count'),
-    'src/pipeline/PipelineCoordinator.h': (6, [
+       'the v2 / v3 log copies, the Suppress filter input, the Debug widget cold-start count; 0.24.17: the '
+       'D2 shadow (its switch, engine A\'s feature and mu, the allocation input hand-back, the ranks and '
+       'page keys onto the eligible rows)'),
+    'src/pipeline/PipelineCoordinator.h': (16, [
         COMMENT,
         r'^\s*#include "learning/legacy/LegacyRun\.h"',
         r'^\s*Scoring::Legacy::Run legacy;$',
         r'^\s*legacy\.Clear\(\);$',
-    ], 'the run context\'s handle on the legacy pass'),
+        # 0.24.17: the D2 shadow's run (engine A's mu, ranks, page keys; core/LegacyShadowPass.h)
+        r'^#include "core/LegacyShadowPass\.h"',
+        r'^\s*Core::LegacyShadow::Run legacyShadow;$',
+        r'^\s*legacyShadow\.Clear\(\);$',
+        r'^\s*Core::SlotAlloc::Input legacyShadowAllocInput;$',
+        r'^\s*legacyShadowAllocInput = \{\};$',
+        # 0.24.17: the switch as the run read it: its default and its Reset (REQUIRED too)
+        r'^\s*bool legacyLive = false;$',
+        r'^\s*legacyLive = false;$',
+    ], 'the run context\'s handle on the legacy pass, and (0.24.17) the D2 shadow\'s run'),
     # The old learner's clock and forget sweep: they run whatever bLegacyLearnFeature says, so
     # BNDW keeps ageing and stays bounded.
     'src/UpdateLoop.cpp': (4, [
@@ -390,28 +511,57 @@ BUDGET = {
     ], 'the old learner\'s play clock and forget sweep (BNDW ages while the switch is off)'),
     # The [Soak] heartbeat's old-learner counts: the soak's check that the forget sweep keeps the
     # BNDW record bounded (items, trains, forgot). Off the lm / um path; reads only.
-    'src/telemetry/SoakMetrics.cpp': (2, [
+    'src/telemetry/SoakMetrics.cpp': (10, [
         r'^\s*#include "learning/legacy/LegacyRun\.h"',
         r'^\s*const auto oldLearner = Scoring::Legacy::Counts\(\);$',
-    ], 'the [Soak] heartbeat\'s old-learner counts (BNDW bounded by the forget sweep)'),
+        # 0.24.17: the shadowA field says moot / off from the two switches
+        r'^\s*const bool shadowMoot = Scoring::Legacy::Enabled\(\);$',
+        r'^\s*const bool shadowOn = Scoring::Legacy::ShadowEnabled\(\);$',
+        # 0.24.17: the window's D2 shadow tally, taken and printed (A-derived counts, prefixed)
+        r'^\s*Core::ShadowCompare::Tally legacyShadowTally;$',
+        r'^\s*legacyShadowTally = legacyShadowWindowTally;$',
+        r'^\s*legacyShadowWindowTally = \{\};$',
+        r'^\s*legacyShadowTally\.(?:keys|reach|reachAOnly), legacyShadowTally\.\w+, legacyShadowTally\.\w+(?:,|\);)$',
+    ], 'the [Soak] heartbeat\'s old-learner counts (BNDW bounded by the forget sweep), and (0.24.17) the '
+       'shadowA field\'s two switches'),
+    # 0.24.17: the [Soak] D2 shadow tally (A-derived counts) is legacyShadow-prefixed: its record
+    # call and member, in their exact forms; nothing else in the header may name it.
+    'src/telemetry/SoakMetrics.h': (4, [
+        r'^\s*void RecordShadowPick\(const Core::ShadowCompare::Pick& legacyShadowPick\)$',
+        r'^\s*if \(legacyShadowPick\.kind == Core::ShadowCompare::PickKind::None\) return;$',
+        r'^\s*legacyShadowWindowTally\.Add\(legacyShadowPick\);$',
+        r'^\s*Core::ShadowCompare::Tally legacyShadowWindowTally;$',
+    ], 'the [Soak] D2 shadow tally (0.24.17)'),
     # The live scorer that ranks (sort, wildcards, envelopes): no old engine, but its [Recs]
     # lines log lm's inputs (hg recs detail) and the fallback's line.
     'src/learning/UtilityScorer.h': (0, None, 'the live scorer: no old engine'),
     'src/learning/UtilityScorer.cpp': (7, [
         r'^\s*const std::string legacy = !scored\.legacyScored \? std::string\(" \| lm: under the old floors"\)$',
         r'^\s*const auto& bd = scored\.breakdown;$',
-        r'^\s*: detail\s+\? fmt::format\(" \| lm from \{\}", bd\.ToDetailString\(\)\)$',
+        r'^\s*: detail\s+\? fmt::format\(" \| \{\} from \{\}", p\.utilMissing != 0\.0 \? "shadow A\'s lm" : "lm", '
+        r'bd\.ToDetailString\(\)\)$',
         r'^\s*scored\.score, scored\.utility,$',
         r'^\s*detail \? bd\.ToDetailString\(\) : bd\.ToCompactString\(\),$',
         r'^\s*scored\.isColdStartBoosted \? " \[COLD\]" : ""\);$',
     ], 'the live scorer: only [Recs] lines log the old parts (lm\'s inputs; the fallback line)'),
     # The v2 selection log's cached rows (PipelineStateCache feeds SelectionLog.cpp).
-    'src/learning/PipelineStateCache.h': (4, [
+    'src/learning/PipelineStateCache.h': (9, [
         r'^\s*\.utility = sc\.utility,$',
         r'^\s*\.breakdown = sc\.breakdown,$',
         r'^\s*bool isColdStartBoosted = false;$',
         r'^\s*\.isColdStartBoosted = sc\.isColdStartBoosted,$',
-    ], 'the v2 selection log\'s cached rows'),
+        # 0.24.17: the eligible row's copy of the D2 shadow, for the v3 log
+        r'^\s*float legacyShadowMu = std::numeric_limits<float>::quiet_NaN\(\);$',
+        r'^\s*int16_t legacyShadowRank[AB] = 0;$',
+        r'^\s*int8_t legacyShadowKey(?:A|B0) = -2;$',
+    ], 'the v2 selection log\'s cached rows; the eligible rows\' D2 shadow fields (0.24.17)'),
+    # 0.24.17: the v3 Row's D2 shadow fields (logged only; ChoiceLearner, which reads the Row,
+    # names none: its budget is 0).
+    'src/core/DecisionLog.h': (5, [
+        r'^\s*float legacyShadowMu = kNone;$',
+        r'^\s*std::int16_t legacyShadowRank[AB] = 0;$',
+        r'^\s*std::int8_t legacyShadowKey(?:A|B0) = kNoShadowKey;$',
+    ], 'the v3 row\'s D2 shadow columns (amu, ar, br, ak, bk)'),
     # The Debug widget's cold-start badge (reads the legacy pass's flag; ranks nothing).
     'src/ui/UtilityScorerDebugWidget.cpp': (1, [r'^\s*if \(candidate\.isColdStartBoosted\) \{$'],
                                             'the Debug widget cold-start badge'),
@@ -440,13 +590,14 @@ BUDGET = {
                                   'host legacy slot policy (no live core reads it)'),
     # The live learner's path. ChoiceSubscriber feeds ChoiceLearner::OnPick: no old engine.
     'src/learning/ChoiceSubscriber.h': (0, None, 'the live learner\'s subscriber: no old engine'),
-    # ChoiceLearner trains on the v3 rows: it reads the row's old-utility copy once, as the
-    # util_missing flag (whether the old floors scored the row), never as a value.
-    'src/learning/ChoiceLearner.cpp': (1, [r'^\s*const bool scored = std::isfinite\(r\.util\);$'],
-                                       'the live learner: `util` read only as the util_missing flag'),
+    # ChoiceLearner trains on the v3 rows. 0.24.17: no old-engine line at all -- util missing and
+    # ln learn mult come from the row's um / lm (what the live score read), no longer from whether
+    # the old floors set `util` (they do on B's rows too while the D2 shadow runs), and it names
+    # none of the D2 shadow's columns.
+    'src/learning/ChoiceLearner.cpp': (0, None, 'the live learner: no old engine, no D2 shadow'),
     # SelectionLogV3 builds the v3 Decision rows the live learner trains on (util, lm): only the
     # row's old-utility copy and the OldScore columns' learner fill, each in its exact form.
-    'src/learning/SelectionLogV3.cpp': (10, [
+    'src/learning/SelectionLogV3.cpp': (21, [
         r'^#include "FeatureBanditLearner\.h"$',
         r'^#include "UsageMemory\.h"$',
         # EligibleToRow: the row's utility and Scored flag, copied as the run left them
@@ -459,7 +610,16 @@ BUDGET = {
         r'^\s*const auto learner = g_featureBanditLearner->AcquireReader\(\);$',
         r'^\s*const auto usage = g_usageMemory->AcquireReader\(old\.stateHash\);$',
         r'^\s*r\.old\.est = m\.rewardEstimate;$',
-    ], 'the v3 rows the live learner trains on: the utility copy and the OldScore learner fill'),
+        # 0.24.17: EligibleToRow copies the D2 shadow's columns; the [Soak] tally reads A's page key
+        r'^\s*r\.legacyShadow(Mu|RankA|RankB|KeyA|KeyB0) = e\.legacyShadow\1;$',
+        r'^\s*if \(r\.legacyShadowKeyA != Core::DecisionLog::kNoShadowKey\) \{$',
+        r'^\s*const std::int8_t legacyShadowChosen(A|B0) = chosen \? chosen->legacyShadowKey\1 : '
+        r'Core::DecisionLog::kNoShadowKey;$',
+        r'^\s*chosen != nullptr, legacyShadowChosenA, legacyShadowChosenB0\);$',
+        r'^\s*const auto legacyShadowPick = Core::ShadowCompare::ClassifyPick\(d\.outcome == Outcome::Nothing, d\.repeat,$',
+        r'^\s*Telemetry::SoakMetrics::GetSingleton\(\)\.RecordShadowPick\(legacyShadowPick\);$',
+    ], 'the v3 rows the live learner trains on: the utility copy and the OldScore learner fill; the D2 '
+       'shadow\'s columns and the [Soak] tally\'s read of them (0.24.17)'),
     # `ln_util`: its enum line, the bootstrap's refusal (REQUIRED below keeps it whole) and the
     # refusal's host test.
     'src/core/ChoiceScore.h': (1, [r'^\s*ln_util,$'], 'the format v1 feature enum: `ln util`\'s slot'),
@@ -469,12 +629,15 @@ BUDGET = {
                                       'the ln util refusal\'s host test'),
     # Construction, settings and the legacy commands and tests (counted, not whole-file).
     # R11: 31, down from 34: the per-type dumps and their train-count columns went.
-    'src/console/ConsoleCommands.cpp': (31, None, 'hg weights, hg dump weights, hg status counts and the '
-                                                   'switch, hg reset'),
-    'src/Main.cpp': (24, None, 'construction, the equip-bus registration and the switch'),
+    # 0.24.17: 32: hg status names the D2 shadow's switch beside the feature's.
+    'src/console/ConsoleCommands.cpp': (32, None, 'hg weights, hg dump weights, hg status counts and the '
+                                                   'switches, hg reset'),
+    # 0.24.17: 25: the D2 shadow's switch set at load.
+    'src/Main.cpp': (25, None, 'construction, the equip-bus registration and the switches'),
     'src/Globals.h': (9, None, 'construction'),
     'src/Globals.cpp': (6, None, 'construction and the reset'),
-    'src/settings/SettingsReloader.cpp': (9, None, 'settings loader: hot reload, the switch and the dMenu reset'),
+    # 0.24.17: 10: the D2 shadow's switch hot-reloaded.
+    'src/settings/SettingsReloader.cpp': (10, None, 'settings loader: hot reload, the switches and the dMenu reset'),
     'src/settings/SettingsReloader.h': (2, None, 'settings loader: the reset-weights doc comment'),
     'src/Tests.cpp': (282, None, 'the in-game Debug suite\'s legacy and slot-harness tests'),
 }
