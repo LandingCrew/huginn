@@ -28,9 +28,14 @@ learner's learning score on the rows the old floors pass. So two lists:
           (FILE_PATTERNS): a bare `utility` / `breakdown` in ScoredCandidate.h's code, and
           `Suppress` in PipelineCoordinator.cpp. A file that ranks or does slot math live
           (ScoredCandidate.h, SlotScoreMath.h, UtilityScorer, PipelineCoordinator) is never
-          allowed whole: it is a patterned budget.
+          allowed whole: it is a patterned budget. Nor is a file on the live learner's path
+          (ChoiceSubscriber.h: no LEGACY line; SelectionLogV3.cpp, which builds the v3 rows the
+          learner trains on: patterned).
+          The old utility's row feature (`ln_util`) is LEGACY too: the bootstrap refuses a weight
+          on it, and nothing but that refusal, its enum line and its host test may name it.
   STALE   phrases that describe a pruned behaviour as live (the display reason derived from the
           context weights), in code and comments, two lines at a time.
+  REQUIRED code that must stay, verbatim up to whitespace: the bootstrap's ln util refusal.
 
 What the check is: a guard against ACCIDENTAL reintroduction, by name and by plain member read.
 It does not try to defeat a deliberate evasion (a structured binding, a macro, a new accessor
@@ -133,6 +138,15 @@ STALE = [
      'the display reason came from the old context weights (DominantReason); since R8.3 it comes '
      'from the page\'s explanations (PipelineCoordinator::UpdateContextReason)'),
 ]
+# Code that must stay (path, regex over the whole file, why): deleting it lets the old utility back
+# in without naming anything new. Whitespace-tolerant.
+REQUIRED = [
+    ('src/core/Bootstrap.cpp',
+     r'if \(static_cast<Choice::Feature>\(i\) == Choice::Feature::ln_util\) \{\s*'
+     r'if \(w != 0\.0\) \+\+rep\.featuresRefused;\s*continue;\s*\}',
+     'the bootstrap refuses a weight on `ln util` (R8.4): without it a refit weighing the old '
+     'utility would rank on it'),
+]
 # Searched for those keys by name: a missing one is a violation (a move would hide a key).
 REQUIRED_INI = ['configs/Huginn.ini', 'Data/SKSE/Plugins/dmenu/customSettings/Huginn.json']
 
@@ -157,6 +171,9 @@ LEGACY = [
     'FallbackRanking', 'KeptFor', 'KeptCount', 'RowFor', 'OldScoreCapture', 'LearnerCounts',
     # the utility -> rank-score bridge: only the fallback (legacy module) and the slot harness
     'RankOnUtility', 'BridgeScore', 'DisplayUtility',
+    # the old utility's row feature (format v1 `ln util`): the bootstrap refuses a weight on it
+    # (core/Bootstrap.cpp); no row, live or logged, may set it
+    'ln_util',
 ]
 # The old score's config fields (ScorerConfig.h): C++ only.
 LEGACY_CPP = [
@@ -207,12 +224,12 @@ ALLOW = [
     ('src/context/ContextRuleEngine.*', 'the context rules: the floors\' input'),
     ('src/context/ContextWeightForCandidate.*', 'the context rules: weight per candidate, the hard-gate check'),
     ('src/context/ContextWeightConfig.h', 'the context rules: config'),
-    ('src/learning/EquipSubscribers.h', 'the old learner\'s subscribers (BanditSubscriber, UsageMemorySubscriber)'),
+    ('src/learning/EquipSubscribers.h', 'the old learner\'s subscribers (BanditSubscriber, UsageMemorySubscriber); '
+                                        'the live learner\'s ChoiceSubscriber is in ChoiceSubscriber.h (budget 0)'),
     ('src/learning/EquipEvent.h', 'the old learner\'s subscriber input: press-time features on the event'),
     ('src/learning/EquipEventBus.cpp', 'the old learner\'s subscriber input: the bus computes those features'),
     ('src/persist/BanditSerializer.*', 'the BNDW cosave record (D2 reads the old learner\'s per-item state)'),
     ('src/learning/SelectionLog.cpp', 'the v2 selection log (the audit trail for refits)'),
-    ('src/learning/SelectionLogV3.cpp', 'the v3 OldScore columns (the audit trail for refits)'),
     ('src/core/OldScore.h', 'the v3 OldScore columns\' record'),
     ('src/core/DecisionLog.cpp', 'the v3 format: the OldRun head writes the floors\' lambdaMin / lambdaMax'),
     ('tests/core/DecisionLogTests.cpp', 'the v3 format\'s host test (the OldRun head)'),
@@ -330,9 +347,37 @@ BUDGET = {
         r'^\s*\[\[nodiscard\]\] inline SlotScore BridgeScore\(float utility\) noexcept$',
         r'^\s*\[\[nodiscard\]\] inline float DisplayUtility\(SlotScore score\) noexcept$',
     ], 'the bridge: the BridgeScore / DisplayUtility definitions'),
-    # The R7 Debug slot capture: the golden snapshot's utility token.
-    'src/slot/SlotSnapshot.cpp': (1, [r'^\s*c\.utility = sc\.utility;'],
-                                  'the R7 Debug slot capture: the golden snapshot\'s utility token'),
+    # BuildAllocInput, the live allocation's input (SlotAllocator calls it on every allocation):
+    # it carries the old utility as the CandidateRec's token for the R7 capture and the host legacy
+    # slot policy. No live core reads CandidateRec::utility; the slots rank on c.score.
+    'src/slot/SlotSnapshot.cpp': (1, [r'^\s*c\.utility = sc\.utility;$'],
+                                  'the live alloc input: the utility token for the R7 capture and the '
+                                  'host legacy slot policy (no live core reads it)'),
+    # The live learner's path. ChoiceSubscriber feeds ChoiceLearner::OnPick: no old engine.
+    'src/learning/ChoiceSubscriber.h': (0, None, 'the live learner\'s subscriber: no old engine'),
+    # SelectionLogV3 builds the v3 Decision rows the live learner trains on (util, lm): only the
+    # row's old-utility copy and the OldScore columns' learner fill, each in its exact form.
+    'src/learning/SelectionLogV3.cpp': (10, [
+        r'^#include "FeatureBanditLearner\.h"$',
+        r'^#include "UsageMemory\.h"$',
+        # EligibleToRow: the row's utility and Scored flag, copied as the run left them
+        r'^\s*r\.flags = Flag::Eligible \| \(std::isfinite\(e\.utility\) \? Flag::Scored : 0\);$',
+        r'^\s*r\.util = e\.utility;$',
+        # FillLearner: the OldScore columns (est, alpha, trains, ucb, rec) of rows the run missed
+        r'^\s*if \(!old\.run\.valid \|\| old\.run\.phi\.size\(\) != Learning::StateFeatures::NUM_FEATURES\) return;$',
+        r'^\s*if \(!g_featureBanditLearner \|\| !g_usageMemory\) return;$',
+        r'^\s*std::array<float, Learning::StateFeatures::NUM_FEATURES> phi\{\};$',
+        r'^\s*const auto learner = g_featureBanditLearner->AcquireReader\(\);$',
+        r'^\s*const auto usage = g_usageMemory->AcquireReader\(old\.stateHash\);$',
+        r'^\s*r\.old\.est = m\.rewardEstimate;$',
+    ], 'the v3 rows the live learner trains on: the utility copy and the OldScore learner fill'),
+    # `ln_util`: its enum line, the bootstrap's refusal (REQUIRED below keeps it whole) and the
+    # refusal's host test.
+    'src/core/ChoiceScore.h': (1, [r'^\s*ln_util,$'], 'the format v1 feature enum: `ln util`\'s slot'),
+    'src/core/Bootstrap.cpp': (1, [r'^\s*if \(static_cast<Choice::Feature>\(i\) == Choice::Feature::ln_util\) \{$'],
+                               'the ln util refusal'),
+    'tests/core/BootstrapTests.cpp': (1, [r'^\s*CHECK\(m\.model\.w\[static_cast<std::size_t>\(C::Feature::ln_util\)\] == 0\.0\);$'],
+                                      'the ln util refusal\'s host test'),
     # Construction, settings and the legacy commands and tests (counted, not whole-file).
     'src/console/ConsoleCommands.cpp': (34, None, 'hg weights, hg dump weights, the dumps\' train-count '
                                                    'columns, hg status counts and the switch, hg reset'),
@@ -465,6 +510,18 @@ def check(tree, ini, verbose=False, out=print):
         bad_paths += [s[0] for s in stale]
     else:
         out(f'STALE: 0 hits ({len(STALE)} phrase(s))')
+
+    # --- REQUIRED ---
+    missing = [(p, why) for p, rx_req, why in REQUIRED
+               if p not in tree or not re.search(rx_req, tree[p])]
+    if missing:
+        out(f'REQUIRED: {len(missing)} piece(s) of code gone:')
+        for p, why in missing:
+            out(f'  {p}: {why}')
+        bad += len(missing)
+        bad_paths += [p for p, _ in missing]
+    else:
+        out(f'REQUIRED: all {len(REQUIRED)} present')
 
     # --- LEGACY ---
     rx_words = word_rx(LEGACY)

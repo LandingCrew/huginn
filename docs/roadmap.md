@@ -1124,13 +1124,16 @@ changed in the same PR, and the shipped INI loses the dead keys.
         pruned keys in the shipped INI, its templates or the dMenu JSON; the
         LEGACY lines appear only in the allowlisted files, each with its reason
         (the legacy module, the old learner's own files and subscribers,
-        BanditSerializer, the selection logs, `core/OldScore.h` and the v3
+        BanditSerializer, the v2 selection log, `core/OldScore.h` and the v3
         format, the settings loaders, the R7 snapshot format and capture
         harness, the legacy host tests), or in a BUDGETED file within its
         count, each line matching one of the file's allowed forms. A file that
         ranks or does slot math live is never allowed whole (review 3:
         `ScoredCandidate.h`, whose `operator<` and `SlotScore()` rank, and
-        `core/SlotScoreMath.h` had been). A LEGACY line names the old
+        `core/SlotScoreMath.h` had been), nor is a file on the live learner's
+        path (review 4: `ChoiceSubscriber` moved out of `EquipSubscribers.h`
+        to its own header, budget 0; `SelectionLogV3.cpp`, which builds the v3
+        rows the learner trains on, is budgeted). A LEGACY line names the old
         engine's types, globals or config fields, the utility -> rank-score
         bridge, the legacy module's facade (`Legacy::` / `Scoring::Legacy`, its
         include, `ctx.legacy`, `FallbackRanking`, `KeptFor`, `RowFor`,
@@ -1139,7 +1142,10 @@ changed in the same PR, and the shipped INI loses the dead keys.
         display again through a wrapper or a member read (review 2: the first
         version listed only the inner names, and nine probes passed it;
         review 3 added qualified reads, `X::utility`, and the cold-start flag
-        `isColdStartBoosted`). A few words are LEGACY in one file only: a
+        `isColdStartBoosted`; review 4 the old utility's row feature
+        `ln_util`, kept only on its enum line, the bootstrap's refusal and
+        that refusal's host test, and a REQUIRED check that the refusal itself
+        stays). A few words are LEGACY in one file only: a
         bare `utility` / `breakdown` in `ScoredCandidate.h`'s code (an
         accessor or comparator written on it) and `Suppress` in
         `PipelineCoordinator.cpp` (its one read is the favorite_suppressed
@@ -1161,7 +1167,12 @@ changed in the same PR, and the shipped INI loses the dead keys.
         lm's inputs, the fallback's line and the `[COLD]` tag) and its header
         0; `PipelineStateCache.h` 4 (the v2 log's cached rows);
         `UtilityScorerDebugWidget.cpp` 1 (the cold-start badge);
-        `SlotSnapshot.cpp` 1 (the R7 capture's utility token). Counted: ConsoleCommands, Main,
+        `SlotSnapshot.cpp` 1 (`BuildAllocInput`, the live allocation's input:
+        the utility token it carries for the R7 capture and the host legacy
+        slot policy; no live core reads it); `SelectionLogV3.cpp` 10 (the v3
+        row's utility copy and the OldScore columns' learner fill);
+        `ChoiceSubscriber.h` 0; `core/ChoiceScore.h`, `core/Bootstrap.cpp` and
+        `BootstrapTests.cpp` 1 each (`ln_util`). Counted: ConsoleCommands, Main,
         Globals, SettingsReloader and `Tests.cpp` on their R8.4 line counts, so
         a new use anywhere in them fails. To get there the legacy half of UtilityScorer
         (the pass, the per-candidate score, λ, the favourites helper and the
@@ -1175,8 +1186,12 @@ changed in the same PR, and the shipped INI loses the dead keys.
         learner's clock, forget sweep, counts and weights-changed latch), and
         the facts the live filters and the skip gate share with the context
         rules moved to `context/ContextFacts.h`. `tools/prune/test_r8_check.py`
-        runs 36 mutation probes in memory, each of which must fail the check
-        (review 3 added: utility ranking again through `operator<` or
+        runs 43 mutation probes in memory, each of which must fail the check
+        (review 4 added: `ln util` back in the learner's RowFeatures or in
+        RankOnChoice, the bootstrap's refusal dropped (two ways), the v3 row's
+        lm taken from the old utility, the old learner read in
+        ChoiceSubscriber, the alloc input's score taken from the old utility;
+        review 3 added: utility ranking again through `operator<` or
         `SlotScore()`, an accessor on the bare utility, a bridge call in the
         slot math, the stale reason comment back, a pointer to the old
         utility, the cold-start flag or a Suppress skip in RankOnChoice, and

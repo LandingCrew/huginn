@@ -66,6 +66,7 @@
 #include "learning/SelectionTracker.h"
 #include "learning/PlayerInputGate.h"
 #include "learning/EquipSubscribers.h"
+#include "learning/ChoiceSubscriber.h"
 #include "needs/NeedSettings.h"
 #include "state/DropAheadProbe.h"
 #include "state/HandModelProbe.h"

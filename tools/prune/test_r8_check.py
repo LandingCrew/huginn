@@ -5,7 +5,8 @@ PASS. Standard library only.
 usage:  python -I tools/prune/test_r8_check.py
 
 A probe is (name, path, anchor, line, mode): `line` goes after (mode 'after') the first line
-containing `anchor`, or replaces that line (mode 'replace'). The probes cover the verifier's
+containing `anchor`, or replaces that line (mode 'replace'); 'delete-next' drops the line after
+the anchor and 'delete-block' the anchor's line through its closing brace. The probes cover the verifier's
 dodges of the first version of the check (utility ranking again through a member read, the
 facade names, a changed allowed form) and the earlier set (old-engine names in the live scorer,
 the pipeline, the console, the Debug suite, the display).
@@ -27,6 +28,24 @@ SC_SLOT = 'return isRememberedOnly ? Core::kUnrankedScore : score;'
 D2 = 'C::SetLegacy(x.feat,'
 
 PROBES = [
+    # --- round 4: ln_util is LEGACY; the live learner's path is not allowed whole ---
+    ('R4: ln util back in the learner\'s RowFeatures', 'src/learning/ChoiceLearner.cpp',
+     'if (std::isfinite(r.lm))',
+     '                f[static_cast<std::size_t>(C::Feature::ln_util)] = '
+     'std::log(std::max(static_cast<double>(r.util), 1e-6));', 'after'),
+    ('R4: ln util back in RankOnChoice', PC, D2,
+     '        if (sc.legacyScored) x.feat[static_cast<size_t>(C::Feature::ln_util)] = 1.0;', 'after'),
+    ('R4: the bootstrap\'s ln util refusal dropped (continue deleted)', 'src/core/Bootstrap.cpp',
+     'if (w != 0.0) ++rep.featuresRefused;', '', 'delete-next'),
+    ('R4: the bootstrap\'s ln util refusal dropped (whole if deleted)', 'src/core/Bootstrap.cpp',
+     'Choice::Feature::ln_util) {', '', 'delete-block'),
+    ('R4: the v3 row\'s lm taken from the old utility', 'src/learning/SelectionLogV3.cpp',
+     'r.util = e.utility;', '            r.util = e.utility; r.lm = std::log(e.utility);', 'replace'),
+    ('R4: the old learner read in ChoiceSubscriber', 'src/learning/ChoiceSubscriber.h',
+     'if (event.v3Decision) Feed(m_learner, *event.v3Decision);',
+     '            if (event.v3Decision && g_featureBanditLearner) Feed(m_learner, *event.v3Decision);', 'replace'),
+    ('R4: the alloc input\'s score from the old utility', 'src/slot/SlotSnapshot.cpp',
+     'c.utility = sc.utility;', '        c.utility = sc.utility; c.score = std::log(sc.utility);', 'replace'),
     # --- round 3: ScoredCandidate.h and SlotScoreMath.h rank live (budgets, not allows) ---
     ('R3 must-fix 1.1: utility ranks the list again through operator<', SC, SC_LESS,
      '            return Core::RanksBefore(Core::BridgeScore(utility), TieBreakDps(), '
@@ -57,7 +76,7 @@ PROBES = [
      '        for (auto& sc : ctx.scoredCandidates) sc.score = std::log(sc.utility);', 'after'),
     ('b: the ln_util feature back in RankOnChoice', PC, 'C::SetLegacy(x.feat,',
      '        x.feat[0] = std::log(std::max(sc.utility, 1e-6f));', 'after'),
-    ('c: the Verbose context breakdown back', IM, 'const double s = scored.SlotScore();',
+    ('c: the Verbose context breakdown back', IM, 'const double s = assignment.score;',
      '            const float old = scored.breakdown.contextWeight + scored.breakdown.learningScore;', 'after'),
     ('d: utility x context weight in the live scorer', US, 'const auto& p = scored.choice;',
      '            const float u = scored.utility * bd.contextWeight;', 'after'),
@@ -114,6 +133,14 @@ def mutate(text, anchor, line, mode):
         if anchor in ln:
             if mode == 'after':
                 lines.insert(i + 1, line)
+            elif mode == 'delete-next':        # drop the line after the anchor
+                del lines[i + 1]
+            elif mode == 'delete-block':       # drop the anchor's line through its closing brace
+                indent = len(ln) - len(ln.lstrip())
+                j = i + 1
+                while not (lines[j].strip() == '}' and len(lines[j]) - len(lines[j].lstrip()) == indent):
+                    j += 1
+                del lines[i:j + 1]
             else:
                 lines[i] = line
             return '\n'.join(lines) + '\n'

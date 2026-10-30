@@ -799,7 +799,10 @@ namespace Huginn::UI
         // explanation.
         if (mode == DisplayMode::Verbose && !assignment.IsOverride() && !scored.isRememberedOnly) {
             const auto& t = scored.choice.top[0];
-            const double s = scored.SlotScore();
+            // The assignment's score, not the held candidate's: SlotLocker can
+            // refresh a held key's item data without its score (a Remembrance
+            // row, the pre-filter lookup), and the assignment is what ranked.
+            const double s = assignment.score;
             std::string scores;
             if (scored.fallbackRanked) {
                 scores = std::format("s:{:+.1f} fallback", s);

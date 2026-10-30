@@ -68,7 +68,7 @@ namespace Huginn::Scoring
     };
 
     // =============================================================================
-    // SCORED CANDIDATE - Wraps a candidate with its computed utility score
+    // SCORED CANDIDATE - Wraps a candidate with its rank score (R8.3: mu)
     // =============================================================================
     struct ScoredCandidate
     {
@@ -192,7 +192,7 @@ namespace Huginn::Scoring
         // break strict weak ordering: two tied weapons would order against each
         // other while each compared equal to a tied spell, and std::sort on an
         // intransitive comparator is undefined. Ordering on the pair
-        // (utility, dps) with dps 0 off-weapon is a proper lexicographic
+        // (score, dps) with dps 0 off-weapon is a proper lexicographic
         // ordering. The cost is that a spell tying a weapon exactly loses the
         // tie -- arbitrary, but it was arbitrary before too.
         [[nodiscard]] float TieBreakDps() const noexcept {

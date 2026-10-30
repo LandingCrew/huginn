@@ -11,7 +11,7 @@
 #include "UtilityScorer.h"
 #include "ChoiceLearner.h"
 #include "ChoiceShadow.h"
-#include "EquipSubscribers.h"
+#include "ChoiceSubscriber.h"
 #include "core/Coverage.h"
 #include "core/CrossFeatures.h"
 #include "core/FilterReason.h"
