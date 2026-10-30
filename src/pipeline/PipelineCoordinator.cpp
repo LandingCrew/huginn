@@ -461,8 +461,8 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     auto candidates = candidateGen.GenerateCandidates(ctx.playerState, ctx.currentMagicka, gates,
         heldIDs, &heldAside, &ctx.filtered);
 
-    // Read once for the tick: the wildcard roll below and AllocateAndLock
-    // must agree on it.
+    // Read once for the tick: the wildcard key's plan and the allocation in
+    // AllocateAndLock must agree on it.
     ctx.hideUidlessGear = Display::HidesUidlessGear(ctx.displayPageIndex);
 
     // Which model ranks, and whether the legacy pass runs. Logged on change.
@@ -510,17 +510,10 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
         ctx.scoredCandidates = ctx.legacy.FallbackRanking();
     }
 
-    // The display page comes from ResolveDisplayPage, which ran earlier this
-    // tick -- so wildcards key and size against the same page AllocateAndLock
-    // will fill. In combat (the lock's notion of it) no wildcard is placed.
-    g_utilityScorer->RankAndApplyWildcards(ctx.scoredCandidates,
-        Scoring::WildcardPage{
-            .index = ctx.displayPageIndex,
-            .slotCount = ctx.displaySlotCount,
-            .wildcardSlots = ctx.displayWildcardSlots,
-            .inCombat = Slot::SlotLocker::GetSingleton().IsInCombat(),
-            .hideUidlessGear = ctx.hideUidlessGear,
-        });
+    // The whole list in rank order. R10: no wildcard swap here; the
+    // wildcard has a key of its own, placed and drawn by the allocation
+    // (AllocateAndLock: WildcardManager::Plan, the allocation, Commit).
+    g_utilityScorer->Rank(ctx.scoredCandidates);
 
     // A Remembrance hold shows what the player took off whether or not the
     // ranking kept it. Since R8.3 every candidate is ranked, so this adds
@@ -745,20 +738,15 @@ void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
 {
     Huginn_ZONE_NAMED("Pipeline::CaptureEligible");
     // First legacy-scored row per dedup key (type, uniqueID, formID) wins, as
-    // the cache's FormID index does; and every ranked row, for the wildcard
-    // propensity.
+    // the cache's FormID index does. R10: the wildcard propensity is set after
+    // the allocation, which draws the wildcard (AllocateAndLock).
     std::unordered_map<uint64_t, const Scoring::ScoredCandidate*> scoredByKey;
-    std::unordered_map<uint64_t, const Scoring::ScoredCandidate*> rankedByKey;
     scoredByKey.reserve(ctx.scoredCandidates.size());
-    rankedByKey.reserve(ctx.scoredCandidates.size());
     for (const auto& sc : ctx.scoredCandidates) {
         if (sc.isRememberedOnly) continue;   // added for the hold only: not scored
         const auto key = Candidate::GetBase(sc.candidate).GetDeduplicationKey();
-        rankedByKey.try_emplace(key, &sc);
         if (sc.legacyScored) scoredByKey.try_emplace(key, &sc);
     }
-
-    const auto& wildcards = g_utilityScorer->GetWildcardManager();
 
     // 0.23.53: the old engine's view of the run (see above). R8.3: only when
     // the legacy pass ran.
@@ -812,10 +800,6 @@ void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
         if (const auto it = scoredByKey.find(base.GetDeduplicationKey()); it != scoredByKey.end()) {
             scored = it->second;
             row.utility = it->second->utility;
-        }
-        if (const auto it = rankedByKey.find(base.GetDeduplicationKey());
-            it != rankedByKey.end() && it->second->isWildcard) {
-            row.wildcardPropensity = wildcards.GetWildcardPropensity(ctx.displayPageIndex, base.formID);
         }
         if (withOld) {
             row.old = capture.Explain(c, true, scored);
@@ -901,8 +885,41 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
     auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
     const auto& pageCandidates = Display::CandidatesForWheelPage(ctx.displayPageIndex, ctx.hideUidlessGear,
         ctx.scoredCandidates, ctx.pageCandidatesScratch);
+    // R10, the wildcard key: the manager says what this page's key should do
+    // (pin the cached wildcard, or roll), the allocation places it or draws
+    // one from what the finished page does not show, and the manager keeps
+    // the result. In combat (the lock's notion of it) none is placed.
+    auto& wildcards = g_utilityScorer->GetWildcardManager();
+    const Scoring::WildcardPage wildcardPage{
+        .index = ctx.displayPageIndex,
+        .slotCount = ctx.displaySlotCount,
+        .seat = ctx.displayWildcardSeat,
+        .inCombat = Slot::SlotLocker::GetSingleton().IsInCombat(),
+        .hideUidlessGear = ctx.hideUidlessGear,
+        .display = true,
+    };
+    const auto wildcardRequest = wildcards.Plan(wildcardPage, ctx.scoredCandidates);
+    Slot::WildcardResult wildcardResult;
     ctx.rawAssignments = slotAllocator.AllocateSlotsForPage(
-        ctx.displayPageIndex, pageCandidates, ctx.overrides, ctx.playerState, ctx.worldState);
+        ctx.displayPageIndex, pageCandidates, ctx.overrides, ctx.playerState, ctx.worldState,
+        &wildcardRequest, &wildcardResult);
+    wildcards.Commit(wildcardPage, wildcardResult);
+    // The v3 log's propensity (wp) on the eligible row the page's wildcard is
+    // (its form and stack), NaN on every other: read after the commit, so a
+    // wildcard drawn on this run carries its own.
+    {
+        const RE::FormID wildForm = wildcards.GetWildcard(ctx.displayPageIndex);
+        const float wildP = wildcards.GetWildcardPropensity(ctx.displayPageIndex, wildForm);
+        const uint16_t wildUid = wildcards.GetWildcardUniqueID(ctx.displayPageIndex);
+        // Its own stack; failing that (the allocation pinned another stack of
+        // the form, SlotAllocator), every stack of the form.
+        const bool stackListed = std::ranges::any_of(ctx.eligible,
+            [&](const auto& row) { return row.formID == wildForm && row.uniqueID == wildUid; });
+        for (auto& row : ctx.eligible) {
+            const bool it = wildForm != 0 && row.formID == wildForm && (!stackListed || row.uniqueID == wildUid);
+            row.wildcardPropensity = it ? wildP : std::numeric_limits<float>::quiet_NaN();
+        }
+    }
 
     // If an off-thread page mutation landed since the snapshot (Wheeler callback,
     // page-cycle keys, `hg page`, or a full SlotAllocator::Reset), abandon before
@@ -1250,7 +1267,7 @@ bool PipelineCoordinator::ResolveDisplayPage(PipelineContext& ctx)
     ctx.displayPageIndex = slotAllocator.GetCurrentPage();
     ctx.displayPageCount = pageCount;
     ctx.displaySlotCount = slotAllocator.GetSlotCount(ctx.displayPageIndex);
-    ctx.displayWildcardSlots = slotAllocator.GetWildcardSlotCount(ctx.displayPageIndex);
+    ctx.displayWildcardSeat = slotAllocator.GetWildcardSeat(ctx.displayPageIndex);
     ctx.displayPageName  = slotAllocator.GetPageName(ctx.displayPageIndex);
 
     return changed;

@@ -4976,15 +4976,15 @@ void RunUnitTests()
     }
 
     // =========================================================================
-    // Wildcard page cache — stranding is structurally unreachable (#70 + the
-    // bWildcardsEnabled and 1-slot-page cases that shared its root cause)
+    // Wildcard manager (R10): one wildcard key per page, its cache per page
     // =========================================================================
-    // The old cache was one global position-indexed array shared by every page,
-    // so an entry could survive at an index nothing on the current page could
-    // display; the liveness check still saw it and suppressed the re-roll that
-    // would have produced a usable one. All four shapes below used to be able to
-    // reach that state. Probabilities are pinned to 1.0 and the refractory to 0
-    // so the rolls are deterministic — this asserts bounds, not randomness.
+    // The draw and the placement are the slot core's, host-tested
+    // (tests/core/WildcardTests.cpp). This checks the manager around them:
+    // Plan asks for a roll only on the displayed page with nothing cached and
+    // the refractory over; Commit caches a drawn wildcard per page; the next
+    // Plan pins it; a reshape, a refusal and the cooldown drop it; an
+    // off-screen page never rolls and never sees another page's wildcard (the
+    // Wheeler leak); combat drops every page's.
     {
         using namespace Huginn::Scoring;
 
@@ -5003,142 +5003,96 @@ void RunUnitTests()
         mgr.SetBaseProbability(1.0f);
         mgr.SetMaxProbability(1.0f);
         mgr.SetCooldown(1000.0f);      // nothing expires mid-test
-        mgr.SetRefractoryPeriod(0.0f); // every eligible page rolls on first apply
+        mgr.SetRefractoryPeriod(0.0f); // every page may roll on first plan
 
-        // Applying mutates the list (swaps + isWildcard), so each case gets a
-        // copy. Returned so a case can assert what was SURFACED, not just cached.
-        auto apply = [&](const WildcardPage& page) {
-            ScoredCandidateList work = pool;
-            mgr.ApplyWildcards(work, page);
-            return work;
+        // What an allocation that drew `pool[row]` returns.
+        auto drew = [&](size_t row) {
+            Slot::WildcardResult r;
+            r.core.seat = 7;
+            r.core.rollAsked = r.core.rolled = true;
+            r.core.drawn = static_cast<uint32_t>(row);
+            r.core.pRoll = 1.0;
+            r.core.pDraw = 0.25;
+            r.drawn = pool[row];
+            return r;
         };
+        const WildcardPage page0{ .index = 0, .slotCount = 8, .seat = 7 };
 
-        auto surfacedCount = [](const ScoredCandidateList& list) {
-            return static_cast<size_t>(std::count_if(list.begin(), list.end(),
-                [](const ScoredCandidate& s) { return s.isWildcard; }));
-        };
-
-        // Highest cached index with a wildcard on a page, or SIZE_MAX if none.
-        auto highestCachedIndex = [&](size_t pageIndex) -> size_t {
-            size_t highest = SIZE_MAX;
-            for (size_t i = 0; i < Slot::MAX_SLOTS_PER_PAGE; ++i) {
-                if (mgr.GetWildcardForSlot(pageIndex, i) != 0) {
-                    highest = i;
-                }
-            }
-            return highest;
-        };
-
-        // Page 0: 7 slots, all wildcard-capable — the baseline that rolls.
-        apply({ .index = 0, .slotCount = 7, .wildcardSlots = 7 });
-        if (!mgr.HasActiveWildcard(0)) {
-            logger::error("TEST FAIL: 7-slot page rolled no wildcard at probability 1.0"sv);
+        // Displayed page, nothing cached: a roll.
+        auto req = mgr.Plan(page0, pool);
+        if (!req.roll || req.pinForm != 0) {
+            logger::error("TEST FAIL: wildcard: the displayed page with nothing cached did not ask for a roll"sv);
             return;
         }
-        const size_t page0Count = mgr.GetActiveWildcardCount(0);
-
-        // Page 1: 4 slots. #70 — this used to inherit page 0's entries at
-        // indices 4-6, which ApplyWildcardsToRanking could never surface.
-        apply({ .index = 1, .slotCount = 4, .wildcardSlots = 4 });
-        if (!mgr.HasActiveWildcard(1)) {
-            logger::error("TEST FAIL: 4-slot page was blocked from rolling"sv);
+        mgr.Commit(page0, drew(8));
+        if (mgr.GetWildcard(0) != 0x1008 || std::abs(mgr.GetWildcardPropensity(0, 0x1008) - 0.25f) > 1e-6f) {
+            logger::error("TEST FAIL: wildcard: the drawn row was not cached with its propensity"sv);
             return;
         }
-        if (highestCachedIndex(1) >= 4) {
-            logger::error("TEST FAIL: 4-slot page cached a wildcard at index {}"sv,
-                highestCachedIndex(1));
-            return;
-        }
-        // ...and it did not disturb page 0, which the player can switch back to.
-        if (mgr.GetActiveWildcardCount(0) != page0Count) {
-            logger::error("TEST FAIL: applying page 1 changed page 0's cache ({} → {})"sv,
-                page0Count, mgr.GetActiveWildcardCount(0));
+        // Next run: pinned, no roll.
+        req = mgr.Plan(page0, pool);
+        if (req.roll || req.pinForm != 0x1008) {
+            logger::error("TEST FAIL: wildcard: the cached wildcard was not pinned (roll={}, pin={:08X})"sv,
+                req.roll, req.pinForm);
             return;
         }
 
-        // Page 2: 5 slots, none accepting wildcards (bWildcardsEnabled=false
-        // throughout). FindBestCandidate would skip every wildcard, so rolling
-        // one caches something no slot can ever seat.
-        apply({ .index = 2, .slotCount = 5, .wildcardSlots = 0 });
-        if (mgr.HasActiveWildcard(2)) {
-            logger::error("TEST FAIL: page with no wildcard-capable slots cached {} wildcard(s)"sv,
-                mgr.GetActiveWildcardCount(2));
+        // An off-screen Wheeler page: never a roll, never page 0's wildcard.
+        const WildcardPage page1{ .index = 1, .slotCount = 8, .seat = 7, .display = false };
+        req = mgr.Plan(page1, pool);
+        if (req.roll || req.pinForm != 0) {
+            logger::error("TEST FAIL: wildcard: an off-screen page rolled or showed another page's wildcard"sv);
+            return;
+        }
+        // A page with no wildcard key: nothing.
+        req = mgr.Plan({ .index = 2, .slotCount = 1, .seat = SIZE_MAX }, pool);
+        if (req.roll || req.pinForm != 0) {
+            logger::error("TEST FAIL: wildcard: a page with no wildcard key asked for one"sv);
             return;
         }
 
-        // Page 3: 1 slot. Slot 0 is excluded and scores base × 0 anyway, so the
-        // page rolls nothing — but it must reach the cache logic to say so,
-        // which the old slotCount < 2 guard returned before.
-        apply({ .index = 3, .slotCount = 1, .wildcardSlots = 1 });
-        if (mgr.HasActiveWildcard(3)) {
-            logger::error("TEST FAIL: 1-slot page cached a wildcard it cannot display"sv);
-            return;
-        }
-
-        // Page 4: 6 slots but only 2 accepting wildcards. A page can display at
-        // most as many wildcards as it has seats for them; the surplus would
-        // strand. Asserted as EQUALITY, not just an upper bound: at probability
-        // 1.0 the count is deterministic, and a cap that is too tight (an
-        // off-by-one, or one applied before startSlot) would leave a
-        // wildcard-capable page rolling nothing while an upper-bound check
-        // still passed.
-        apply({ .index = 4, .slotCount = 6, .wildcardSlots = 2 });
-        if (mgr.GetActiveWildcardCount(4) != 2) {
-            logger::error("TEST FAIL: page with 2 wildcard-capable slots cached {} wildcards, expected 2"sv,
-                mgr.GetActiveWildcardCount(4));
-            return;
-        }
-
-        // Page 5: 6 slots, ONE wildcard-capable. Every cached entry must also be
-        // surfaced — the invariant this whole class exists to hold.
-        //
-        // RollNewWildcards draws for slot i, and ApplyWildcardsToRanking only
-        // surfaces a wildcard by swapping it UP (it skips when foundIdx <=
-        // slotIdx). A draw from at or above i is therefore a roll that caches an
-        // entry nothing displays, while the cache reads as active and suppresses
-        // the re-roll for a full cooldown. With several slots rolling, a wasted
-        // draw is masked by its neighbours; with exactly one seat it IS the
-        // stall. Checks the surfaced count, not just the cached one, because
-        // cached-but-invisible is precisely the failure being excluded.
+        // The key refused it (equipped under skip-equipped): dropped.
         {
-            const auto work = apply({ .index = 5, .slotCount = 6, .wildcardSlots = 1 });
-            const size_t cached = mgr.GetActiveWildcardCount(5);
-            if (cached != 1) {
-                logger::error("TEST FAIL: 1-seat page cached {} wildcards, expected 1"sv, cached);
-                return;
-            }
-            if (surfacedCount(work) != cached) {
-                logger::error("TEST FAIL: 1-seat page cached {} wildcard(s) but surfaced {}"sv,
-                    cached, surfacedCount(work));
+            Slot::WildcardResult refused;
+            refused.pinFound = true;
+            refused.core.seat = 7;
+            refused.core.pin = Core::SlotAlloc::PinFate::Refused;
+            mgr.Commit(page0, refused);
+            if (mgr.HasActiveWildcard(0)) {
+                logger::error("TEST FAIL: wildcard: a refused wildcard stayed cached"sv);
                 return;
             }
         }
 
-        // Reshape: page 0 shrinks under an INI reload. Its own cache is the one
-        // remaining way to strand an entry, and a shape change discards it.
-        apply({ .index = 0, .slotCount = 3, .wildcardSlots = 3 });
-        if (highestCachedIndex(0) >= 3) {
-            logger::error("TEST FAIL: reshaped page 0 kept a wildcard at index {}"sv,
-                highestCachedIndex(0));
+        // Reshape: the seat moves under an INI reload -- the cache is dropped.
+        (void)mgr.Plan(page0, pool);
+        mgr.Commit(page0, drew(9));
+        req = mgr.Plan({ .index = 0, .slotCount = 8, .seat = 6 }, pool);
+        if (mgr.HasActiveWildcard(0) || req.pinForm != 0) {
+            logger::error("TEST FAIL: wildcard: a reshaped page kept its wildcard"sv);
             return;
         }
 
-        // Expiry reaches every page, not just the displayed one, and reports a
-        // lapse only for the page last applied (page 0 above).
+        // Combat: every page's wildcard dropped, none placed.
+        const WildcardPage page0b{ .index = 0, .slotCount = 8, .seat = 6 };
+        mgr.Commit(page0b, drew(7));
+        req = mgr.Plan({ .index = 0, .slotCount = 8, .seat = 6, .inCombat = true }, pool);
+        if (req.roll || req.pinForm != 0 || mgr.HasActiveWildcard(0)) {
+            logger::error("TEST FAIL: wildcard: combat placed or kept a wildcard"sv);
+            return;
+        }
+        (void)mgr.Plan(page0b, pool);   // combat over: the refractory restarts (0 s here)
+
+        // Expiry reaches every page.
+        mgr.Commit(page0b, drew(6));
         mgr.SetCooldown(0.0f);
-        if (!mgr.UpdateExpiry()) {
-            logger::error("TEST FAIL: expiry did not report the displayed page lapsing"sv);
+        if (!mgr.UpdateExpiry() || mgr.HasActiveWildcard(0)) {
+            logger::error("TEST FAIL: wildcard: expiry did not lapse the cached wildcard"sv);
             return;
         }
-        for (size_t page = 0; page < 6; ++page) {
-            if (mgr.HasActiveWildcard(page)) {
-                logger::error("TEST FAIL: page {} survived expiry"sv, page);
-                return;
-            }
-        }
 
-        logger::info("TEST PASS: Wildcard page cache (per-page bounds, wildcard-capable "
-            "seats, cached==surfaced, 1-slot page, reshape, all-page expiry)"sv);
+        logger::info("TEST PASS: Wildcard manager (roll on the displayed page, pin, per-page cache, "
+            "no Wheeler leak, refusal, reshape, combat, expiry)"sv);
     }
 
     logger::info("=== All unit tests passed! ==="sv);

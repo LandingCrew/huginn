@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <set>
 #include <string>
@@ -13,14 +15,15 @@
 
 #include "core/SlotClassCapMath.h"
 #include "core/SlotScoreMath.h"
+#include "core/WildcardPick.h"
 
 // =============================================================================
 // SLOT ALLOCATION CORE (pure; host-tested in tests/core/SlotAlloc*Tests.cpp)
 // =============================================================================
 // The decision logic of Slot::SlotAllocator (src/slot/SlotAllocator.cpp) over
-// plain records: overrides, Remembrance holds, the slot hold, the rank-ordered
-// fill, the class cap, seating and home keys, filling job keys from Regular
-// keys. SlotAllocator builds an Input from the game's types (SlotSnapshot.h),
+// plain records: overrides, Remembrance holds, the wildcard key (R10), the
+// slot hold, the rank-ordered fill, the class cap, seating and home keys,
+// filling job keys from Regular keys. SlotAllocator builds an Input from the game's types (SlotSnapshot.h),
 // runs this, and turns the Output back into SlotAssignments; logging,
 // telemetry and the Remembrance side effects stay on the game side, fed by the
 // Output's events.
@@ -91,7 +94,7 @@ namespace Huginn::Core::SlotAlloc
         float utility = 0.0f;             // the old engine's value (the legacy policy, logs)
         SlotScore score = 0.0;            // what the slot code ranks on
         float tieBreak = 0.0f;            // ScoredCandidate::TieBreakDps (the scorer's sort only)
-        bool isWildcard = false;
+        double sd = 0.0;                  // the score's sd (choice posterior; 0 in the fallback): the wildcard draw (R10)
         bool isRememberedOnly = false;
         bool isEquipped = false;          // CandidateBase::isEquipped
         bool playerEquipped = false;      // player->IsItemEquipped(formID)
@@ -165,6 +168,17 @@ namespace Huginn::Core::SlotAlloc
         std::vector<OverrideRec> overrides;     // active overrides that carry a candidate, in order
         std::array<HoldRec, kMaxSlots> holds{};
         PageMemory memory;
+
+        /// R10: the page's wildcard key (the seat: SeatOf). WildcardManager
+        /// keeps the cache and the clocks; the allocation places and draws.
+        struct WildcardIn
+        {
+            std::uint32_t pinned = kNone;   // the cached wildcard's row (a candidate index), shown on the seat
+            bool roll = false;              // nothing cached and the clocks allow a roll: roll for one
+            double uRoll = 1.0;             // uniforms in [0, 1): the roll, then the draw
+            double uDraw = 0.0;
+            Core::Wildcard::Params params;
+        } wildcard;
     };
 
     struct SlotState
@@ -175,7 +189,40 @@ namespace Huginn::Core::SlotAlloc
         friend bool operator==(const SlotState&, const SlotState&) = default;
 
         [[nodiscard]] bool IsEmpty() const noexcept { return kind == Kind::Empty; }
-        [[nodiscard]] bool IsPinned() const noexcept { return kind == Kind::Override || kind == Kind::Remembered; }
+        /// Placed by a rule for its slot, not by rank: an override, a
+        /// Remembrance hold, and (R10) the wildcard on its seat. Seating never
+        /// moves one, and one claims no seat (RecordSeating).
+        [[nodiscard]] bool IsPinned() const noexcept
+        {
+            return kind == Kind::Override || kind == Kind::Remembered || kind == Kind::Wildcard;
+        }
+    };
+
+    /// What became of the cached wildcard (Input::WildcardIn::pinned).
+    enum class PinFate : std::uint8_t
+    {
+        None,       // nothing was pinned
+        Placed,     // shown on the seat
+        SeatBusy,   // the seat (or the item) is taken by an override or a Remembrance hold this run: kept
+        Refused,    // the seat no longer takes it (its class, or it is equipped under skip-equipped): drop it
+    };
+
+    /// R10: the wildcard pass's result.
+    struct WildcardOut
+    {
+        std::size_t seat = npos;          // the page's wildcard key, npos when it has none
+        PinFate pin = PinFate::None;
+        bool rollAsked = false;           // Input::WildcardIn::roll, and the seat showed a ranked row (or none)
+        bool rolled = false;              // ...and uRoll came up under pRoll
+        std::uint32_t drawn = kNone;      // the row drawn and shown on the seat (rolled with a pool)
+        std::uint32_t pool = 0;           // rows it was drawn from
+        double pRoll = 0.0;               // P(roll) this run (WildcardPick RollProbability)
+        double pDraw = 0.0;               // P(the draw shows the drawn row's form | rolled)
+        double weight = 0.0;              // the drawn row's w, rel and sd
+        double rel = 0.0;
+        double sd = 0.0;
+        double topWeight = 0.0;           // the pool's largest w
+        [[nodiscard]] double Propensity() const noexcept { return pRoll * pDraw; }
     };
 
     enum class EventKind : std::uint8_t
@@ -217,6 +264,7 @@ namespace Huginn::Core::SlotAlloc
         std::array<std::uint64_t, kMaxSlots> seatsBeforeRecord{};   // for the [Seating] change log
         std::vector<std::uint32_t> skipped;   // candidates the class cap passed over (SlotClassCap's notes)
         std::vector<Event> events;
+        WildcardOut wildcard;
     };
 
     // =========================================================================
@@ -257,6 +305,25 @@ namespace Huginn::Core::SlotAlloc
         std::stable_sort(order.begin(), order.begin() + static_cast<std::ptrdiff_t>(n),
             [&slots](std::size_t a, std::size_t b) { return slots[a].priority > slots[b].priority; });
         return n;
+    }
+
+    /// R10: the page's wildcard key (map Phase 8: "a reserved wildcard slot
+    /// per page, placed explicitly instead of a rank swap"). The LAST key in
+    /// fill order (PriorityOrder: lowest iPriority, ties to the highest slot
+    /// index) of those with bWildcardsEnabled -- on the shipped layouts key 8,
+    /// the "Wildcard" key the Jobs page already names. Never the first key in
+    /// fill order (the old "slot 0 is never a wildcard" rule): a page whose
+    /// only wildcard-enabled key is its top one, or a one-key page, has none.
+    /// npos when there is none. A player picks the key by turning
+    /// bWildcardsEnabled off on the keys after it, or off everywhere.
+    [[nodiscard]] inline std::size_t SeatOf(const std::vector<SlotRec>& slots)
+    {
+        std::array<std::size_t, kMaxSlots> order{};
+        const std::size_t n = PriorityOrder(slots, order);
+        for (std::size_t k = n; k-- > 1;) {
+            if (slots[order[k]].wildcardsEnabled) return order[k];
+        }
+        return npos;
     }
 
     // =========================================================================
@@ -342,9 +409,9 @@ namespace Huginn::Core::SlotAlloc
                     v = { o.formID, &o.name, o.dedupKey, o.matchMask, o.capClass, false, o.isEquipped, o.playerEquipped };
                 } else {
                     const auto& c = m_in.candidates[s.src];
-                    // A remembered copy is placed with isWildcard cleared.
+                    // R10: a wildcard is a placement (the seat), not a row's flag.
                     v = { c.formID, &c.name, c.dedupKey, c.matchMask, c.capClass,
-                        s.kind == Kind::Remembered ? false : c.isWildcard, c.isEquipped, c.playerEquipped };
+                        s.kind == Kind::Wildcard, c.isEquipped, c.playerEquipped };
                 }
                 return v;
             }
@@ -425,15 +492,17 @@ namespace Huginn::Core::SlotAlloc
             /// scorer sorts the WHOLE list since R7 (past a top-10 prefix the
             /// first match was not the best one).
             ///
-            /// Checks, in order: wildcards when the slot refuses them; rows
-            /// only a Remembrance hold may place; anything already shown, by
-            /// formID and by NAME (two enchanted copies with different formIDs
-            /// and one name); the slot's class; and, under skipEquipped, both
-            /// the candidate's own isEquipped (registry scan) and the player
-            /// state's 100 ms equipment poll, to cover the gap between the two.
+            /// Checks, in order: rows only a Remembrance hold may place;
+            /// anything already shown, by formID and by NAME (two enchanted
+            /// copies with different formIDs and one name); the slot's class;
+            /// and, under skipEquipped, both the candidate's own isEquipped
+            /// (registry scan) and the player state's 100 ms equipment poll, to
+            /// cover the gap between the two. R10: no wildcard rule here any
+            /// more -- the wildcard is placed on its seat by its own pass
+            /// (PlaceCachedWildcard, DrawWildcard), never found by rank.
             [[nodiscard]] std::optional<std::uint32_t> FindBest(const SlotRec& slot,
                 const std::set<std::uint32_t>& ids, const std::set<std::string_view>& names,
-                bool skipEquipped, bool skipWildcards, bool useCap)
+                bool skipEquipped, bool useCap)
             {
                 const bool capped = useCap && m_cap.active && slot.regular;
                 std::uint32_t first = kNone;
@@ -442,7 +511,6 @@ namespace Huginn::Core::SlotAlloc
                 const auto& cands = m_in.candidates;
                 for (std::uint32_t i = 0; i < cands.size(); ++i) {
                     const auto& c = cands[i];
-                    if (skipWildcards && c.isWildcard) continue;
                     if (c.isRememberedOnly) continue;
                     if (ids.contains(c.formID)) continue;
                     if (names.contains(c.name)) continue;
@@ -454,19 +522,16 @@ namespace Huginn::Core::SlotAlloc
                     // Under the class cap: the first match wins outright
                     // unless its class is already full on the page; then
                     // every later match is weighed with its own cap term, to
-                    // the end of the list. A wildcard keeps its POSITION
-                    // semantics (see HoldIncumbents): it wins only as the
-                    // first match, and is never weighed against capped items.
+                    // the end of the list.
                     if (best == kNone) {
                         const Cap cap = CapOf(c.capClass);
-                        if (c.isWildcard || !m_p.IsCapped(cap)) {
+                        if (!m_p.IsCapped(cap)) {
                             return i;
                         }
                         first = best = i;
                         bestScore = m_p.Apply(m_p.Raw(c), cap);
                         continue;
                     }
-                    if (c.isWildcard) continue;
                     const Score effective = m_p.Apply(m_p.Raw(c), CapOf(c.capClass));
                     if (m_p.Greater(effective, bestScore)) {
                         best = i;
@@ -518,6 +583,8 @@ namespace Huginn::Core::SlotAlloc
             void ApplySeating();
             void RecordSeating();
             void PullIntoEmptyJobKeys(std::size_t priorityCount);
+            void PlaceCachedWildcard();
+            void DrawWildcard();
 
             const Input& m_in;
             const Policy& m_p;
@@ -552,7 +619,14 @@ namespace Huginn::Core::SlotAlloc
             // PASS 1a: Remembrance.
             PassRemembrance(priorityCount);
 
-            // The class cap counts what overrides and Remembrance placed.
+            // PASS 1w (R10): the cached wildcard on its seat, pinned like a
+            // Remembrance hold -- after the overrides and holds, which outrank
+            // it, before the slot hold and the fill, which then never see the
+            // seat or the item. Replaces the rank swap and its special cases
+            // in the hold and the fill (map Phase 8).
+            PlaceCachedWildcard();
+
+            // The class cap counts what overrides, Remembrance and the wildcard placed.
             Recount();
 
             // PASS 1c: the slot hold.
@@ -569,6 +643,10 @@ namespace Huginn::Core::SlotAlloc
                 PullIntoEmptyJobKeys(priorityCount);
                 Recount();
                 Fill(priorityCount, /*refill=*/true);
+            }
+            if (!set.keepSlotPositions) {
+                // PASS 4w (R10): no seating below; the page is final here.
+                DrawWildcard();
             }
 
             // PASS 3: seat returning items where they were (anti-juggling).
@@ -592,6 +670,12 @@ namespace Huginn::Core::SlotAlloc
                 // pass 2's, so this cannot re-place an item already shown.
                 Recount();
                 Fill(priorityCount, /*refill=*/true);
+                // PASS 4w (R10): a roll draws the wildcard from what the
+                // finished page does not show and puts it on the seat. Before
+                // the record, so the seat's displaced owner is remembered as
+                // departed (home keys bring it back when the wildcard ends)
+                // and the wildcard, pinned, claims no seat.
+                DrawWildcard();
                 // PASS 5: remember the result for next time.
                 RecordSeating();
             }
@@ -774,8 +858,8 @@ namespace Huginn::Core::SlotAlloc
 
             // Phase A: which seat owners are still candidates, and still
             // allowed in their seat? An item the slot has given up -- now
-            // equipped under skip-equipped, a wildcard in a slot that refuses
-            // them -- is not held, however well it scores: holding it would
+            // equipped under skip-equipped, or no longer of its class -- is
+            // not held, however well it scores: holding it would
             // keep something the slot itself just rejected. Priority order,
             // the order the fill uses: when two held slots want the same
             // challenger, the one the fill would have served first gets it.
@@ -899,17 +983,11 @@ namespace Huginn::Core::SlotAlloc
                 const auto& config = slots[j];
                 const auto& it = cands[item];
 
-                // A wildcard is not challenged on score: WildcardManager
-                // swaps it into a rank POSITION and leaves its own low score,
-                // so a score comparison always finds it beaten and it was
-                // released and re-placed elsewhere every pass (2026-09-27
-                // 19:02:40-46). It stays until WildcardManager ends it or the
-                // slot stops accepting it (Phase A).
-                if (it.isWildcard) {
-                    Place(j, Kind::Wildcard, item);
-                    Assign(it.formID, it.name);
-                    continue;
-                }
+                // R10: no wildcard case here. The wildcard is pinned on its
+                // seat (pass 1w) before this pass, so it is never a holder or
+                // a challenger: the old rank-swapped wildcard, low-scored by
+                // design, needed an exemption from this comparison (2026-09-27
+                // 19:02:40-46), and the pinned one cannot reach it.
 
                 // On a Regular key both sides are weighed after the class cap:
                 // a holder past its class's free count holds at its capped
@@ -918,7 +996,7 @@ namespace Huginn::Core::SlotAlloc
                 m_cap.Remove(it.capClass);
                 const std::size_t skipMark = m_cap.skipped.size();
                 const auto challenger = FindBest(config, excludedIDs, excludedNames, config.skipEquipped,
-                    /*skipWildcards=*/!config.wildcardsEnabled, /*useCap=*/true);
+                    /*useCap=*/true);
                 const bool capped = config.regular;
                 const Cap itemCap = capped ? holderCap[t] : m_p.NoCap();
                 const Cap challengerCap = capped && challenger ? CapOf(cands[*challenger].capClass) : m_p.NoCap();
@@ -937,7 +1015,7 @@ namespace Huginn::Core::SlotAlloc
                         e.capped = m_p.IsCapped(itemCap) || m_p.IsCapped(challengerCap);
                         Note(e);
 
-                        Place(j, ch.isWildcard ? Kind::Wildcard : Kind::Normal, *challenger);
+                        Place(j, Kind::Normal, *challenger);
                         Assign(ch.formID, ch.name);
                         excludedIDs.insert(ch.formID);
                         excludedNames.insert(ch.name);
@@ -959,7 +1037,7 @@ namespace Huginn::Core::SlotAlloc
                     }
                 }
 
-                Place(j, it.isWildcard ? Kind::Wildcard : Kind::Normal, item);
+                Place(j, Kind::Normal, item);
                 // A home claimant arriving at its key from where it waited:
                 // the lock still showing it there may let go (SlotLocker).
                 {
@@ -984,37 +1062,18 @@ namespace Huginn::Core::SlotAlloc
                 const auto& config = slots[idx];
                 if (!m_state[idx].IsEmpty()) continue;
 
-                if (refill) {
-                    // Passes 2b and 4: wildcards only where the slot takes them.
-                    const auto pick = FindBest(config, m_ids, m_names, config.skipEquipped,
-                        /*skipWildcards=*/!config.wildcardsEnabled, /*useCap=*/true);
-                    if (!pick) continue;
-                    const auto& c = m_in.candidates[*pick];
-                    Place(idx, c.isWildcard ? Kind::Wildcard : Kind::Normal, *pick);
-                    Assign(c.formID, c.name);
-                    m_cap.Add(c.capClass);
-                    continue;
-                }
-
-                auto best = FindBest(config, m_ids, m_names, config.skipEquipped, /*skipWildcards=*/false, /*useCap=*/true);
+                // Passes 2b and 4 (refill) note nothing; pass 2 notes a key
+                // nothing fits. R10: no wildcard re-run -- the fill places
+                // ranked rows only (the wildcard has its own passes).
+                const auto best = FindBest(config, m_ids, m_names, config.skipEquipped, /*useCap=*/true);
                 if (!best) {
-                    Note({ EventKind::NoCandidate, static_cast<std::uint32_t>(idx) });
+                    if (!refill) Note({ EventKind::NoCandidate, static_cast<std::uint32_t>(idx) });
                     continue;
                 }
-                Kind kind = m_in.candidates[*best].isWildcard ? Kind::Wildcard : Kind::Normal;
-                // A slot that forbids wildcards re-runs the search without
-                // them (still honouring skipEquipped), and stays empty when
-                // nothing else fits: a wildcard is never left in such a slot.
-                if (kind == Kind::Wildcard && !config.wildcardsEnabled) {
-                    best = FindBest(config, m_ids, m_names, config.skipEquipped, /*skipWildcards=*/true, /*useCap=*/true);
-                    kind = Kind::Normal;
-                }
-                if (best) {
-                    const auto& c = m_in.candidates[*best];
-                    Place(idx, kind, *best);
-                    Assign(c.formID, c.name);
-                    m_cap.Add(c.capClass);
-                }
+                const auto& c = m_in.candidates[*best];
+                Place(idx, Kind::Normal, *best);
+                Assign(c.formID, c.name);
+                m_cap.Add(c.capClass);
             }
         }
 
@@ -1394,6 +1453,114 @@ namespace Huginn::Core::SlotAlloc
                 m_state[i] = m_state[from];
                 m_state[from] = SlotState{};
             }
+        }
+
+        // PASS 1w (R10): the cached wildcard on its seat. WildcardManager
+        // holds which item it is (for fCooldownSeconds) and names its row; this
+        // places it, pinned, where the seat is still free. It does not place a
+        // row the seat no longer takes (its class; equipped under
+        // skip-equipped: the player has it in hand, so the exploration is
+        // over) -- PinFate::Refused, and the manager drops it rather than let
+        // a cache nothing can show block the next roll. An override or a
+        // Remembrance hold on the seat, or showing the item, wins for this run
+        // (SeatBusy): the manager keeps the wildcard for when they let go.
+        template <class Policy>
+        void Engine<Policy>::PlaceCachedWildcard()
+        {
+            auto& w = m_out.wildcard;
+            w.seat = SeatOf(m_in.slots);
+            const auto& wi = m_in.wildcard;
+            if (wi.pinned == kNone) return;
+            if (w.seat == npos || w.seat >= m_state.size() || wi.pinned >= m_in.candidates.size()) {
+                w.pin = PinFate::Refused;
+                return;
+            }
+            const auto& c = m_in.candidates[wi.pinned];
+            if (!m_state[w.seat].IsEmpty() || m_ids.contains(c.formID) || m_names.contains(c.name)) {
+                w.pin = PinFate::SeatBusy;
+                return;
+            }
+            const SlotState s{ Kind::Wildcard, wi.pinned, false };
+            if (c.isRememberedOnly || !SlotAccepts(m_in.slots[w.seat], s)) {
+                w.pin = PinFate::Refused;
+                return;
+            }
+            Place(w.seat, Kind::Wildcard, wi.pinned);
+            Assign(c.formID, c.name);
+            w.pin = PinFate::Placed;
+        }
+
+        // PASS 4w (R10): the roll. With nothing cached and the clocks open
+        // (WildcardManager), on a finished page whose seat shows a ranked row
+        // or nothing: the pool is every ranked row the page does not show
+        // (by formID and by name, as the fill dedups) that the seat takes;
+        // each weighs rel x sd against the seat's occupant (core/WildcardPick.h);
+        // the roll comes up with P(roll) from the pool's top weight, and the
+        // draw puts the row it picks on the seat in the occupant's place. The
+        // scores the weights read are the rows' own (mu), never the policy's
+        // capped ones: the class cap shapes the page, not the wildcard's odds.
+        template <class Policy>
+        void Engine<Policy>::DrawWildcard()
+        {
+            auto& w = m_out.wildcard;
+            const auto& wi = m_in.wildcard;
+            if (!wi.roll || w.seat == npos || w.seat >= m_state.size() || w.pin == PinFate::Placed) return;
+            const SlotState occupant = m_state[w.seat];
+            if (occupant.IsPinned()) return;   // an override or a hold has the seat: roll on a later run
+            w.rollAsked = true;
+
+            constexpr double kHuge = std::numeric_limits<double>::infinity();
+            double muCut = -kHuge;   // an empty seat with nothing ranked shown: no cut
+            if (occupant.kind == Kind::Normal) {
+                muCut = m_in.candidates[occupant.src].score;
+            } else {
+                double lowest = kHuge;
+                for (const auto& s : m_state) {
+                    if (s.kind == Kind::Normal) lowest = std::min(lowest, m_in.candidates[s.src].score);
+                }
+                if (lowest < kHuge) muCut = lowest;
+            }
+
+            std::set<std::uint32_t> shownIDs;
+            std::set<std::string_view> shownNames;
+            for (const auto& s : m_state) {
+                if (s.IsEmpty()) continue;
+                const ItemView v = View(s);
+                shownIDs.insert(v.formID);
+                shownNames.insert(*v.name);
+            }
+
+            const auto& seat = m_in.slots[w.seat];
+            std::vector<std::uint32_t> rows;
+            std::vector<std::uint32_t> forms;
+            std::vector<double> rels;
+            std::vector<double> weights;
+            for (std::uint32_t i = 0; i < m_in.candidates.size(); ++i) {
+                const auto& c = m_in.candidates[i];
+                if (c.isRememberedOnly || !std::isfinite(c.score)) continue;
+                if (shownIDs.contains(c.formID) || shownNames.contains(c.name)) continue;
+                if (!SlotAccepts(seat, SlotState{ Kind::Normal, i, false })) continue;
+                const double rel = Core::Wildcard::Relevance(c.score, muCut);
+                rows.push_back(i);
+                forms.push_back(c.formID);
+                rels.push_back(rel);
+                weights.push_back(Core::Wildcard::Weight(rel, c.sd));
+            }
+            for (const double x : weights) w.topWeight = std::max(w.topWeight, x);
+            w.pool = static_cast<std::uint32_t>(rows.size());
+            w.pRoll = Core::Wildcard::RollProbability(wi.params, w.topWeight);
+            w.rolled = wi.uRoll < w.pRoll;
+            if (!w.rolled || rows.empty()) return;
+
+            const auto probs = Core::Wildcard::Distribution(weights, wi.params.uniformShare);
+            const std::size_t k = Core::Wildcard::Draw(probs, wi.uDraw);
+            if (k >= rows.size()) return;
+            w.drawn = rows[k];
+            w.pDraw = Core::Wildcard::FormShare(probs, forms, forms[k]);
+            w.weight = weights[k];
+            w.rel = rels[k];
+            w.sd = m_in.candidates[rows[k]].sd;
+            Place(w.seat, Kind::Wildcard, rows[k]);
         }
     }  // namespace Detail
 

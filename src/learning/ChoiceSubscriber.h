@@ -2,6 +2,7 @@
 
 #include "EquipEventBus.h"
 #include "ChoiceLearner.h"
+#include "telemetry/SoakMetrics.h"   // R10: wildcard picks in the heartbeat
 
 #include <atomic>
 #include <chrono>
@@ -46,6 +47,12 @@ namespace Huginn::Learning
     private:
         static void Feed(ChoiceLearner& learner, const Core::DecisionLog::Decision& d)
         {
+            // R10: a pick of the row the page showed as its wildcard (the
+            // chosen row's flag, as the v3 log wrote it). Repeats count once.
+            if (!d.repeat && d.ctx && d.row >= 0 && static_cast<size_t>(d.row) < d.ctx->rows.size() &&
+                (d.ctx->rows[static_cast<size_t>(d.row)].flags & Core::DecisionLog::Flag::Wildcard) != 0) {
+                Telemetry::SoakMetrics::GetSingleton().RecordWildcardPicked();
+            }
             // The decision moment on the steady clock: the confirmation (now)
             // less the confirmation delay, as fitlib.pick_time reads utc - confirmMs.
             const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();

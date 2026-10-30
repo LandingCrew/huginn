@@ -19,27 +19,19 @@ namespace Huginn::Scoring
     // rules) moved to the legacy module (src/learning/legacy/) unchanged in
     // arithmetic; tools/prune/r8_check.py keeps them out of this file.
 
-    void UtilityScorer::RankAndApplyWildcards(ScoredCandidateList& scored, const WildcardPage& displayPage)
+    void UtilityScorer::Rank(ScoredCandidateList& scored)
     {
         // The whole list in rank order (R7), on SlotScore's score (R8.3: the
-        // choice score mu; ln utility in the fallback ranking) -- until
-        // ApplyWildcards below swaps a wildcard up into a rank position. The
-        // slot code takes the FIRST match in list order for a job key or an
-        // uncapped Regular key, so the tail must be sorted too. Stable, so
-        // exact ties (same score, same DPS) keep the order the candidates were
-        // generated in. Cost (R7 review, 500 rows): about 42 us a pass.
+        // choice score mu; ln utility in the fallback ranking). The slot code
+        // takes the FIRST match in list order for a job key or an uncapped
+        // Regular key, so the tail must be sorted too. Stable, so exact ties
+        // (same score, same DPS) keep the order the candidates were generated
+        // in. Cost (R7 review, 500 rows): about 42 us a pass. R10: the list
+        // stays in this order -- the wildcard is placed on its own key by the
+        // allocation, not swapped into a rank position.
         if (!scored.empty()) {
             Huginn_ZONE_NAMED("Score::Sort");
             std::stable_sort(scored.begin(), scored.end());
-        }
-
-        // Apply wildcards for exploration, keyed and sized against the page
-        // THIS tick allocates. WildcardManager works on rank POSITIONS (a draw
-        // from below the slot, a swap up into it), never on score values, so
-        // it is sign-safe as it stands (R8.3); R10 replaces it.
-        {
-            Huginn_ZONE_NAMED("Score::Wildcards");
-            m_wildcardMgr.ApplyWildcards(scored, displayPage);
         }
     }
 
@@ -128,15 +120,14 @@ namespace Huginn::Scoring
                                                             : std::string{};
 
             if (fallback) {
-                logger::info("[Recs] {}. {} ({}) s={:+.3f} u={:.3f} | {}{}{}"sv,
+                logger::info("[Recs] {}. {} ({}) s={:+.3f} u={:.3f} | {}{}"sv,
                     i + 1, scored.GetName(), Candidate::SourceTypeToString(scored.GetSourceType()),
                     scored.score, scored.utility,
                     detail ? bd.ToDetailString() : bd.ToCompactString(),
-                    scored.isWildcard ? " [WC]" : "",
                     scored.isColdStartBoosted ? " [COLD]" : "");
                 continue;
             }
-            logger::info("[Recs] {}. {} ({}) mu={:+.3f} sd={:.3f} | {} | need={:+.3f} b={:+.3f} lm={:+.3f}{}{}{}{}{}"sv,
+            logger::info("[Recs] {}. {} ({}) mu={:+.3f} sd={:.3f} | {} | need={:+.3f} b={:+.3f} lm={:+.3f}{}{}{}{}"sv,
                 i + 1,
                 scored.GetName(),
                 Candidate::SourceTypeToString(scored.GetSourceType()),
@@ -144,7 +135,6 @@ namespace Huginn::Scoring
                 terms, p.needMu, p.b, p.lnLearnMult, p.utilMissing != 0.0 ? " um" : "",
                 p.covered > 0.0 ? fmt::format(" covered={:.2f}", p.covered) : std::string{},
                 legacy,
-                scored.isWildcard ? " [WC]" : "",
                 scored.isColdStartBoosted ? " [COLD]" : "");
         }
     }

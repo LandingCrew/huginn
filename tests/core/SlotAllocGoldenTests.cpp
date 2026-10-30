@@ -21,6 +21,13 @@
 //
 // The sort change (the scorer's top-10 partial sort becomes a full sort) is
 // upstream of the slot code and is characterised separately below.
+//
+// R10 (0.24.3) moved the wildcard out of the ranking: it has a key of its own
+// (Core::SlotAlloc::SeatOf) and is placed there by its own passes, and the
+// hold's and the fill's special cases for a rank-swapped row are gone. Links 1
+// and 3 therefore leave out the recorded pages that show a rank-swapped
+// wildcard (Snapshot::rankWildcard), counted; link 2 still runs on every
+// input (both arithmetics see the same rows, the flag no longer read).
 // =============================================================================
 
 #include "LegacySlotPolicy.h"
@@ -38,6 +45,12 @@ using Huginn::Core::SlotAlloc::LogScorePolicy;
 
 namespace
 {
+    // R10: recorded snapshots whose page shows a rank-swapped wildcard (a row
+    // with flag 1), left out of the replays against the recorded result --
+    // counted from the fixtures, so a parser that marked more or fewer fails.
+    constexpr std::size_t kRankWildcardSnapshotsOld = 106;   // of 425 in vanilla-0.23.9-old.txt
+    constexpr std::size_t kRankWildcardSnapshotsNew = 66;    // of 230 in vanilla-0.23.11-new.txt
+
     bool EndsWith(const std::string& s, std::string_view suffix)
     {
         return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
@@ -160,11 +173,16 @@ TEST_CASE("slot golden: the core with the old arithmetic reproduces the old game
     REQUIRE(error.empty());
     std::size_t checked = 0;
     std::map<std::string, std::size_t> byTag;
+    std::map<std::string, std::size_t> rankWildcards;
     for (const auto& f : files) {
         if (!EndsWith(f.name, "-old.txt")) continue;
         for (std::size_t i = 0; i < f.snaps.size(); ++i) {
             const auto& snap = f.snaps[i];
             REQUIRE(snap.hasResult);
+            if (snap.rankWildcard) {   // R10: the rank-swapped wildcard is gone (below)
+                ++rankWildcards[f.name];
+                continue;
+            }
             const auto out = Allocate(snap.in, LegacySlotPolicy::From(snap.in.settings));
             const std::string diff = DiffResult(snap, snap.in, out);
             CHECK_MESSAGE(diff.empty(), f.name, " #", i, " (", snap.tag, "): ", diff);
@@ -175,6 +193,15 @@ TEST_CASE("slot golden: the core with the old arithmetic reproduces the old game
     for (const auto& [tag, n] : byTag) MESSAGE(tag, ": ", n);
     MESSAGE("old-code snapshots replayed bit for bit: ", checked);
     CHECK(checked > 0);
+    // R10 placed the wildcard on its own key instead of swapping it into a
+    // rank position, and removed the hold's and the fill's special cases for
+    // the swapped row. A recorded page that shows a rank-swapped wildcard is
+    // therefore not reproducible from its input any more, and is left out --
+    // exactly these, counted, so a parse that marked more would fail here.
+    // The recorded pages without one still replay bit for bit, which is the
+    // proof that removing the special cases changed nothing else.
+    CHECK(rankWildcards["vanilla-0.23.9-old.txt"] == kRankWildcardSnapshotsOld);
+    MESSAGE("left out (a rank-swapped wildcard, R10): ", rankWildcards["vanilla-0.23.9-old.txt"]);
 }
 
 TEST_CASE("slot golden: the new game code's recorded pages replay through the core")
@@ -183,18 +210,25 @@ TEST_CASE("slot golden: the new game code's recorded pages replay through the co
     const auto files = LoadSlotFixtures(&error);
     REQUIRE(error.empty());
     std::size_t checked = 0;
+    std::size_t rankWildcards = 0;
     for (const auto& f : files) {
         if (!EndsWith(f.name, "-new.txt")) continue;
         for (std::size_t i = 0; i < f.snaps.size(); ++i) {
             const auto& snap = f.snaps[i];
             REQUIRE(snap.hasResult);
+            if (snap.rankWildcard) {   // R10: as in the old-code replay above
+                ++rankWildcards;
+                continue;
+            }
             const auto out = Allocate(snap.in);
             const std::string diff = DiffResult(snap, snap.in, out);
             CHECK_MESSAGE(diff.empty(), f.name, " #", i, " (", snap.tag, "): ", diff);
             ++checked;
         }
     }
-    MESSAGE("new-code snapshots replayed: ", checked);
+    MESSAGE("new-code snapshots replayed: ", checked, "; left out (a rank-swapped wildcard, R10): ", rankWildcards);
+    CHECK(checked > 0);
+    CHECK(rankWildcards == kRankWildcardSnapshotsNew);
 }
 
 TEST_CASE("slot golden: old and new arithmetic give identical pages on every recorded snapshot")
@@ -236,7 +270,7 @@ TEST_CASE("slot golden: the full sort -- what it changes against the old top-10 
         for (const auto& snap : f.snaps) {
             if (snap.tag != "tick") continue;
             const auto& in = snap.in;
-            if (std::any_of(in.candidates.begin(), in.candidates.end(), [](const SA::CandidateRec& c) { return c.isWildcard; })) {
+            if (snap.rankWildcard) {
                 ++withWildcard;
                 continue;
             }

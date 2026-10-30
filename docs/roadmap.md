@@ -577,7 +577,8 @@ agent runs the cheap test on today's log: one weight per slot class × logged
   widget hidden (12:48:57.458–12:49:02.859), so the player never saw it
   there first. So candidacy depended on context (ctx=0.00 outside the right
   one), not a cold-start block. The user accepts this for now; discovery
-  belongs to R10 (wildcards by uncertainty).
+  belongs to R10 (wildcards by uncertainty). *(R10, 0.24.3: a new spell has no
+  b, so the wildcard draw weighs it at b's prior sd; checked in game under R10.)*
 
 ### R6. Offline fit: go / no-go
 
@@ -1051,7 +1052,7 @@ changed in the same PR, and the shipped INI loses the dead keys.
         hit@1 0.5457, page NLL 1.289071, pick NLL 1.966564 -- identical.
       - Behaviour changes to expect in play: pages are always full (nothing is
         under a floor any more); the wildcard draws from the whole ranked list
-        below the slot, not only the floors' rows (R10 replaces it); external
+        below the slot, not only the floors' rows (R10 replaced it, 0.24.3); external
         equips of items the floors used to drop now classify as `miss` (a
         ranked candidate), not `novel`, so the soak's accept denominators move;
         the v3 rows' `util` lacks the favourites rank scaling and the potion
@@ -1394,6 +1395,51 @@ press in the heartbeat against the R8 session.
 Map Phase 8: a reserved slot per page, ranked by relevance × σ plus a small
 random term, propensity logged, flags per page (Wheeler leak). **In game:**
 wildcard picks against the soak's 8 of 333.
+- [x] **Built in 0.24.3 (`r10-wildcards`, on `rewrite-r8`).** As built:
+      [9-implementation-map.md](architecture/9-implementation-map.md), Phase 8
+      "As built"; the design: [5-slots.md](architecture/5-slots.md#wildcard-system).
+      - **The reserved slot:** one wildcard key per page, the last key in fill
+        order with `bWildcardsEnabled`, never the first (`Core::SlotAlloc::SeatOf`;
+        key 8 on the shipped pages, named at load by `[SlotSettings]`). The
+        cached wildcard is pinned there (a pass of its own, like a Remembrance
+        hold); a roll draws on the finished page and puts its row there. The
+        rank swap, the hold's and the fill's special cases for it, and the
+        same-type draw are gone.
+      - **Relevance × σ:** w = logistic(μ − μ_cut) × σ (μ_cut: the row the
+        wildcard displaces; σ: the posterior sd, high for an item never
+        picked, one whose battery ran down, a newly learned spell, a pairing
+        with little evidence); the random term is a uniform share of the draw
+        (`[Wildcards] fUniformShare = 0.1`), so the propensity stays exact;
+        P(roll) runs from `fBaseProbability` (nothing uncertain near the page)
+        to `fMaxProbability` (an unknown item at its edge).
+      - **Propensity logged:** v3 `wp` = P(roll) × P(the draw shows the form).
+      - **Flags per page:** an off-screen Wheeler page shows its own cached
+        wildcard and never rolls; it no longer inherits the displayed page's.
+      - **Discovery (R5's note, newly learned spells not on the HUD):** a new
+        spell has no b, so its σ carries b's prior sd (0.5), as does every
+        never-picked item; it weighs high when its score is also near the
+        page. Whether that brings new spells up often enough is the in-game
+        check below.
+      - **Telemetry:** `[Soak] ... wildcards rolled= relevant= picked=`
+        (relevant: a need the player had at the draw values the item's
+        effects); one `[Wildcard] Page P key K: 'name' (p=..)` info line per
+        draw.
+- [ ] **In game (you):** a session of ordinary play on the R10 build.
+      - The load log names each page's wildcard key: `[SlotSettings] Page 0
+        'Main': 8 slots, wildcard key 8` (and the `[WildcardConfig]` line shows
+        the uniform share).
+      - Out of combat a wildcard appears on key 8 only (never on another key),
+        with the Wildcard subtext on the wheel; it stays about 30 s, then key
+        8's own item comes back; none in combat.
+      - Turn Wheeler to page 2 while page 1 shows a wildcard: page 2's key 8
+        shows no wildcard label unless page 2 rolled its own.
+      - The heartbeat's `wildcards rolled= relevant= picked=` over the session,
+        against the soak's 8 picks of 333 placements (2%); and against the
+        relevant rolls (doc 9's measure). Note any wildcard that made no sense.
+      - Learn a new spell and play on: note whether, and after how many
+        `[Wildcard]` lines, it comes up on key 8. It has no special boost:
+        every never-picked carried item shares b's prior sd, so it competes on
+        how close its score is to the page (open question in the PR).
 
 ### R11. Console, telemetry, docs; retire the classifiers
 

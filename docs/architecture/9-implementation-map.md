@@ -178,6 +178,13 @@ Order inside the phase matters:
 - Rank by relevance × σ with a small random term, and log each propensity.
 - Make wildcard flags per page: non-display Wheeler pages reuse the display page's list (`WheelerBackend.cpp:183`).
 
+**As built (R10, 0.24.3).**
+- *The reserved slot:* `Core::SlotAlloc::SeatOf` -- the last key in fill order with `bWildcardsEnabled`, never the first (key 8 on the shipped pages). The core places the cached wildcard there in a pass of its own (PASS 1w, pinned like a Remembrance hold: `SlotState::IsPinned` includes `Kind::Wildcard`) and draws a new one on the finished page (PASS 4w, before the seating record). `CandidateRec::isWildcard` is gone, and with it the hold's exemption and the fill's position rule and re-run (the special cases above), and the same-type draw (`WildcardManager` rewritten: `Plan` / `Commit` around the allocation, `UpdateExpiry`; the per-page cache, shape check and combat step kept). Recorded slot snapshots that show a rank-swapped wildcard (106 old, 66 new) are left out of the golden replays, counted; the rest still replay bit for bit.
+- *Relevance × σ:* w = logistic(μ − μ_cut) × σ, μ_cut the score of the row the wildcard displaces (the model's own pairwise choice probability), σ the row's posterior sd (`core/WildcardPick.h`). The random term is a mixture (`fUniformShare` uniform, so the propensity stays exact); doc 9's "chance = base + θ uncertainty" is P(roll) = base + (max − base) · min(1, max w / 0.25), 0.25 = an item tied with the cut at b's prior sd. Host tests: `tests/core/WildcardTests.cpp`.
+- *Propensity:* P(roll) × P(the draw shows the form), set on the eligible row after the allocation (the roll is part of it now); `wc.base` / `wc.max` keep their names with the new meaning (9-selection-log-v3.md).
+- *Per-page flags:* `WheelerBackend` allocates each off-screen page with its own cached wildcard (`WildcardPage::display = false`, never a roll); the ranked list carries no wildcard flag.
+- *Telemetry:* `[Soak]` appends `wildcards rolled= relevant= picked=` (doc 9's "relevant wildcards": a positive θ·n·cap term when drawn), and each draw logs one `[Wildcard]` info line.
+
 ### Phase 9: persistence, console, telemetry, docs
 
 - **Cosave** (built in Phase 6, listed here for the format): new `THTA` (version, pairs {key, μ, σ²}, including the outside option's θ[need, out] entries and its intercept θ_out) and `BIAS` ({formID, b, n, minutes since chosen}) records; HCID unchanged; the old `BNDW` record falls to the unknown-record branch, a clean break. `ReplaceDynamicEntries` applies to BIAS only.

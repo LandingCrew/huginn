@@ -281,7 +281,8 @@ namespace Huginn::Test
             c.utility = RandomUtility();
             c.score = Core::BridgeScore(c.utility);
             c.tieBreak = Chance(20) ? static_cast<float>(Int(1, 4)) : 0.0f;
-            c.isWildcard = Chance(5);
+            // R10: the score's sd, for the wildcard draw (0 = the fallback's none).
+            c.sd = Chance(70) ? std::uniform_real_distribution<double>(0.0, 1.2)(m_rng) : 0.0;
             c.isEquipped = Chance(8);
             c.playerEquipped = Chance(8);
             c.matchMask = MaskFor(c.formID);
@@ -326,7 +327,6 @@ namespace Huginn::Test
                 auto r = RandomCandidate();
                 r.utility = 0.0f;
                 r.isRememberedOnly = true;
-                r.isWildcard = false;
                 r.score = Core::kUnrankedScore;
                 in.candidates.push_back(std::move(r));
             }
@@ -352,6 +352,16 @@ namespace Huginn::Test
                 if (Chance(15)) {
                     in.holds[j] = { true, 0x0A000000u + static_cast<std::uint32_t>(Int(1, m_spec.formPool)) };
                 }
+            }
+            // R10: the wildcard key -- a cached wildcard pinned on its seat,
+            // or a roll on the finished page.
+            if (!in.candidates.empty() && Chance(15)) {
+                in.wildcard.pinned = static_cast<std::uint32_t>(Int(0, static_cast<int>(in.candidates.size()) - 1));
+            } else if (Chance(25)) {
+                in.wildcard.roll = true;
+                in.wildcard.uRoll = std::uniform_real_distribution<double>(0.0, 1.0)(m_rng);
+                in.wildcard.uDraw = std::uniform_real_distribution<double>(0.0, 1.0)(m_rng);
+                if (Chance(30)) in.wildcard.params = { 1.0, 1.0, Chance(50) ? 0.0 : 0.1 };
             }
             return in;
         }
