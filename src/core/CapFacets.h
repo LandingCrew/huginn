@@ -22,6 +22,10 @@
 // (Regular, SpellsAny, ScrollsAny, the school classes, WeaponsAny, AmmoAny,
 // ApparelAny; PotionsAny / FoodAny from its source type) and no effect class,
 // and no effect filter drops it. The scorer reads only b for it too.
+// One classifier output still reaches it: its kind (potion / food / soul gem)
+// comes from the candidate's source type (effect/Facets.cpp), which
+// candidate/CandidateTypes.cpp derives from ItemClassifier's ItemType. r8_check
+// does not see that path; it goes when the item source type stops reading it.
 //
 // Pure: standard library only (src/core/README.md).
 // =============================================================================

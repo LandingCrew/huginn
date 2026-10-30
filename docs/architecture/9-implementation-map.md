@@ -207,7 +207,7 @@ Order inside the phase matters:
 - *Overrides:* the per-load-order actor-value override (layer 2) is the effect override directory (`core/OverrideFiles.h`, `EffectCatalog::LoadOverrides`); `Huginn_Overrides.ini`'s type/tag semantics stay with the classifiers, so they reach D2 only.
 - *Deleted:* the per-type dumps and their helpers, `SpellClassifier::RetryDecidedType`, `ItemRegistry::GetBestPotion`, `GetBestCurePoisonPotion`, `GetBestWaterbreathingPotion`, `ItemData::HasHarmfulSideEffects`, the two classifier-based resist checks; `hg dump all` ships in every build and derives its slot class from cap.
 - *Tests.cpp:* the in-game suites keep their made-up candidates (stated in the old vocabulary); `InstallSyntheticFacetResolver` answers their facets for forms the catalog does not hold, around the suite runs only.
-- *Confinement:* `tools/prune/r8_check.py` CLASSIFIER (code only) and REQUIRED, and 14 more probes in `test_r8_check.py`. When D2 retires, the CLASSIFIER list becomes PRUNED and these files go: the classifiers, the overrides loaders, the candidate types' copies, the tag enums.
+- *Confinement:* `tools/prune/r8_check.py` CLASSIFIER (code only) and REQUIRED, and 21 more probes in `test_r8_check.py` (67 in all). When D2 retires, the CLASSIFIER list becomes PRUNED and these files go: the classifiers, the overrides loaders, the candidate types' copies, the tag enums.
 - *Review of the classes:* [5-slots.md](5-slots.md), "Slot classes, re-derived from cap(i)".
 
 ## Decisions (the user, 2026-10-08)

@@ -476,6 +476,12 @@ namespace Huginn::Override
     // A potion whose restore is not a plain value row (a scripted restore the
     // catalog maps by its description) falls back to the catalog's restore
     // amount for that vital (its total, the whole duration).
+    //
+    // Known edge: that fallback is not the same measure as the rows' (a total,
+    // not what lands within the window), so a scripted restore that spreads
+    // its amount over longer than `windowSec` ranks a little above where it
+    // belongs against plain potions. Accepted: scripted restores are rare and
+    // the catalog carries no duration per vital to window them with.
     [[nodiscard]] static float PotionRestoreWithin(RE::FormID formID, RE::ActorValue av, std::size_t vital, float windowSec)
     {
         float restored = 0.0f;
@@ -833,6 +839,11 @@ namespace Huginn::Override
     // waterbreathing rows (primary actor value WaterBreathing, not hostile).
     // An item whose waterbreathing is not such a row (a scripted one the
     // catalog maps by its description) falls back to ItemData::duration.
+    //
+    // Known edge: that fallback is the classifier's duration of the costliest
+    // effect, not of the waterbreathing, so it is not the same measure as the
+    // rows' (on a food it can be a long fortify's). Accepted: scripted
+    // waterbreathing is rare, and the catalog keeps a grade for it, not seconds.
     [[nodiscard]] static float WaterbreathingSeconds(const Item::ItemData& data)
     {
         float seconds = 0.0f;

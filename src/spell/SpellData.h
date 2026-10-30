@@ -266,9 +266,9 @@ namespace Huginn::Spell
       case TypeEvidence::Archetype:    return "effect data";
       case TypeEvidence::Applied:      return "the spell it applies";
       case TypeEvidence::SchoolOnly:   return "school only";
-      // No comma: this string is written as a field in `hg dump spells`,
-      // and the one that used to be here split 52 rows and shifted every
-      // column after it.
+      // No comma: this string was written as a CSV field by `hg dump spells`
+      // (deleted in R11), and the one that used to be here split 52 rows and
+      // shifted every column after it. Kept comma-free for any CSV it reaches.
       case TypeEvidence::SchoolGuess:  return "school guess";
       case TypeEvidence::Tags:         return "tags";
       case TypeEvidence::Name:         return "name only";

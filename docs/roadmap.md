@@ -1583,7 +1583,8 @@ passes R6's gate, or the user's call).
       probes, the snapshot's match masks), the candidate filters (full vitals,
       the active buffs, the resist check -- one `IsResistRedundant` for potions
       and spells -- and the no_follower gate), the override finders (the three
-      restore potions by facet and `ItemData::RestoredWithin`,
+      restore potions by facet, ranked by the potion's own restore row
+      (`PotionRestoreWithin`),
       `ItemRegistry::GetBestPotion` deleted; the restore-spell fallback; the
       cure; waterbreathing), the "Ally Support" label (TargetsOthers) and the
       widget's potion styling. Every ranked row carries its subject
@@ -1611,8 +1612,8 @@ passes R6's gate, or the user's call).
       override-section parser, the Debug registry widget, and budgets (the
       soul gem split in `CandidateGenerator.cpp`, 2 exact lines; `Tests.cpp`,
       counted); PRUNED gains the per-type dumps and the live helpers they
-      replaced; REQUIRED keeps the facet readers wired. 14 new mutation probes
-      (60 in all), each of which must fail it.
+      replaced; REQUIRED keeps the facet readers wired. 21 new mutation probes
+      (67 in all), each of which must fail it.
 - [x] **Per-type dumps deleted** (`hg dump spells / food / potions / scrolls /
       weapons / apparel / diseases`); `hg dump all` ships in every build and
       its slot class is the cap-derived one; `hg dump weights` (the old
@@ -1620,9 +1621,9 @@ passes R6's gate, or the user's call).
 - [x] **The override layer as a directory** (`core/OverrideFiles.h`):
       `Data/SKSE/Plugins/Huginn/EffectOverrides/*.ini` alphabetically, the
       player's `Huginn_EffectOverrides.ini` last; plugin-relative keys
-      (`<plugin>|<local FormID>` = an effects.csv column); a file that does not
-      parse, or says it is a newer format (`[Huginn] iFormatVersion`), is
-      skipped and named; entries for plugins not loaded are skipped quietly;
+      (`<plugin>|<local FormID>` = an effects.csv column); a file that cannot
+      be read, or whose format version (`[Huginn] iFormatVersion`) is newer
+      than this build reads or invalid, is skipped and named; entries for plugins not loaded are skipped quietly;
       later files' replacements are counted. `Huginn_Overrides.ini` (type /
       tag) is NOT replaced: it corrects the classifiers, so it now reaches D2
       only, and its one shipped fix (Arcane Mass Inhibition, Debuff) is part

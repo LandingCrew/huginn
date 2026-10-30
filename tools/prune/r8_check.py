@@ -181,6 +181,10 @@ STALE = [
                             r'|\breason\b[^.;]{0,40}?\bcomes\s+from\s+the\s+(?:scorer\'?s\s+|old\s+)?context\s+weights?\b',
      'the display reason came from the old context weights (DominantReason); since R8.3 it comes '
      'from the page\'s explanations (PipelineCoordinator::UpdateContextReason)'),
+    # Present tense only: the notes that say what a dump found on a date stay.
+    ('per-type dump as live', r'`?hg dump (?:spells|food|potions|scrolls|weapons|apparel|diseases)`?\s+'
+                              r'(?:classifies|walks|prints|writes|lists|is\s+the)\b',
+     'R11 deleted the per-type dumps; `hg dump all` is the one load-order dump'),
 ]
 # Code that must stay (path, regex over the whole file, why): deleting it lets the old utility back
 # in without naming anything new. Whitespace-tolerant.
@@ -503,6 +507,10 @@ CLASSIFIER_CPP_PATTERNS = {
     'potion views': r'\bGet(?:Best)?(?:Health|Magicka|Stamina|Resist(?:Fire|Frost|Shock|Poison|Magic)|'
                     r'Cure(?:Disease|Poison)|Fortify(?:School|Combat|Utility)|Invisibility|Waterbreathing)'
                     r'Potions?(?:ByMagnitude)?\b|\bGetItemsWithTag\b|\bIsFortify(?:Destruction|Smithing)\b',
+    # ScrollRegistry's views by ScrollType or element (today only the Debug registry widget calls
+    # them): the same way round through src/scroll/*.
+    'scroll views': r'\bGet(?:Best)?(?:Damage|Healing|Defensive|Utility|Summon|Fire|Frost|Shock)Scrolls?\b'
+                    r'|\bGetScrollsByType\b',
 }
 CLASSIFIER_ALLOW = [
     ('src/spell/*', 'the spell classifier, its data, overrides and registry (the D2 inputs\' producer)'),

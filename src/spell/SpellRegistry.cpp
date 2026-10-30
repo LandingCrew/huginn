@@ -119,8 +119,9 @@ namespace Huginn::Spell
       // only be answered after a classification pass.
       //
       // It sees the PLAYER'S spells, so an override on a spell they have not
-      // learned reads as unmatched. `hg dump spells` classifies the whole form
-      // array and is the complete check.
+      // learned reads as unmatched. Nothing classifies the whole load order any
+      // more (R11 deleted `hg dump spells` with the other per-type dumps), so a
+      // character who knows the spell is the only complete check.
       m_classifier.ReportOverrideUsage("after rebuild"sv);
 
       ReportWeakClassificationsLocked();

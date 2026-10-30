@@ -76,6 +76,24 @@ namespace Huginn::Slot
             if (candidate.Is<Candidate::ItemCandidate>()) {
                 const auto f = SlotClassifier::SubjectOf(candidate).facets;
                 using F = Core::Facets::F;
+                // The vital the override surfaced it for first: a mixed Restore
+                // Health + Magicka potion the LowMagicka override picked (its
+                // ranking reads the potion's own magicka row) is a magicka potion
+                // here. Otherwise the first restore it carries.
+                switch (Candidate::GetBase(candidate.candidate).overrideReason) {
+                    case Context::ContextReason::CriticalHealth:
+                    case Context::ContextReason::LowHealth:
+                        if (f.Has(F::RestoreHealth)) return UI::SlotContent::HealthPotion(name, formID);
+                        break;
+                    case Context::ContextReason::LowMagicka:
+                        if (f.Has(F::RestoreMagicka)) return UI::SlotContent::MagickaPotion(name, formID);
+                        break;
+                    case Context::ContextReason::LowStamina:
+                        if (f.Has(F::RestoreStamina)) return UI::SlotContent::StaminaPotion(name, formID);
+                        break;
+                    default:
+                        break;
+                }
                 if (f.Has(F::RestoreHealth)) {
                     return UI::SlotContent::HealthPotion(name, formID);
                 }

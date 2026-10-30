@@ -72,6 +72,12 @@ PROBES = [
     ('R11: a restore potion ranked by the costliest effect again (REQUIRED)', 'src/override/OverrideManager.cpp',
      'const float restored = PotionRestoreWithin(',
      '            const float restored = item.data.RestoredWithin(windowSec);', 'replace'),
+    ('R11: a registry scroll view by type called from the overrides', 'src/override/OverrideManager.cpp',
+     '#include "effect/Facets.h"',
+     'static const auto* S(const Scroll::ScrollRegistry& r) { return r.GetBestHealingScroll(); }', 'after'),
+    ('R11: a comment sending authors to a deleted dump (STALE)', 'src/spell/SpellRegistry.cpp',
+     'm_classifier.ReportOverrideUsage("after rebuild"sv);',
+     '      // `hg dump spells` classifies the whole form array and is the complete check.', 'after'),
     ('R11: the old resist check back', 'src/candidate/CandidateFilters.h', '#pragma once',
      '// bool IsResistSpellRedundant(const SpellCandidate&) const;', 'after'),
     # --- round 5: the v3 row's `.util` and the old floors' keep flag are LEGACY ---
