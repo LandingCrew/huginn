@@ -196,8 +196,8 @@ Then launch Skyrim. Two trigger points:
 
 | When | What runs | Where |
 |---|---|---|
-| **`kDataLoaded`** (main menu, once per process) | `RunUnitTests()` | `src/Main.cpp:682` |
-| **`kPostLoadGame`** — loading a save, **not** a new game | the 19 after-load suites | `InitializeGameSystems()`, `src/Main.cpp` (the `HUGINN_RUN_SUITE` list) |
+| **`kDataLoaded`** (main menu, once per process) | `RunUnitTests()` | `src/Main.cpp` (`HUGINN_RUN_SUITE(RunUnitTests)` in the kDataLoaded handler) |
+| **`kPostLoadGame`** — loading a save, **not** a new game | the 20 after-load suites | `InitializeGameSystems()`, `src/Main.cpp` (the `HUGINN_RUN_SUITE` list) |
 
 The second group is gated on `!isNewGame` because it needs real form data
 (spells, items, weapons) in the player's inventory. Starting a new game runs
@@ -220,7 +220,7 @@ per batch:
 ```
 [HuginnTest] suite RunSlotClassCapTest passed (0 error line(s))
 [HuginnTest] suite RunHomeKeyTest SKIPPED (0 error line(s); skipped: needs seating, the hold and home keys)
-[HuginnTest] RESULT phase=load suites=18 passed=17 failed=0 skipped=1 fail_lines=0 failed_suites=- skipped_suites=RunHomeKeyTest
+[HuginnTest] RESULT phase=load suites=20 passed=19 failed=0 skipped=1 fail_lines=0 failed_suites=- skipped_suites=RunHomeKeyTest
 ```
 
 `phase=menu` is `RunUnitTests()` at `kDataLoaded`; `phase=load` is the
@@ -235,7 +235,7 @@ after the main-menu suites Huginn loads a named save, runs the after-load
 suites, logs
 
 ```
-[HuginnTest] DONE result=PASS suites=19 passed=19 failed=0 skipped=0 fail_lines=0 failed_suites=- skipped_suites=- reason=-
+[HuginnTest] DONE result=PASS suites=21 passed=21 failed=0 skipped=0 fail_lines=0 failed_suites=- skipped_suites=- reason=-
 ```
 
 and ends the process (exit code 0 on PASS, 1 on FAIL). `reason` is `-`,
@@ -411,7 +411,7 @@ carries them). The run order is the `HUGINN_RUN_SUITE` list in `src/Main.cpp`.
 | GameState hash | Test 1 minimum hash, Test 2 maximum hash, Test 3 uniqueness across all `GameState::kTotalStates` = 48,384 states (6×6×3×7×4×2×2×2×2), Test 3b stamina is excluded from the hash, Test 3c allyStatus hashes as its injured bit — None == Present, and Injured differs, Test 3d the distance bucket is the closest living hostile's (a townsperson leaves it Ranged, a corpse is ignored), Test 3e target type is seen only for a living hostile primary |
 | SpellRegistry | Registry starts empty (basic construction; the real coverage is the integration suite) |
 | PriorCalculator context independence | Tests 1–8: healing and damage priors identical in/out of context; magnitude, scarcity, spell cost, weapon charge, ammo matching and scroll magnitude *do* affect the prior. This is the guard on the `ContextRuleEngine` / `PriorCalculator` separation |
-| Optimization + engine | Test 1 partial-sort correctness, Test 3 `SCOPED_TIMER` compiles and runs, Tests 4–9 `ContextRuleEngine` vital / elemental / environmental / combat / target / equipment rules, Test 10 end-to-end `ContextRuleEngine` → `UtilityScorer` (subtests 1a/1b/2–5: forge, enchanter, resist-fire, healing at 30% HP, AOE damage, soul gem), Test 11 `TargetCollection` cache invariant, Test 12 `PipelineStateCache` rank clamping, Test 13 `EquipSourceTracker` FormID keying, Test 14 `UsageMemory` snapshot reader, Test 15 dedup equivalence (`IsFavorited`, fortify-school parity), Test 16 `FeatureBanditLearner` batch decay, Test 17 `ContextReason` derivation |
+| Optimization + engine | Test 1 partial-sort correctness, Test 3 `SCOPED_TIMER` compiles and runs, Tests 4–9 `ContextRuleEngine` vital / elemental / environmental / combat / target / equipment rules, Test 10 end-to-end `ContextRuleEngine` → `UtilityScorer` (subtests 1a/1b/2–5: forge, enchanter, resist-fire, healing at 30% HP, AOE damage, soul gem), Test 11 `TargetCollection` cache invariant, Test 12 `PipelineStateCache` rank clamping, Test 13 `EquipSourceTracker` FormID keying, Test 14 `UsageMemory` snapshot reader, Test 15 dedup equivalence (`IsFavorited`, fortify-school parity), Test 16 `FeatureBanditLearner` batch decay, Test 17 explanation label and context weights (torch, survival food, not_dark filter, label ladder 17i-17k) |
 
 The wildcard-page-cache block that used to sit here (the regression guard for
 issue #70 and its two siblings) left with R10: the wildcard manager's decisions
@@ -421,7 +421,7 @@ expiry).
 
 ### 2.2 Runs at `kPostLoadGame` (needs a loaded save)
 
-The 19 suites, in run order:
+The 20 suites, in run order:
 
 | Suite | What it covers |
 |---|---|
@@ -429,7 +429,7 @@ The 19 suites, in run order:
 | `RunItemClassifierTests()` | Item classification against real forms |
 | `RunItemRegistryTests()` | Item registry against real inventory. Its potion-sort check needs 2+ health potions; in test mode it supplies them (section 1a), otherwise it marks the suite skipped |
 | `RunWeaponRegistryTests()` | Weapon registry against real inventory |
-| `RunMultiplicativeScoringTests()` | 6 tests: zero context gates utility, adaptive lambda vs confidence, learning amplification, correlation compounding, full integration, favorites boost by rank |
+| `RunMultiplicativeScoringTests()` | Test 1 only: zero context gates utility (the context rules' healing weight at full health; D2's input). Tests 2-5 checked arithmetic on their own constants and called no Huginn code (deleted in 0.24.5); Test 6 went with the rank scaling in R8.4 |
 | `RunRegressionTests()` | See below |
 | `RunCosaveTests()` | 4 tests: `FeatureBanditLearner` export/import round-trip, empty round-trip, import clears existing data, feature-count migration (pad / truncate / equal / reject) |
 | `RunStateFeaturesTests()` | 8 tests: default state, low-health combat, one-hot correctness across all 7 target types, distance normalisation, `ToArray` round-trip, normalisation bounds, no-enemy fallback, vital clamping |
@@ -437,6 +437,7 @@ The 19 suites, in run order:
 | `RunOverrideNamespaceTests()` | `Huginn_Overrides.ini` section namespacing (`[Spell:...]` / `[Item:...]`) |
 | `RunSlotLockerResetTest()` | `SlotLocker::Reset()` clears every `LockedSlot` field (throwaway) |
 | `RunSlotLockerInstanceLockTest()` | Per-stack lock breaking (throwaway) |
+| `RunSlotLockerOverrideScopeTest()` | An override breaks only its own key's lock; the combat lock's freeze (a challenger never takes a key, `UseKind::Used` keeps it, `UseKind::Gone` frees it, leaving combat turns it into a normal lock) (0.23.37) |
 | `RunSlotSeatingTest()` | Anti-juggling seating; skipped when `bKeepSlotPositions` is off |
 | `RunFillJobKeysTest()` | `bFillJobKeysFromRegular` |
 | `RunSlotClassCapTest()` | The slot class cap: free items, then x discount per item; food counts as one class |
@@ -477,13 +478,15 @@ Recorded in [../roadmap.md](../roadmap.md) under *Follow-ups*.
 
 1. **`Context::WeightForCandidate` is hand-reimplemented in two tests instead of
    being called.** The sites, by their comments in `src/Tests.cpp`: "Extract
-   weight using UtilityScorer's GetContextWeight logic" (inside unit test 10)
-   and the TC-05 block that simulates `GetContextWeight` with `max()`
-   accumulation. Both should call
+   the weight as Context::WeightForCandidate does" (inside unit test 10, in
+   `RunUnitTests`) and TC-05 in `RunRegressionTests` ("Simulate the
+   per-candidate weight lookup with max() accumulation"), which still
+   re-implements the lookup with `std::max` by hand. Both should call
    `Context::WeightForCandidate()` from
    `src/context/ContextWeightForCandidate.h`, which most of the rest of the file
-   already does (18 call sites). `DominantReason` / `ReasonLabel` are covered by
-   unit test 17 and are not part of this gap.
+   already does (about 34 mentions). `Display::ReasonLabel` is covered by unit
+   test 17's label ladder and is not part of this gap. The item goes when D2
+   goes (the context rules and their in-game tests with it).
 
 2. *(Resolved.)* The cosave decode negative test used to log a real-looking
    `[E] DecodeV2EntryBlob: byteLen 83 != stride 84`. The "length mismatch must
@@ -501,7 +504,7 @@ Recorded in [../roadmap.md](../roadmap.md) under *Follow-ups*.
 | **Capture history** (what previous traces measured) | [../profiling/tracy-traces.md](../profiling/tracy-traces.md) |
 | **Long-play soak** (20–50 hr endurance, `[Soak]` heartbeat, accept%) | [../playtest/LongPlaySoak.md](../playtest/LongPlaySoak.md) |
 | **Timing targets and update-loop tiers** | [../reference/Performance.md](../reference/Performance.md) |
-| **Console commands** for manual poking (`hg refresh`, `hg recs`, `hg status`, `hg weights`) | [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) |
+| **Console commands** for manual poking (`hg refresh`, `hg recs`, `hg status`, `hg weights`) | [Console commands](../../CLAUDE.md#console-commands) |
 
 ### In-game verification gotchas
 
@@ -540,6 +543,6 @@ Listed so nobody reintroduces a reference to it:
 - No `docs/refactor/staged-implementation.md`, no `docs/reviews/SESSION-SUMMARY.md`,
   no `docs/testing/performance-issues.md`
 - No `docs/ROADMAP.md` — the roadmap is [../roadmap.md](../roadmap.md), with
-  [../roadmap-archive.md](../roadmap-archive.md) beside it
+  `docs/roadmap-archive.md` (removed in dd73d24) beside it
 - No `huginn.reload` console command — the command is registered as `Huginn`
-  with the short alias `hg`, so the syntax is `hg reload`; see [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands)
+  with the short alias `hg`, so the syntax is `hg reload`; see [Console commands](../../CLAUDE.md#console-commands)
