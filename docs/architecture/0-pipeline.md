@@ -189,7 +189,7 @@ The data bundle shared between steps. It is a *member* of the coordinator (`m_ct
 - **State snapshots:** `currentState` (`GameState`), `playerState`, `targets`, `worldState`, `healthTracking`, `currentMagicka`, `stateHash`
 - **Unhashed-state flags:** `elementalDamageActive`, `fallingActive`, `underwaterActive`
 - **Pipeline outputs:** `scoredCandidates`, `overrides`, `rawAssignments`, `assignments`, `contextReason`
-- **Page snapshot:** `displayPageIndex`, `displayPageCount`, `displaySlotCount`, `displayWildcardSlots`, `displayPageName`
+- **Page snapshot:** `displayPageIndex`, `displayPageCount`, `displaySlotCount`, `displayWildcardSeat`, `displayPageName`
 
 > Only `HealthTrackingState` is snapshotted. `MagickaTrackingState` and
 > `StaminaTrackingState` used to ride along for the relevance tags; nothing consumes

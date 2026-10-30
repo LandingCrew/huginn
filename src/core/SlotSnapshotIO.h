@@ -31,6 +31,7 @@
 //   SD   <sd>...                               (R10: every row's sd, in order; when any is not 0)
 //   WILD <pinned row|-> <roll> <uRoll> <uDraw> <base> <max> <share>   (R10: Input::wildcard, when set)
 //   WHELD <formID>...                          (R10: forms a slot lock holds, kept out of the draw; when any)
+//   WKEYS <mask>                               (R10: keys a slot lock holds, bit j = key j, hex; when any)
 //   OVR  <formID> <uniqueID> <key> <condition> <category> <pinned> <equipped> <playerEquipped> <matchMask> <capClass> =<name>
 //   HOLD <slot> <formID>                       (active Remembrance holds)
 //   MEM <seats x10> | <lastPlaced x10> | <claims x10>

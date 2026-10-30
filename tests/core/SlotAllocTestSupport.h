@@ -358,6 +358,9 @@ namespace Huginn::Test
             // or a roll on the finished page.
             if (!in.candidates.empty() && Chance(15)) {
                 in.wildcard.pinned = static_cast<std::uint32_t>(Int(0, static_cast<int>(in.candidates.size()) - 1));
+                // A locked key now and then, with no draw of the generator's
+                // own, so every later input stays as it was.
+                if (in.wildcard.pinned % 3 == 0) in.wildcard.heldKeys = 1u << (in.wildcard.pinned % SA::kMaxSlots);
             } else if (Chance(25)) {
                 in.wildcard.roll = true;
                 in.wildcard.uRoll = std::uniform_real_distribution<double>(0.0, 1.0)(m_rng);
@@ -367,6 +370,7 @@ namespace Huginn::Test
                 // of the generator's own, so every later input stays as it was.
                 if (in.wildcard.uDraw < 0.3 && in.candidates.size() > 2) {
                     in.wildcard.heldForms = { in.candidates[1].formID };
+                    in.wildcard.heldKeys = 1u << 6;
                 }
             }
             return in;

@@ -660,6 +660,47 @@ TEST_CASE("wildcard key: the page's best row seated on the wildcard key is not p
             CHECK(out.wildcard.rel == doctest::Approx(W::Logistic(mu - 6.0)));
         }
     }
+
+    SUBCASE("a locked key is passed over though the allocation put another row on it (a roll)")
+    {
+        // The lock on key 7 holds some other form (it lost the key this
+        // run): ApplyLocks shows that form there, whatever row 8 does, so
+        // row 1 moves to key 6 (row 7 leaves) -- the same move as above,
+        // read from the key, not from the row on it.
+        auto in = base;
+        in.wildcard.roll = true;
+        in.wildcard.uRoll = 0.0;
+        in.wildcard.heldKeys = 1u << 6;
+        in.wildcard.heldForms = { 99u };
+        for (int k = 0; k < 20; ++k) {
+            in.wildcard.uDraw = (k + 0.5) / 20.0;
+            const auto out = Allocate(in);
+            REQUIRE(out.wildcard.drawn != SA::kNone);
+            const auto page = SA::PageOf(in, out);
+            CHECK(page[5].formID == 1u);
+            CHECK(out.wildcard.movedTo == 5u);
+            CHECK(out.wildcard.left == seven);
+        }
+    }
+
+    SUBCASE("a locked key is passed over on a pinned run too")
+    {
+        auto in = base;
+        in.wildcard.pinned = static_cast<std::uint32_t>(IndexOf(in, 12));
+        in.wildcard.heldKeys = 1u << 6;
+        const auto out = Allocate(in);
+        CHECK(out.wildcard.pin == SA::PinFate::Placed);
+        CHECK(Shown(in, out) == std::vector<std::uint32_t>{ 2, 3, 4, 5, 6, 1, 8, 12 });
+        CHECK(out.wildcard.movedTo == 5u);
+        CHECK(out.wildcard.moved == one);
+        CHECK(out.wildcard.left == seven);
+        // Every key a lock holds: the row has nowhere to go and leaves.
+        in.wildcard.heldKeys = 0x7Fu;
+        const auto out2 = Allocate(in);
+        CHECK(out2.wildcard.pin == SA::PinFate::Placed);
+        CHECK(out2.wildcard.movedTo == SA::npos);
+        CHECK(Shown(in, out2) == std::vector<std::uint32_t>{ 2, 3, 4, 5, 6, 7, 8, 12 });
+    }
 }
 
 TEST_CASE("wildcard roll: the cut is the row that leaves the page -- the seat's occupant when no other key takes it")

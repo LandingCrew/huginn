@@ -32,6 +32,9 @@ namespace Huginn::Slot
         // Forms a slot lock holds on the page's keys (PipelineCoordinator, from
         // SlotLocker::GetLockSnapshot): kept out of the draw's pool.
         std::vector<RE::FormID> heldForms;
+        // Keys a slot lock holds on the page, bit j for key j: the seat's
+        // displaced row never moves onto one (SlotAlloc::Engine::RehomeFor).
+        uint32_t heldKeys = 0;
     };
 
     /// ...and what the allocation did with it.

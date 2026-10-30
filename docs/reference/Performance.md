@@ -268,8 +268,10 @@ display", which suppressed re-rolls because the liveness check scanned the whole
 cache while only a bounded prefix could ever be shown.
 
 `UpdateExpiry()` runs unconditionally every tick across **all** pages, because
-`ApplyWildcards` only runs on non-skipped pipeline ticks and a wildcard on a page
-the player has switched away from must still age out on its own timer.
+`WildcardManager::Plan`/`Commit` (around the allocation in
+`PipelineCoordinator::AllocateAndLock`) only run on non-skipped pipeline ticks,
+and a wildcard on a page the player has switched away from must still age out on
+its own timer.
 
 ### Context reason hold
 

@@ -199,6 +199,11 @@ namespace Huginn::Core::SlotAlloc
             /// copy, and the rows just under the cut -- the likeliest draws --
             /// are the ones that just left a key and are still held there.
             std::vector<std::uint32_t> heldForms;
+            /// Keys a slot lock holds on this page, bit j for key j. The seat's
+            /// displaced row never moves onto one (RehomeFor): ApplyLocks keeps
+            /// the locked item there, whatever row the allocation put on it,
+            /// and the moved row would be shown nowhere until the lock let go.
+            std::uint32_t heldKeys = 0;
         } wildcard;
 
         /// R9: the ranking run's beliefs, which CandidateRec::beliefRow
@@ -1590,9 +1595,11 @@ namespace Huginn::Core::SlotAlloc
         // instead, when d outranks it (each after the class cap, with both
         // out of the count, as the slot hold weighs a holder). One key
         // changes besides the seat, and the page loses its weakest row, not
-        // an arbitrary one. A key whose row a slot lock holds anyway
-        // (WildcardIn::heldForms) is passed over: the lock would keep that
-        // row and d would be shown nowhere until it let go.
+        // an arbitrary one. A key a slot lock holds (WildcardIn::heldKeys)
+        // is passed over, and so is a key whose row's form a lock holds on
+        // some key (WildcardIn::heldForms): the lock shows its own item on
+        // its key whatever the allocation puts there, so d would be shown
+        // nowhere until it let go.
         template <class Policy>
         std::size_t Engine<Policy>::RehomeFor(std::uint32_t d)
         {
@@ -1609,6 +1616,7 @@ namespace Huginn::Core::SlotAlloc
             for (std::size_t k = slotCount; k-- > 0;) {
                 const std::size_t j = m_order[k];
                 if (j >= slotCount || j == w.seat || m_state[j].kind != Kind::Normal) continue;
+                if (j < 32 && ((m_in.wildcard.heldKeys >> j) & 1u) != 0) continue;
                 const auto& row = cands[m_state[j].src];
                 if (std::find(held.begin(), held.end(), row.formID) != held.end()) continue;
                 if (!SlotAccepts(slots[j], moving)) continue;

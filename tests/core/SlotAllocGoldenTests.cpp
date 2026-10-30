@@ -136,6 +136,9 @@ namespace
             if (page[w.movedTo].formID != in.candidates[w.moved].formID) {
                 return std::format("the moved row is not on key {}", w.movedTo);
             }
+            if (w.movedTo < 32 && ((in.wildcard.heldKeys >> w.movedTo) & 1u) != 0) {
+                return std::format("the moved row went to key {}, which a lock holds", w.movedTo);
+            }
             for (const auto& p : page) {
                 if (p.kind != SA::Kind::Empty && p.formID == in.candidates[w.left].formID) {
                     return "the row the move put off the page is still on it";

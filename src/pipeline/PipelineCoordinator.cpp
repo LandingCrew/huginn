@@ -928,20 +928,23 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
     // any key is kept out of the draw: the post-lock dedup would clear the
     // wildcard as a second copy, and the rows just under the cut -- the
     // likeliest draws -- are the ones that just left a key and are still
-    // held there. A lock with no time left lets go in ApplyLocks this run.
-    if (wildcardRequest.roll) {
+    // held there. The held keys (and their forms) are passed on a pinned run
+    // too: the seat's displaced row never moves onto a locked key, where
+    // ApplyLocks would show the locked item and the moved row nowhere. A
+    // lock with no time left lets go in ApplyLocks this run.
+    if (wildcardRequest.roll || wildcardRequest.pinForm != 0) {
         const auto locks = Slot::SlotLocker::GetSingleton().GetLockSnapshot();
         const auto holding = [](const Slot::SlotLocker::SlotLockView& v) {
             return v.isLocked && (v.frozen || v.remainingMs > 0.0f);
         };
         const size_t seat = ctx.displayWildcardSeat;
-        if (seat < locks.size() && holding(locks[seat])) {
+        if (wildcardRequest.roll && seat < locks.size() && holding(locks[seat])) {
             wildcardRequest.roll = false;
         } else {
-            for (size_t s = 0; s < locks.size() && s < ctx.displaySlotCount; ++s) {
-                if (holding(locks[s]) && locks[s].previousFormID != 0) {
-                    wildcardRequest.heldForms.push_back(locks[s].previousFormID);
-                }
+            for (size_t s = 0; s < locks.size() && s < ctx.displaySlotCount && s < 32; ++s) {
+                if (!holding(locks[s])) continue;
+                wildcardRequest.heldKeys |= 1u << s;
+                if (locks[s].previousFormID != 0) wildcardRequest.heldForms.push_back(locks[s].previousFormID);
             }
         }
     }

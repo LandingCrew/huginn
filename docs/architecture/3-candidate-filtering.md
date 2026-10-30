@@ -425,8 +425,11 @@ Stage 2 → Stage 6.
    the rank-scaled one. It never drops entries, even if rescaling pushes one under
    `minimumUtility`.
 8. `std::partial_sort` for the top N.
-9. `WildcardManager::ApplyWildcards` against the page **this tick allocates**, taken from
-   the pipeline snapshot rather than a live `SlotAllocator` read.
+9. No wildcard step here any more (R10): the ranked list is left in rank order.
+   `PipelineCoordinator::AllocateAndLock` asks `WildcardManager::Plan` what the page
+   **this tick allocates** (taken from the pipeline snapshot rather than a live
+   `SlotAllocator` read) wants of its wildcard key, the allocation pins or draws it, and
+   `WildcardManager::Commit` keeps the result.
 
 These two thresholds are what replaced the removed `baseRelevance` filter:
 

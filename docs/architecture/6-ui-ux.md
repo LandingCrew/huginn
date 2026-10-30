@@ -128,7 +128,7 @@ page-consistent:
    line rather than clamped, because a clamp would never converge and would pin
    the pipeline's hash-skip gate open.
 3. Snapshot `displayPageIndex`, `displayPageCount`, `displaySlotCount`,
-   `displayWildcardSlots` and `displayPageName` onto the tick context, all read
+   `displayWildcardSeat` and `displayPageName` onto the tick context, all read
    **by index** so they describe the same page even if an off-thread switch
    lands between statements.
 
