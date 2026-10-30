@@ -60,9 +60,9 @@ namespace Huginn::Learning
             return instance;
         }
 
-        void LoadFromFile(const std::filesystem::path& iniPath);
+        // Over the shipped Huginn.ini (Settings::LoadMainIni): its values are
+        // the defaults.
         void LoadFromIni(const CSimpleIniA& ini);
-        void ResetToDefaults();
 
         /// Produce an immutable snapshot of all learning settings.
         [[nodiscard]] LearningConfig BuildConfig() const;

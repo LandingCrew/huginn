@@ -59,6 +59,7 @@
 #include "context/ContextWeightSettings.h"
 #include "context/ContextWeightConfig.h"
 #include "settings/SettingsReloader.h"
+#include "settings/ShippedDefaults.h"
 #include "console/ConsoleCommands.h"
 #include "effect/EffectCatalog.h"
 #include "persist/BanditSerializer.h"
@@ -135,20 +136,21 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
     // ── 0. Parse the main INI ONCE, distribute to every settings loader ──
     // Each settings class used to re-open and re-parse Huginn.ini independently
     // (9+ full parses per game load). Parse it a single time here and hand the
-    // parsed CSimpleIniA to each loader via LoadFromIni. When the file is
-    // missing, haveMainIni is false and every loader keeps its current values —
-    // matching the old per-call "not found, using defaults" early-return.
+    // parsed CSimpleIniA to each loader via LoadFromIni. Parsed over the
+    // shipped Huginn.ini (settings/ShippedDefaults.h): a key the player's file
+    // leaves out, or a missing file, reads the shipped value, so every loader
+    // always loads.
     CSimpleIniA mainIni;
-    const bool haveMainIni = LoadIniFile(mainIni, GetMainIniPath(), "InitMain"sv);
+    Settings::LoadMainIni(mainIni, "InitMain"sv);
 
     // ── 1. INI settings (before anything that depends on them) ──────────
     {
         auto& wheelerSettings = Wheeler::WheelerSettings::GetSingleton();
-        if (haveMainIni) wheelerSettings.LoadFromIni(mainIni);
+        wheelerSettings.LoadFromIni(mainIni);
     }
     {
         auto& slotSettings = Slot::SlotSettings::GetSingleton();
-        if (haveMainIni) slotSettings.LoadFromIni(mainIni);
+        slotSettings.LoadFromIni(mainIni);
     }
 
     // ── 2. Wheeler setup ────────────────────────────────────────────────
@@ -265,7 +267,7 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
     g_apparelRegistry->RebuildRegistry();
 
     // ── 4. CandidateConfig + CandidateGenerator ────────────────────────
-    if (haveMainIni) LoadCandidateConfigFromINI(mainIni);
+    LoadCandidateConfigFromINI(mainIni);
     {
         auto& candidateGen = Candidate::CandidateGenerator::GetSingleton();
         if (!candidateGen.IsInitialized()) {
@@ -339,22 +341,22 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
 
     {
         auto& scorerSettings = Scoring::ScorerSettings::GetSingleton();
-        if (haveMainIni) scorerSettings.LoadFromIni(mainIni);
+        scorerSettings.LoadFromIni(mainIni);
         const auto scorerConfig = scorerSettings.BuildConfig();
         g_utilityScorer->SetConfig(scorerConfig);
         g_legacyScorer->SetConfig(scorerConfig);
     }
 
     // ── 6. ContextWeightSettings + WildcardConfig ──────────────────────
-    if (haveMainIni) State::ContextWeightSettings::GetSingleton().LoadFromIni(mainIni);
+    State::ContextWeightSettings::GetSingleton().LoadFromIni(mainIni);
     g_legacyScorer->SetContextWeightConfig(State::ContextWeightSettings::GetSingleton().BuildConfig());
 
     // ── 6a. NeedSettings (the [Needs] response curves; the choice score reads
     //    the need vector; the bootstrap's curves replace their lines at step 6c)
-    if (haveMainIni) Needs::NeedSettings::GetSingleton().LoadFromIni(mainIni);
+    Needs::NeedSettings::GetSingleton().LoadFromIni(mainIni);
 
     // ── 6b. LearningSettings ────────────────────────────────────────────
-    if (haveMainIni) Learning::LearningSettings::GetSingleton().LoadFromIni(mainIni);
+    Learning::LearningSettings::GetSingleton().LoadFromIni(mainIni);
     Learning::ExternalEquipLearner::GetSingleton().SetConfig(
         Learning::LearningSettings::GetSingleton().BuildConfig());
     g_featureBanditLearner->SetMemoryLife(Learning::LearningSettings::GetSingleton().BuildConfig().memory);
@@ -379,7 +381,7 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
     });
     Learning::PlayerInputGate::GetSingleton().SetWheelOpenQuery(
         [] { return Wheeler::WheelerClient::GetSingleton().IsWheelOpen(); });
-    if (haveMainIni) LoadWildcardConfigFromINI(g_utilityScorer->GetWildcardManager(), mainIni);
+    LoadWildcardConfigFromINI(g_utilityScorer->GetWildcardManager(), mainIni);
 
     // ── 6c. ChoiceLearner (R8.3: the ranking's model) ─────────────────
     // Created, and the bootstrap file read, once (the first load): its
@@ -389,7 +391,7 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
     // under the decision step 5 made (persist/ChoiceSerializer.h); not in
     // ResetPipelineSubsystems, which would wipe what the save restored.
     {
-        const auto choiceSettings = haveMainIni ? Learning::ChoiceSettings::FromIni(mainIni) : Learning::ChoiceSettings{};
+        const auto choiceSettings = Learning::ChoiceSettings::FromIni(mainIni);
         Scoring::Legacy::SetEnabled(choiceSettings.legacyLearnFeature);
         const bool firstTime = !g_choiceLearner;
         if (firstTime) g_choiceLearner = std::make_unique<Learning::ChoiceLearner>();
@@ -424,7 +426,7 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
     // ── 7. OverrideManager ─────────────────────────────────────────────
     {
         auto& settings = Override::Settings::GetSingleton();
-        if (haveMainIni) settings.LoadFromIni(mainIni);
+        settings.LoadFromIni(mainIni);
 
         auto& overrideMgr = Override::OverrideManager::GetSingleton();
         overrideMgr.Initialize(*g_itemRegistry, *g_weaponRegistry);
@@ -477,11 +479,12 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
 #endif
 
     // ── 11. IntuitionMenu settings + show ──────────────────────────────
-    // [Widget] and [Debug] belong to dMenu and are read ONLY from its INI; the
-    // main Huginn.ini does not define them. See GetDMenuIniPath in Globals.h.
+    // [Widget] and [Debug] belong to dMenu and are read ONLY from its INI (over
+    // the dMenu descriptor's defaults, Settings::LoadDMenuIni); the main
+    // Huginn.ini does not define them. See GetDMenuIniPath in Globals.h.
     CSimpleIniA dmenuIni;
-    const bool haveDMenuIni = LoadIniFile(dmenuIni, GetDMenuIniPath(), "InitDMenu"sv);
-    if (haveDMenuIni) UI::IntuitionSettings::GetSingleton().LoadFromIni(dmenuIni);
+    Settings::LoadDMenuIni(dmenuIni, GetDMenuIniPath(), "InitDMenu"sv);
+    UI::IntuitionSettings::GetSingleton().LoadFromIni(dmenuIni);
     UI::IntuitionMenu::Show();
 
     // Push [Widget] to an already-open menu, for the same reason SetReadOnly is
@@ -509,14 +512,13 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
     // game load, so a value edited between sessions lands before play. Pushing
     // only at kDataLoaded once gave a player who set bReadOnly=true working
     // hotkeys and a log line claiming ReadOnly: true.
-    // Unconditional rather than inside haveDMenuIni:
-    // with no dMenu file the settings hold their defaults, and pushing those is
-    // still correct.
+    // With no dMenu file the settings hold the descriptor's defaults, and
+    // pushing those is still correct.
     Input::InputHandler::GetSingleton().SetReadOnly(
         UI::IntuitionSettings::GetSingleton().IsReadOnly());
 
     // ── 11b. Debug widget visibility (debug builds only) ───────────────
-    if (haveDMenuIni) {
+    {
         auto& debugSettings = UI::DebugSettings::GetSingleton();
         debugSettings.LoadFromIni(dmenuIni);
         debugSettings.ApplyToWidgets();  // Phase-2 apply (LoadFromIni is now a pure loader)
@@ -592,7 +594,7 @@ static void OnDataLoaded()
 
 #ifdef _DEBUG
         // Debug widget visibility is now controlled by DebugSettings (loaded from INI)
-        // See InitializeGameSystems() -> DebugSettings::LoadFromFile()
+        // See InitializeGameSystems() step 11b (DebugSettings::LoadFromIni)
         logger::info("Debug widgets will be initialized from INI settings (debug build)"sv);
 #endif
     } else {
@@ -634,10 +636,11 @@ static void OnDataLoaded()
     // place for the whole load sequence. Both are plain file reads with no
     // game-data dependency, so they are safe this early.
     // Parsed once and handed to both loaders, matching the pattern the rest of
-    // this file uses — two LoadFromFile calls would parse the same file twice and
+    // this file uses — two separate reads would parse the same file twice and
     // log "not found" twice for a player without dMenu.
     CSimpleIniA earlyDMenuIni;
-    if (LoadIniFile(earlyDMenuIni, GetDMenuIniPath(), "InitDMenuEarly"sv)) {
+    Settings::LoadDMenuIni(earlyDMenuIni, GetDMenuIniPath(), "InitDMenuEarly"sv);
+    {
         UI::DebugSettings::GetSingleton().LoadFromIni(earlyDMenuIni);
         // Apply here too, not only at step 11b. The widgets now default to
         // hidden, so without this a player who ASKED for one in dMenu would
@@ -815,13 +818,16 @@ static void OnDataLoaded()
         auto& equipManager = Input::EquipManager::GetSingleton();
 
         // Keybindings come from the main Huginn.ini only — dMenu does not
-        // declare them, so there is no second file to consult.
+        // declare them, so there is no second file to consult. Over the
+        // shipped file, like every main-INI read (Settings::LoadMainIni).
+        CSimpleIniA keyIni;
+        Settings::LoadMainIni(keyIni, "InitKeybindings"sv);
         Input::KeybindingSettings keybindings;
-        keybindings.LoadFromFile(GetMainIniPath());
+        keybindings.LoadFromIni(keyIni);
         inputHandler.SetKeyCodes(keybindings);
 
         // NOTE: read-only is not pushed here. [Widget] IS now read at
-        // kDataLoaded (see the LoadFromFile pair above), so pushing here would
+        // kDataLoaded (see the earlyDMenuIni block above), so pushing here would
         // no longer mask the real value — but InitializeGameSystems re-reads the
         // same file at kNewGame/kPostLoadGame and pushes there, which is the
         // point that matters: nothing can act on the flag before a game loads.

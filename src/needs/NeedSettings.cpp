@@ -40,13 +40,6 @@ namespace Huginn::Needs
                        : std::string{});
    }
 
-   void NeedSettings::ResetToDefaults()
-   {
-      std::lock_guard lock(m_mutex);
-      m_curves = Core::Needs::DefaultCurves();
-      m_source.fill(Source::Default);
-   }
-
    void NeedSettings::SetBootstrapCurves(const std::vector<Core::Bootstrap::BuildCurve>& curves)
    {
       std::vector<std::pair<std::size_t, Core::Needs::Curve>> list;

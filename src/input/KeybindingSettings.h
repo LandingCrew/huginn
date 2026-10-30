@@ -50,15 +50,9 @@ namespace Huginn::Input
         uint32_t toggleKey   = KeybindingDefaults::TOGGLE_KEY;
 
         /**
-         * @brief Load settings from INI file
-         * @param iniPath Path to Huginn.ini
+         * @brief Load [Keybindings] from the parsed main INI (Settings::LoadMainIni:
+         * the player's Huginn.ini over the shipped one, whose values are the defaults)
          */
-        void LoadFromFile(const std::filesystem::path& iniPath);
         void LoadFromIni(const CSimpleIniA& ini);
-
-        /**
-         * @brief Reset all settings to compile-time defaults
-         */
-        void ResetToDefaults();
     };
 }

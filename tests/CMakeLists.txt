@@ -71,6 +71,16 @@ target_compile_features(huginn_core_tests PRIVATE cxx_std_23)
 # PCH, no CommonLib), which is the point.
 target_include_directories(huginn_core_tests PRIVATE "${PROJECT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/support")
 target_link_libraries(huginn_core_tests PRIVATE doctest::doctest)
+# ShippedDefaultsTests.cpp (0.24.10): the embedded shipped files (the
+# generated header, root CMakeLists.txt) and settings/IniOverlay.h, the one
+# non-core header under test. It includes nothing but SimpleIni (header-only,
+# not a game header), so the overlay every settings INI is loaded through is
+# the code tested here, not a copy of it.
+find_path(HUGINN_SIMPLEINI_DIR "SimpleIni.h" REQUIRED)
+target_include_directories(huginn_core_tests PRIVATE "${HUGINN_GENERATED_DIR}")
+# SYSTEM, as the plugin sees it (third-party: no /W4 warnings from it).
+target_include_directories(huginn_core_tests SYSTEM PRIVATE "${HUGINN_SIMPLEINI_DIR}")
+add_dependencies(huginn_core_tests huginn_shipped_files)
 # Data-driven tests (the race map) read repo files by absolute path.
 target_compile_definitions(huginn_core_tests PRIVATE "HUGINN_REPO_ROOT=\"${PROJECT_SOURCE_DIR}\"")
 if(MSVC)

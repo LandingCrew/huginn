@@ -77,12 +77,10 @@ namespace Huginn::Scoring
             return instance;
         }
 
-        // Parse `iniPath` from disk, then load [Scoring]/[Favorites]. Thin wrapper
-        // over LoadFromIni for standalone callers.
-        void LoadFromFile(const std::filesystem::path& iniPath);
-        // Load [Scoring]/[Favorites] from an already-parsed INI (parse-once path).
+        // Load [Scoring]/[Favorites] from an already-parsed INI (parse-once path;
+        // Settings::LoadMainIni, over the shipped Huginn.ini, whose values are
+        // the defaults).
         void LoadFromIni(const CSimpleIniA& ini);
-        void ResetToDefaults();
 
         // Build a ScorerConfig struct from current settings
         [[nodiscard]] ScorerConfig BuildConfig() const;

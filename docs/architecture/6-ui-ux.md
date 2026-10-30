@@ -502,9 +502,11 @@ bMinimalCounts = true       ; Minimal shows "Iron Arrow - [12]" (0.21.12)
 sSlotEffect = slide         ; slide | fade | instant       (or 0 | 1 | 2)
 ```
 
-The values above are the compile-time defaults in `IntuitionDefaults`
-(`src/ui/IntuitionSettings.h`); with no dMenu INI present, these are what you
-get.
+The values above are the defaults: the `"default"` fields of the dMenu
+descriptor (`Huginn.json`), compiled in, which every `[Widget]` read is
+layered on (`Settings::LoadDMenuIni`); `IntuitionDefaults`
+(`src/ui/IntuitionSettings.h`) holds the same values as the loader's fallback.
+With no dMenu INI present, these are what you get.
 
 ### Read-only mode (`bReadOnly`, 0.19.11)
 

@@ -13,11 +13,15 @@
 // =============================================================================
 // Shared INI parse front door
 // =============================================================================
-// Every settings loader routes its disk read through LoadIniFile so the
-// exists-check / SetUnicode / LoadFile / error-logging boilerplate lives in one
-// place. Kept in its own lightweight header (rather than Globals.h) so the
-// settings translation units don't pull in the whole global-systems include
-// graph just to parse a file.
+// The parse front door for the INIs that are NOT settings (Huginn_Overrides.ini,
+// the test harness's INI), so the exists-check / SetUnicode / LoadFile /
+// error-logging boilerplate lives in one place. The settings INIs (Huginn.ini,
+// dMenu's INI) are parsed through Settings::LoadMainIni / LoadDMenuIni
+// (settings/ShippedDefaults.h) instead: over the shipped file, whose values
+// are the defaults; a host test (ShippedDefaultsTests.cpp) keeps it that way.
+// Kept in its own lightweight header (rather than Globals.h) so translation
+// units don't pull in the whole global-systems include graph just to parse a
+// file.
 // =============================================================================
 
 /// @brief Log severity for the "file not found" case (a parse failure is always

@@ -2,6 +2,8 @@
 
 > **R11 (0.24.4):** the "Reset Learned Weights" button returns θ to the bootstrap and clears b (and the old learner, D2's input), as `hg reset weights`; its text says so since R11. The `[Scoring]` and `[ContextWeights]` sections in the ownership table (main INI, re-read by `hg reload` / the Reload INI button) are D2's inputs only; the panels themselves expose `[Widget]` and `[Debug]` (the hand-tuned engine (context weights × the bandit's learning score × multipliers) no longer ranks: every candidate is ranked on the choice score μ (θ over need × effect columns, b per item; doc 9, [9-implementation-map.md](9-implementation-map.md)), and the old engine runs only for the D2 feature `ln learn mult` (`[Scoring] bLegacyLearnFeature`, confined by `tools/prune/r8_check.py`)).
 
+> **0.24.10: one source of defaults; Reset to Defaults restores the shipped files.** The shipped `configs/Huginn.ini` and the dMenu descriptor are compiled into the DLL (`cmake/EmbedShipped.cmake`). Every main-INI read is the shipped Huginn.ini with the player's file over it, and every `[Widget]`/`[Debug]` read is the descriptor's defaults with dMenu's INI over them (`settings/ShippedDefaults.h`, `settings/IniOverlay.h`), so a key a file leaves out reads its shipped value, never a loader constant. Reset to Defaults writes the shipped files back to disk (keeping `.bak` copies) and loads them, so it persists. See [Reset to Defaults](#reset-to-defaults).
+
 How Huginn integrates with [dMenu](https://www.nexusmods.com/skyrimspecialedition/mods/97221)
 for in-game settings management, and what a settings reload actually does.
 
@@ -37,19 +39,21 @@ dependency. Communication is entirely through a JSON descriptor file and SKSE
 
 | Situation | Behaviour |
 |---|---|
-| dMenu not installed | No events fire. `GetDMenuIniPath()` falls back to the main INI, which does not define `[Widget]`/`[Debug]`, so those take compile-time defaults; everything else loads from `Huginn.ini` as normal |
+| dMenu not installed | No events fire. `GetDMenuIniPath()` falls back to the main INI, which does not define `[Widget]`/`[Debug]`, so those take the descriptor's defaults (compiled in); everything else loads from `Huginn.ini` as normal |
 | dMenu installed, no JSON | Huginn's panel doesn't appear in dMenu; same as above |
 | dMenu installed with JSON | Full hot-reload through the dMenu UI |
 
 Because the fallback resolves to the main INI, a hand-written `[Widget]` or
 `[Debug]` section added to `Huginn.ini` *is* read when dMenu is absent — the
-shipped `configs/Huginn.ini` simply doesn't define one
-(`Globals.cpp:138`, `IntuitionSettings.cpp:18`).
+shipped `configs/Huginn.ini` simply doesn't define one (`GetDMenuIniPath` in
+`Globals.cpp`, `Settings::LoadDMenuIni`).
 
 `SettingsReloader::ReloadAllSettings` is the **single source of truth for a full
 reload**: the dMenu event handler, the dMenu "Reload INI" button and the
 `hg reload` console command all delegate to it, so the paths cannot diverge
-(`ConsoleCommands.cpp:307`).
+(`Cmd_Reload` in `ConsoleCommands.cpp`). The reload and Reset to Defaults
+share one loader pass (`SettingsReloader::ApplyIni`), so they cannot load
+different sets of settings either.
 
 ---
 
@@ -82,10 +86,24 @@ graph LR
     style MAIN_INI fill:#e1f5ff
 ```
 
-**One key, one home.** Nothing is defined in both files, and nothing overlays
-anything (`SettingsReloader.h:21`, `SettingsReloader.cpp:161`). That is what
-makes it safe for dMenu to fire an update event *after* writing its own INI: the
-reload cannot overwrite the value the player just changed.
+**One key, one home.** Nothing is defined in both files, and neither file
+overrides the other (`SettingsReloader.h`, `SettingsReloader::ApplyIni`). That
+is what makes it safe for dMenu to fire an update event *after* writing its own
+INI: the reload cannot overwrite the value the player just changed.
+
+**Each file over its shipped defaults (0.24.10).** The one layering there is
+sits *under* each file, not between them: the main INI is parsed as the
+shipped `configs/Huginn.ini` (compiled in) with the player's `Huginn.ini` over
+it (`Settings::LoadMainIni`), and dMenu's INI as the descriptor's `"default"`
+values with dMenu's file over them (`Settings::LoadDMenuIni`;
+`core/DMenuDefaults.h` turns the descriptor into the INI dMenu itself writes on
+a fresh install). A key the player's file sets wins; a key it leaves out, or a
+missing file, reads the shipped value. So the default of every setting is the
+line the shipped file states, and the loaders' fallback constants matter only
+for a key in neither file or a value that does not parse (a NaN, an unknown
+mode name). `tests/core/ShippedDefaultsTests.cpp` pins the layering on the real
+shipped file, and a source guard there fails the build of the tests if a
+settings INI is opened any other way.
 
 | INI section | Owner file | Loader |
 |---|---|---|
@@ -114,21 +132,28 @@ needs the same second call, and the reload table is where that has to be visible
 dMenu's `flush_ini()` creates a **fresh** `CSimpleIniA`, writes only the settings
 dMenu tracks, then calls `SaveFile()`. The output therefore contains *only*
 dMenu-managed sections.
-<!-- UNVERIFIED: dMenu's internal flush_ini() behaviour is third-party and cannot
-     be checked against src/. It is stated here as Huginn's documented rationale
-     for the split (SettingsReloader.cpp:94-96), not as an independent finding. --> If dMenu wrote directly to the main `Huginn.ini`, every
-other section would be destroyed (`SettingsReloader.cpp:94`).
+Checked 2026-10-30 against the original dMenu source (D7ry/dMenu,
+`src/bin/menus/ModSettings.cpp`, `flush_ini`: `CSimpleIniA ini; ...
+ini.SetValue(...) per tracked setting; ini.SaveFile(...)`). The dMenu NG DLL
+LoreRim ships (1.3.0, closed source) says on its Nexus page that its INI
+saving "updates existing files instead of rebuilding them from scratch", so
+under NG a shared file would survive -- but the split stays: Huginn has to
+work with either DLL. If the original dMenu wrote directly to the main
+`Huginn.ini`, every other section would be destroyed.
 
 The JSON descriptor points dMenu at its own file, and Huginn reads each section
 from exactly one place via two path helpers in `Globals.cpp`:
 
-- `GetMainIniPath()` — `Data/SKSE/Plugins/Huginn.ini` (`Globals.cpp:134`)
-- `GetDMenuIniPath()` — `Data/SKSE/Plugins/dmenu/customSettings/ini/Huginn.ini`,
-  falling back to the main INI when that file does not exist (`Globals.cpp:138`)
+- `GetMainIniPath()` — `Data/SKSE/Plugins/Huginn.ini`; read only by
+  `Settings::LoadMainIni` (over the shipped file) and written only by Reset to
+  Defaults
+- `GetDMenuIniPath()` — `Data/SKSE/Plugins/dmenu/customSettings/ini/Huginn.ini`
+  (`GetDMenuOwnIniPath()`), falling back to the main INI when that file does
+  not exist; handed only to `Settings::LoadDMenuIni`
 
 > **Changed in 0.19.0:** keybindings used to be dMenu-managed. They are not any
 > more — `[Keybindings]` lives in the main `Huginn.ini` only, dMenu no longer
-> declares them, and `Main.cpp:557` loads them with `GetMainIniPath()`.
+> declares them, and `Main.cpp` loads them from the main INI (`Settings::LoadMainIni`).
 
 ---
 
@@ -136,16 +161,22 @@ from exactly one place via two path helpers in `Globals.cpp`:
 
 ```
 Data/SKSE/Plugins/
-    Huginn.ini                              <- Main INI (never written by dMenu)
+    Huginn.ini                              <- Main INI (never written by dMenu; Reset to Defaults
+                                               writes the shipped file here)
+    Huginn.ini.bak                          <- the player's Huginn.ini before the last Reset to
+                                               Defaults (only when it differed from the shipped one)
     Huginn_Overrides.ini                    <- Classification overrides (registry-time, NOT reloaded)
     dmenu/customSettings/
         Huginn.json                         <- dMenu descriptor (setting definitions + "ini" path)
         ini/
             Huginn.ini                      <- dMenu-managed INI ([Widget], [Debug] only)
+            Huginn.ini.bak                  <- it, before the last Reset to Defaults
 ```
 
 The repository copies live in `configs/Huginn.ini`, `configs/Huginn_Overrides.ini`
-and `Data/SKSE/Plugins/dmenu/customSettings/Huginn.json`.
+and `Data/SKSE/Plugins/dmenu/customSettings/Huginn.json`. The first and the
+last are also compiled into the DLL (`cmake/EmbedShipped.cmake`, rerun when
+either changes), as the defaults.
 
 ### Huginn.json
 
@@ -164,7 +195,9 @@ The *Intuition Widget* group covers all ten `[Widget]` keys (`bEnabled`,
 **Dropdowns serialize as an integer index, not a label.** dMenu writes
 `sDisplayMode=0`, not `sDisplayMode=minimal`. `IntuitionSettings::LoadFromIni`
 accepts both spellings, and the index order in the loader must stay in sync with
-the `options` arrays in `Huginn.json` (`IntuitionSettings.cpp:39`).
+the `options` arrays in `Huginn.json` (`IntuitionSettings::LoadFromIni`).
+`core/DMenuDefaults.h` writes the defaults the same way (a dropdown's index, a
+slider as C's `%f` of the float: `28.000000`), matching what dMenu writes.
 
 ---
 
@@ -191,8 +224,8 @@ sequenceDiagram
 
 | Event | Trigger | Handler |
 |---|---|---|
-| `dmenu_updateSettings` | Any slider/checkbox/dropdown change (`strArg == "Huginn"`) | `ReloadAllSettings(GetDMenuIniPath())` (`SettingsReloader.cpp:64`) |
-| `dmenu_buttonCallback` | An action button was clicked | `HandleButtonCallback(strArg)` (`SettingsReloader.cpp:189`) |
+| `dmenu_updateSettings` | Any slider/checkbox/dropdown change saved (`strArg == "Huginn"`), and once for every mod at `kDataLoaded` | `ReloadAllSettings(GetDMenuIniPath())` (`SettingsReloader::ProcessEvent`) |
+| `dmenu_buttonCallback` | An action button was clicked | `HandleButtonCallback(strArg)` |
 
 ### Button callbacks
 
@@ -200,12 +233,79 @@ sequenceDiagram
 |---|---|---|
 | `Huginn_toggle_widget` | Show/Hide Widget | `IntuitionMenu::ToggleUserHidden()` — deliberately the *same* latch the hotkey flips, not a parallel flag. Resets to shown on load; use `bEnabled` to turn the widget off for good |
 | `Huginn_reset_weights` | Reset Learned Weights | `ResetLearningData()` — clears `FeatureBanditLearner` **and** resets `SlotLocker`, so locked slots stop pinning recommendations scored by the just-cleared table. Shared with `hg reset weights` |
-| `Huginn_reset_defaults` | Reset to Defaults | `ResetAllToDefaults()` — every settings singleton back to compile-time defaults, then the same side effects as a reload. `[Wildcards]` and `[SlotLocker]` (the lock keys and the Remembrance / fill-job keys) included: nothing re-reads `Huginn.ini`. The page layout resets to the code default, one page of eight Regular keys (the shipped `Huginn.ini` has three pages). Nothing is written to disk, so the next game load or reload reads `Huginn.ini` again |
+| `Huginn_reset_defaults` | Reset to Defaults | `ResetAllToDefaults()` — writes the shipped `Huginn.ini` over the player's and the descriptor's defaults over dMenu's INI (old files kept as `.bak`), then loads the shipped files alone through the same pass as a reload: every setting, the page layout included, as a fresh install. Learned data is untouched. See [Reset to Defaults](#reset-to-defaults) |
 | `Huginn_reload_ini` | Reload INI | `ReloadAllSettings(GetDMenuIniPath())`. dMenu-managed sections still come from the dMenu INI, so a manual reload does **not** reset the player's widget customizations |
 
 An unknown button ID logs a warning and shows "Huginn: Unknown action (check logs)".
 
 ---
+
+## Reset to Defaults
+
+The button is the "I changed something, I don't know what, put it all back"
+switch. After it, the game behaves as a fresh install of the shipped files
+would, now and after the next game start.
+
+**What it does** (`SettingsReloader::ResetAllToDefaults`):
+
+1. **Writes the shipped files to disk** (`Settings::RestoreShippedFiles`),
+   outside the update mutex:
+   - the compiled-in `configs/Huginn.ini` over `Data/SKSE/Plugins/Huginn.ini`
+     (created if missing, as a fresh install has one);
+   - the descriptor's defaults over dMenu's INI, **only if dMenu's INI exists**
+     (dMenu creates it itself, at those same defaults, the first time it runs
+     with `Huginn.json`; a player without dMenu gets no new file).
+
+   A file that differs from what is written is first copied to `<name>.bak`,
+   replacing an older `.bak`; a file already identical is left alone, so
+   pressing the button twice keeps the first backup. If a backup or a write
+   fails, that file is left as it was, the log says which, and the
+   notification says the reset holds for this session only.
+2. **Loads the shipped files alone** (`LoadShippedMainIni` /
+   `LoadShippedDMenuIni`; not re-read from disk, so a failed write still
+   resets the session) through `ApplyIni`, the pass a reload uses: every
+   settings class, the page layout (`[Pages]`: the shipped two pages, with the
+   third, Kit, defined and off), keybindings, `[Widget]`, `[Debug]`,
+   `[Wheeler]`, `[Needs]`, `[Scoring]`, `[ContextWeights]`, `[Candidates]`,
+   `[Overrides]`, `[Learning]`, `[Wildcards]`, `[SlotLocker]`, `[Subtexts]`,
+   `[Favorites]`.
+3. **Side effects as a reload**, plus two for a fresh start: the Wheeler
+   wheels are always rebuilt at `sWheelPosition` and a position the player
+   dragged them to this session is forgotten, and the widget's hide latch (the
+   hotkey / Show-Hide button) is cleared.
+
+**Not touched:** learned data (the cosave's THTA / BIAS / BNDW, the old
+learner) — that is Reset Learned Weights; `Huginn_Overrides.ini` and the
+effect override directory; `Huginn_Bootstrap.json`. A curve the bootstrap
+carries still replaces its `[Needs]` line, as on any load.
+
+**Persistence, file by file:**
+
+| File | Who writes it | After the button |
+|---|---|---|
+| `Data/SKSE/Plugins/Huginn.ini` | Huginn (only here); never dMenu | The shipped file. The next load, reload or dMenu change reads it |
+| dMenu's `ini/Huginn.ini` | dMenu on every save of its panel; Huginn here | The descriptor's defaults on disk. **dMenu's panel still shows the old values until the game restarts** (below) |
+
+**The dMenu caveat.** dMenu reads its INI for every mod once, when SKSE
+loads it, keeps the values in memory, and on a save of its panel (Save, or
+Auto Save) writes *all* of a mod's values from memory (D7ry/dMenu
+`ModSettings::init` / `load_ini` / `flush_ini`; dMenu NG keeps the same
+`load_ini` / `flush_ini` / `dmenu_updateSettings` flow, by its strings).
+It has no way for another plugin to tell it to re-read the file or reset its
+values. So after the button, in the same session, the panel still shows the
+old `[Widget]`/`[Debug]` values, and changing any Huginn setting in it would
+write the old values back over the reset (and Huginn would load them, as it
+loads any dMenu change). The main `Huginn.ini` is not affected: dMenu never
+writes it. A second notification says to restart before changing the panel;
+after a restart dMenu reads the reset file. (dMenu's own per-entry reset,
+hovering an entry and pressing R, sets that entry to the same descriptor
+default.)
+
+**Under MO2** the writes go through the virtual file system: the new
+`Huginn.ini` lands where usvfs puts a write to an existing file (the file's
+mod folder, or Overwrite), and the `.bak` files, being new, in Overwrite.
+Either way the game sees the new file. Huginn never writes anywhere but the
+two settings files and their `.bak` copies.
 
 ## What a reload does — and does not — rebuild
 
@@ -276,10 +376,10 @@ if (afterLayout != beforeLayout) {                       // SettingsReloader.cpp
 
 Two decisions, deliberately keyed on different things:
 
-| Decision | Keyed on | Line |
-|---|---|---|
-| Rebuild the wheels | the **whole** `WheelLayout` differs — a renamed page or a changed slot count needs new wheels | `SettingsReloader.cpp:361` |
-| Forget a player-dragged wheel position | **only** `wheelPosition` differs (`positionRestated`) | `SettingsReloader.cpp:360` |
+| Decision | Keyed on |
+|---|---|
+| Rebuild the wheels | the **whole** `WheelLayout` differs — a renamed page or a changed slot count needs new wheels — or Reset to Defaults |
+| Forget a player-dragged wheel position | **only** `wheelPosition` differs (`positionRestated`), or Reset to Defaults |
 
 Keying the *forget* on the full comparison was a bug: `WheelLayout` also carries
 every page name and slot count, so editing something unrelated (`iPage2Slots`, a
@@ -308,18 +408,19 @@ first line is the system working as intended.
 
 ```
 kDataLoaded (plugin init, before the main menu)
-    |-- SettingsReloader::Register()                          Main.cpp:453
+    |-- SettingsReloader::Register()
     |     subscribes to ModCallbackEvent
-    |-- DebugSettings::LoadFromFile(GetDMenuIniPath())         Main.cpp:456
+    |-- LoadDMenuIni(GetDMenuIniPath()) -> DebugSettings, IntuitionSettings
     |     early load so dMenu toggles apply before a save is loaded
-    +-- KeybindingSettings::LoadFromFile(GetMainIniPath())     Main.cpp:557
+    +-- LoadMainIni -> KeybindingSettings::LoadFromIni
           + InputHandler::SetKeyCodes()
 
-kPostLoadGame / kNewGame  ->  InitializeGameSystems()          Main.cpp:90
-    |-- Parse Huginn.ini ONCE, distribute to every loader      Main.cpp:121
+kPostLoadGame / kNewGame  ->  InitializeGameSystems()
+    |-- LoadMainIni ONCE (shipped + player's), distribute to every loader
     |     WheelerSettings, SlotSettings, ScorerSettings, ContextWeightSettings,
-    |     Override::Settings, LearningSettings, CandidateConfig, SlotLocker config
-    +-- Parse the dMenu INI once                               Main.cpp:353
+    |     NeedSettings, Override::Settings, LearningSettings, CandidateConfig,
+    |     wildcards, ChoiceSettings (SlotLocker config: ResetPipelineSubsystems)
+    +-- LoadDMenuIni ONCE (descriptor defaults + dMenu's INI)
           IntuitionSettings (then IntuitionMenu::Show()), DebugSettings + ApplyToWidgets()
 ```
 
@@ -343,34 +444,38 @@ SettingsReloader
 |   +-- "dmenu_buttonCallback"                      -> HandleButtonCallback(id)
 |-- ReloadAllSettings(dMenuIniPath)      <- PUBLIC entry point; wraps RunExclusive
 |   +-- ReloadAllSettingsExclusive()     <- requires the update mutex
-|       |-- CaptureWheelLayout()             (before)
-|       |-- Phase 1: parse both INIs once, hand to every loader
-|       |     mainIni:  SlotSettings, ScorerSettings, ContextWeightSettings,
-|       |               Override::Settings, LearningSettings, WheelerSettings,
-|       |               CandidateConfig, KeybindingSettings
-|       |     dMenuIni: IntuitionSettings, DebugSettings
-|       +-- Phase 2: ApplySideEffects(&mainIni, layoutBefore)
+|       |-- LoadMainIni / LoadDMenuIni       (each file over its shipped defaults)
+|       +-- ApplyIni(mainIni, dMenuIni, reset = false)
 |-- ResetLearningData()         <- STATIC; clears FeatureBanditLearner + resets SlotLocker.
 |                                  Shared by `hg reset weights` and the dMenu button.
 |                                  Returns nullopt when the learner isn't initialized
 |-- HandleButtonCallback()      <- dispatches the four action buttons
-|-- ResetAllToDefaults()        <- wraps RunExclusive
-|   +-- ResetAllToDefaultsExclusive()  -> ApplySideEffects(nullptr, layoutBefore)
-+-- ApplySideEffects(mainIni, beforeLayout)
+|-- ResetAllToDefaults()        <- RestoreShippedFiles() (disk, outside the lock), then RunExclusive
+|   +-- ResetAllToDefaultsExclusive()
+|       |-- LoadShippedMainIni / LoadShippedDMenuIni   (the shipped layers alone)
+|       +-- ApplyIni(mainIni, dMenuIni, reset = true)
+|-- ApplyIni(mainIni, dMenuIni, reset)   <- the one loader pass, shared
+|       |-- CaptureWheelLayout()             (before)
+|       |-- Phase 1: every loader
+|       |     mainIni:  SlotSettings, ScorerSettings, ContextWeightSettings, NeedSettings,
+|       |               Override::Settings, LearningSettings, WheelerSettings,
+|       |               CandidateConfig, KeybindingSettings
+|       |     dMenuIni: IntuitionSettings, DebugSettings
+|       +-- Phase 2: ApplySideEffects(mainIni, layoutBefore, wasEnabled, reset)
++-- ApplySideEffects(mainIni, beforeLayout, wasEnabled, reset)
 ```
 
 Each INI is parsed **once** per reload and handed to every loader via
 `LoadFromIni(const CSimpleIniA&)`, rather than each settings class re-opening the
-file (9+ parses per load before `866f7bb`). `LoadIniFile` in `src/IniLoad.h` is
-the shared parse front door. `ApplySideEffects` takes the already-parsed main INI
-so the wildcard and slot-locker loaders can reuse it; on the reset-to-defaults
-path it is `nullptr` and those two read an empty INI, so every key takes its
-loader's fallback, which is its default.
+file (9+ parses per load before `866f7bb`). `Settings::LoadMainIni` /
+`LoadDMenuIni` (`src/settings/ShippedDefaults.h`) are the settings files' parse
+front door; `LoadIniFile` (`src/IniLoad.h`) is for the other files.
+`ApplySideEffects` takes the already-parsed main INI so the wildcard,
+slot-locker and choice-learner loaders reuse it.
 
-Graceful degradation inside the reload: if the dMenu INI does not exist, the path
-falls back to the main INI with a warning; if the main INI is missing, every
-main-INI loader is skipped and keeps its current values, while keybindings,
-`[Wildcards]` and `[SlotLocker]`'s lock keys fall back to compile-time defaults.
+Graceful degradation inside the reload: a missing dMenu INI reads the
+descriptor's defaults; a missing main INI reads the shipped `Huginn.ini` (a
+warning says so), so every loader still loads, at the shipped values.
 
 ### ApplySideEffects order
 
@@ -407,13 +512,18 @@ locks; the update mutex is what makes that safe.
 
 | File | Role |
 |---|---|
-| `src/settings/SettingsReloader.h` / `.cpp` | Event sink, reload orchestration, button dispatch, wheel-layout gating, side effects |
-| `src/Globals.cpp` | `GetMainIniPath()`, `GetDMenuIniPath()`, `LoadIniFile()`, `LoadCandidateConfigFromINI()`, `LoadSlotLockerConfigFromINI()`, `LoadWildcardConfigFromINI()` |
-| `src/IniLoad.h` | Shared INI parse front door + `ReadClampedFloat` |
-| `src/Main.cpp` | `InitializeGameSystems()` (parse-once load at game init), early `DebugSettings` + `KeybindingSettings` load at `kDataLoaded` |
+| `src/settings/SettingsReloader.h` / `.cpp` | Event sink, reload orchestration, Reset to Defaults, button dispatch, wheel-layout gating, side effects |
+| `src/settings/ShippedDefaults.h` / `.cpp` | `LoadMainIni` / `LoadDMenuIni` (each file over its shipped defaults), `RestoreShippedFiles` (Reset to Defaults' writes and `.bak` copies) |
+| `src/settings/IniOverlay.h` | The layering itself (SimpleIni only; host-tested) |
+| `src/core/DMenuDefaults.h` / `.cpp` | The descriptor's defaults as dMenu writes them (host-tested) |
+| `cmake/EmbedShipped.cmake` | Compiles `configs/Huginn.ini` and `Huginn.json` into the DLL |
+| `tests/core/ShippedDefaultsTests.cpp` | Embedded bytes = repo files; the overlay on the real shipped file; the descriptor's defaults; the source guard |
+| `src/Globals.cpp` | `GetMainIniPath()`, `GetDMenuIniPath()`, `GetDMenuOwnIniPath()`, `LoadIniFile()`, `LoadCandidateConfigFromINI()`, `LoadSlotLockerConfigFromINI()`, `LoadWildcardConfigFromINI()` |
+| `src/IniLoad.h` | INI parse front door for the non-settings files + `ReadClampedFloat` |
+| `src/Main.cpp` | `InitializeGameSystems()` (parse-once load at game init), early `[Debug]`/`[Widget]` + keybindings load at `kDataLoaded` |
 | `src/console/ConsoleCommands.cpp` | `hg reload`, `hg rebuild`, `hg reset weights` — all delegating to the shared entry points |
 | `Data/SKSE/Plugins/dmenu/customSettings/Huginn.json` | dMenu UI descriptor |
-| `configs/Huginn.ini` | Main INI shipped with the mod |
+| `configs/Huginn.ini` | Main INI shipped with the mod; compiled in as every main-INI key's default |
 
 ---
 
@@ -421,7 +531,9 @@ locks; the update mutex is what makes that safe.
 
 ### Adding a new dMenu-managed setting
 
-1. Add the entry to `Huginn.json` under the appropriate group.
+1. Add the entry to `Huginn.json` under the appropriate group. Its `"default"`
+   is the default Huginn reads (`core/DMenuDefaults.h`) and Reset to Defaults
+   writes; update the expected list in `ShippedDefaultsTests.cpp`.
 2. Make its `"ini"` section/id match the keys the settings class reads in
    `LoadFromIni()`. Only `[Widget]` and `[Debug]` are dMenu-owned — a new section
    means a new ownership decision, not a default.
@@ -433,7 +545,10 @@ locks; the update mutex is what makes that safe.
 
 ### Adding a new non-dMenu setting
 
-1. Add the section/keys to `configs/Huginn.ini`.
+1. Add the section/keys to `configs/Huginn.ini`. Its value there **is** the
+   default: every load reads the shipped file under the player's, and Reset to
+   Defaults restores it. Give the loader's fallback the same value anyway; it
+   only applies to a key in neither file or a value that does not parse.
 2. Load from `mainIni` in `ReloadAllSettingsExclusive()` and from the main-INI
    parse in `InitializeGameSystems()`.
 3. Do **not** add it to `Huginn.json` — dMenu's `flush_ini()` would claim ownership

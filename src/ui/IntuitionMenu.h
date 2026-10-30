@@ -106,10 +106,6 @@ namespace Huginn::UI
         [[nodiscard]] static bool ConsumeResync() noexcept;
         static void ResetUserHidden() noexcept;
 
-        /// Re-read IntuitionSettings from INI and push all values to the live widget.
-        /// Called by `hg reload` console command for hot-tuning.
-        void ReapplySettings();
-
         /// Apply a pre-built config snapshot (avoids re-reading INI).
         /// Called by SettingsReloader::ApplySideEffects() after INI is already loaded.
         void ReapplySettings(const IntuitionConfig& config);

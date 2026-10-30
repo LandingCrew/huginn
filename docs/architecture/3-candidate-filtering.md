@@ -527,8 +527,8 @@ It is called on `kPostLoadGame`/`kNewGame` (`src/Main.cpp:221`) and again on
 > INI had no effect. Invisible because the shipped values matched those defaults.
 > `RefreshConfigFromGlobal()` is now called from `InitializeGameSystems` (outside
 > the `IsInitialized` guard, so a save load re-pushes rather than keeping the
-> previous game's values) and from `SettingsReloader`, and `ResetAllToDefaults`
-> resets the global too.
+> previous game's values) and from `SettingsReloader` (reload and Reset to
+> Defaults share `ApplyIni`, which loads the global and refreshes the generator).
 >
 > **Scope of `bEnableSoulGemRecharge`:** it gates `GatherSoulGemCandidates` and
 > nothing else, so with it off, `OverrideManager::FindSoulGem` still surfaces a
