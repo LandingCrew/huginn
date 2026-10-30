@@ -446,7 +446,12 @@ namespace
         C::BeliefTable table;
     };
 
-    FixedWorld MakeWorld(std::mt19937& rng, T::SyntheticGenerator& gen)
+    /// `uniqueKeys` false (0.24.6): rows may share a dedup key (the
+    /// generator's two stacks of one form drawn twice) and a name (its "Twin"
+    /// rows) -- the worlds R9's verifier saw churn on before the allocation
+    /// gave every key one owner (Engine::MarkShadowed) and the hold deduped
+    /// its owners by name.
+    FixedWorld MakeWorld(std::mt19937& rng, T::SyntheticGenerator& gen, bool uniqueKeys = true)
     {
         std::uniform_real_distribution<double> u(0.0, 1.0);
         C::Model m;
@@ -471,17 +476,17 @@ namespace
         in.settings = settings;
         in.slots = gen.RandomLayout();
         in.nowNs = 1'000'000'000'000LL;
-        // Every dedup key and name unique: two candidates sharing a key make
-        // the seat-owner lookup (first match) read a taken key as free, and
-        // the page can churn with nothing moving -- allocator behaviour that
-        // predates R9 (the fixed margin churns more on such pages), not what
-        // this test is about.
+        // The default: every dedup key and name unique, the worlds R9 was
+        // judged on. Until 0.24.6 two candidates sharing a key made the
+        // seat-owner lookup (first match) read a taken key as free, and the
+        // page could churn with nothing moving; the duplicate-key variant
+        // (below) now settles too.
         const int wanted = gen.Int(2, 30);
         std::set<std::uint64_t> keys;
         std::set<std::string> names;
         for (int tries = 0; static_cast<int>(in.candidates.size()) < wanted && tries < 400; ++tries) {
             auto c = gen.RandomCandidate();
-            if (keys.contains(c.dedupKey) || names.contains(c.name)) continue;
+            if (uniqueKeys && (keys.contains(c.dedupKey) || names.contains(c.name))) continue;
             keys.insert(c.dedupKey);
             names.insert(c.name);
             // (R10: no wildcard flag on a row any more; the input pins and rolls none.)
@@ -521,13 +526,15 @@ namespace
 
     /// Runs `passes` allocations of one fixed world with `policy`, carrying
     /// the memory, and counts the give-ways that reverse an earlier one.
+    /// `withBeliefs` false: the hold's fixed margin, ln(1 + fChallengerMargin)
+    /// (the fallback ranking's path), on the same worlds.
     template <class Policy>
-    SwapBackCount RunFixed(FixedWorld& w, const Policy& policy, int passes, std::mt19937& rng)
+    SwapBackCount RunFixed(FixedWorld& w, const Policy& policy, int passes, std::mt19937& rng, bool withBeliefs = true)
     {
         SwapBackCount r;
         std::set<std::pair<std::uint32_t, std::uint32_t>> beaten;   // (winner row, loser row): candidate indices, fixed
         SA::Input in = w.in;
-        in.beliefs = &w.table;
+        in.beliefs = withBeliefs ? &w.table : nullptr;
         std::uniform_int_distribution<int> dt(0, 30);
         for (int p = 0; p < passes; ++p) {
             in.nowNs += static_cast<std::int64_t>(dt(rng)) * 100'000'000LL;   // 0-3 s
@@ -586,6 +593,46 @@ TEST_CASE("challenger rule: no swap-back on fixed beliefs (property test over ra
     CHECK(worlds == 600);
     CHECK(giveWays > 200);
     CHECK(unsettled == 0);
+}
+
+TEST_CASE("slot hold: pages with duplicate dedup keys and names settle, under the challenger rule and the fixed margin")
+{
+    // R9's verifier: with two rows of one dedup key the seat-owner lookups
+    // (the hold's owners and guests, the wildcard seat's owner) took the
+    // first match while the fill could place the other, so a taken key read
+    // as free -- worlds that never settled (HoldGaveWay every pass with no
+    // visible change, A->B->A bounces) on both hold paths. 0.24.6: a key
+    // names one row (the first ranked one; the rest are shadowed and never
+    // placed), and the hold dedups its owners by name. The same worlds as
+    // the property test above, duplicates kept.
+    for (const bool withBeliefs : { true, false }) {
+        std::mt19937 rng(20261030);
+        T::SyntheticGenerator gen(78, T::SyntheticSpec{ .exoticSettings = true, .formPool = 12, .maxCandidates = 30 });
+        int worlds = 0, giveWays = 0, unsettled = 0, swapBacks = 0, withDuplicates = 0;
+        for (int s = 0; s < 600; ++s) {
+            FixedWorld w = MakeWorld(rng, gen, /*uniqueKeys=*/false);
+            std::set<std::uint64_t> keys;
+            bool dup = false;
+            for (const auto& c : w.in.candidates) dup = !keys.insert(c.dedupKey).second || dup;
+            withDuplicates += dup ? 1 : 0;
+            const auto policy = SA::LogScorePolicy::From(w.in.settings);
+            const auto r = RunFixed(w, policy, 12, rng, withBeliefs);
+            INFO("world " << s << " beliefs " << withBeliefs);
+            CHECK(r.lateGiveWays == 0);
+            giveWays += r.giveWays;
+            swapBacks += r.swapBacks;
+            unsettled += r.lateGiveWays > 0;
+            ++worlds;
+        }
+        const std::string path = withBeliefs ? "challenger rule" : "fixed margin";
+        MESSAGE(path << ", duplicate keys: " << giveWays
+                << " give-ways in " << worlds << " worlds (" << withDuplicates << " with a duplicate key), "
+                << unsettled << " unsettled, " << swapBacks << " swap-backs");
+        CHECK(withDuplicates > 400);
+        CHECK(giveWays > 100);
+        CHECK(unsettled == 0);
+        CHECK(swapBacks == 0);
+    }
 }
 
 TEST_CASE("challenger rule: the property test sees swap-backs under per-pass sampling (contrast)")

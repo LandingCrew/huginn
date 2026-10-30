@@ -340,6 +340,7 @@ namespace Huginn::Slot
             RE::FormID previousFormID = 0;
             bool hadContent = false;
             bool frozen = false;   ///< no timer (combat freeze): remainingMs means nothing
+            std::string name;      ///< the key's item's display name (the held one while locked); 0.24.6
         };
 
         /// Snapshot all slots' lock state under a SINGLE mutex acquisition.

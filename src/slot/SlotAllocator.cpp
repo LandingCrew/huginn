@@ -454,6 +454,7 @@ namespace Huginn::Slot
             w.uDraw = wildcard->uDraw;
             w.params = wildcard->params;
             w.heldForms.assign(wildcard->heldForms.begin(), wildcard->heldForms.end());
+            w.heldNames = wildcard->heldNames;
             w.heldKeys = wildcard->heldKeys;
             if (wildcard->pinForm != 0) {
                 uint32_t first = SA::kNone;

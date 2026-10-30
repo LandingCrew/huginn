@@ -412,7 +412,8 @@ else about a call is still a pure function of its inputs.
            |
            v
   PASS 1a  remembered item -> the slot the player pressed
-           (classification ignored; skipped if an override has it)
+           (classification ignored; skipped if an override has it,
+           or the page already shows its name)
            |
            v
   PASS 1c  hold seated items unless a challenger clears the line
@@ -621,6 +622,42 @@ the registries and `GetDeduplicationKey()` use) per slot, per page, on the
 allocator. The allocator has to own it: `SlotLocker` is keyed by slot index and
 knows only the display page, and the Wheeler pages never reach the locker at
 all, so nothing else sees every page.
+
+**One owner per key (0.24.6).** Seats, last placements, home claims and
+departures name an item by its key, so a key must name one row of the list.
+The game's list has one: `CandidateFilters` drops a second candidate of a key
+as `duplicate` (two plain stacks of one weapon form with no `ExtraUniqueID`,
+say), and a Remembrance row is added only for a form no ranked row has, once.
+What does reach the allocation is several rows of one *form* with different
+keys (a tempered or enchanted stack with its own uniqueID beside the plain
+one: one form, one key on the page, by the formID dedup), several forms of one
+*name* (two enchanted copies, a player-made item: one name per page, below),
+and a spell and a scroll of one effect (different forms and source types:
+different keys, ordinary rows). The core does not rely on the filter: the key's
+row is the first ranked row with it in list order (the scorer's order, so its
+best), else the first remembered-only row; any other row with the key is
+*shadowed* and no pass places it, finds it or draws it
+(`Engine::MarkShadowed`, `OwnerOf`). Before this every "the row with this key"
+lookup (the hold's owners and guests, the wildcard seat's owner) took the
+first match while the fill could place another, so a key the page showed could
+read as free; on synthetic pages with shared keys that left pages that never
+settled (a `HoldGaveWay` every pass with no visible change) under the
+challenger rule and the fixed margin alike (R9's verifier). Host-tested: the R9
+property test's worlds with duplicate keys and names kept settle on both paths
+(`tests/core/ChallengerRuleTests.cpp`).
+
+**One name per page (0.24.6).** Every pass that puts an item on a key checks
+the form and the display name against what the page already shows: the fill
+and the draw did, and since 0.24.6 the override passes, the Remembrance pass
+and the slot hold's owners do too. Two forms of one name read as one item to
+the player, and `SlotLocker`'s post-lock dedup clears one of them by name
+anyway (`core/DedupRules.h`). The hold was the gap: it checked its seat owners
+only against what the overrides and holds had placed, so two seated forms
+named alike (R10's synthetic seeds 409 and 459, two Normal "Twin" rows) were
+both held. Now the owner the fill would serve first keeps its seat and the
+other is an ordinary row, which the name dedup keeps off the page. The golden
+test's page invariant checks every row: at most one wildcard, only on its key,
+no form twice, no name twice, no shadowed row.
 
 **Pass 3 resolves chains, not swaps.** A departure shifts a run of items up by
 one, so putting them back starts at the bottom: the last item drops into the
@@ -1212,12 +1249,21 @@ core has passes of its own:
   locked key shows its locked item whatever the allocation says. So a roll
   waits while the seat's lock still holds (not spent: the next unlocked run in
   the window rolls), and every form a lock holds on the page is kept out of
-  the pool (`WildcardIn::heldForms`): the post-lock dedup would clear such a
-  wildcard as a second copy, and the rows just under the cut -- the likeliest
-  draws -- are the ones that just left a key and are still held there. The
-  move above passes over a key whose row a lock holds. Without this a drawn
-  wildcard could be cached, logged and counted in `rolled=` for up to the lock
-  duration (3 s) before the player saw it, or never.
+  the pool (`WildcardIn::heldForms`), and since 0.24.6 every name
+  (`WildcardIn::heldNames`): the post-lock dedup compares names, so it would
+  clear such a wildcard as a second copy, and the rows just under the cut --
+  the likeliest draws -- are the ones that just left a key and are still held
+  there. The move above passes over a key whose row a lock holds.
+- **Counted once shown (0.24.6).** `WildcardManager::Commit` runs after
+  `ApplyLocks`, and a draw counts only if the page shows it on the seat
+  (`Core::Wildcard::DrawnShown`: the seat is the wildcard, that stack). One the
+  locker kept off -- a lock kept or taken inside `ApplyLocks` itself, the one
+  case the exclusions above cannot see -- is not cached, not logged, not
+  counted in `rolled=`, and does not spend the window's roll
+  (`CommitFate::NotShown`, a debug line); the next run in the window rolls
+  again, as after a page race. Before 0.24.6 `Commit` ran before
+  `ApplyLocks` (R10's verifier), so such a draw was cached for its cooldown,
+  logged and counted although the player never saw it.
 
 The math is `src/core/WildcardPick.h`; the host tests are
 `tests/core/WildcardTests.cpp`. Rows with no sd (the fallback ranking, no
@@ -1238,13 +1284,15 @@ the uid check on the ranked list, the logs and the heartbeat:
 - `Plan(page, list)`, before the page's allocation: pin the cached wildcard,
   or -- nothing cached, the refractory over, not in combat, the displayed
   page -- ask for a roll with two uniforms;
-- `Commit(page, result)`, after it (and only for an allocation the pipeline
+- `Commit(page, result, drawnShown)`, after it and after `ApplyLocks` (and
+  only for an allocation the pipeline
   keeps: after the page-race check, so an abandoned tick caches, logs and
   counts nothing; `Plan` itself steps the clocks before that check, so an
   abandoned tick that asked for a roll leaves the window open and the next run
   rolls with fresh uniforms -- with page races, about none in play, the logged
   per-window propensity runs a little low): cache a drawn wildcard (info line `[Wildcard] Page P key
-  K: 'name' (p=..: roll .. x draw .. of N; rel= sd= w= ..)`), drop a refused
+  K: 'name' (p=..: roll .. x draw .. of N; rel= sd= w= ..)`) the page shows
+  (one the locks hid counts for nothing, above), drop a refused
   one, and spend a roll that drew nothing;
 - `UpdateExpiry()`, every tick, across all pages.
 
@@ -1478,9 +1526,10 @@ Input Thread (- / = keys)
 
 Update Thread (~100ms tick)
   -> OverrideManager::Update() / SlotLocker::Update()   [unconditional]
-  -> WildcardManager::Plan() / Commit()                 [pipeline ticks only, around the allocation]
+  -> WildcardManager::Plan()                            [pipeline ticks only, before the allocation]
   -> SlotAllocator::AllocateSlotsForPage()              [seating: mutex-guarded]
   -> SlotLocker::ApplyLocks()                           [mutex-guarded]
+  -> WildcardManager::Commit()                          [after the locks: counts a draw only if shown (0.24.6)]
   -> Slot::ComputeVisualStates() -> IntuitionMenu / Wheeler
 
 Wheeler Callback Thread

@@ -933,6 +933,7 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
     // the window open, and the next run rolls with fresh uniforms: with page
     // races (about none in play) the logged per-window propensity runs a
     // little low against the true chance of a wildcard in that window.
+    // (0.24.6: likewise a draw the slot locks hid, after ApplyLocks below.)
     auto wildcardRequest = wildcards.Plan(wildcardPage, ctx.scoredCandidates);
     // A roll on a key the lock still holds would draw a wildcard the player
     // does not see (ApplyLocks keeps the locked item), yet cache, log and
@@ -941,7 +942,10 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
     // any key is kept out of the draw: the post-lock dedup would clear the
     // wildcard as a second copy, and the rows just under the cut -- the
     // likeliest draws -- are the ones that just left a key and are still
-    // held there. The held keys (and their forms) are passed on a pinned run
+    // held there. 0.24.6: and what a lock holds by NAME -- the post-lock
+    // dedup compares names (core/DedupRules.h), so a row named like a locked
+    // key's item of another form was cleared just the same. The held keys
+    // (and their forms and names) are passed on a pinned run
     // too: the seat's displaced row never moves onto a locked key, where
     // ApplyLocks would show the locked item and the moved row nowhere. A
     // lock with no time left lets go in ApplyLocks this run.
@@ -958,6 +962,7 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
                 if (!holding(locks[s])) continue;
                 wildcardRequest.heldKeys |= 1u << s;
                 if (locks[s].previousFormID != 0) wildcardRequest.heldForms.push_back(locks[s].previousFormID);
+                if (!locks[s].name.empty()) wildcardRequest.heldNames.push_back(locks[s].name);
             }
         }
     }
@@ -991,27 +996,6 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
         logger::debug("[Pipeline] Page changed mid-tick ({} -> {}); abandoning tick to avoid stale locks"sv,
             ctx.displayPageIndex, livePage);
         return false;
-    }
-
-    // R10: the wildcard result is kept only for an allocation that is used --
-    // after the page-race check above, so an abandoned tick neither caches a
-    // drawn wildcard (nor logs or counts it) nor spends the window's roll.
-    wildcards.Commit(wildcardPage, wildcardResult);
-    // The v3 log's propensity (wp) on the eligible row the page's wildcard is
-    // (its form and stack), NaN on every other: read after the commit, so a
-    // wildcard drawn on this run carries its own.
-    {
-        const RE::FormID wildForm = wildcards.GetWildcard(ctx.displayPageIndex);
-        const float wildP = wildcards.GetWildcardPropensity(ctx.displayPageIndex, wildForm);
-        const uint16_t wildUid = wildcards.GetWildcardUniqueID(ctx.displayPageIndex);
-        // Its own stack; failing that (the allocation pinned another stack of
-        // the form, SlotAllocator), every stack of the form.
-        const bool stackListed = std::ranges::any_of(ctx.eligible,
-            [&](const auto& row) { return row.formID == wildForm && row.uniqueID == wildUid; });
-        for (auto& row : ctx.eligible) {
-            const bool it = wildForm != 0 && row.formID == wildForm && (!stackListed || row.uniqueID == wildUid);
-            row.wildcardPropensity = it ? wildP : std::numeric_limits<float>::quiet_NaN();
-        }
     }
 
     // Apply slot locking for temporal stability. ApplyLocks also dedups
@@ -1134,6 +1118,46 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
         };
     }
     ctx.assignments = slotLocker.ApplyLocks(ctx.rawAssignments, ctx.overrides, ctx.scoredCandidates, lockRun);
+
+    // R10: the wildcard result is kept only for an allocation that is used --
+    // after the page-race check above, so an abandoned tick neither caches a
+    // drawn wildcard (nor logs or counts it) nor spends the window's roll.
+    // 0.24.6: and after ApplyLocks, so a draw is cached, logged ('[Wildcard]
+    // Page P key K') and counted (the heartbeat's rolled=) only when the page
+    // SHOWS it on the seat. Committed before ApplyLocks (R10's verifier), a
+    // draw the locker hid -- the seat's lock keeping its old item, or the
+    // post-lock dedup clearing the wildcard for a lock's copy of its name --
+    // was cached for its cooldown and counted although the player saw no
+    // wildcard. The draw leaves out what a lock holds (above), so this is the
+    // backstop for a lock kept or taken inside ApplyLocks itself: such a draw
+    // counts for nothing and the roll waits (Core::Wildcard::CommitFate::
+    // NotShown). ApplyLocks reads nothing of the manager's, so the order is
+    // free to change.
+    bool drawnShown = true;
+    if (wildcardResult.drawn) {
+        const size_t seat = wildcardResult.core.seat;
+        const Slot::SlotAssignment* shown = seat < ctx.assignments.size() ? &ctx.assignments[seat] : nullptr;
+        drawnShown = Core::Wildcard::DrawnShown(shown != nullptr && shown->IsWildcard(),
+            shown ? shown->formID : 0, shown ? shown->uniqueID : uint16_t{ 0 },
+            wildcardResult.drawn->GetFormID(), wildcardResult.drawn->GetUniqueID());
+    }
+    wildcards.Commit(wildcardPage, wildcardResult, drawnShown);
+    // The v3 log's propensity (wp) on the eligible row the page's wildcard is
+    // (its form and stack), NaN on every other: read after the commit, so a
+    // wildcard drawn on this run carries its own.
+    {
+        const RE::FormID wildForm = wildcards.GetWildcard(ctx.displayPageIndex);
+        const float wildP = wildcards.GetWildcardPropensity(ctx.displayPageIndex, wildForm);
+        const uint16_t wildUid = wildcards.GetWildcardUniqueID(ctx.displayPageIndex);
+        // Its own stack; failing that (the allocation pinned another stack of
+        // the form, SlotAllocator), every stack of the form.
+        const bool stackListed = std::ranges::any_of(ctx.eligible,
+            [&](const auto& row) { return row.formID == wildForm && row.uniqueID == wildUid; });
+        for (auto& row : ctx.eligible) {
+            const bool it = wildForm != 0 && row.formID == wildForm && (!stackListed || row.uniqueID == wildUid);
+            row.wildcardPropensity = it ? wildP : std::numeric_limits<float>::quiet_NaN();
+        }
+    }
 
     // Compute visual state for each slot
     Slot::ComputeVisualStates(ctx.assignments, ctx.rawAssignments, slotLocker);

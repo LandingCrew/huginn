@@ -371,6 +371,9 @@ namespace Huginn::Test
                 if (in.wildcard.uDraw < 0.3 && in.candidates.size() > 2) {
                     in.wildcard.heldForms = { in.candidates[1].formID };
                     in.wildcard.heldKeys = 1u << 6;
+                    // 0.24.6: and a name a lock holds (another form's, the
+                    // post-lock dedup compares names), still with no draw.
+                    in.wildcard.heldNames = { in.candidates[2].name };
                 }
             }
             return in;

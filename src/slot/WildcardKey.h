@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace Huginn::Slot
@@ -32,6 +33,9 @@ namespace Huginn::Slot
         // Forms a slot lock holds on the page's keys (PipelineCoordinator, from
         // SlotLocker::GetLockSnapshot): kept out of the draw's pool.
         std::vector<RE::FormID> heldForms;
+        // ...and their display names (0.24.6): the post-lock dedup compares
+        // names, so a row named like a held item is kept out too.
+        std::vector<std::string> heldNames;
         // Keys a slot lock holds on the page, bit j for key j: the seat's
         // displaced row never moves onto one (SlotAlloc::Engine::RehomeFor).
         uint32_t heldKeys = 0;

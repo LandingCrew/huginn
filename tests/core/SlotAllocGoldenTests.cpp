@@ -93,32 +93,47 @@ namespace
         Coverage cov;
     };
 
-    /// R10: what any page must be, whichever path made it -- at most one
-    /// wildcard, and only on the page's wildcard key (SeatOf); no form shown
-    /// twice; and no other key showing the wildcard's name (the pin and the
-    /// draw dedup by form and by name). Empty when it holds, else what broke.
-    /// (Two ordinary rows of one name can share a page -- synthetic seeds 409,
-    /// 459: two Normal "Twin" rows -- in the old and the new arithmetic alike,
-    /// before R10 too; that is not the wildcard's rule to judge.)
+    /// What any page must be, whichever path made it, on EVERY row (0.24.6;
+    /// R10 checked names for the wildcard only): at most one wildcard, and
+    /// only on the page's wildcard key (SeatOf); no form shown twice; no name
+    /// shown twice -- two forms of one display name read as one item to the
+    /// player, and SlotLocker's post-lock dedup compares names
+    /// (core/DedupRules.h). Until 0.24.6 two ordinary rows of one name could
+    /// share a page (synthetic seeds 409 and 459: two Normal "Twin" rows, both
+    /// seat owners the slot hold kept), in the old and the new arithmetic
+    /// alike. And no row shown that another row of its dedup key shadows
+    /// (Engine::MarkShadowed). Empty when it holds, else what broke.
     std::string PageInvariant(const SA::Input& in, const SA::Output& out)
     {
         const auto page = SA::PageOf(in, out);
         const std::size_t seat = SA::SeatOf(in.slots);
         std::size_t wildcards = 0;
         std::set<std::uint32_t> forms;
+        std::set<std::string> names;
         for (std::size_t i = 0; i < page.size(); ++i) {
             const auto& p = page[i];
             if (p.kind == SA::Kind::Empty) continue;
             if (p.kind == SA::Kind::Wildcard) {
                 ++wildcards;
                 if (i != seat) return std::format("wildcard on key {} (its key is {})", i, seat);
-                for (std::size_t j = 0; j < page.size(); ++j) {
-                    if (j != i && page[j].kind != SA::Kind::Empty && page[j].name == p.name) {
-                        return std::format("the wildcard's name '{}' is also on key {}", p.name, j);
+            }
+            if (!forms.insert(p.formID).second) return std::format("form {:08X} shown twice", p.formID);
+            if (!names.insert(p.name).second) {
+                return std::format("name '{}' shown twice (key {}: {})", p.name, i, Describe(p));
+            }
+            const auto& s = out.slots[i];
+            if (s.kind != SA::Kind::Override && s.src < in.candidates.size()) {
+                const auto& me = in.candidates[s.src];
+                for (std::uint32_t r = 0; r < in.candidates.size() && me.dedupKey != 0; ++r) {
+                    const auto& c = in.candidates[r];
+                    if (r == s.src || c.dedupKey != me.dedupKey) continue;
+                    const bool shadows = c.isRememberedOnly == me.isRememberedOnly ? r < s.src
+                                                                                   : !c.isRememberedOnly;
+                    if (shadows) {
+                        return std::format("key {} shows row {}, which row {} of its dedup key shadows", i, s.src, r);
                     }
                 }
             }
-            if (!forms.insert(p.formID).second) return std::format("form {:08X} shown twice", p.formID);
         }
         if (wildcards > 1) return std::format("{} wildcards", wildcards);
         // A drawn wildcard is never a form a slot lock holds; a row the

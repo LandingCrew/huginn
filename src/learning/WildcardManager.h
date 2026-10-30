@@ -59,8 +59,10 @@ namespace Huginn::Scoring
     //                      pin on the seat, or -- nothing cached, the refractory
     //                      over, not in combat, the displayed page -- a roll,
     //                      with its two uniforms and the [Wildcards] odds.
-    //   Commit(page, res)  after it: a drawn wildcard is cached for
-    //                      fCooldownSeconds with its propensity; a pinned one
+    //   Commit(page, res)  after it and the slot locks: a drawn wildcard the
+    //                      page shows is cached for fCooldownSeconds with its
+    //                      propensity, logged and counted (0.24.6: one the
+    //                      locks hid is none of these; the roll waits); a pinned one
     //                      the seat refused is dropped; a roll that drew
     //                      nothing is spent (one roll per refractory window).
     //   UpdateExpiry()     every tick: cooldowns lapse on every page.
@@ -101,7 +103,11 @@ namespace Huginn::Scoring
         /// that drew nothing is spent: the refractory restarts (one roll per
         /// window, core/WildcardGate.h). Not called for an allocation the
         /// pipeline abandons.
-        void Commit(const WildcardPage& page, const Slot::WildcardResult& result);
+        /// @param drawnShown 0.24.6: the row the allocation drew is what the
+        ///        page shows on the seat after SlotLocker::ApplyLocks. False:
+        ///        the draw is not cached, logged or counted, and the roll is
+        ///        not spent (CommitFate::NotShown).
+        void Commit(const WildcardPage& page, const Slot::WildcardResult& result, bool drawnShown = true);
 
         /// Unconditional per-tick expiry check, across ALL pages: a wildcard on a
         /// page the player has switched away from must still age out on its own

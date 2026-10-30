@@ -88,7 +88,7 @@ namespace Huginn::Scoring
         return req;
     }
 
-    void WildcardManager::Commit(const WildcardPage& page, const Slot::WildcardResult& result)
+    void WildcardManager::Commit(const WildcardPage& page, const Slot::WildcardResult& result, bool drawnShown)
     {
         const auto& w = result.core;
         const RE::FormID before = GetWildcard(page.index);
@@ -97,6 +97,7 @@ namespace Huginn::Scoring
             .pin = w.pin,
             .rollAsked = w.rollAsked,
             .propensity = w.Propensity(),
+            .drawnShown = drawnShown,
         };
         if (result.drawn) {
             in.drawnForm = result.drawn->GetFormID();
@@ -114,6 +115,13 @@ namespace Huginn::Scoring
             logger::debug("[Wildcard] Page {} roll spent (p={:.3f}, pool {}) - next in {:.0f}s"sv,
                 page.index, w.pRoll, w.pool, m_gate.settings.refractorySec);
 #endif
+            return;
+        case Core::Wildcard::CommitFate::NotShown:
+            // A transition, and rare: the draw already leaves out what a lock
+            // holds (by form and by name), so only a lock taken or kept in
+            // ApplyLocks itself gets here.
+            logger::debug("[Wildcard] Page {} key {}: drew '{}' but the slot locks did not show it - not kept, "
+                "the roll waits"sv, page.index, w.seat + 1, result.drawn ? result.drawn->GetName() : std::string_view{});
             return;
         case Core::Wildcard::CommitFate::Cached:
             break;
