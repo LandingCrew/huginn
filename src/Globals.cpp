@@ -303,12 +303,16 @@ void LoadWildcardConfigFromINI(Scoring::WildcardManager& wildcardMgr, const CSim
     ini.GetDoubleValue(section, "fBaseProbability", 0.165)));
   wildcardMgr.SetMaxProbability(static_cast<float>(
     ini.GetDoubleValue(section, "fMaxProbability", 0.5)));
+  // R10: the random term's share of the draw (core/WildcardPick.h).
+  wildcardMgr.SetUniformShare(static_cast<float>(
+    ini.GetDoubleValue(section, "fUniformShare", 0.1)));
   wildcardMgr.SetCooldown(static_cast<float>(
     ini.GetDoubleValue(section, "fCooldownSeconds", 30.0)));
   wildcardMgr.SetRefractoryPeriod(static_cast<float>(
     ini.GetDoubleValue(section, "fRefractorySeconds", 5.0)));
 
-  logger::info("[WildcardConfig] base={:.3f}, max={:.2f}, cooldown={:.0f}s, refractory={:.0f}s",
-    wildcardMgr.GetBaseProbability(), wildcardMgr.GetMaxProbability(),
+  logger::info("[WildcardConfig] roll {:.3f}..{:.2f} (base..max), uniform share {:.2f}, cooldown={:.0f}s, "
+    "refractory={:.0f}s",
+    wildcardMgr.GetBaseProbability(), wildcardMgr.GetMaxProbability(), wildcardMgr.GetUniformShare(),
     wildcardMgr.GetCooldown(), wildcardMgr.GetRefractoryPeriod());
 }

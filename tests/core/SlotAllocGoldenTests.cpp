@@ -21,6 +21,15 @@
 //
 // The sort change (the scorer's top-10 partial sort becomes a full sort) is
 // upstream of the slot code and is characterised separately below.
+//
+// R10 (0.24.3) moved the wildcard out of the ranking: it has a key of its own
+// (Core::SlotAlloc::SeatOf) and is placed there by its own passes, and the
+// hold's and the fill's special cases for a rank-swapped row are gone. Links 1
+// and 3 therefore leave out of the exact replay the recorded pages that show a
+// rank-swapped wildcard (Snapshot::rankWildcard), counted, and check those on
+// every key but the wildcard's instead (DiffOffWildcard; the agreeing pages
+// counted too); link 2 still runs on every input (both arithmetics see the
+// same rows, the flag no longer read).
 // =============================================================================
 
 #include "LegacySlotPolicy.h"
@@ -28,7 +37,10 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <format>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -38,6 +50,33 @@ using Huginn::Core::SlotAlloc::LogScorePolicy;
 
 namespace
 {
+    // R10: recorded snapshots whose page shows a rank-swapped wildcard (a row
+    // with flag 1), left out of the replays against the recorded result --
+    // counted from the fixtures, so a parser that marked more or fewer fails.
+    constexpr std::size_t kRankWildcardSnapshotsOld = 106;   // of 425 in vanilla-0.23.9-old.txt
+    constexpr std::size_t kRankWildcardSnapshotsNew = 66;    // of 230 in vanilla-0.23.11-new.txt
+    // ...and of those, the pages the core reproduces on every key but the one
+    // the recorded wildcard stood on (DiffOffWildcard).
+    constexpr std::size_t kOffWildcardAgreeOld = 89;
+    constexpr std::size_t kOffWildcardAgreeNew = 51;
+
+    /// R10: a recorded page that showed a rank-swapped wildcard, against the
+    /// core's page for the same input, on every key but the ones the recorded
+    /// wildcard stood on. Empty when they agree there.
+    std::string DiffOffWildcard(const SA::Snapshot& rec, const SA::Input& in, const SA::Output& out)
+    {
+        const auto page = SA::PageOf(in, out);
+        if (page.size() != rec.page.size()) return "page size";
+        std::string why;
+        for (std::size_t i = 0; i < page.size(); ++i) {
+            if (rec.page[i].kind == SA::Kind::Wildcard) continue;
+            if (page[i] != rec.page[i]) {
+                why += std::format(" key {}: recorded {} core {};", i, Describe(rec.page[i]), Describe(page[i]));
+            }
+        }
+        return why;
+    }
+
     bool EndsWith(const std::string& s, std::string_view suffix)
     {
         return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
@@ -49,9 +88,66 @@ namespace
         std::size_t differing = 0;
         std::size_t withDisagreement = 0;   // runs where some comparison went the other way
         std::size_t unexplained = 0;        // a disagreement that is not a rounding boundary
+        std::size_t badPages = 0;           // pages that break PageInvariant
         std::vector<std::string> notes;
         Coverage cov;
     };
+
+    /// R10: what any page must be, whichever path made it -- at most one
+    /// wildcard, and only on the page's wildcard key (SeatOf); no form shown
+    /// twice; and no other key showing the wildcard's name (the pin and the
+    /// draw dedup by form and by name). Empty when it holds, else what broke.
+    /// (Two ordinary rows of one name can share a page -- synthetic seeds 409,
+    /// 459: two Normal "Twin" rows -- in the old and the new arithmetic alike,
+    /// before R10 too; that is not the wildcard's rule to judge.)
+    std::string PageInvariant(const SA::Input& in, const SA::Output& out)
+    {
+        const auto page = SA::PageOf(in, out);
+        const std::size_t seat = SA::SeatOf(in.slots);
+        std::size_t wildcards = 0;
+        std::set<std::uint32_t> forms;
+        for (std::size_t i = 0; i < page.size(); ++i) {
+            const auto& p = page[i];
+            if (p.kind == SA::Kind::Empty) continue;
+            if (p.kind == SA::Kind::Wildcard) {
+                ++wildcards;
+                if (i != seat) return std::format("wildcard on key {} (its key is {})", i, seat);
+                for (std::size_t j = 0; j < page.size(); ++j) {
+                    if (j != i && page[j].kind != SA::Kind::Empty && page[j].name == p.name) {
+                        return std::format("the wildcard's name '{}' is also on key {}", p.name, j);
+                    }
+                }
+            }
+            if (!forms.insert(p.formID).second) return std::format("form {:08X} shown twice", p.formID);
+        }
+        if (wildcards > 1) return std::format("{} wildcards", wildcards);
+        // A drawn wildcard is never a form a slot lock holds; a row the
+        // wildcard moved is shown on the key it moved to, and the row that
+        // left in its place is not on the page.
+        const auto& w = out.wildcard;
+        if (w.drawn != SA::kNone) {
+            const auto& held = in.wildcard.heldForms;
+            if (std::find(held.begin(), held.end(), in.candidates[w.drawn].formID) != held.end()) {
+                return std::format("drew {:08X}, which a lock holds", in.candidates[w.drawn].formID);
+            }
+        }
+        if (w.movedTo != SA::npos) {
+            if (w.movedTo >= page.size() || w.moved == SA::kNone || w.left == SA::kNone) return "a bad move record";
+            if (page[w.movedTo].formID != in.candidates[w.moved].formID) {
+                return std::format("the moved row is not on key {}", w.movedTo);
+            }
+            if (w.movedTo < 32 && ((in.wildcard.heldKeys >> w.movedTo) & 1u) != 0) {
+                return std::format("the moved row went to key {}, which a lock holds", w.movedTo);
+            }
+            for (const auto& p : page) {
+                if (p.kind != SA::Kind::Empty && p.formID == in.candidates[w.left].formID) {
+                    return "the row the move put off the page is still on it";
+                }
+            }
+        }
+        if (out.wildcard.seat != seat) return "WildcardOut::seat is not SeatOf";
+        return {};
+    }
 
     /// Old vs new arithmetic on one input. Returns the legacy output (for
     /// sequences that carry the memory on).
@@ -69,6 +165,13 @@ namespace
         CHECK_MESSAGE(DiffOutputs(in, oldOut, dualOut).empty(), where);
 
         acc.cov.Add(in, newOut);
+        for (const auto* o : { &oldOut, &newOut }) {
+            const std::string bad = PageInvariant(in, *o);
+            if (!bad.empty()) {
+                ++acc.badPages;
+                if (acc.notes.size() < 20) acc.notes.push_back(where + ": " + bad);
+            }
+        }
         const std::string diff = DiffOutputs(in, oldOut, newOut);
         if (diff.empty()) {
             ++acc.identical;
@@ -160,11 +263,20 @@ TEST_CASE("slot golden: the core with the old arithmetic reproduces the old game
     REQUIRE(error.empty());
     std::size_t checked = 0;
     std::map<std::string, std::size_t> byTag;
+    std::map<std::string, std::size_t> rankWildcards;
+    std::size_t offWildcardSame = 0;
     for (const auto& f : files) {
         if (!EndsWith(f.name, "-old.txt")) continue;
         for (std::size_t i = 0; i < f.snaps.size(); ++i) {
             const auto& snap = f.snaps[i];
             REQUIRE(snap.hasResult);
+            if (snap.rankWildcard) {   // R10: the rank-swapped wildcard is gone (below)
+                ++rankWildcards[f.name];
+                const auto out = Allocate(snap.in, LegacySlotPolicy::From(snap.in.settings));
+                const std::string diff = DiffOffWildcard(snap, snap.in, out);
+                offWildcardSame += diff.empty() ? 1 : 0;
+                continue;
+            }
             const auto out = Allocate(snap.in, LegacySlotPolicy::From(snap.in.settings));
             const std::string diff = DiffResult(snap, snap.in, out);
             CHECK_MESSAGE(diff.empty(), f.name, " #", i, " (", snap.tag, "): ", diff);
@@ -175,6 +287,22 @@ TEST_CASE("slot golden: the core with the old arithmetic reproduces the old game
     for (const auto& [tag, n] : byTag) MESSAGE(tag, ": ", n);
     MESSAGE("old-code snapshots replayed bit for bit: ", checked);
     CHECK(checked > 0);
+    // R10 placed the wildcard on its own key instead of swapping it into a
+    // rank position, and removed the hold's and the fill's special cases for
+    // the swapped row. A recorded page that shows a rank-swapped wildcard is
+    // therefore not reproducible from its input any more, and is left out --
+    // exactly these, counted, so a parse that marked more would fail here.
+    // The recorded pages without one still replay bit for bit, which is the
+    // proof that removing the special cases changed nothing else.
+    CHECK(rankWildcards["vanilla-0.23.9-old.txt"] == kRankWildcardSnapshotsOld);
+    MESSAGE("left out (a rank-swapped wildcard, R10): ", rankWildcards["vanilla-0.23.9-old.txt"]);
+    // ...but every other key of those pages is still checked
+    // (DiffOffWildcard): 89 of the 106 agree off the wildcard's key. The 17
+    // that do not are where the removed special cases acted (the hold kept a
+    // swapped wildcard, or the fill re-ran around it, so other keys moved).
+    // Counted, so a change that moves either number is seen.
+    CHECK(offWildcardSame == kOffWildcardAgreeOld);
+    MESSAGE("of those, the same on every key but the wildcard's: ", offWildcardSame);
 }
 
 TEST_CASE("slot golden: the new game code's recorded pages replay through the core")
@@ -183,18 +311,31 @@ TEST_CASE("slot golden: the new game code's recorded pages replay through the co
     const auto files = LoadSlotFixtures(&error);
     REQUIRE(error.empty());
     std::size_t checked = 0;
+    std::size_t rankWildcards = 0;
+    std::size_t offWildcardSame = 0;
     for (const auto& f : files) {
         if (!EndsWith(f.name, "-new.txt")) continue;
         for (std::size_t i = 0; i < f.snaps.size(); ++i) {
             const auto& snap = f.snaps[i];
             REQUIRE(snap.hasResult);
+            if (snap.rankWildcard) {   // R10: as in the old-code replay above
+                ++rankWildcards;
+                const auto out = Allocate(snap.in);
+                const std::string diff = DiffOffWildcard(snap, snap.in, out);
+                offWildcardSame += diff.empty() ? 1 : 0;
+                continue;
+            }
             const auto out = Allocate(snap.in);
             const std::string diff = DiffResult(snap, snap.in, out);
             CHECK_MESSAGE(diff.empty(), f.name, " #", i, " (", snap.tag, "): ", diff);
             ++checked;
         }
     }
-    MESSAGE("new-code snapshots replayed: ", checked);
+    MESSAGE("new-code snapshots replayed: ", checked, "; left out (a rank-swapped wildcard, R10): ", rankWildcards);
+    CHECK(checked > 0);
+    CHECK(rankWildcards == kRankWildcardSnapshotsNew);
+    CHECK(offWildcardSame == kOffWildcardAgreeNew);
+    MESSAGE("of those, the same on every key but the wildcard's: ", offWildcardSame);
 }
 
 TEST_CASE("slot golden: old and new arithmetic give identical pages on every recorded snapshot")
@@ -215,6 +356,7 @@ TEST_CASE("slot golden: old and new arithmetic give identical pages on every rec
     CHECK(acc.unexplained == 0);
     CHECK(acc.differing == 0);
     CHECK(acc.withDisagreement == 0);
+    CHECK(acc.badPages == 0);
 }
 
 TEST_CASE("slot golden: the full sort -- what it changes against the old top-10 order (characterised)")
@@ -236,7 +378,7 @@ TEST_CASE("slot golden: the full sort -- what it changes against the old top-10 
         for (const auto& snap : f.snaps) {
             if (snap.tag != "tick") continue;
             const auto& in = snap.in;
-            if (std::any_of(in.candidates.begin(), in.candidates.end(), [](const SA::CandidateRec& c) { return c.isWildcard; })) {
+            if (snap.rankWildcard) {
                 ++withWildcard;
                 continue;
             }
@@ -300,6 +442,7 @@ TEST_CASE("slot golden: old and new arithmetic agree on synthetic snapshots (shi
         " differing, ", acc.withDisagreement, " with a comparison answered differently; coverage:", acc.cov.Report());
     CHECK(acc.unexplained == 0);
     CHECK(acc.differing == 0);
+    CHECK(acc.badPages == 0);
     // Each listed path was taken somewhere in the synthetic set. Synthetic
     // snapshots only show that the two arithmetics agree on a path; whether
     // the path is RIGHT rests on the recorded old-code snapshots (pages and
@@ -309,7 +452,7 @@ TEST_CASE("slot golden: old and new arithmetic agree on synthetic snapshots (shi
              "slot hold: holder gave way", "slot hold: gave way under the cap", "job key pulled from Regular",
              "returner: home", "returner: taken", "returner: waits", "returner: class",
              "class cap kept an item off", "stale generation cleared", "seatMoved", "wildcard shown",
-             "remembered shown" }) {
+             "wildcard: the seat's row moved to the weakest key", "remembered shown" }) {
         CHECK_MESSAGE(acc.cov.counts[path] > 0, path);
     }
 }
@@ -341,4 +484,5 @@ TEST_CASE("slot golden: old and new arithmetic differ only at float-rounding bou
     MESSAGE("synthetic (any settings): ", passes, " passes, ", acc.identical, " identical, ", acc.differing,
         " differing, ", acc.withDisagreement, " with a comparison answered differently; coverage:", acc.cov.Report());
     CHECK(acc.unexplained == 0);
+    CHECK(acc.badPages == 0);
 }

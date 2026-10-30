@@ -9,6 +9,7 @@
 #include "SlotClassifier.h"
 #include "core/ChallengerRule.h"
 #include "candidate/CandidateTypes.h"
+#include "core/SlotAllocCore.h"   // SeatOf: the page's wildcard key (R10)
 
 namespace Huginn::Slot
 {
@@ -157,20 +158,21 @@ namespace Huginn::Slot
 
             newPages.push_back(std::move(page));
 
-            // Log page summary. The `w` flag and the wildcard-capable count are
-            // not cosmetic: WildcardManager caps a page's rolls at the number of
-            // slots accepting wildcards (SlotAllocator::GetWildcardSlotCount ->
-            // PipelineContext::displayWildcardSlots), so that count is the only
-            // thing separating "this page rolled nothing because it is unlucky"
-            // from "because it has no seat for a wildcard" — and without it here
-            // neither is distinguishable from a log.
+            // Log page summary. The `w` flag and the wildcard key are not
+            // cosmetic: R10 gives each page ONE wildcard key, the last key in
+            // fill order with bWildcardsEnabled and never the first
+            // (Core::SlotAlloc::SeatOf, SlotAllocator::GetWildcardSeat), so this
+            // line is the only place that says which key it is -- or that the
+            // page has none, which is otherwise indistinguishable from a page
+            // that is merely unlucky.
             std::string slotSummary;
-            size_t wildcardCapable = 0;
+            std::vector<Core::SlotAlloc::SlotRec> seatRecs;
             for (size_t s = 0; s < newPages.back().slots.size(); ++s) {
                 const auto& slot = newPages.back().slots[s];
-                if (slot.wildcardsEnabled) {
-                    ++wildcardCapable;
-                }
+                Core::SlotAlloc::SlotRec rec;
+                rec.wildcardsEnabled = slot.wildcardsEnabled;
+                rec.priority = slot.priority;
+                seatRecs.push_back(rec);
                 if (s > 0) slotSummary += "|";
                 // `:r0` only when remembrance is off: it is on by default,
                 // and the common line stays as it was.
@@ -181,9 +183,11 @@ namespace Huginn::Slot
                     slot.wildcardsEnabled ? 1 : 0,
                     slot.remembrance ? "" : ":r0");
             }
-            SKSE::log::info("[SlotSettings] Page {} '{}': {} slots, {} wildcard-capable [{}]"sv,
+            const size_t seat = Core::SlotAlloc::SeatOf(seatRecs);
+            SKSE::log::info("[SlotSettings] Page {} '{}': {} slots, {} [{}]"sv,
                 p, newPages.back().name, newPages.back().slots.size(),
-                wildcardCapable, slotSummary);
+                seat == Core::SlotAlloc::npos ? std::string("no wildcard key") : std::format("wildcard key {}", seat + 1),
+                slotSummary);
         }
 
         // Slot-position stickiness. Read here rather than in the SlotLocker

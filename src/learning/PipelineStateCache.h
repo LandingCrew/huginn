@@ -177,9 +177,9 @@ namespace Huginn::Learning
         // and the tail was in unspecified order; it sorts the whole list now,
         // but ranks beyond the prefix are still stored as kUnrankedTail, so
         // attribution classifies them as far-miss exactly as before.
-        // NOTE: wildcard swaps run after sorting, so a prefix rank may hold a
-        // wildcard-promoted item — intentional: attribution should see what was
-        // actually surfaced, not the pre-wildcard score order.
+        // R10: the list is in score order (no wildcard swap); a row is
+        // isWildcard when the page shows its form as the wildcard (the first
+        // row of the form, as the index keeps).
         // R4: `eligible` (moved in) and `pageSlots` are kept for the selection
         // log v3 only; attribution and the v2 log read none of it.
         void Update(
@@ -205,11 +205,17 @@ namespace Huginn::Learning
             m_pageSlots = pageSlots;
             ++m_generation;
 
+            RE::FormID wildForm = 0;
+            for (const auto& a : currentPageAssignments) {
+                if (a.IsWildcard() && !a.IsEmpty()) wildForm = a.formID;
+            }
+
             m_scores.clear();
             m_scores.reserve(scored.size());
             m_index.clear();
             for (size_t i = 0; i < scored.size(); ++i) {
                 const auto& sc = scored[i];
+                const bool firstOfForm = !m_index.contains(sc.GetFormID());
                 // FIRST row wins, as in Snapshot::Find. One FormID can have
                 // several rows (the weapon registry keeps one per stack), and
                 // the first is the best-ranked -- attribution and the selection
@@ -223,7 +229,7 @@ namespace Huginn::Learning
                     .utility = sc.utility,
                     .score = sc.SlotScore(),
                     .breakdown = sc.breakdown,
-                    .isWildcard = sc.isWildcard,
+                    .isWildcard = wildForm != 0 && sc.GetFormID() == wildForm && firstOfForm,
                     .isColdStartBoosted = sc.isColdStartBoosted,
                     .isRememberedOnly = sc.isRememberedOnly,
                 });

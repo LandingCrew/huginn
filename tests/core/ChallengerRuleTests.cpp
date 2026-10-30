@@ -484,7 +484,7 @@ namespace
             if (keys.contains(c.dedupKey) || names.contains(c.name)) continue;
             keys.insert(c.dedupKey);
             names.insert(c.name);
-            c.isWildcard = false;   // wildcards are placed by position, not challenged on score
+            // (R10: no wildcard flag on a row any more; the input pins and rolls none.)
             // Scores close together, so the line decides often: a spread of
             // about one sigma_Delta.
             c.score = std::normal_distribution<double>(-1.0, 0.6)(rng);

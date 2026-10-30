@@ -158,7 +158,7 @@ classifications, then `FoodAny` before `AlcoholAny` before `PotionsAny`, then
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
 | `classification` | `SlotClassification` | `Regular` | What type of candidate can appear |
-| `wildcardsEnabled` | `bool` | `true` | Allow wildcard exploration picks |
+| `wildcardsEnabled` | `bool` | `true` | May be the page's wildcard key (the last such key in fill order is; R10) |
 | `overrideFilter` | `OverrideFilter` | `Any` | Which override categories accepted (`None`, `Any`, `HP`, `MP`, `SP`, `Other`) |
 | `skipEquipped` | `bool` | `true` | Skip candidates already equipped (show alternatives only). Default on since v0.21.51 |
 | `remembrance` | `bool` | `true` | Pressing this slot holds what the equip took off here (see [Remembrance](#remembrance)) |
@@ -443,12 +443,9 @@ returns the first candidate that:
    `PlayerActorState::IsItemEquipped` (the ~100 ms equipment poll), to cover the
    timing gap between the two.
 
-If the winning candidate is flagged `isWildcard` but the slot sets
-`wildcardsEnabled = false`, the search is re-run with `skipWildcards = true`.
-Reusing `FindBestCandidate` for the retry (rather than an inline rescan) means
-the fallback still honours `skipEquipped`, and returns cleanly empty when no
-alternative exists — so a wildcard is never left sitting in a slot that forbids
-wildcards.
+R10: the fill places ranked rows only. The wildcard is not a candidate flag
+any more but a placement on the page's wildcard key (see
+[Wildcard System](#wildcard-system)), so the fill's old wildcard re-run is gone.
 
 Duplicates are simply filtered out. There is no learner penalty for being a
 duplicate.
@@ -1112,58 +1109,147 @@ full page. One debug line per entry written while open:
 
 ## Wildcard System
 
-Wildcards are exploration picks: a lower-ranked candidate swapped up into a slot
-so the bandit gets evidence about items the player would otherwise never see.
-`WildcardManager` (`src/learning/WildcardManager.{h,cpp}`) runs *before*
-allocation, mutating the ranked candidate list and setting `isWildcard` on the
-promoted entry; `SlotAllocator` then treats it like any other candidate, apart
-from the `wildcardsEnabled` check.
+*Rewritten in R10 (0.24.3), map Phase 8: wildcards by uncertainty.*
 
-**Probability model** (`GetProbabilityForSlot`, `src/learning/WildcardManager.cpp:199`):
+A wildcard is "Huginn isn't sure about this one": an item the page does not
+show, put on a key for a while so the learner hears whether the player wants
+it ([doc 9](9-context-as-learner-input.md#exploration-uncertainty-ranked-wildcards)).
 
-```
-P(slot i) = min(fBaseProbability * i, fMaxProbability)
-```
+**One wildcard key per page.** `Core::SlotAlloc::SeatOf`
+(`src/core/SlotAllocCore.h`) names it: the last key in fill order
+(`PriorityOrder`: lowest `iPriority`, ties to the higher slot index) of those
+with `bWildcardsEnabled`, never the first key in fill order. On the shipped
+pages that is key 8 (the Jobs page already called key 8 "Wildcard"). A page
+whose only wildcard-enabled key is its top one, or a one-key page, has none.
+`[SlotSettings] Page N '...': K slots, wildcard key S` names it at load;
+`SlotAllocator::GetWildcardSeat(page)` is the same rule.
 
-Slot 0 is excluded by default (`m_firstSlotExcluded = true`) — it is always the
-top-scored pick. With the shipped base 0.165 and cap 0.5: slot 1 = 16.5%,
-slot 2 = 33%, slot 3 = 49.5%, slot 4 and beyond = 50%.
+**Placed, not swapped.** Until R8.4 a wildcard was swapped up into a rank
+position, and the slot hold and the fill carried special cases for the swapped
+row (it scored low by design, so the hold had to exempt it; the class-capped
+fill had to keep its position). Both special cases are gone. The allocation
+core has passes of its own:
 
-**Per-page cache (v0.19.6).** Each page owns its own entry array, its own
-cooldown clock and its own refractory clock (`PageWildcards`,
-`src/learning/WildcardManager.h:162`). Each array also records the page **shape**
-(`slotCount`, `wildcardSlots`) it was rolled against; any shape change — an INI
-hot-reload resizing a page, or toggling `bWildcardsEnabled` — discards that
-page's cache wholesale. This replaced a single global array indexed by position
-and shared by every page, which could strand a cached wildcard that nothing
-could display and thereby suppress re-rolls for a full cooldown.
+- **PASS 1w** (after overrides and Remembrance, before the hold and the fill):
+  the page's cached wildcard is pinned on its seat (`Kind::Wildcard`, which
+  `SlotState::IsPinned` now includes: seating never moves it, it claims no
+  seat). An override or a Remembrance hold on the seat, or showing the item,
+  wins the run (`PinFate::SeatBusy`, kept); a seat that no longer takes the
+  item (its class; equipped under skip-equipped -- the player has it in hand)
+  refuses it (`PinFate::Refused`, the manager drops it).
+- **PASS 4p** (after the refill, seating on): the seat's owner. Pinned before
+  the hold, the wildcard keeps its seat's owner out of it, and the hold keeps
+  that owner from challenging any other key (a displaced owner, as with an
+  override). With the other keys held it had no way back on the page, even as
+  the page's best row: with seating, which row owns the wildcard key is
+  whatever got there first, and R9's challenger rule keeps it there. So an
+  owner the page does not show, while it outranks the weakest ranked row on a
+  key that takes it, moves to that key and the weakest row leaves instead
+  (`RehomeSeatOwner`, `RehomeFor`; each after the class cap, as the hold weighs
+  a holder). The old engine kept the top pick out of the wildcard's reach
+  ("slot 0 is always excluded"); this keeps that promise for any row that
+  would otherwise be shown.
+- **PASS 4w** (on the finished page, before the seating record): the roll.
+  The pool is every ranked row the page does not show (by formID and by name)
+  that the seat takes -- every item type; the old same-type draw is gone. Each
+  row weighs
 
-**Capacity cap.** A page can display at most as many wildcards as it has slots
-with `bWildcardsEnabled`. `SlotAllocator::GetWildcardSlotCount(pageIndex)`
-supplies that count (via `PipelineContext::displayWildcardSlots`) and rolling
-stops once it is reached. It is a page-level *capacity*, not a per-index map:
-allocation decides which slot takes a given wildcard, by classification and
-priority, so no caller can know in advance which one it will be.
+  ```
+  w_i = rel_i * sd_i,    rel_i = logistic(mu_i - mu_cut)
+  ```
 
-**Draw window.** A wildcard is only ever surfaced by swapping a lower-ranked
-candidate *up*. `SelectRandomCandidate` is therefore called with
-`minIndex = i + 1`, so a roll for slot *i* can only draw from below it. Drawing
-at or above *i* would cache an entry the swap step skips (`foundIdx <= slotIdx`)
-while the cache still reads as active — a wasted roll that stalls re-rolling for
-a whole cooldown.
+  with mu the choice score, sd its posterior standard deviation, and mu_cut
+  the score of the row the wildcard puts off the page, so rel is the model's
+  own probability that the player prefers the row to what the page would
+  show. That row is the seat's occupant, unless the occupant outranks the
+  weakest ranked row on another key that takes it: then the occupant moves to
+  that key and the weakest row leaves (`RehomeFor`, as in PASS 4p), and mu_cut
+  is its score. One key changes besides the seat; the `[Wildcard]` line says
+  `its item moved to key J`. P(roll) = base + (max - base) * min(1, max_i w_i / 0.25)
+  (0.25 = an item tied with the cut at the prior sd of b, 0.5). The draw is a
+  mixture: `fUniformShare` uniform over the pool, the rest in proportion to w.
+  The row drawn takes the seat. The row that left is remembered as departed,
+  and home keys bring it back when the wildcard ends; a moved occupant keeps
+  its claim on the seat (it is on screen) and goes home then too.
+- **Slot locks** (`PipelineCoordinator::AllocateAndLock`, from
+  `SlotLocker::GetLockSnapshot`). The roll runs before `ApplyLocks`, and a
+  locked key shows its locked item whatever the allocation says. So a roll
+  waits while the seat's lock still holds (not spent: the next unlocked run in
+  the window rolls), and every form a lock holds on the page is kept out of
+  the pool (`WildcardIn::heldForms`): the post-lock dedup would clear such a
+  wildcard as a second copy, and the rows just under the cut -- the likeliest
+  draws -- are the ones that just left a key and are still held there. The
+  move above passes over a key whose row a lock holds. Without this a drawn
+  wildcard could be cached, logged and counted in `rolled=` for up to the lock
+  duration (3 s) before the player saw it, or never.
 
-Wildcards are also **source-type coherent**: the type is taken from the current
-top-ranked candidate, so a spell-led ranking rolls spell wildcards.
+The math is `src/core/WildcardPick.h`; the host tests are
+`tests/core/WildcardTests.cpp`. Rows with no sd (the fallback ranking, no
+bootstrap) weigh 0 and the draw is uniform.
+
+**What lands on the list** (doc 9): items never picked and items whose battery
+ran down (b back at its prior N(0, 0.25)), pairings with little evidence
+(theta's variance where an active need meets the row's effects), newly learned
+spells (no b yet) -- all through sd; and only those close enough to the page
+to matter, through rel.
+
+**The manager** (`src/learning/WildcardManager.{h,cpp}`) owns, per page, the
+cached wildcard, its propensity and its clocks, and nothing else. Its
+decisions are `Core::Wildcard::Gate` (`src/core/WildcardGate.h`, host-tested
+in `tests/core/WildcardTests.cpp`); the manager adds the clock, the uniforms,
+the uid check on the ranked list, the logs and the heartbeat:
+
+- `Plan(page, list)`, before the page's allocation: pin the cached wildcard,
+  or -- nothing cached, the refractory over, not in combat, the displayed
+  page -- ask for a roll with two uniforms;
+- `Commit(page, result)`, after it (and only for an allocation the pipeline
+  keeps: after the page-race check, so an abandoned tick caches, logs and
+  counts nothing; `Plan` itself steps the clocks before that check, so an
+  abandoned tick that asked for a roll leaves the window open and the next run
+  rolls with fresh uniforms -- with page races, about none in play, the logged
+  per-window propensity runs a little low): cache a drawn wildcard (info line `[Wildcard] Page P key
+  K: 'name' (p=..: roll .. x draw .. of N; rel= sd= w= ..)`), drop a refused
+  one, and spend a roll that drew nothing;
+- `UpdateExpiry()`, every tick, across all pages.
+
+**One roll per window.** Once `fRefractorySeconds` have passed since the
+page's last wildcard ended, the next run whose seat can take one rolls; a roll
+that fails (or comes up with an empty pool) is spent and the refractory
+restarts. A run whose seat an override, a hold or a slot lock has never
+evaluates the roll, and the next run in the window tries. So P(roll) is the chance per window that
+a wildcard appears and the uncertainty term governs how often they do: with
+the shipped clocks a page shows one about every 30 + 60 / P(roll) seconds
+(150 s at the max, about 6.5 minutes at the base). Before this a failed roll
+tried again on the next run, and P(roll) only set a delay of a few runs.
+
+**Per-page cache (v0.19.6, kept).** Each page owns its wildcard and its own
+cooldown and refractory clocks, keyed by the page shape (`slotCount`, `seat`):
+an INI reload that resizes the page or moves its seat drops the page's
+wildcard.
+
+**Per-page flags (R10; the Wheeler leak).** A Wheeler page the player is not
+viewing is allocated on the push (`WheelerBackend`) with its OWN cached
+wildcard pinned (`WildcardPage::display = false`: it never rolls). Before
+R10 it was allocated from the displayed page's ranked list, wildcard swap and
+flags included, so the displayed page's wildcard leaked onto the other wheels.
 
 **Persistence and cooldowns:**
 
-- Once rolled, a page's wildcards persist for `fCooldownSeconds` (30 s default).
-- After they expire, that page waits `fRefractorySeconds` before rolling again
-  (code default 5 s; the **shipped INI sets 60 s**).
-- `UpdateExpiry()` runs unconditionally every tick across **all** pages, because
-  `ApplyWildcards` only runs on non-skipped pipeline ticks — otherwise an
-  expired wildcard would stay on screen while the pipeline is idle. It returns
-  `true` if any page's wildcards lapsed, and the caller forces a pipeline run.
+- Once drawn, a page's wildcard stays `fCooldownSeconds` (30 s default).
+- After it expires (or the seat refuses it, or a roll draws nothing), that
+  page waits `fRefractorySeconds` before rolling again (code default 5 s; the
+  shipped INI sets 60 s).
+- Combat (0.23.40, unchanged): none placed, every page's dropped at onset, the
+  refractory restarted on every page when it ends.
+- `UpdateExpiry()` returns `true` if any page's wildcard lapsed, and the caller
+  forces a pipeline run.
+
+**Logged:** the v3 log's `wp` on the row shown as the wildcard is
+P(roll) x P(the draw shows its form) (two stacks of one form: both shares),
+the chance per window that the window shows that form;
+the `[Soak]` heartbeat appends `wildcards rolled= relevant= picked=` (relevant:
+the row had a positive theta n cap term when drawn; picked: a pick whose chosen
+row was shown as the wildcard).
 
 ---
 
@@ -1214,7 +1300,7 @@ iSlotCount = 8            ; 1-10 (clamped). Code default 7 on page 0, 3 elsewher
 
 [Page0.Slot0]
 sClassification = DamageAny   ; SlotClassification enum name (unknown -> Regular + warning)
-bWildcardsEnabled = true      ; Allow wildcard exploration picks in this slot
+bWildcardsEnabled = true      ; May be the page's wildcard key (the last such key in fill order is)
 bOverridesEnabled = HP        ; OverrideFilter: None/Any/HP/MP/SP/Other (true/false also accepted)
 iPriority = 6                 ; Allocation order (higher = filled first)
 bSkipEquipped = true          ; Skip already-equipped candidates (default on)
@@ -1297,10 +1383,11 @@ bEnableDrowning = true            ; Boolean condition, no threshold
 
 ```ini
 [Wildcards]
-fBaseProbability = 0.165         ; P(slot i) = base * i
-fMaxProbability = 0.5            ; Probability cap
-fCooldownSeconds = 30            ; How long a page's wildcards persist once rolled
-fRefractorySeconds = 60          ; Shipped; code default 5. Wait after expiry before re-rolling
+fBaseProbability = 0.165         ; P(roll) with nothing uncertain near the page
+fMaxProbability = 0.5            ; P(roll) with an unknown item at the page's edge
+fUniformShare = 0.1              ; the draw's uniform share (every row keeps share/N)
+fCooldownSeconds = 30            ; How long a page's wildcard stays once drawn
+fRefractorySeconds = 60          ; Shipped; code default 5. The window: one roll per window, a failed roll restarts it
 ```
 
 ### [Keybindings] (page cycling)
@@ -1354,7 +1441,7 @@ Input Thread (- / = keys)
 
 Update Thread (~100ms tick)
   -> OverrideManager::Update() / SlotLocker::Update()   [unconditional]
-  -> WildcardManager::ApplyWildcards()                  [pipeline ticks only]
+  -> WildcardManager::Plan() / Commit()                 [pipeline ticks only, around the allocation]
   -> SlotAllocator::AllocateSlotsForPage()              [seating: mutex-guarded]
   -> SlotLocker::ApplyLocks()                           [mutex-guarded]
   -> Slot::ComputeVisualStates() -> IntuitionMenu / Wheeler

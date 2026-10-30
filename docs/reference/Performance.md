@@ -243,30 +243,35 @@ Weapon charge is deliberately nonzero: activation is `charge < threshold`, and a
 drained enchanted weapon keeps a sub-cost remainder rather than reaching exactly
 zero, so a zero threshold would never fire.
 
-### Wildcards (`src/learning/WildcardManager.h`, `[Wildcards]`)
+### Wildcards (`src/learning/WildcardManager.h`, `src/core/WildcardGate.h`, `[Wildcards]`)
 
 Exploration picks, so the learner can discover preferences it would otherwise
-never see ranked.
+never see ranked. Since R10 (0.24.3) each page has **one wildcard key** (the
+last key in fill order with `bWildcardsEnabled`; key 8 on the shipped pages),
+and a wildcard is drawn by relevance × sd from what the page does not show
+(`src/core/WildcardPick.h`; see [5-slots.md](../architecture/5-slots.md)).
 
 | Setting | Value | Meaning |
 |---|---|---|
-| `fBaseProbability` | 0.165 | `P(slot i) = base × i`, capped |
-| `fMaxProbability` | 0.5 | The cap |
-| `fCooldownSeconds` | 30 | How long a rolled wildcard persists |
-| `fRefractorySeconds` | 60 (INI) / 5 (code default) | Gap before a new roll |
-| First slot excluded | true | Slot 0 is always the top-scored pick |
+| `fBaseProbability` | 0.165 | P(roll) per refractory window with nothing uncertain near the page |
+| `fMaxProbability` | 0.5 | P(roll) per window with an unknown item at the page's edge |
+| `fUniformShare` | 0.1 | Share of the draw that ignores the weights (uniform over the pool) |
+| `fCooldownSeconds` | 30 | How long a wildcard stays on its key |
+| `fRefractorySeconds` | 60 (INI) / 5 (code default) | The window: one roll per window, and a failed roll restarts it |
 
 There is **no session cap**. Since v0.19.6 the cache is **per page**: each page
-owns its entries, its cooldown and its refractory timer, and records the page
-*shape* (`slotCount`, `wildcardSlots`) it was rolled against — a shape change
-from an INI hot-reload discards that page's cache wholesale. This closed three
+owns its wildcard, its cooldown and its refractory timer, and records the page
+*shape* (`slotCount` and its wildcard key) it was rolled against — a shape
+change from an INI hot-reload discards that page's cache. This closed three
 bugs of one kind (#70 and its two siblings), all "a cached wildcard nothing can
 display", which suppressed re-rolls because the liveness check scanned the whole
 cache while only a bounded prefix could ever be shown.
 
 `UpdateExpiry()` runs unconditionally every tick across **all** pages, because
-`ApplyWildcards` only runs on non-skipped pipeline ticks and a wildcard on a page
-the player has switched away from must still age out on its own timer.
+`WildcardManager::Plan`/`Commit` (around the allocation in
+`PipelineCoordinator::AllocateAndLock`) only run on non-skipped pipeline ticks,
+and a wildcard on a page the player has switched away from must still age out on
+its own timer.
 
 ### Context reason hold
 

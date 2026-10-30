@@ -273,7 +273,6 @@ namespace Huginn::Slot::Capture
             for (const auto& c : base) {
                 if (c.isRememberedOnly) continue;
                 auto copy = c;
-                copy.isWildcard = false;
                 (d100(rng) < keepPercent ? list : dropped).push_back(std::move(copy));
             }
 
@@ -308,16 +307,10 @@ namespace Huginn::Slot::Capture
                 }
             }
 
-            // Wildcards swapped up into a rank position, as WildcardManager does.
-            if (list.size() > 3 && d100(rng) < 30) {
-                const int n = 1 + d100(rng) % 2;
-                for (int k = 0; k < n; ++k) {
-                    const size_t from = 2 + static_cast<size_t>(d100(rng)) % (list.size() - 2);
-                    const size_t to = 1 + static_cast<size_t>(d100(rng)) % std::min<size_t>(5, from);
-                    list[from].isWildcard = true;
-                    std::swap(list[from], list[to]);
-                }
-            }
+            // R10: no wildcard swap here any more -- the wildcard is placed
+            // on its own key by the allocation (a WildcardRequest), which
+            // AllocateForTest does not make; the host tests cover it
+            // (tests/core/WildcardTests.cpp, the synthetic generator).
 
             // Remembered-only rows, at the end, as PipelineCoordinator adds them.
             if (!dropped.empty() && d100(rng) < 30) {

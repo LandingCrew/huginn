@@ -325,6 +325,19 @@ namespace Huginn::Telemetry
         // model (about 4.6 pushes/s in a melee fight).
         void RecordWheelerPush() noexcept { m_wheelerPushes.fetch_add(1, std::memory_order_relaxed); }
 
+        // R10: a wildcard drawn onto a page's wildcard key
+        // (WildcardManager::Commit); `relevant` = a need the player has now
+        // values its effects (doc 9: read the wildcard target against these).
+        // And a pick of a row shown as a wildcard (ChoiceSubscriber: the v3
+        // decision's chosen row). The heartbeat's `wildcards rolled= relevant=
+        // picked=`, against the soak's 8 picks of 333 placements.
+        void RecordWildcardRolled(bool relevant) noexcept
+        {
+            m_wildcardRolls.fetch_add(1, std::memory_order_relaxed);
+            if (relevant) m_wildcardRollsRelevant.fetch_add(1, std::memory_order_relaxed);
+        }
+        void RecordWildcardPicked() noexcept { m_wildcardPicks.fetch_add(1, std::memory_order_relaxed); }
+
         // A pipeline tick was abandoned because a page switch landed mid-tick
         // (PipelineCoordinator::AllocateAndLock). Expected ~0; a nonzero heartbeat
         // value means the display-page race path actually executes on this build.
@@ -417,6 +430,10 @@ namespace Huginn::Telemetry
         std::atomic<uint32_t> m_wheelerPushes{0};
         std::atomic<uint32_t> m_wildcardTicks{0};
         std::atomic<bool> m_wildcardOnScreen{false};   // as the last pipeline run left the page
+        // R10 (window): wildcards drawn, of them relevant, and wildcard picks.
+        std::atomic<uint32_t> m_wildcardRolls{0};
+        std::atomic<uint32_t> m_wildcardRollsRelevant{0};
+        std::atomic<uint32_t> m_wildcardPicks{0};
         std::atomic<uint64_t> m_tickSumMicros{0};
         std::atomic<uint32_t> m_tickPeakMicros{0};
 

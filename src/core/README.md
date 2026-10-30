@@ -96,7 +96,13 @@ slot hold, the fill under the class cap, seating and home keys -- templated on
 the score arithmetic. The game runs `LogScorePolicy` (scores of any sign,
 `SlotScoreMath.h`); `SlotAllocator` builds the input (`src/slot/SlotSnapshot.*`),
 keeps the seating memory and turns the events into logs and telemetry.
-`SlotSnapshotIO.*` is the text record of one allocation. The tests:
+`SlotSnapshotIO.*` is the text record of one allocation. The wildcard key
+(R10): `SlotAllocCore.h` places the cached wildcard on the page's wildcard key
+(`SeatOf`) and draws a new one there; `WildcardPick.h` is the draw's math
+(relevance x sd, the mixture with a uniform share, P(roll), the exact
+propensity); `WildcardGate.h` is each page's cached wildcard and its clocks
+(one roll per refractory window, only the displayed page rolls, combat,
+reshape, refusal), which `Scoring::WildcardManager` wraps. The tests:
 
 | File | What it proves |
 |------|----------------|
@@ -104,6 +110,7 @@ keeps the seating memory and turns the events into logs and telemetry.
 | `SlotAllocAdversarialTests.cpp` | named cases: ties, zeros, the cap's 2x tie, overrides, remembered-only rows, the sort, negative scores, the hold's tie band (a challenger on the margin holds), and the float-rounding boundaries where the arithmetics can still part (the cap's scan at any discount, underflow) |
 | `SlotScoreMathTests.cpp` | the bridge, the cap term, the margin, the sentinels, the churn buckets |
 | `SlotSnapshotIOTests.cpp` | the snapshot format round-trips |
+| `WildcardTests.cpp` | R10: the draw's math, the wildcard key in the allocation (pinned and never moved by seating, the roll's pool and propensity with seating on and off, name twins kept out), and the gate's rules |
 
 Recorded snapshots live in `tests/core/fixtures/slots/` (`*-old.txt` from the
 old code, `*-new.txt` from the new). The old code's were recorded by branch

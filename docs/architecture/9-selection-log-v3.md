@@ -153,7 +153,7 @@ stretches one lap began.
 | `pipe.slots` | int | keys on that page |
 | `pipe.ageMs` | int ms | how old that page was when the context was taken |
 | `race` | string or null | editor ID of the hostile primary target's race (alive, hostile), else null |
-| `wc.base`, `wc.max` | float | the wildcard odds in force (per-slot probability base and cap) |
+| `wc.base`, `wc.max` | float | the wildcard odds in force: before 0.24.3 the per-slot probability base and cap; from 0.24.3 (R10) the roll's chance with nothing uncertain near the page and with an unknown item at its edge (`[Wildcards]`; `fUniformShare` is not logged -- `wp` is the exact propensity) |
 | `env` | object | (0.23.41) where and when, for what the darkness need's input cannot say: `interior` 0/1 (an interior cell), `hour` (game hour, 0-24), `daylight` 0/1 (outdoors under a full sky in the climate's daytime: darkness reads 0), `light` (the raw light on the player, 0-1 in 0.1 steps, before the hold the darkness need reads -- `core/LightHold.h`). Absent before 0.23.41 |
 | `summon` | object | (0.23.46) the player's summons: `n` the living actors the player commands (the count the summon filter compares), `limit` the commanded-actor limit the perks give (the perk entry point from 1; Twin Souls makes it 2; read only while a summon is up, so with `n` 0 it is the last value read in this launch, 1 before the first summon: meaningful only when `n` > 0), `act` one entry per living commanded actor, `[source, kind, remaining, elapsed, actor]`: the spell or scroll that cast it (the staff for a staff's enchantment; null if unknown), `"summon"` / `"reanimate"` / `"other"` (its effect's archetype: thralls apart from summons, doc 11 decision 3), seconds left on that effect (-1 = no timer), seconds since it was cast (a new cast dismisses the oldest), the actor's reference. Absent before 0.23.46 |
 | `old` | object | (0.23.53) the old engine's pipeline run behind the eligible rows, taken with them (not necessarily the run `pipe` describes: `pipe` is read off the page as shown, and the two can be one run apart, as the eligible flags and `pipe` already could): `minCtx` and `minUtil` (`fMinimumContextWeight`, `fMinimumUtility`), `topN` (`iTopNCandidates`: the cold start runs when fewer rows than this pass), `coldBoost` (the cold start raises a row's context to `coldBoost` × `ucb`), `beta` (the exploration weight), `lambdaMin`, `lambdaMax`, `n0` (the learner's pseudo-observations), `fav` (`"boost"`, `"off"`, `"suppress"`), `favMin`, `favMax` (the favourites multiplier's range), `scored` (rows the run kept), `total` (the learner's total evidence, the UCB's), `phi` (the 18 state features the learner read, `StateFeatures`). Written when a run of this session is cached (`pipe.ok` 1). Absent before 0.23.53 |
@@ -386,12 +386,29 @@ active-effect walk `StateManager_MagicEffects.cpp`), logging only:
   player's own buff of its column; a worn enchanted piece covers itself.
 
 **Wildcard propensity** (`wp`): the probability of the roll that put this item
-on the page as a wildcard -- P(its slot rolled a wildcard) × (the entries of its
-FormID in the pool) / (the pool it was drawn from), given the earlier rolls of
-the same pass (`WildcardManager`). The pool holds one entry per candidate row,
-so two stacks of one weapon are two entries of one FormID. It
-does not include whether a roll happened at all (rolls wait for no wildcard
-being active and the refractory period). Only rows shown as wildcards carry it.
+on the page as a wildcard. From 0.24.3 (R10, `core/WildcardPick.h`,
+`core/WildcardGate.h`): P(the roll came up) × P(the draw showed its FormID) --
+the draw's shares of every pool row of that FormID (two stacks of one weapon
+are two rows), the shares being `fUniformShare` / N plus the rest in
+proportion to relevance × sd. It is a **per-window** propensity: each page
+rolls once per refractory window (the first run after `fRefractorySeconds`
+whose wildcard key can take one: not held by an override, a Remembrance hold
+or a slot lock), and a roll that fails or draws nothing
+restarts the refractory instead of trying again on the next run. So `wp` is
+the probability that this window shows that FormID on the wildcard key, given
+the state on the run that rolled; its complement for the window, 1 − P(roll),
+is the chance the window showed no wildcard (not logged: a window without one
+writes nothing). An inverse-propensity reader weights a wildcard pick by 1 /
+`wp` per window, not per pipeline run. One known leak: a tick abandoned by a
+page race after its roll (the page changed mid-tick, about never in play)
+leaves the window open, and the next run rolls again, so with page races the
+true chance per window runs a little above `wp`. Before 0.24.3: P(its slot rolled a
+wildcard) × (the entries of its FormID in the pool) / (the pool it was drawn
+from), given the earlier rolls of the same pass, the pool holding one entry
+per candidate row of the top row's type; those rolls retried on every run, so
+that `wp` understates the chance per window. Either way it does not include
+whether a roll was asked at all (rolls wait for no wildcard being active, the
+refractory period, and no combat). Only rows shown as wildcards carry it.
 
 ### `dec`
 

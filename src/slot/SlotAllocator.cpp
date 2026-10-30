@@ -200,15 +200,23 @@ namespace Huginn::Slot
         return (*snap)[pageIndex].slots.size();
     }
 
-    size_t SlotAllocator::GetWildcardSlotCount(size_t pageIndex) const
+    size_t SlotAllocator::GetWildcardSeat(size_t pageIndex) const
     {
         auto snap = GetConfigSnapshot();
         if (pageIndex >= snap->size()) {
-            return 0;
+            return SIZE_MAX;
         }
-        const auto& slots = (*snap)[pageIndex].slots;
-        return static_cast<size_t>(std::count_if(slots.begin(), slots.end(),
-            [](const SlotConfig& c) { return c.wildcardsEnabled; }));
+        // The same rule the allocation runs (the core's SeatOf), on the two
+        // fields it reads.
+        std::vector<Core::SlotAlloc::SlotRec> recs;
+        for (const auto& c : (*snap)[pageIndex].slots) {
+            Core::SlotAlloc::SlotRec r;
+            r.wildcardsEnabled = c.wildcardsEnabled;
+            r.priority = c.priority;
+            recs.push_back(r);
+        }
+        const size_t seat = Core::SlotAlloc::SeatOf(recs);
+        return seat == Core::SlotAlloc::npos ? SIZE_MAX : seat;
     }
 
     bool SlotAllocator::IsRegularSlot(size_t pageIndex, size_t slotIndex) const
@@ -273,7 +281,9 @@ namespace Huginn::Slot
         const Scoring::ScoredCandidateList& candidates,
         const Override::OverrideCollection& overrides,
         const State::PlayerActorState& player,
-        const State::WorldState& world) const
+        const State::WorldState& world,
+        const WildcardRequest* wildcard,
+        WildcardResult* wildcardOut) const
     {
         // Hold the snapshot for the duration of the call so the config refs
         // passed to AllocateSlotsInternal stay valid even across a concurrent reload.
@@ -284,7 +294,7 @@ namespace Huginn::Slot
         }
         const size_t page = pageIndex < snap->size() ? pageIndex : 0;
         return AllocateSlotsInternal(page, generation, (*snap)[page].slots,
-            candidates, overrides, player, world);
+            candidates, overrides, player, world, /*forTest=*/false, wildcard, wildcardOut);
     }
 
     SlotAssignments SlotAllocator::AllocateSlots(
@@ -351,9 +361,14 @@ namespace Huginn::Slot
         const Override::OverrideCollection& overrides,
         const State::PlayerActorState& player,
         [[maybe_unused]] const State::WorldState& world,
-        bool forTest) const
+        bool forTest,
+        const WildcardRequest* wildcard,
+        WildcardResult* wildcardOut) const
     {
         namespace SA = Core::SlotAlloc;
+        if (wildcardOut) {
+            *wildcardOut = WildcardResult{};
+        }
 
         // One clock reading for the whole pass: home keys measure how long an
         // item was away against it, and departures are stamped with it.
@@ -428,6 +443,31 @@ namespace Huginn::Slot
             &overrideIndex);
         in.memoryAvailable = pageIndex < MAX_PAGES;
 
+        // R10: the wildcard key. The cached wildcard's row in THIS page's list
+        // (a page with a wheel leaves out uid-less gear): its own stack, else
+        // the first row of its form; none when the list no longer has it.
+        bool pinFound = false;
+        if (wildcard) {
+            auto& w = in.wildcard;
+            w.roll = wildcard->roll;
+            w.uRoll = wildcard->uRoll;
+            w.uDraw = wildcard->uDraw;
+            w.params = wildcard->params;
+            w.heldForms.assign(wildcard->heldForms.begin(), wildcard->heldForms.end());
+            w.heldKeys = wildcard->heldKeys;
+            if (wildcard->pinForm != 0) {
+                uint32_t first = SA::kNone;
+                for (uint32_t i = 0; i < in.candidates.size(); ++i) {
+                    const auto& c = in.candidates[i];
+                    if (c.isRememberedOnly || c.formID != wildcard->pinForm) continue;
+                    if (c.uniqueID == wildcard->pinUniqueID) { first = i; break; }
+                    if (first == SA::kNone) first = i;
+                }
+                w.pinned = first;
+                pinFound = first != SA::kNone;
+            }
+        }
+
 #ifndef NDEBUG
         // Slot capture (SlotSnapshot.h): this allocation's input and result.
         std::optional<SA::Snapshot> capture;
@@ -491,18 +531,14 @@ namespace Huginn::Slot
                 // +inf sentinel (the old 1000.0 utility would overflow exp()).
                 Scoring::ScoredCandidate sc;
                 sc.candidate = *overrides.activeOverrides[overrideIndex[s.src]].candidate;
-                sc.isWildcard = false;
                 auto a = SlotAssignment::FromCandidate(i, cls, sc, AssignmentType::Override);
                 a.score = Core::kPinnedScore;
                 assignments.push_back(std::move(a));
                 break;
             }
-            case SA::Kind::Remembered: {
-                Scoring::ScoredCandidate sc = candidates[s.src];
-                sc.isWildcard = false;
-                assignments.push_back(SlotAssignment::FromCandidate(i, cls, sc, AssignmentType::Remembered));
+            case SA::Kind::Remembered:
+                assignments.push_back(SlotAssignment::FromCandidate(i, cls, candidates[s.src], AssignmentType::Remembered));
                 break;
-            }
             default:
                 assignments.push_back(SlotAssignment::FromCandidate(i, cls, candidates[s.src],
                     s.kind == SA::Kind::Wildcard ? AssignmentType::Wildcard : AssignmentType::Normal));
@@ -512,6 +548,14 @@ namespace Huginn::Slot
         }
 
         ReportEvents(pageIndex, slotConfigs, candidates, overrides, overrideIndex, out.events, forTest);
+
+        if (wildcardOut) {
+            wildcardOut->core = out.wildcard;
+            wildcardOut->pinFound = pinFound;
+            if (out.wildcard.drawn != SA::kNone && out.wildcard.drawn < candidates.size()) {
+                wildcardOut->drawn = candidates[out.wildcard.drawn];
+            }
+        }
 
 #ifndef NDEBUG
         // [Seating]: the seat map when it CHANGES -- a steady map is the

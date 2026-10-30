@@ -1,500 +1,187 @@
 #include "WildcardManager.h"
-#include "core/CombatLock.h"     // WildcardMayBePlaced
-#include "core/WheelUidGate.h"   // KeptOffWheelPage
-#include <algorithm>
+#include "core/WheelUidGate.h"   // KeptOffWheelPage, FateOfCachedWildcard
+#include "telemetry/SoakMetrics.h"   // R10: the heartbeat's wildcard rolls
+#include <chrono>
+#include <format>
+#include <limits>
 
 namespace Huginn::Scoring
 {
+    // The decisions are Core::Wildcard::Gate's (core/WildcardGate.h, host-tested
+    // in tests/core/WildcardTests.cpp); this adds the clock, the uniforms, the
+    // uid check on the ranked list, the logs and the heartbeat.
+
     WildcardManager::WildcardManager()
     {
-        const auto now = std::chrono::steady_clock::now();
-        for (auto& cache : m_pages) {
-            cache.lastWildcardTime = now;
-            cache.wildcardEndTime = now;
-        }
+        m_gate.settings.cooldownSec = Config::WILDCARD_COOLDOWN_SECONDS;
+        m_gate.settings.refractorySec = 5.0;
+        m_gate.Reset(NowNs());
     }
 
-    void WildcardManager::ApplyWildcards(ScoredCandidateList& rankedCandidates, const WildcardPage& page)
+    std::int64_t WildcardManager::NowNs()
     {
-        if (!m_enabled || page.index >= MAX_WILDCARD_PAGES) {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+
+    Slot::WildcardRequest WildcardManager::Plan(const WildcardPage& page, const ScoredCandidateList& ranked)
+    {
+        Slot::WildcardRequest req;
+        req.params = m_params;
+
+        const Core::Wildcard::GatePage gatePage{
+            .index = page.index,
+            .slotCount = page.slotCount,
+            .seat = page.seat == SIZE_MAX ? Core::Wildcard::kNoSeat : page.seat,
+            .inCombat = page.inCombat,
+            .display = page.display,
+        };
+        // A wildcard whose rows all are uid-less gear on a page that hides them
+        // (rolled in the second after a load, before the registry knew) cannot
+        // be shown there.
+        const auto fate = [&](uint32_t formID) {
+            bool anyRow = false;
+            bool showable = false;
+            for (const auto& s : ranked) {
+                if (s.GetFormID() != formID || s.isRememberedOnly) continue;
+                anyRow = true;
+                showable = showable || !Core::KeptOffWheelPage(page.hideUidlessGear,
+                    Candidate::IsInstanceItem(s.candidate), s.GetUniqueID());
+            }
+            return Core::FateOfCachedWildcard(anyRow, showable);
+        };
+        const auto plan = m_gate.Plan(gatePage, NowNs(), fate);
+
+        if (plan.reshapeDropped != 0) {
+            logger::debug("[Wildcard] Page {} reshaped ({} keys, wildcard key {}) - dropped {:08X}"sv,
+                page.index, page.slotCount, page.seat, plan.reshapeDropped);
+        }
+        // In combat no wildcard is placed: a wildcard is exploration, and under
+        // the combat freeze it held a key for the whole fight (a mage's Iron
+        // Dagger, 2026-10-12 08:56-08:58).
+        for (const auto& [p, form] : plan.combatDropped) {
+            logger::debug("[Wildcard] Page {}: combat - dropped {:08X}, none placed until it ends"sv, p, form);
+        }
+        if (plan.combatOver) {
+            logger::debug("[Wildcard] Combat over - refractory ({:.1f}s) restarted on every page"sv,
+                m_gate.settings.refractorySec);
+        }
+#ifndef NDEBUG
+        if (plan.expired != 0) {
+            logger::debug("[Wildcard] Page {} wildcard {:08X} expired - refractory {:.1f}s"sv,
+                page.index, plan.expired, m_gate.settings.refractorySec);
+        }
+#endif
+        if (plan.uidDropped != 0) {
+            logger::debug("[Wildcard] Page {} wildcard {:08X} dropped: the page's wheel cannot show it "
+                "(no uniqueID)"sv, page.index, plan.uidDropped);
+        }
+
+        req.pinForm = plan.pinForm;
+        req.pinUniqueID = plan.pinUniqueID;
+        if (plan.roll) {
+            std::uniform_real_distribution<double> unit(0.0, 1.0);
+            req.roll = true;
+            req.uRoll = unit(GetRNG());
+            req.uDraw = unit(GetRNG());
+        }
+        return req;
+    }
+
+    void WildcardManager::Commit(const WildcardPage& page, const Slot::WildcardResult& result)
+    {
+        const auto& w = result.core;
+        const RE::FormID before = GetWildcard(page.index);
+        Core::Wildcard::CommitIn in{
+            .pinFound = result.pinFound,
+            .pin = w.pin,
+            .rollAsked = w.rollAsked,
+            .propensity = w.Propensity(),
+        };
+        if (result.drawn) {
+            in.drawnForm = result.drawn->GetFormID();
+            in.drawnUniqueID = result.drawn->GetUniqueID();
+        }
+        const auto fate = m_gate.Commit(page.index, in, NowNs());
+
+        switch (fate) {
+        case Core::Wildcard::CommitFate::Refused:
+            logger::debug("[Wildcard] Page {} wildcard {:08X} refused by key {} - dropped"sv,
+                page.index, before, w.seat == Core::SlotAlloc::npos ? 0 : w.seat + 1);
+            return;
+        case Core::Wildcard::CommitFate::RollSpent:
+#ifndef NDEBUG
+            logger::debug("[Wildcard] Page {} roll spent (p={:.3f}, pool {}) - next in {:.0f}s"sv,
+                page.index, w.pRoll, w.pool, m_gate.settings.refractorySec);
+#endif
+            return;
+        case Core::Wildcard::CommitFate::Cached:
+            break;
+        default:
             return;
         }
 
-        auto& cache = m_pages[page.index];
+        const auto& d = *result.drawn;
+        // "Relevant": a need the player has now values the item's effects (a
+        // positive theta n cap term, the row's explanation). Doc 9's open item
+        // asks the wildcard target to be read against these, not against
+        // wildcards placed when nothing called for them.
+        const bool relevant = d.choice.top[0].need >= 0;
+        Telemetry::SoakMetrics::GetSingleton().RecordWildcardRolled(relevant);
 
-        // Clamp to what this class can track. Both bounds come from the same
-        // snapshot, so wildcardSlots can never out-run slotCount, but clamp it
-        // against the clamped slotCount rather than the raw one anyway.
-        const size_t slotCount = std::min(page.slotCount, MAX_WILDCARD_SLOTS);
-        const size_t wildcardSlots = std::min(page.wildcardSlots, slotCount);
-
-        // Shape change invalidates this page's cache wholesale.
-        //
-        // This is all that remains of #70's bounds repair, and it now fires on
-        // the only event that can still strand an entry: the page itself being
-        // reshaped by an INI reload. A page SWITCH no longer needs repairing,
-        // because pages no longer share an array — page A's entries stay under
-        // page A's key and page B's liveness check never sees them.
-        //
-        // Deliberately does NOT stamp wildcardEndTime: these were never
-        // displayed at the new shape, so no refractory is owed. Clearing the
-        // last live entry therefore leaves refractoryElapsed measured from the
-        // previous real expiry — usually long past — and the re-roll fires on
-        // this same tick. Consequence worth knowing: a reshape now almost always
-        // yields a wildcard promptly, where before it could yield none at all.
-        // That is a wider swing than "fixes a stall", and it is intended.
-        //
-        // Not wrapped in #ifndef NDEBUG like the other debug logs in this file:
-        // the defining property of this bug was that nothing recorded it, so the
-        // drop is worth a line wherever debug logging is on. It stays at debug
-        // (Release runs at info, Main.cpp:577) — same call as the
-        // [Context]/[Subtext] diagnostics, which are Debug-build tools.
-        if (cache.slotCount != slotCount || cache.wildcardSlots != wildcardSlots) {
-            if (PageHasActiveWildcard(cache)) {
-                logger::debug("[WildcardManager] Page {} reshaped ({} slots / {} wildcard-capable, "
-                    "was {} / {}) — dropped {} cached wildcard(s)"sv,
-                    page.index, slotCount, wildcardSlots,
-                    cache.slotCount, cache.wildcardSlots, GetActiveWildcardCount(page.index));
-                ClearPageEntries(cache);
-            }
-            cache.slotCount = slotCount;
-            cache.wildcardSlots = wildcardSlots;
-        }
-
-        // In combat no wildcard is placed: none rolled, none swapped into the
-        // ranking, and this page's cached ones dropped, so the fight-start
-        // re-score fills the key a wildcard held with a ranked item (the
-        // locker releases that key at onset). A wildcard is exploration -- a
-        // low-scored item shown so the learner hears about it -- and under the
-        // combat freeze it held a key for the whole fight: a mage's Iron Dagger,
-        // 2026-10-12 08:56-08:58. The expiry clock is not touched otherwise, so
-        // out of combat everything below runs exactly as before.
-        //
-        // Every page, not only this one: a page the player switches to in the
-        // fight must not bring its cached wildcard back. And when combat ends
-        // the refractory restarts on every page, so the first run after the
-        // fight does not roll one onto keys that just settled.
-        {
-            const auto step = Core::StepWildcardsForCombat(m_wasInCombat, page.inCombat);
-            m_wasInCombat = page.inCombat;
-            const auto stepNow = std::chrono::steady_clock::now();
-            if (step.dropCached) {
-                for (size_t p = 0; p < m_pages.size(); ++p) {
-                    if (PageHasActiveWildcard(m_pages[p])) {
-                        logger::debug("[WildcardManager] Page {}: combat - dropped {} cached wildcard(s), "
-                            "none placed until it ends"sv, p, GetActiveWildcardCount(p));
-                        ClearPageEntries(m_pages[p]);
-                        m_pages[p].wildcardEndTime = stepNow;
-                    }
-                }
-            }
-            if (step.restartRefractory) {
-                for (auto& pageCache : m_pages) {
-                    pageCache.wildcardEndTime = stepNow;
-                }
-                logger::debug("[WildcardManager] Combat over - refractory ({:.1f}s) restarted on every page"sv,
-                    m_refractorySeconds);
-            }
-            if (!step.mayPlace) {
-                return;
-            }
-        }
-
-        // A page every slot of which sets bWildcardsEnabled=false can display no
-        // wildcard at all. Rolling one anyway is exactly the stall #70 fixed for
-        // the index case: the liveness check reports it live, nothing shows it,
-        // and no re-roll happens until its own cooldown lapses. The clear above
-        // has already emptied the cache if this page just lost its last
-        // wildcard-capable slot, so there is nothing left to strand here.
-        if (wildcardSlots == 0) {
-            return;
-        }
-
-        // SelectRandomCandidate skips index 0 (the top pick is never a wildcard
-        // source), so a list of one has nothing to draw from. slotCount == 0 is
-        // the only slot-count case worth refusing: the old guard rejected
-        // slotCount < 2 as well, which is why a 1-slot page never reached the
-        // repair path. Slot 0 is already unreachable on its own terms — excluded
-        // by m_firstSlotExcluded, and scored at base * 0 == 0 even when it is
-        // not — so a 1-slot page rolls nothing without needing a special case.
-        if (rankedCandidates.size() < 2 || slotCount == 0) {
-            return;
-        }
-
-        auto now = std::chrono::steady_clock::now();
-
-        // Update expiry and check refractory period
-        UpdateWildcardExpiry(cache, now);
-
-        bool hasActiveWildcards = PageHasActiveWildcard(cache);
-        float refractoryElapsed = std::chrono::duration<float>(now - cache.wildcardEndTime).count();
-
-        // Roll for new wildcards if none active and refractory period has passed
-        if (!hasActiveWildcards && refractoryElapsed >= m_refractorySeconds) {
-            RollNewWildcards(cache, rankedCandidates, slotCount, wildcardSlots, page.hideUidlessGear, now);
-        }
-
-        // Apply wildcards to ranking
-        ApplyWildcardsToRanking(rankedCandidates, cache, slotCount, page.hideUidlessGear);
+        // A transition (at most one per cooldown + refractory per page): info.
+        // The key's own item, when it outranked the page's weakest row, moved
+        // to that row's key (core RehomeFor): name the key it went to.
+        const std::string moved = w.movedTo == Core::SlotAlloc::npos
+            ? std::string()
+            : std::format("; its item moved to key {}", w.movedTo + 1);
+        logger::info("[Wildcard] Page {} key {}: '{}' (p={:.3f}: roll {:.2f} x draw {:.3f} of {}; "
+            "rel={:.3f} sd={:.3f} w={:.3f}, top w={:.3f}{}{}), {:.0f}s"sv,
+            page.index, w.seat + 1, d.GetName(), w.Propensity(), w.pRoll, w.pDraw, w.pool,
+            w.rel, w.sd, w.weight, w.topWeight, relevant ? ", relevant" : "", moved, m_gate.settings.cooldownSec);
     }
 
     bool WildcardManager::UpdateExpiry()
     {
-        const auto now = std::chrono::steady_clock::now();
-
-        // Reports a lapse on ANY page. An earlier cut narrowed this to the page
-        // ApplyWildcards last ran for, on the reasoning that ageing out a page
-        // nobody is looking at changes nothing on screen. That is true right up
-        // until the remembered page is WRONG: ApplyWildcards only runs on
-        // non-skipped pipeline ticks, and SlotAllocator::Reset() drops the
-        // display back to page 0 by assigning m_currentPage directly, without
-        // raising m_pageChanged. So after a game load the remembered page stays
-        // stale for as long as the pipeline is hash-skipped — which is precisely
-        // the window this return value exists to break out of, and the expired
-        // wildcard would sit on screen until some unrelated state change woke
-        // the pipeline. (Initialize() was the cited path until 0.20.3, when it
-        // stopped resetting the page on every `hg reload`.)
-        //
-        // The asymmetry decides it: over-reporting costs one pipeline run that
-        // repaints the same content (~1 ms, at most once per page per cooldown,
-        // against the 10 Hz the pipeline already runs at); under-reporting is a
-        // visible stale recommendation. Not worth a remembered page to avoid.
-        bool anyLapsed = false;
-        for (auto& cache : m_pages) {
-            const bool wasActive = PageHasActiveWildcard(cache);
-            UpdateWildcardExpiry(cache, now);
-            anyLapsed = anyLapsed || (wasActive && !PageHasActiveWildcard(cache));
+        const bool lapsed = m_gate.UpdateExpiry(NowNs());
+#ifndef NDEBUG
+        if (lapsed) {
+            logger::debug("[Wildcard] Wildcard expired - refractory {:.1f}s"sv, m_gate.settings.refractorySec);
         }
-        return anyLapsed;
+#endif
+        return lapsed;
     }
 
     bool WildcardManager::HasActiveWildcard(size_t pageIndex) const
     {
-        if (pageIndex >= MAX_WILDCARD_PAGES) {
-            return false;
-        }
-        return PageHasActiveWildcard(m_pages[pageIndex]);
+        const auto* c = m_gate.Page(pageIndex);
+        return c && c->Active();
     }
 
-    RE::FormID WildcardManager::GetWildcardForSlot(size_t pageIndex, size_t slotIndex) const
+    RE::FormID WildcardManager::GetWildcard(size_t pageIndex) const
     {
-        if (pageIndex < MAX_WILDCARD_PAGES && slotIndex < MAX_WILDCARD_SLOTS) {
-            return m_pages[pageIndex].slots[slotIndex].formID;
-        }
-        return 0;
+        const auto* c = m_gate.Page(pageIndex);
+        return c ? c->formID : 0;
     }
 
-    size_t WildcardManager::GetActiveWildcardCount(size_t pageIndex) const
+    uint16_t WildcardManager::GetWildcardUniqueID(size_t pageIndex) const
     {
-        if (pageIndex >= MAX_WILDCARD_PAGES) {
-            return 0;
-        }
-
-        size_t count = 0;
-        for (const auto& slot : m_pages[pageIndex].slots) {
-            if (slot.formID != 0) {
-                ++count;
-            }
-        }
-        return count;
+        const auto* c = m_gate.Page(pageIndex);
+        return c ? c->uniqueID : 0;
     }
 
     float WildcardManager::GetWildcardPropensity(size_t pageIndex, RE::FormID formID) const
     {
-        if (pageIndex >= MAX_WILDCARD_PAGES || formID == 0) {
+        const auto* c = m_gate.Page(pageIndex);
+        if (!c || formID == 0 || c->formID != formID) {
             return std::numeric_limits<float>::quiet_NaN();
         }
-        for (const auto& slot : m_pages[pageIndex].slots) {
-            if (slot.formID == formID) {
-                return slot.propensity;
-            }
-        }
-        return std::numeric_limits<float>::quiet_NaN();
+        return static_cast<float>(c->propensity);
     }
 
     void WildcardManager::Reset()
     {
-        const auto now = std::chrono::steady_clock::now();
-        m_wasInCombat = false;
-        for (auto& cache : m_pages) {
-            ClearPageEntries(cache);
-            // Forget the recorded shape too: a reset is a fresh start, and the
-            // next ApplyWildcards should re-key rather than inherit whatever the
-            // pre-reset config happened to be.
-            cache.slotCount = SIZE_MAX;
-            cache.wildcardSlots = SIZE_MAX;
-            cache.lastWildcardTime = now;
-            cache.wildcardEndTime = now;
-        }
-    }
-
-    // =========================================================================
-    // INTERNAL HELPERS
-    // =========================================================================
-
-    bool WildcardManager::PageHasActiveWildcard(const PageWildcards& cache)
-    {
-        // Safe to scan the whole array: every entry in it was rolled within the
-        // bounds of the shape the cache currently records, and a shape change
-        // empties it (see ApplyWildcards).
-        for (const auto& slot : cache.slots) {
-            if (slot.formID != 0) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    void WildcardManager::ClearPageEntries(PageWildcards& cache)
-    {
-        for (auto& slot : cache.slots) {
-            slot.formID = 0;
-        }
-    }
-
-    float WildcardManager::GetProbabilityForSlot(size_t slotIndex, size_t slotCount) const
-    {
-        // Bounds check - return 0% for out-of-range slots
-        if (slotIndex >= slotCount || slotIndex >= MAX_WILDCARD_SLOTS) {
-            return 0.0f;
-        }
-
-        // Slot 0 excluded by default
-        if (m_firstSlotExcluded && slotIndex == 0) {
-            return 0.0f;
-        }
-
-        // Linear scaling: higher slots have higher probability
-        // Formula: baseProbability * slotIndex (capped at maxProbability)
-        // Examples with base=0.165, max=0.5:
-        //   Slot 0: 0% (excluded)
-        //   Slot 1: 16.5%
-        //   Slot 2: 33%
-        //   Slot 3: 49.5% (capped at 50%)
-        //   Slot 4+: 50% (capped)
-        float probability = m_baseProbability * static_cast<float>(slotIndex);
-        return std::min(probability, m_maxProbability);
-    }
-
-    void WildcardManager::UpdateWildcardExpiry(PageWildcards& cache, std::chrono::steady_clock::time_point now)
-    {
-        bool hasActiveWildcards = PageHasActiveWildcard(cache);
-        float elapsedSeconds = std::chrono::duration<float>(now - cache.lastWildcardTime).count();
-
-        // Check if cooldown has expired
-        if (hasActiveWildcards && elapsedSeconds >= m_cooldownSeconds) {
-            // Clear this page's wildcards and mark end time for its refractory
-            // period. Both are per-page, so ageing out a page the player is not
-            // looking at cannot impose a refractory on the one they are.
-            ClearPageEntries(cache);
-            cache.wildcardEndTime = now;
-
-#ifndef NDEBUG
-            logger::debug("[WildcardManager] Wildcards expired - entering refractory period ({:.1f}s)"sv,
-                m_refractorySeconds);
-#endif
-        }
-    }
-
-    void WildcardManager::RollNewWildcards(
-        PageWildcards& cache,
-        const ScoredCandidateList& rankedCandidates,
-        size_t slotCount,
-        size_t wildcardSlots,
-        bool hideUidlessGear,
-        std::chrono::steady_clock::time_point now)
-    {
-        auto& rng = GetRNG();
-        std::uniform_real_distribution<float> probDist(0.0f, 1.0f);
-
-        bool anyRolled = false;
-        size_t rolled = 0;
-        auto& usedFormIDs = m_usedFormIDsBuffer;
-        usedFormIDs.clear();
-
-        // Get source type from top candidate for coherent wildcards
-        auto topType = rankedCandidates[0].GetSourceType();
-
-        // Roll for each slot (starting from 1 if first slot excluded)
-        size_t startSlot = m_firstSlotExcluded ? 1 : 0;
-        for (size_t i = startSlot; i < slotCount && i < rankedCandidates.size(); ++i) {
-            // Never roll more wildcards than this page has slots willing to show
-            // one. Allocation decides WHICH slot takes a given wildcard (by
-            // classification and priority), so the surplus above this count has
-            // no seat to be assigned to and would sit in the cache suppressing
-            // re-rolls while displaying nothing.
-            if (rolled >= wildcardSlots) {
-                break;
-            }
-
-            float probability = GetProbabilityForSlot(i, slotCount);
-
-            if (probDist(rng) < probability) {
-                // Draw only from BELOW this slot (index > i). ApplyWildcardsToRanking
-                // surfaces a wildcard by swapping it UP into the slot and skips the
-                // swap when `foundIdx <= slotIdx`, so a draw from at or above i is a
-                // roll that caches an entry nothing will ever display — and, because
-                // the cache then reads as active, suppresses the re-roll for a whole
-                // cooldown. Harmless-looking before the capacity cap below, which
-                // could mask it by rolling several slots; on a page with one
-                // wildcard-capable slot that single wasted roll IS the stall this
-                // class exists to prevent.
-                RE::FormID wildcardID =
-                    SelectRandomCandidate(rankedCandidates, topType, usedFormIDs, i + 1, hideUidlessGear);
-
-                if (wildcardID != 0) {
-                    cache.slots[i].formID = wildcardID;
-                    cache.slots[i].sourceType = topType;
-                    // The pool holds one entry per candidate row: two stacks of
-                    // one weapon are two entries of one FormID, and drawing
-                    // either shows the same wildcard.
-                    const auto copies = std::count(m_eligibleBuffer.begin(), m_eligibleBuffer.end(), wildcardID);
-                    cache.slots[i].propensity = m_lastDrawPool > 0
-                        ? probability * static_cast<float>(copies) / static_cast<float>(m_lastDrawPool) : 0.0f;
-                    usedFormIDs.push_back(wildcardID);
-                    anyRolled = true;
-                    ++rolled;
-
-#ifndef NDEBUG
-                    // Find name for logging
-                    for (const auto& c : rankedCandidates) {
-                        if (c.GetFormID() == wildcardID) {
-                            logger::debug("[WildcardManager] Slot {} wildcard: {} (prob={:.1f}%, persists {:.1f}s)"sv,
-                                i, c.GetName(), probability * 100.0f, m_cooldownSeconds);
-                            break;
-                        }
-                    }
-#endif
-                }
-            }
-        }
-
-        // Reset cooldown timer if any wildcard was rolled
-        if (anyRolled) {
-            cache.lastWildcardTime = now;
-        }
-    }
-
-    void WildcardManager::ApplyWildcardsToRanking(
-        ScoredCandidateList& rankedCandidates,
-        PageWildcards& cache,
-        size_t slotCount,
-        bool hideUidlessGear)
-    {
-        // Track which positions have been swapped to avoid double-swapping.
-        // assign() reuses capacity — allocation-free after the first call.
-        auto& swappedPositions = m_swappedBuffer;
-        swappedPositions.assign(rankedCandidates.size(), false);
-
-        // Apply wildcards for each slot
-        for (size_t slotIdx = 0; slotIdx < slotCount && slotIdx < MAX_WILDCARD_SLOTS; ++slotIdx) {
-            auto& wildcardSlot = cache.slots[slotIdx];
-            if (wildcardSlot.formID == 0) {
-                continue;
-            }
-
-            // Find the candidate with this FormID -- a row the page's wheel
-            // can show. A wildcard whose rows all read uniqueID 0 on a page
-            // that hides them (rolled in the second after a load, before the
-            // registry knew) is dropped from the cache rather than skipped:
-            // skipped, it would block a re-roll for its whole cooldown while
-            // showing nothing (core::FateOfCachedWildcard).
-            bool anyRow = false;
-            auto it = std::find_if(rankedCandidates.begin(), rankedCandidates.end(),
-                [&wildcardSlot, hideUidlessGear, &anyRow](const ScoredCandidate& s) {
-                    if (s.GetFormID() != wildcardSlot.formID || s.GetSourceType() != wildcardSlot.sourceType) {
-                        return false;
-                    }
-                    anyRow = true;
-                    return !Core::KeptOffWheelPage(hideUidlessGear, Candidate::IsInstanceItem(s.candidate),
-                        s.GetUniqueID());
-                });
-
-            const auto fate = Core::FateOfCachedWildcard(anyRow, it != rankedCandidates.end());
-            if (fate == Core::CachedWildcardFate::Drop) {
-                logger::debug("[WildcardManager] Slot {} wildcard {:08X} dropped: the page's wheel cannot show it "
-                    "(no uniqueID)"sv, slotIdx, wildcardSlot.formID);
-                wildcardSlot.formID = 0;
-                continue;
-            }
-            if (fate == Core::CachedWildcardFate::Absent) {
-                continue;  // Wildcard candidate no longer available
-            }
-
-            size_t foundIdx = std::distance(rankedCandidates.begin(), it);
-
-            // Don't swap if already in a better or same position
-            if (foundIdx <= slotIdx) {
-                continue;
-            }
-
-            // Don't swap if target position already swapped
-            if (slotIdx < swappedPositions.size() && swappedPositions[slotIdx]) {
-                continue;
-            }
-
-            // Don't swap if source position already swapped
-            if (foundIdx < swappedPositions.size() && swappedPositions[foundIdx]) {
-                continue;
-            }
-
-            // Perform swap
-            if (slotIdx < rankedCandidates.size()) {
-                std::iter_swap(rankedCandidates.begin() + slotIdx, it);
-                rankedCandidates[slotIdx].isWildcard = true;
-                swappedPositions[slotIdx] = true;
-                swappedPositions[foundIdx] = true;
-
-#ifndef NDEBUG
-                logger::trace("[WildcardManager] Slot {} using persistent wildcard: {}"sv,
-                    slotIdx, rankedCandidates[slotIdx].GetName());
-#endif
-            }
-        }
-    }
-
-    RE::FormID WildcardManager::SelectRandomCandidate(
-        const ScoredCandidateList& candidates,
-        Candidate::SourceType sourceType,
-        const std::vector<RE::FormID>& excludeFormIDs,
-        size_t minIndex,
-        bool hideUidlessGear)
-    {
-        // Reuse buffer to avoid heap allocation in hot path
-        m_eligibleBuffer.clear();
-
-        // Start below the target slot. minIndex is always >= 1, so this also
-        // keeps the old "slot 0 (top pick) is never a wildcard source" rule.
-        for (size_t i = minIndex; i < candidates.size(); ++i) {
-            RE::FormID formID = candidates[i].GetFormID();
-
-            // Check source type matches
-            if (candidates[i].GetSourceType() != sourceType) {
-                continue;
-            }
-
-            // Check not already used as wildcard
-            if (std::find(excludeFormIDs.begin(), excludeFormIDs.end(), formID) != excludeFormIDs.end()) {
-                continue;
-            }
-
-            // Not a row this page's wheel cannot show (WildcardPage::hideUidlessGear)
-            if (Core::KeptOffWheelPage(hideUidlessGear, Candidate::IsInstanceItem(candidates[i].candidate),
-                    candidates[i].GetUniqueID())) {
-                continue;
-            }
-
-            m_eligibleBuffer.push_back(formID);
-        }
-
-        m_lastDrawPool = m_eligibleBuffer.size();
-        if (m_eligibleBuffer.empty()) {
-            return 0;
-        }
-
-        auto& rng = GetRNG();
-        std::uniform_int_distribution<size_t> indexDist(0, m_eligibleBuffer.size() - 1);
-        return m_eligibleBuffer[indexDist(rng)];
+        m_gate.Reset(NowNs());
     }
 
     std::mt19937& WildcardManager::GetRNG()

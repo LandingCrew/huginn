@@ -87,7 +87,6 @@ namespace Huginn::Scoring
         // budgets every read of it outside the files that log it.
         float utility = 0.0f;
         ScoreBreakdown breakdown;               // the old utility's parts (legacy rows only)
-        bool isWildcard = false;                // True if this is a wildcard exploration pick
         bool isColdStartBoosted = false;        // True if scored via cold-start UCB boost
         // R8.3: the old floors kept this row (pass or cold start), so the D2
         // legacy feature (ln learn mult) applies to it. False with

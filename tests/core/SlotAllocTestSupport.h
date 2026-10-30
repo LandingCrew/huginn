@@ -182,6 +182,7 @@ namespace Huginn::Test
             if (!out.skipped.empty()) ++counts["class cap passed an item over"];
             if (!SA::KeptOff(in, out).empty()) ++counts["class cap kept an item off"];
             if (out.clearedAllPages) ++counts["stale generation cleared"];
+            if (out.wildcard.movedTo != SA::npos) ++counts["wildcard: the seat's row moved to the weakest key"];
             for (const auto& s : out.slots) {
                 if (s.seatMoved) ++counts["seatMoved"];
                 if (s.kind == SA::Kind::Wildcard) ++counts["wildcard shown"];
@@ -281,7 +282,8 @@ namespace Huginn::Test
             c.utility = RandomUtility();
             c.score = Core::BridgeScore(c.utility);
             c.tieBreak = Chance(20) ? static_cast<float>(Int(1, 4)) : 0.0f;
-            c.isWildcard = Chance(5);
+            // R10: the score's sd, for the wildcard draw (0 = the fallback's none).
+            c.sd = Chance(70) ? std::uniform_real_distribution<double>(0.0, 1.2)(m_rng) : 0.0;
             c.isEquipped = Chance(8);
             c.playerEquipped = Chance(8);
             c.matchMask = MaskFor(c.formID);
@@ -326,7 +328,6 @@ namespace Huginn::Test
                 auto r = RandomCandidate();
                 r.utility = 0.0f;
                 r.isRememberedOnly = true;
-                r.isWildcard = false;
                 r.score = Core::kUnrankedScore;
                 in.candidates.push_back(std::move(r));
             }
@@ -351,6 +352,25 @@ namespace Huginn::Test
             for (std::size_t j = 0; j < SA::kMaxSlots; ++j) {
                 if (Chance(15)) {
                     in.holds[j] = { true, 0x0A000000u + static_cast<std::uint32_t>(Int(1, m_spec.formPool)) };
+                }
+            }
+            // R10: the wildcard key -- a cached wildcard pinned on its seat,
+            // or a roll on the finished page.
+            if (!in.candidates.empty() && Chance(15)) {
+                in.wildcard.pinned = static_cast<std::uint32_t>(Int(0, static_cast<int>(in.candidates.size()) - 1));
+                // A locked key now and then, with no draw of the generator's
+                // own, so every later input stays as it was.
+                if (in.wildcard.pinned % 3 == 0) in.wildcard.heldKeys = 1u << (in.wildcard.pinned % SA::kMaxSlots);
+            } else if (Chance(25)) {
+                in.wildcard.roll = true;
+                in.wildcard.uRoll = std::uniform_real_distribution<double>(0.0, 1.0)(m_rng);
+                in.wildcard.uDraw = std::uniform_real_distribution<double>(0.0, 1.0)(m_rng);
+                if (Chance(30)) in.wildcard.params = { 1.0, 1.0, Chance(50) ? 0.0 : 0.1 };
+                // A form a slot lock holds (kept out of the draw), with no draw
+                // of the generator's own, so every later input stays as it was.
+                if (in.wildcard.uDraw < 0.3 && in.candidates.size() > 2) {
+                    in.wildcard.heldForms = { in.candidates[1].formID };
+                    in.wildcard.heldKeys = 1u << 6;
                 }
             }
             return in;

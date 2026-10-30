@@ -5,7 +5,9 @@
 #include "SlotSettings.h"
 #include "core/ChoiceBeliefs.h"
 #include "override/OverrideConfig.h"
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <fstream>
 #include <mutex>
 
@@ -122,7 +124,9 @@ namespace Huginn::Slot
             c.utility = sc.utility;
             c.score = sc.SlotScore();
             c.tieBreak = sc.TieBreakDps();
-            c.isWildcard = sc.isWildcard;
+            // R10: the score's sd for the wildcard draw (core/WildcardPick.h);
+            // none in the fallback ranking (no posterior: the draw is uniform).
+            c.sd = sc.fallbackRanked ? 0.0 : std::sqrt(std::max(sc.choice.var, 0.0));
             c.isRememberedOnly = sc.isRememberedOnly;
             c.isEquipped = base.isEquipped;
             c.playerEquipped = player && player->IsItemEquipped(base.formID);

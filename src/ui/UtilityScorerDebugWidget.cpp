@@ -36,7 +36,6 @@ namespace Huginn::UI
         constexpr ImVec4 LEGACY_COLOR{0.8f, 0.6f, 0.4f, 1.0f};     // Brown: the D2 legacy feature
 
         // Status colors
-        constexpr ImVec4 WILDCARD_COLOR{1.0f, 0.8f, 0.2f, 1.0f};   // Gold
         constexpr ImVec4 FAVORITE_COLOR{1.0f, 0.4f, 0.4f, 1.0f};   // Red heart
         constexpr ImVec4 UTILITY_BAR{0.3f, 0.7f, 0.9f, 1.0f};      // Cyan
 
@@ -257,11 +256,8 @@ namespace Huginn::UI
             ImGui::SameLine();
         }
 
-        // Wildcard badge
-        if (candidate.isWildcard) {
-            ImGui::TextColored(ScorerColors::WILDCARD_COLOR, "[W]");
-            ImGui::SameLine();
-        }
+        // R10: no wildcard badge on a ranked row -- the wildcard is a key's
+        // placement (the assignments below mark it), not a row's flag.
 
         // Favorite badge
         if (candidate.IsFavorited()) {

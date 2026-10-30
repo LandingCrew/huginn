@@ -16,8 +16,9 @@ namespace Huginn::Scoring
     // nothing here computes it: the legacy pass moved to the legacy module
     // (src/learning/legacy/), and tools/prune/r8_check.py keeps the old engine
     // out of this file. What is left:
-    //   - the rank sort and the wildcards (RankAndApplyWildcards, on
-    //     SlotScore(): the choice score mu; R10 replaces the wildcards);
+    //   - the rank sort (Rank, on SlotScore(): the choice score mu) and the
+    //     wildcard manager (R10: the per-page cache and clocks; the
+    //     allocation places and draws the wildcard on its key);
     //   - the magicka / stamina envelopes the needs (and the legacy pass) read;
     //   - the [Recs] lines;
     //   - the [Scoring] config snapshot (ScorerSettings), of which the live
@@ -32,12 +33,10 @@ namespace Huginn::Scoring
         ~UtilityScorer() = default;
 
         // R8.3: the whole list in rank order on SlotScore()'s score (stable;
-        // R7 -- the slot fill reads past the top N), then the wildcards.
-        // @param displayPage The page THIS tick allocates, from the pipeline
-        //        snapshot (PipelineContext::displayPageIndex / displaySlotCount
-        //        / displayWildcardSlots): wildcard eligibility is page-relative,
-        //        so it comes from the tick's snapshot (critique #10).
-        void RankAndApplyWildcards(ScoredCandidateList& scored, const WildcardPage& displayPage);
+        // R7 -- the slot fill reads past the top N). R10: nothing is swapped
+        // into the ranking any more; the wildcard has a key of its own
+        // (WildcardManager::Plan, then the allocation).
+        void Rank(ScoredCandidateList& scored);
 
         // Configuration access
         [[nodiscard]] const ScorerConfig& GetConfig() const noexcept { return m_config; }

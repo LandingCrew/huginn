@@ -251,9 +251,9 @@ The three `SmoothingExponent` settings shape how sharply the health, magicka and
 
 ##### Learning and trying new things — `[Wildcards]` and `[Learning]`
 
-Huginn can only learn that you like something if it offers it to you occasionally. That is what wildcards are: now and then a lower-ranked option takes a slot, so it gets a chance to be picked.
+Huginn can only learn that you like something if it offers it to you occasionally. That is what wildcards are: now and then something Huginn is unsure about — a newly learned spell, an item you have not used in a long while — shows up on one key for a short time, so it gets a chance to be picked.
 
-Wildcards never touch your top slot — that always holds the genuine best pick — and they get rarer the more you care about a slot. `fBaseProbability` and `fMaxProbability` control how often they appear; the two cooldown settings stop the same slot churning. You can also turn them off per slot with `bWildcardsEnabled = false`.
+Each page has one wildcard key: key 8 on the shipped pages (the last key in fill order with `bWildcardsEnabled = true`), so the other keys stay as they are. A wildcard never pushes a better pick off the page: if key 8's own item outranks the weakest item showing, it moves to that item's key while the wildcard is up and the weakest drops off instead, then goes back to key 8. Once per `fRefractorySeconds` Huginn rolls for one; the chance runs from `fBaseProbability` (nothing it is unsure of near the top of the list) up to `fMaxProbability` (something it knows nothing about, just off the page). A wildcard stays `fCooldownSeconds`, never in combat. To move the wildcard key, turn `bWildcardsEnabled` off on the keys after the one you want; off on every key, the page has none.
 
 `[Learning]` covers the other half: Huginn also watches what you equip *outside* of it, through the vanilla inventory, the favourites menu, or a vanilla hotkey. Reaching past Huginn for something is a strong signal, and the reward settings say how strong. `bLearnFromExternalEquips = false` turns this off if you would rather it only learn from your use of its own keys.
 

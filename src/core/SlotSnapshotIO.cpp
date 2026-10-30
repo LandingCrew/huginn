@@ -1,5 +1,6 @@
 #include "core/SlotSnapshotIO.h"
 
+#include <algorithm>
 #include <bit>
 #include <charconv>
 #include <cstdint>
@@ -280,7 +281,9 @@ namespace Huginn::Core::SlotAlloc
                 Bit(sl.skipEquipped), Bit(sl.remembrance), static_cast<int>(sl.priority), sl.overrideAccept);
         }
         for (const auto& c : in.candidates) {
-            const unsigned flags = (c.isWildcard ? 1u : 0u) | (c.isRememberedOnly ? 2u : 0u) |
+            // Flag 1 (a rank-swapped wildcard) is never written since R10: a
+            // wildcard is the WILD line's placement, not a row's flag.
+            const unsigned flags = (c.isRememberedOnly ? 2u : 0u) |
                                    (c.isEquipped ? 4u : 0u) | (c.playerEquipped ? 8u : 0u);
             if (dict) {
                 const std::string item = std::format("{:x} {} {:x} {} {:x} {} {}", c.formID, c.uniqueID, c.dedupKey,
@@ -296,6 +299,25 @@ namespace Huginn::Core::SlotAlloc
                     Num(c.utility), ScoreToken(c), Num(c.tieBreak), flags, c.matchMask, c.capClass, EscapeName(c.name));
             }
         }
+        // R10: each row's sd (the wildcard draw's weights), when any is set.
+        if (std::any_of(in.candidates.begin(), in.candidates.end(), [](const CandidateRec& c) { return c.sd != 0.0; })) {
+            out += "SD";
+            for (const auto& c : in.candidates) out += std::format(" {}", Num(c.sd));
+            out += '\n';
+        }
+        // R10: the wildcard key's input, when it asks for anything.
+        if (in.wildcard.pinned != kNone || in.wildcard.roll) {
+            const auto& w = in.wildcard;
+            out += std::format("WILD {} {} {} {} {} {} {}\n",
+                w.pinned == kNone ? std::string("-") : std::format("{}", w.pinned), Bit(w.roll), Num(w.uRoll),
+                Num(w.uDraw), Num(w.params.baseRoll), Num(w.params.maxRoll), Num(w.params.uniformShare));
+        }
+        if (!in.wildcard.heldForms.empty()) {
+            out += "WHELD";
+            for (const auto f : in.wildcard.heldForms) out += std::format(" {:x}", f);
+            out += '\n';
+        }
+        if (in.wildcard.heldKeys != 0) out += std::format("WKEYS {:x}\n", in.wildcard.heldKeys);
         for (const auto& o : in.overrides) {
             out += std::format("OVR {:x} {} {:x} {} {} {} {} {} {:x} {} {}\n", o.formID, o.uniqueID, o.dedupKey,
                 o.condition, o.category, Bit(o.pinnedToSlot), Bit(o.isEquipped), Bit(o.playerEquipped), o.matchMask,
@@ -430,7 +452,10 @@ namespace Huginn::Core::SlotAlloc
                     c.capClass = tk.Int<std::uint8_t>();
                     c.name = tk.Name();
                 }
-                c.isWildcard = (flags & 1u) != 0;
+                // Flag 1: a pre-R10 rank-swapped wildcard (the recorded page
+                // put it by rank position). Not an input any more; the
+                // snapshot is marked so the golden replays can leave it out.
+                cur.rankWildcard = cur.rankWildcard || (flags & 1u) != 0;
                 c.isRememberedOnly = (flags & 2u) != 0;
                 c.isEquipped = (flags & 4u) != 0;
                 c.playerEquipped = (flags & 8u) != 0;
@@ -441,6 +466,25 @@ namespace Huginn::Core::SlotAlloc
                     if (r.ec != std::errc{} || r.ptr != scoreTok.data() + scoreTok.size()) return fail("bad score");
                 }
                 in.candidates.push_back(std::move(c));
+            } else if (tag == "SD") {
+                for (auto& c : in.candidates) c.sd = tk.Real<double>();
+            } else if (tag == "WILD") {
+                auto& w = in.wildcard;
+                const auto pin = tk.Next();
+                if (pin == "-") {
+                    w.pinned = kNone;
+                } else {
+                    const auto r = std::from_chars(pin.data(), pin.data() + pin.size(), w.pinned);
+                    if (r.ec != std::errc{} || r.ptr != pin.data() + pin.size() || w.pinned >= in.candidates.size()) {
+                        return fail("bad WILD pin");
+                    }
+                }
+                w.roll = tk.Flag();
+                w.uRoll = tk.Real<double>();
+                w.uDraw = tk.Real<double>();
+                w.params.baseRoll = tk.Real<double>();
+                w.params.maxRoll = tk.Real<double>();
+                w.params.uniformShare = tk.Real<double>();
             } else if (tag == "OVR") {
                 OverrideRec o;
                 o.formID = tk.Int<std::uint32_t>(16);
@@ -483,6 +527,10 @@ namespace Huginn::Core::SlotAlloc
                 if (!ReadMemoryLine(tk, cur.memoryAfter)) return fail("bad OMEM");
             } else if (tag == "ODEP") {
                 if (!ReadDepLine(tk, cur.memoryAfter)) return fail("bad ODEP");
+            } else if (tag == "WHELD") {
+                while (!tk.Done() && tk.ok) in.wildcard.heldForms.push_back(tk.Int<std::uint32_t>(16));
+            } else if (tag == "WKEYS") {
+                in.wildcard.heldKeys = tk.Int<std::uint32_t>(16);
             } else if (tag == "KEPT") {
                 while (!tk.Done() && tk.ok) cur.keptOff.push_back(tk.Int<std::uint32_t>(16));
             } else if (tag == "EVENTS") {

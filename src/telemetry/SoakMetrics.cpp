@@ -233,6 +233,9 @@ namespace Huginn::Telemetry
         const uint32_t pageBails    = m_pageRaceBails.exchange(0, std::memory_order_relaxed);
         const uint32_t wheelerPushes = m_wheelerPushes.exchange(0, std::memory_order_relaxed);
         const uint32_t wildcardTicks = m_wildcardTicks.exchange(0, std::memory_order_relaxed);
+        const uint32_t wildcardRolls = m_wildcardRolls.exchange(0, std::memory_order_relaxed);
+        const uint32_t wildcardRelevant = m_wildcardRollsRelevant.exchange(0, std::memory_order_relaxed);
+        const uint32_t wildcardPicks = m_wildcardPicks.exchange(0, std::memory_order_relaxed);
         const uint64_t sumMicros    = m_tickSumMicros.exchange(0, std::memory_order_relaxed);
         const uint32_t peakMicros   = m_tickPeakMicros.exchange(0, std::memory_order_relaxed);
         const uint32_t pressRegular = m_pressRegular.exchange(0, std::memory_order_relaxed);
@@ -363,10 +366,12 @@ namespace Huginn::Telemetry
         // 4.6 in a melee fight, 0.44 on a quiet walk; wildcard on screen 20%
         // to 32% exploring; Wheeler 4.6 pushes/s in fights).
         const float win = windowSec > 0.0f ? windowSec : 1.0f;
-        const std::string rateStr = std::format("runs/s={:.2f} wildcard={:.0f}% wheeler/s={:.2f}",
+        // R10: appended, so every field before it keeps its place.
+        const std::string rateStr = std::format("runs/s={:.2f} wildcard={:.0f}% wheeler/s={:.2f} "
+            "wildcards rolled={} relevant={} picked={}",
             static_cast<float>(recomputes) / win,
             ticks ? 100.0f * static_cast<float>(wildcardTicks) / static_cast<float>(ticks) : 0.0f,
-            static_cast<float>(wheelerPushes) / win);
+            static_cast<float>(wheelerPushes) / win, wildcardRolls, wildcardRelevant, wildcardPicks);
 
         const int64_t upTicks = now.time_since_epoch().count() -
                                 m_processStart.load(std::memory_order_relaxed);

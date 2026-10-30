@@ -28,6 +28,10 @@
 //   SLOT <class> <regular> <wildcards> <skipEquipped> <remembrance> <priority> <overrideAccept>
 //   C    <item id> <utility> <score> <flags>
 //   CAND <formID> <uniqueID> <key> <utility> <score> <tieBreak> <flags> <matchMask> <capClass> =<name>
+//   SD   <sd>...                               (R10: every row's sd, in order; when any is not 0)
+//   WILD <pinned row|-> <roll> <uRoll> <uDraw> <base> <max> <share>   (R10: Input::wildcard, when set)
+//   WHELD <formID>...                          (R10: forms a slot lock holds, kept out of the draw; when any)
+//   WKEYS <mask>                               (R10: keys a slot lock holds, bit j = key j, hex; when any)
 //   OVR  <formID> <uniqueID> <key> <condition> <category> <pinned> <equipped> <playerEquipped> <matchMask> <capClass> =<name>
 //   HOLD <slot> <formID>                       (active Remembrance holds)
 //   MEM <seats x10> | <lastPlaced x10> | <claims x10>
@@ -43,8 +47,9 @@
 // formIDs and keys are hex; floats and doubles in the shortest form that reads
 // back to the same bits (std::format "{}"), inf as "inf"; names percent-
 // escaped (space, %, =, control and non-ASCII bytes), behind '=' so an empty
-// name is still a token. C/CAND flags: 1 wildcard, 2 remembered-only, 4
-// equipped, 8 equipped per the player state. A score of "~" is the bridge of
+// name is still a token. C/CAND flags: 2 remembered-only, 4 equipped, 8
+// equipped per the player state; 1 was a rank-swapped wildcard before R10 (read
+// only, as Snapshot::rankWildcard: such a page cannot replay). A score of "~" is the bridge of
 // the utility to the last bit (BridgeScore, or -inf for a remembered-only
 // row); the writer uses it only when that holds.
 // =============================================================================
@@ -86,6 +91,10 @@ namespace Huginn::Core::SlotAlloc
     {
         std::string tag;                 // where it came from (tick, page, campaign, synthetic)
         Input in;
+        /// A row carried flag 1: the old rank-swapped wildcard. R10 places the
+        /// wildcard on a seat instead and the core no longer knows the swap,
+        /// so the recorded page is not reproducible from the input.
+        bool rankWildcard = false;
 
         bool hasResult = false;          // a recorded result follows
         std::vector<PageSlot> page;
