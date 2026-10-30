@@ -741,6 +741,22 @@ namespace Huginn::Slot
                 // (ln m), which a negative score cannot turn upside down.
                 const double holder = e.x + e.z;
                 const double challenger = e.y + e.w;
+                if (e.sd >= 0.0) {
+                    // R9: the challenger rule decided (the scorer's beliefs
+                    // were known for both rows): the gap against its line,
+                    // ln m + z sigma_Delta, and P(better) = Phi(gap / sd).
+                    const auto& set = SlotSettings::GetSingleton();
+                    const double z = Core::Challenger::ZForConfidence(set.ChallengerConfidence());
+                    const double minGap = Core::Challenger::ClampMinGap(set.ChallengerMinGap());
+                    const double gap = challenger - holder;
+                    const double p = e.sd > 0.0 ? Core::Challenger::NormalCdf((gap - minGap) / e.sd) : 1.0;
+                    SKSE::log::debug("[Hold] Page {} slot {}: '{}' gives way to '{}' (s={:+.3f} vs {:+.3f}{}: "
+                        "{:+.3f} > ln m {:.3f} + z {:.2f} x sd {:.3f}, P {:.2f})",
+                        pageIndex, e.a, candidates[e.b].GetName(), candidates[e.c].GetName(), e.y, e.x,
+                        e.capped ? std::format("; class cap {:+.3f} vs {:+.3f}", e.w, e.z) : std::string{},
+                        gap, minGap, z, e.sd, p);
+                    break;
+                }
                 const double logMargin = Core::LogHoldMargin(SlotSettings::GetSingleton().ChallengerMargin());
                 if (e.capped) {
                     SKSE::log::debug("[Hold] Page {} slot {}: '{}' gives way to '{}' (s={:+.3f} vs {:+.3f}; "

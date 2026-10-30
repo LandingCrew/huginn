@@ -23,6 +23,7 @@
 #include "learning/PipelineStateCache.h"
 #include "learning/ChoiceLearner.h"
 #include "learning/ChoiceShadow.h"
+#include "core/ChoiceBeliefs.h"   // the run's beliefs for the challenger rule (R9)
 #include "core/ChoiceLive.h"
 #include "core/Coverage.h"
 #include "effect/CrossFeatures.h"
@@ -671,11 +672,26 @@ Scoring::ScoredCandidateList PipelineCoordinator::RankOnChoice(PipelineContext& 
     std::vector<C::LiveScore> scores;
     C::ScoreForRanking(model, tick, attrs, extras, gateRows, atLimit ? outIdx : SIZE_MAX, leftOut, rows, scores);
 
+    // R9: the run's beliefs, for the slot hold's challenger rule -- each
+    // row's attributes, covered after the upgrade gate and b's variance,
+    // beside the tick's column variances (core/ChoiceBeliefs.h). One table,
+    // shared by every row, so sigma_Delta between any two rows of the run
+    // reads the same tick the scores did. b is keyed by form (snap->B above),
+    // so the form is each row's b key: two stacks of one form share one b.
+    auto beliefs = std::make_shared<C::BeliefTable>(tick, model.covered.var);
+    beliefs->Reserve(rows);
+    for (size_t i = 0; i < rows; ++i) {
+        beliefs->Add(attrs[i], extras[i].covered, extras[i].bVar, out[i].GetFormID());
+    }
+    std::shared_ptr<const C::BeliefTable> sharedBeliefs = std::move(beliefs);
+
     for (size_t i = 0; i < rows; ++i) {
         auto& sc = out[i];
         const auto& ls = scores[i];
         sc.score = ls.s.mu;
         auto& p = sc.choice;
+        p.beliefs = sharedBeliefs;
+        p.beliefRow = static_cast<uint32_t>(i);
         p.var = ls.s.var;
         p.needMu = ls.needMu;
         p.b = extras[i].bMu;
@@ -980,6 +996,8 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
     lockRun.wheelOpen = Wheeler::WheelerClient::GetSingleton().IsWheelOpen();
     lockRun.pressGraceMs = Slot::SlotSettings::GetSingleton().PressGraceMs();
     lockRun.challengerMargin = Slot::SlotSettings::GetSingleton().ChallengerMargin();
+    lockRun.challengerZ = Core::Challenger::ZForConfidence(Slot::SlotSettings::GetSingleton().ChallengerConfidence());
+    lockRun.challengerMinGap = Core::Challenger::ClampMinGap(Slot::SlotSettings::GetSingleton().ChallengerMinGap());
     // A combat-locked key's item, checked against the game every run: a spell
     // or shout the player no longer knows, or an item now equipped / worn.
     // The worn stack's uniqueID in one hand (the list carrying ExtraWorn, else

@@ -13,6 +13,7 @@
 #include <string_view>
 #include <vector>
 
+#include "core/ChallengerRule.h"
 #include "core/SlotClassCapMath.h"
 #include "core/SlotScoreMath.h"
 #include "core/WildcardPick.h"
@@ -54,6 +55,10 @@
 //   bool  RawGreater(Score a, Score b); strict order on raw scores (sorts, best stack)
 //   bool  Exceeds(Score c, Score h);    the slot hold: c beats h by the margin
 //   double ToDouble(Score), ToDouble(Cap);   for the events (logs)
+// and optionally (R9, LogScorePolicy):
+//   bool  ExceedsBelief(Score c, Score h, double sigmaDelta);   the Bayesian
+//         challenger rule (core/ChallengerRule.h), used by the hold when the
+//         Input carries the scorer's beliefs for both rows
 // =============================================================================
 
 namespace Huginn::Core::SlotAlloc
@@ -100,6 +105,10 @@ namespace Huginn::Core::SlotAlloc
         bool playerEquipped = false;      // player->IsItemEquipped(formID)
         std::uint32_t matchMask = 0;      // bit k: SlotClassifier::Matches(c, k), for the layout's classes
         std::uint8_t capClass = 0;        // SlotClassCap::ClassOf(c)
+        /// R9: this row's index in Input::beliefs (the ranking run's belief
+        /// table); kNone = no belief (the fallback ranking, a remembered-only
+        /// row, a test that states utilities). Not in the snapshot format.
+        std::uint32_t beliefRow = kNone;
     };
 
     struct OverrideRec
@@ -135,6 +144,12 @@ namespace Huginn::Core::SlotAlloc
         float homeKeyMemorySec = 60.0f;
         bool returnToHomeKey = true;
         bool remembranceToJob = false;
+        /// R9, the challenger rule with beliefs (core/ChallengerRule.h):
+        /// tau (fChallengerConfidence) and ln m (fChallengerMinGap). Not in
+        /// the snapshot format: the recorded snapshots carry no beliefs, so
+        /// their hold is the fixed margin above, which these do not touch.
+        float challengerConfidence = static_cast<float>(Challenger::kDefaultConfidence);
+        float challengerMinGap = 0.0f;
     };
 
     struct Departure
@@ -179,6 +194,13 @@ namespace Huginn::Core::SlotAlloc
             double uDraw = 0.0;
             Core::Wildcard::Params params;
         } wildcard;
+
+        /// R9: the ranking run's beliefs, which CandidateRec::beliefRow
+        /// indexes. Null (the fallback ranking, the golden snapshots): the
+        /// hold is the fixed margin, ln(1 + challengerMargin). Not owned; the
+        /// caller keeps it alive for the allocation (SlotSnapshot.cpp: the
+        /// scored list holds it).
+        const Challenger::BeliefSource* beliefs = nullptr;
     };
 
     struct SlotState
@@ -235,7 +257,7 @@ namespace Huginn::Core::SlotAlloc
         HoldNotCandidate,         // a: slot pressed, b: formID -- a Remembrance hold whose item is not a candidate
         HoldShown,                // a: slot pressed, b: slot shown on, c: 1 = its class does not fit there
         NoCandidate,              // a: slot
-        HoldGaveWay,              // a: slot, b: holder, c: challenger; x/y: their raw scores, z/w: their caps; capped
+        HoldGaveWay,              // a: slot, b: holder, c: challenger; x/y: their raw scores, z/w: their caps; capped; sd (R9)
         PulledToJobKey,           // a: job slot, b: from Regular slot, c: candidate
         Returner,                 // a: candidate now showing it, b: home slot, c: slot now, f: away s, why, key, d/e: displaced cand/slot
     };
@@ -249,6 +271,7 @@ namespace Huginn::Core::SlotAlloc
         std::uint32_t a = 0, b = 0, c = 0, d = kNone, e = kNone;
         double x = 0.0, y = 0.0, z = 0.0, w = 0.0;
         float f = 0.0f;
+        double sd = -1.0;                 // HoldGaveWay: sigma_Delta under the challenger rule; < 0 = the fixed margin decided
         bool capped = false;
         Away why = Away::None;
         std::uint64_t key = 0;
@@ -278,10 +301,14 @@ namespace Huginn::Core::SlotAlloc
         float discount = 1.0f;
         std::uint32_t freePerClass = 0;
         double logMargin = 0.0;
+        double minGap = 0.0;   // R9: ln m of the challenger rule
+        double z = 0.0;        // R9: Phi^-1(tau)
 
         [[nodiscard]] static LogScorePolicy From(const Settings& s) noexcept
         {
-            return { ClampClassCapDiscount(s.classDiscount), s.classFree, LogHoldMargin(s.challengerMargin) };
+            return { ClampClassCapDiscount(s.classDiscount), s.classFree, LogHoldMargin(s.challengerMargin),
+                Challenger::ClampMinGap(static_cast<double>(s.challengerMinGap)),
+                Challenger::ZForConfidence(static_cast<double>(s.challengerConfidence)) };
         }
         [[nodiscard]] bool CapActive() const noexcept { return ClassCapActive(discount); }
         [[nodiscard]] Score Raw(const CandidateRec& c) const noexcept { return c.score; }
@@ -292,6 +319,10 @@ namespace Huginn::Core::SlotAlloc
         [[nodiscard]] bool Greater(Score a, Score b) const noexcept { return ScoreGreater(a, b); }
         [[nodiscard]] bool RawGreater(Score a, Score b) const noexcept { return a > b; }
         [[nodiscard]] bool Exceeds(Score c, Score h) const noexcept { return ScoreExceedsByMargin(c, h, logMargin); }
+        [[nodiscard]] bool ExceedsBelief(Score c, Score h, double sigmaDelta) const noexcept
+        {
+            return Challenger::Exceeds(c, h, sigmaDelta, minGap, z);
+        }
         [[nodiscard]] static double ToDouble(double v) noexcept { return v; }
     };
 
@@ -466,14 +497,15 @@ namespace Huginn::Core::SlotAlloc
             }
 
             /// SlotClassCap::DropSkipsSince: keep a note only if the skipped
-            /// item, uncapped, would have taken the slot from the holder.
-            void DropSkipsSince(std::size_t mark, Score holderScore)
+            /// item, uncapped, would have taken the slot from the holder
+            /// (under the hold's own test, TakesKey).
+            void DropSkipsSince(std::size_t mark, std::uint32_t holder, Score holderScore)
             {
                 if (mark >= m_cap.skipped.size()) return;
                 std::size_t w = mark;
                 for (std::size_t r = mark; r < m_cap.skipped.size(); ++r) {
                     const std::uint32_t i = m_cap.skipped[r];
-                    if (m_p.Exceeds(m_p.Raw(m_in.candidates[i]), holderScore)) {
+                    if (TakesKey(i, m_p.Raw(m_in.candidates[i]), holder, holderScore, nullptr)) {
                         m_cap.skipped[w] = m_cap.skipped[r];
                         m_cap.skippedIDs[w] = m_cap.skippedIDs[r];
                         ++w;
@@ -481,6 +513,33 @@ namespace Huginn::Core::SlotAlloc
                 }
                 m_cap.skipped.resize(w);
                 m_cap.skippedIDs.resize(w);
+            }
+
+            /// The slot hold's test: does challenger c (at score cs, its cap
+            /// applied) take the key of holder h (at hs)? R9: when the Input
+            /// carries the scorer's beliefs for both rows, the Bayesian
+            /// challenger rule, mu_c - mu_i > ln m + z sigma_Delta
+            /// (core/ChallengerRule.h), and *sd receives sigma_Delta; else
+            /// (the fallback ranking, the golden snapshots, a policy without
+            /// the rule) the fixed margin, c - h > ln(1 + fChallengerMargin).
+            /// The class cap's terms are deterministic: they shift the two
+            /// scores and add nothing to sigma_Delta.
+            [[nodiscard]] bool TakesKey(std::uint32_t c, Score cs, std::uint32_t h, Score hs, double* sd) const
+            {
+                if constexpr (requires(const Policy& p, Score a, double v) { p.ExceedsBelief(a, a, v); }) {
+                    if (m_in.beliefs) {
+                        const std::uint32_t rc = m_in.candidates[c].beliefRow;
+                        const std::uint32_t rh = m_in.candidates[h].beliefRow;
+                        if (rc != kNone && rh != kNone) {
+                            const double s = Challenger::SigmaDelta(m_in.beliefs->DeltaVar(rc, rh));
+                            if (s == s) {
+                                if (sd) *sd = s;
+                                return m_p.ExceedsBelief(cs, hs, s);
+                            }
+                        }
+                    }
+                }
+                return m_p.Exceeds(cs, hs);
             }
 
             std::size_t ComputePriorityOrder() { return PriorityOrder(m_in.slots, m_order); }
@@ -828,8 +887,14 @@ namespace Huginn::Core::SlotAlloc
 
         // PASS 1c: the slot hold. Before the rank-ordered fill, keep each
         // seated item in its own seat unless the slot no longer accepts it or
-        // the best challenger FOR THAT SLOT beats it by the margin: score
-        // difference > ln m (m = 1 + fChallengerMargin; the old u_c > m u_i).
+        // the best challenger FOR THAT SLOT beats it (TakesKey): from R9 by
+        // the Bayesian challenger rule, mu_c - mu_i > ln m + z sigma_Delta,
+        // when the scorer's beliefs are known; else by the fixed margin,
+        // score difference > ln(1 + fChallengerMargin) (the old u_c > m u_i).
+        // Only the best challenger is asked, as before R9: a lower one with
+        // a narrower sigma_Delta that would clear the line waits until the
+        // best one stops standing in its way (the conservative reading; the
+        // no-swap-back argument holds either way).
         //
         // Two problems, one pass. Near-tied items were trading slots every
         // time a lock expired -- most slot changes in play were under 10%
@@ -1005,13 +1070,15 @@ namespace Huginn::Core::SlotAlloc
                 if (challenger) {
                     const auto& ch = cands[*challenger];
                     const Score challengerScore = m_p.Apply(m_p.Raw(ch), challengerCap);
-                    if (m_p.Exceeds(challengerScore, itemScore)) {
+                    double sd = -1.0;
+                    if (TakesKey(*challenger, challengerScore, item, itemScore, &sd)) {
                         m_cap.Add(ch.capClass);
                         Event e{ EventKind::HoldGaveWay, static_cast<std::uint32_t>(j), item, *challenger };
                         e.x = Policy::ToDouble(m_p.Raw(it));
                         e.y = Policy::ToDouble(m_p.Raw(ch));
                         e.z = Policy::ToDouble(itemCap);
                         e.w = Policy::ToDouble(challengerCap);
+                        e.sd = sd;
                         e.capped = m_p.IsCapped(itemCap) || m_p.IsCapped(challengerCap);
                         Note(e);
 
@@ -1049,7 +1116,7 @@ namespace Huginn::Core::SlotAlloc
                 // The search was hypothetical: an item it passed for the cap
                 // was kept off by the cap only if, uncapped, it would have
                 // taken the slot from this holder.
-                DropSkipsSince(skipMark, itemScore);
+                DropSkipsSince(skipMark, item, itemScore);
             }
         }
 

@@ -143,10 +143,20 @@ namespace Huginn::Telemetry
                 if (change.ratio != ChallengerRatio::NotApplicable) {
                     m_challengerRatios[static_cast<std::size_t>(change.ratio)].fetch_add(1, std::memory_order_relaxed);
                 }
+                if (change.dsd != Core::Challenger::DeltaSdBucket::Count) {
+                    m_deltaSd[static_cast<std::size_t>(change.dsd)].fetch_add(1, std::memory_order_relaxed);
+                    if (change.underLine) m_underLine.fetch_add(1, std::memory_order_relaxed);
+                }
                 if (change.cause == SlotChange::Page || change.slotIndex >= SLOT_CHURN_SLOTS) {
                     continue;
                 }
                 ++counted;
+                if (change.bounce) {
+                    m_bounces.fetch_add(1, std::memory_order_relaxed);
+                    if (change.cause == SlotChange::Expired || change.cause == SlotChange::Unheld) {
+                        m_bouncesHold.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
                 // Tenure measures juggling the player did not ask for: a change
                 // the player's own press caused -- the Used backfill, a
                 // Remembrance hold arriving or leaving -- is left out.
@@ -255,6 +265,13 @@ namespace Huginn::Telemetry
         for (std::size_t r = 0; r < ratios.size(); ++r) {
             ratios[r] = m_challengerRatios[r].exchange(0, std::memory_order_relaxed);
         }
+        std::array<uint32_t, static_cast<std::size_t>(Core::Challenger::DeltaSdBucket::Count)> deltaSd{};
+        for (std::size_t b = 0; b < deltaSd.size(); ++b) {
+            deltaSd[b] = m_deltaSd[b].exchange(0, std::memory_order_relaxed);
+        }
+        const uint32_t underLine = m_underLine.exchange(0, std::memory_order_relaxed);
+        const uint32_t bounces = m_bounces.exchange(0, std::memory_order_relaxed);
+        const uint32_t bouncesHold = m_bouncesHold.exchange(0, std::memory_order_relaxed);
         uint32_t churnPeak = 0;
         std::size_t churnPeakSlot = 0;
         {
@@ -296,7 +313,15 @@ namespace Huginn::Telemetry
                 churnStr += std::format("{}{}={}", r ? " " : "",
                     ChallengerRatioName(static_cast<ChallengerRatio>(r)), ratios[r]);
             }
-            churnStr += ") tenure(";
+            // R9: the same changes on Delta / sigma_Delta, and how many were
+            // at or under the challenger rule's line on raw scores (the hold
+            // passes none of those but its class-capped give-ways).
+            churnStr += ") dsd(";
+            for (std::size_t b = 0; b < deltaSd.size(); ++b) {
+                churnStr += std::format("{}{}={}", b ? " " : "",
+                    Core::Challenger::DeltaSdBucketName(static_cast<Core::Challenger::DeltaSdBucket>(b)), deltaSd[b]);
+            }
+            churnStr += std::format(") under={} tenure(", underLine);
             for (std::size_t b = 0; b < tenure.size(); ++b) {
                 churnStr += std::format("{}{}={}", b ? " " : "",
                     TenureBandName(static_cast<TenureBand>(b)), tenure[b]);
@@ -365,11 +390,28 @@ namespace Huginn::Telemetry
         // not, and by kind; it counts enchanted gear too, which reachIns does
         // not (ReachReporter).
         const uint32_t pressTotal = pressRegular + pressLabeled;
+        // R9, churn per press (the in-game comparison against the R8
+        // session): the visible changes the player did not cause -- every
+        // cause but a page switch, a Used backfill, a Remembrance hold and an
+        // override (trace-04's "without player or safety causes") -- over
+        // the presses. Both counts are printed so windows sum (a session's
+        // figure is the sum over the sum, not a mean of ratios); R8's
+        // heartbeat carries the same causes and presses, so
+        // tools/soak/churn_per_press.py computes it for either build.
+        const uint32_t ownChurn = churnTotal - churn[static_cast<std::size_t>(SlotChange::Page)] -
+                                  churn[static_cast<std::size_t>(SlotChange::Used)] -
+                                  churn[static_cast<std::size_t>(SlotChange::Remembrance)] -
+                                  churn[static_cast<std::size_t>(SlotChange::Override)];
+        const std::string perPressStr = std::format("churn={} presses={} churn/press={} bounce10s={} (hold={})",
+            ownChurn, pressTotal,
+            pressTotal ? std::format("{:.2f}", static_cast<float>(ownChurn) / static_cast<float>(pressTotal))
+                       : std::string("n/a"),
+            bounces, bouncesHold);
         logger::info(
             "[Soak] up={}h{:02}m{:02}s | equips hit={} near={} miss={} novel={} new={} accept={} skipped={} | "
             "recompute={}/{} ticks override={} pageBail={} | slotChurn={} | learn items={} trains={} forgot={} | tick avg={:.3f} peak={:.3f} ms | "
             "goals reachIns={} (candidate={}) presses={} (regular={} labeled={} offPage={}) pageFlips={} | {} | "
-            "choice {} | rate {}"sv,
+            "choice {} | rate {} | perPress {}"sv,
             upH, upM, upS,
             hit, near_, miss, novel, learned, acceptStr, skipStr,
             recomputes, ticks, overrideRuns, pageBails,
@@ -378,7 +420,7 @@ namespace Huginn::Telemetry
             avgMs, peakMs,
             totalEquips + learned, hit + near_ + miss,
             pressTotal, pressRegular, pressLabeled, pressOffPage, pageFlips,
-            Core::Reach::FormatSplit(reach), choiceStr, rateStr);
+            Core::Reach::FormatSplit(reach), choiceStr, rateStr, perPressStr);
 
         Huginn_PLOT("Huginn/Learner Items", static_cast<int64_t>(learnerItems));
         // Only plot windows that carry signal — zero-equip windows would drag the
