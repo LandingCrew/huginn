@@ -148,8 +148,8 @@ One thing worth knowing about emergencies: a slot set to `Other` will *not* take
 | `ScrollsAny` | Any scroll |
 | `PotionsAny` | Any potion — restore, resist, fortify, cure, and poisons. Not food or drink |
 | `PoisonsAny` | Poisons only |
-| `FoodAny` | Food |
-| `AlcoholAny` | Ale, mead, wine, skooma |
+| `FoodAny` | Food, not alcohol or drugs |
+| `NarcoticsAny` | Narcotics: ale, mead, wine, spirits, skooma, sleeping tree sap (never a poison) |
 | `WeaponsAny` | Any weapon, including staves |
 | `WeaponsMelee` | Swords, axes, maces, daggers |
 | `WeaponsRanged` | Bows, crossbows, staves |

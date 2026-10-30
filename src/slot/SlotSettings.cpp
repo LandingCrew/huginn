@@ -433,7 +433,7 @@ namespace Huginn::Slot
         if (lower == "weaponsmelee" || lower == "melee") return SlotClassification::WeaponsMelee;
         if (lower == "weaponsranged" || lower == "ranged") return SlotClassification::WeaponsRanged;
         if (lower == "foodany" || lower == "food") return SlotClassification::FoodAny;
-        if (lower == "alcoholany" || lower == "alcohol" || lower == "drinks") return SlotClassification::AlcoholAny;
+        if (lower == "narcoticsany" || lower == "narcotics" || lower == "narcotic") return SlotClassification::NarcoticsAny;
         if (lower == "ammoany" || lower == "ammo" || lower == "ammunition") return SlotClassification::AmmoAny;
         if (lower == "apparelany" || lower == "apparel" || lower == "armor") return SlotClassification::ApparelAny;
         if (lower == "regular" || lower == "any" || lower == "all") return SlotClassification::Regular;
@@ -466,7 +466,7 @@ namespace Huginn::Slot
             case SlotClassification::WeaponsMelee: return "WeaponsMelee";
             case SlotClassification::WeaponsRanged: return "WeaponsRanged";
             case SlotClassification::FoodAny:      return "FoodAny";
-            case SlotClassification::AlcoholAny:   return "AlcoholAny";
+            case SlotClassification::NarcoticsAny: return "NarcoticsAny";
             case SlotClassification::AmmoAny:      return "AmmoAny";
             case SlotClassification::ApparelAny:   return "ApparelAny";
             case SlotClassification::Regular:      return "Regular";

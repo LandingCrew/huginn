@@ -125,15 +125,19 @@ namespace Huginn::Core::Effect
     /// for a light, being a light.
     [[nodiscard]] bool DescribesItem(const Cap& cap, Kind kind) noexcept;
 
-    /// The `alcohol` item feature (effects.csv; 0.24.9): a potion, poison or
-    /// food that is an alcoholic drink or a drug. Marks, any one of them: an
+    /// The `narcotic` item feature (effects.csv; 0.24.9 as `alcohol`, 0.24.16
+    /// renamed): a potion or food that is an alcoholic drink or a drug, one
+    /// group (the user, 2026-10-30). Never a poison. Marks, any one of them: an
     /// alcohol or drug item keyword (OCF, LoreRim - Food Tweaks' Alcohol*,
     /// Simonrim's MAG_FoodTypeDrugs, CACO's), an effect whose MGEF carries an
-    /// alcohol keyword (Requiem's Feat_KW_Alcohol, BOOB's
-    /// BOOB_AlcoholBadEffect, Simonrim's MAG_ ones), or the drink drawback
-    /// MGEF Skyrim.esm 10C645, vanilla's only mark. MagicAlchHarmful is not
-    /// one: poisoned food and Rendil's Screaming Cheese carry it too.
-    [[nodiscard]] bool IsAlcohol(const ItemRecord& item, const EffectTable& effects);
+    /// alcohol or drug keyword (Requiem's Feat_KW_Alcohol, BOOB's
+    /// BOOB_AlcoholBadEffect, Simonrim's MAG_ ones), or an effect that is a
+    /// drink or drug MGEF by plugin and local id: the drink drawback
+    /// Skyrim.esm 10C645, vanilla's Drugged (0E3CBB) and Redwater Skooma
+    /// effect, Requiem's two Skooma effects, WindhelmSSE's moonshine.
+    /// MagicAlchHarmful is not one: poisoned food and Rendil's Screaming
+    /// Cheese carry it too.
+    [[nodiscard]] bool IsNarcotic(const ItemRecord& item, const EffectTable& effects);
 
     /// The column's value rule from effects.csv's `how`: "Amount", "Level",
     /// "P", "PD", "PG", "PGD", "PArea", "Hunger" or "Thirst" (graded ones grade

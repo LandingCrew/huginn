@@ -129,8 +129,8 @@ columns), what changed against the classifier version, and why.
 | **ScrollsAny** / **SpellsAny** | any scroll / any spell | -- | unchanged |
 | **Spells&lt;School&gt;** | the candidate's school (form fact) | -- | unchanged (spells and scrolls) |
 | **WeaponsAny** / **WeaponsMelee** / **WeaponsRanged** | -- | -- | from the weapon's type (bow, crossbow, staff = ranged; blades, axes, maces, daggers = melee), the same split the weapon tag encoded |
-| **FoodAny** | -- | kind Food, and not Alcohol | R11 (0.24.4) took every food, alcohol included; **0.24.9 takes alcohol out again**, now that cap(i) has an `alcohol` column (the user, 2026-10-30: alcohol is a hybrid of food, potion and poison, not food for a food key). Rendil's Screaming Cheese and raw fish with a paralysis, which the old AlcoholAny reading took, are food again |
-| **AlcoholAny** | -- | Alcohol: the `alcohol` column (0.24.9), any consumable kind | read from the records' alcohol and drug marks (effects.csv `alcohol`, `core/EffectMapper.h` IsAlcohol: OCF's and LoreRim - Food Tweaks' item keywords, Requiem's and BOOB's effect keywords, the vanilla drink drawback MGEF Skyrim.esm 10C645), no longer guessed from side effects (R11 read food that intoxicates or costs something other than a vital drain, with the cheese and raw fish as strays). On LoreRim's 2026-10-10 dump: the 56 drinks and Balmora Blue (food), and the five Skoomas and Sleeping Tree Sap, which the load order makes potions: those match PotionsAny too. Drugs count, as the old classifier had it (ale, mead, wine, skooma) |
+| **FoodAny** | -- | kind Food, and not Narcotic | R11 (0.24.4) took every food, alcohol included; **0.24.9 takes alcohol out again**, now that cap(i) has a column for it (the user, 2026-10-30: alcohol is a hybrid of food, potion and poison, not food for a food key; 0.24.16 groups drugs with it as narcotics). Rendil's Screaming Cheese and raw fish with a paralysis, which R11's alcohol reading took, are food again |
+| **NarcoticsAny** | -- | Narcotic: the `narcotic` column, a potion or food, never a poison | alcohol and drugs, one group (the user, 2026-10-30: "just group into narcotics"; 0.24.9 called it AlcoholAny and the column `alcohol`, 0.24.16 renamed both). Read from the records' drink and drug marks (effects.csv `narcotic`, `core/EffectMapper.h` IsNarcotic: OCF's and LoreRim - Food Tweaks' item keywords, Requiem's and BOOB's effect keywords, and drink or drug MGEFs by plugin and local id: the drink drawback Skyrim.esm 10C645, vanilla's Drugged 0E3CBB and Redwater Skooma effect, Requiem's two Skooma effects, WindhelmSSE's moonshine), no longer guessed from side effects. On LoreRim's 2026-10-10 dump: the 56 drinks and Balmora Blue (food), and the six Skoomas (Sweet Skooma included), Sleeping Tree Sap and the Windhelm Homebrew scene potion, which the load order makes potions: those match PotionsAny too. A poison never matches: the mapper sets the column only on a potion or food, and the class checks the kind as well (a poison is applied, not taken) |
 | **AmmoAny** / **ApparelAny** | -- | ammo / apparel candidates | unchanged |
 | **Regular** | everything | everything | unchanged |
 
@@ -143,9 +143,9 @@ score reads only b for such an item too.
 **The overlaps, reviewed.** They remain, on purpose: a class is a filter on a
 key, not a partition of the items. DamageAny takes weapons and poisons
 (an "anything that hurts" key); HealingAny and PotionsAny both take a health
-potion; PotionsAny and AlcoholAny both take a Skooma potion. FoodAny and
-AlcoholAny no longer overlap (0.24.9). A layout that wants disjoint keys
-names the narrower class (DamageMagic, PoisonsAny, AlcoholAny). What matters is
+potion; PotionsAny and NarcoticsAny both take a Skooma potion. FoodAny and
+NarcoticsAny no longer overlap (0.24.9). A layout that wants disjoint keys
+names the narrower class (DamageMagic, PoisonsAny, NarcoticsAny). What matters is
 that each class now means its effects, so a player can predict it from what an
 item does, and that the slot classes, the filters and the override finders read
 the same facets and cannot disagree.
@@ -153,12 +153,12 @@ the same facets and cannot disagree.
 **Classify()** (the class cap's group, the v2 log's and the dump's class) walks
 `core/CapFacets.h`'s `kClassPriority`, most specific first: HealingAny,
 DamageMagic, PoisonsAny, DamageAny, DefensiveAny, BuffsAny, SummonsAny,
-Utility, AlcoholAny (before PotionsAny, which takes a Skooma potion too), FoodAny,
+Utility, NarcoticsAny (before PotionsAny, which takes a Skooma potion too), FoodAny,
 PotionsAny, ScrollsAny, the weapon classes, AmmoAny, ApparelAny, the school
 classes, SpellsAny, then Regular. A weapon classifies as DamageAny, as before
 (the class cap groups all weapons there); the class cap still groups all food
 (source type Food) as FoodAny, drink included: that grouping is the page's
-variety on Regular keys, not a food key, and 0.24.9 leaves it as it was.
+variety on Regular keys, not a food key, and 0.24.9 and 0.24.16 leave it as it was.
 
 ### Regular (Unrestricted)
 
@@ -606,7 +606,7 @@ for testing and log reading:
 |---------|------|--------|
 | 3 | T: Emergencies | Regular keys with HP / MP / SP / Other on 1-4; key 5 PotionsAny with no overrides as a control |
 | 4 | T: Classes A | Ten keys, one class each: WeaponsMelee, WeaponsRanged, AmmoAny, DamageMagic, HealingAny, DefensiveAny, SummonsAny, BuffsAny, Utility, ScrollsAny |
-| 5 | T: Classes B | PotionsAny, FoodAny, AlcoholAny, ApparelAny, DamageAny and the five spell schools |
+| 5 | T: Classes B | PotionsAny, FoodAny, NarcoticsAny, ApparelAny, DamageAny and the five spell schools |
 | 6 | T: Ranking | Eight Regular keys with no overrides, wildcards or swap back: churn from ranking and the hold alone |
 | 7 | T: Swap | Swap back and equip: one key with `bSkipEquipped = 0`, one with `bRemembrance = 0` |
 

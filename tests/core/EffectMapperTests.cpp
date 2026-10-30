@@ -800,7 +800,7 @@ TEST_CASE("effect mapper: weapon, ammo, armour, soul gem and light features")
     CHECK_FALSE(DescribesItem(r.caps[4], Kind::Weapon));  // an unenchanted staff says nothing
 }
 
-TEST_CASE("effect mapper: the alcohol column, each mark and what is not one (0.24.9)")
+TEST_CASE("effect mapper: the narcotic column (alcohol and drugs), each mark and what is not one")
 {
     World w;
     auto restore = Mgef(kArchValueModifier, "Health", "Restore Health");
@@ -832,6 +832,23 @@ TEST_CASE("effect mapper: the alcohol column, each mark and what is not one (0.2
     auto paralysis = Mgef(kArchParalysis, "Paralysis", "Paralysis", kFlagDetrimental);
     paralysis.keywords = { "MagicAlchHarmful" };
     const auto paralyse = w.Add(paralysis);
+    // The drug MGEFs, by plugin and local id (0.24.16). Formids as the runtime
+    // has them in LoreRim (Requiem.esp at 0x87, WindhelmSSE.esp at 0x82).
+    auto drugMgef = [&](std::uint32_t formId, std::string plugin, std::string name) {
+        auto m = Mgef(kArchScript, "", std::move(name));
+        m.formId = formId;
+        m.plugin = std::move(plugin);
+        return w.Add(m);
+    };
+    const auto drugged = drugMgef(0x000E3CBB, "Skyrim.esm", "Drugged");                    // dunSleepingTreeDruggedAlch
+    const auto redwaterFx = drugMgef(0x0201391E, "Dawnguard.esm", "DLC1RedwaterSkoomaScriptEffect");
+    const auto skoomaSide = drugMgef(0x870693C3, "Requiem.esp", "Damage Health");          // REQ_AlchDamageHealthSkoomaSide
+    const auto spirited = drugMgef(0x87191518, "Requiem.esp", "Spiritedness");             // REQ_Effect_Drug_Skooma01_FX
+    const auto moonshine = drugMgef(0x82367FBC, "WindhelmSSE.esp", "Drugged");              // 0WHMoonshine
+    const auto notRequiem = drugMgef(0x330693C3, "Other.esp", "Damage Health");            // Requiem's local id, another plugin
+    auto invis = Mgef(kArchInvisibility, "Invisibility", "Invisibility");
+    invis.keywords = { "MagicInvisibility", "MagicAlchBeneficial" };
+    const auto invisible = w.Add(invis);
 
     auto food = [&](std::string name, std::vector<std::string> kws, std::vector<std::uint32_t> fx) -> std::size_t {
         auto& it = w.Item(Kind::Food, std::move(name));
@@ -851,6 +868,32 @@ TEST_CASE("effect mapper: the alcohol column, each mark and what is not one (0.2
     const auto rawFish = food("Raw Salmon", { "OCF_AlchFood_FishRaw", "VendorItemFoodRaw" }, { heal, paralyse });
     const auto notThisOne = food("Other ...645", {}, { heal, otherPlugin });
     const auto notLight = food("Light ...645", {}, { heal, lightId });
+    auto potionOf = [&](std::string name, std::vector<std::string> kws, std::vector<std::uint32_t> fx,
+                        Kind kind = Kind::Potion) -> std::size_t {
+        auto& it = w.Item(kind, std::move(name));
+        it.keywords = std::move(kws);
+        for (const auto e : fx) World::Fx(it, e, 10, 45);
+        return w.items.size() - 1;
+    };
+    // Sweet Skooma (Unmarked Locations Pack) as LoreRim has it: Requiem's Skooma
+    // effects and no drug keyword (OCF_VesselBottleSkooma is a bottle, not a drug).
+    const auto sweetSkooma = potionOf("Sweet Skooma", { "REQ_VendorItem_BlackMarket", "OCF_VesselBottleSkooma" },
+                                      { heal, skoomaSide, paralyse, spirited });
+    const auto spiritedOnly = potionOf("Skooma (Spiritedness only)", {}, { spirited });
+    // Vanilla's Sleeping Tree Sap and Redwater Skooma: VendorItemFood only, Drugged.
+    const auto vanillaSap = potionOf("Sleeping Tree Sap (vanilla)", { "VendorItemFood" }, { heal, drugged });
+    const auto vanillaRedwater = potionOf("Redwater Skooma (vanilla)", { "VendorItemFood" }, { heal, redwaterFx });
+    const auto homebrew = potionOf("Windhelm Homebrew (scene)", { "VendorItemFood" }, { moonshine });
+    // Not one: a Disguised Invisibility Potion (a Skooma bottle, VendorItemFood),
+    // Holy Water (VendorItemFood), Requiem's local id from another plugin, and
+    // poisons wearing a drug keyword or a drug effect (a poison is applied, not taken).
+    const auto disguised = potionOf("Disguised Invisibility Potion", { "VendorItemFood", "OCF_VesselBottleSkooma" },
+                                    { invisible });
+    const auto holyWater = potionOf("Holy Water", { "VendorItemFood" }, { heal });
+    const auto otherSide = potionOf("Other ...0693C3", {}, { heal, notRequiem });
+    const auto poisonKw = potionOf("Poisoned Skooma", { "OCF_AlchDrug", "OCF_AlchDrugSkooma" }, { paralyse }, Kind::Poison);
+    const auto poisonFx = potionOf("Poisoned Firebrand Wine", { "VendorItemFood" }, { paralyse, drugged, vanillaDrawback },
+                                   Kind::Poison);
     // A Skooma the load order makes a potion (OCF_AlchDrug), and a weapon wearing a drink keyword.
     auto& potion = w.Item(Kind::Potion, "Skooma (LoreRim)");
     potion.keywords = { "OCF_AlchDrug", "OCF_AlchDrugSkooma" };
@@ -863,20 +906,21 @@ TEST_CASE("effect mapper: the alcohol column, each mark and what is not one (0.2
     const std::size_t weapon = w.items.size() - 1;
 
     const auto r = w.Build();
-    for (const auto i : { ocf, tweaks, featOnly, boobOnly, gourmet, gourmetFx, vanilla, caco, skoomaPotion }) {
+    for (const auto i : { ocf, tweaks, featOnly, boobOnly, gourmet, gourmetFx, vanilla, caco, skoomaPotion, sweetSkooma,
+                          spiritedOnly, vanillaSap, vanillaRedwater, homebrew }) {
         INFO(w.items[i].name);
-        CHECK(CapOf(r, i, Col::alcohol) == 1.0f);
-        CHECK(IsAlcohol(w.items[i], w.effects));
+        CHECK(CapOf(r, i, Col::narcotic) == 1.0f);
+        CHECK(IsNarcotic(w.items[i], w.effects));
     }
-    for (const auto i : { bread, rawFish, notThisOne, notLight, weapon }) {
+    for (const auto i : { bread, rawFish, notThisOne, notLight, weapon, disguised, holyWater, otherSide, poisonKw, poisonFx }) {
         INFO(w.items[i].name);
-        CHECK(CapOf(r, i, Col::alcohol) == 0.0f);
-        CHECK_FALSE(IsAlcohol(w.items[i], w.effects));
+        CHECK(CapOf(r, i, Col::narcotic) == 0.0f);
+        CHECK_FALSE(IsNarcotic(w.items[i], w.effects));
     }
     // The column is an item feature beside the kind, never an effect.
     CHECK(CapOf(r, ocf, Col::kind_food) == 1.0f);
-    CHECK_FALSE(IsEffect(Col::alcohol));
-    CHECK(ValueRuleName(Col::alcohol) == "P");
+    CHECK_FALSE(IsEffect(Col::narcotic));
+    CHECK(ValueRuleName(Col::narcotic) == "P");
 }
 
 TEST_CASE("effect mapper: populations and the cap's text form")

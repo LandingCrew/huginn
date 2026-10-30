@@ -236,11 +236,11 @@ class NewAndUnknownKeys(TempWork):
         self.assertNotIn('char', decs[0])
 
 
-class AlcoholColumn(TempWork):
-    """0.24.9 added the alcohol column after kind_light: every later column's index moved
-    by one. The C++ encoder's golden session as 0.24.8 wrote it (243 columns) and as this
-    build writes it (244) hold the same caps; v3load maps both by the head's names, alone
-    and in one load (a rotated file across the update)."""
+class NarcoticColumn(TempWork):
+    """0.24.9 added a column after kind_light (named alcohol; 0.24.16 renamed it narcotic):
+    every later column's index moved by one. The C++ encoder's golden session as 0.24.8
+    wrote it (243 columns) and as this build writes it (244) hold the same caps; v3load maps
+    both by the head's names, alone and in one load (a rotated file across the update)."""
     DEC = HERE.parents[1] / 'tests' / 'core' / 'fixtures' / 'decisions'
 
     @staticmethod
@@ -257,12 +257,13 @@ class AlcoholColumn(TempWork):
         new = v3load.load([self.DEC / 'synthetic_v3.jsonl'])
         self.assertEqual(old['heads'][0]['ncols'], 243)
         self.assertEqual(new['heads'][0]['ncols'], 244)
-        self.assertNotIn('alcohol', old['cols'])
-        self.assertEqual(new['cols'].index('alcohol'), new['cols'].index('kind_light') + 1)
+        self.assertNotIn('narcotic', old['cols'])
+        self.assertNotIn('alcohol', new['cols'])
+        self.assertEqual(new['cols'].index('narcotic'), new['cols'].index('kind_light') + 1)
         caps = self.named_caps(old)
         self.assertEqual(caps, self.named_caps(new))
         # the session's caps reach past the inserted column (school_*, weapon and armour stats)
-        moved = {n for c in caps if c for n, _ in c} & set(new['cols'][new['cols'].index('alcohol') + 1:])
+        moved = {n for c in caps if c for n, _ in c} & set(new['cols'][new['cols'].index('narcotic') + 1:])
         self.assertTrue(moved)
 
     def test_one_load_across_the_update(self):
@@ -272,7 +273,7 @@ class AlcoholColumn(TempWork):
             if 'launch' in r:
                 r['launch'] = '20261009-110000'
         D = v3load.load([self.write('old.jsonl', edit_lines(old, relaunch)), self.DEC / 'synthetic_v3.jsonl'])
-        self.assertEqual(len(D['cols']), 244)          # the union by name: alcohol appended once
+        self.assertEqual(len(D['cols']), 244)          # the union by name: narcotic appended once
         self.assertEqual(D['stats']['dup_ctx'], 2)      # each file's own second segment, nothing across
         by_launch = {}
         for (launch, cid), ctx in D['ctxs'].items():
@@ -281,6 +282,19 @@ class AlcoholColumn(TempWork):
                 by_launch.setdefault(launch, []).append(
                     None if c is None or c < 0 else sorted((D['cols'][j], v) for j, v in D['caps'][c]))
         self.assertEqual(by_launch['20261009-110000'], by_launch['20261009-120000'])
+
+    def test_rename_is_a_new_name(self):
+        """0.24.16 renamed alcohol to narcotic at the same index. v3load keys columns by name
+        and has no alias (no backward-compatibility path): a 0.24.9 file reads its column as
+        alcohol, this build's as narcotic, every other column the same."""
+        old = v3load.load([self.DEC / 'synthetic_v3_0.24.9.jsonl'])
+        new = v3load.load([self.DEC / 'synthetic_v3.jsonl'])
+        self.assertEqual(old['heads'][0]['ncols'], 244)
+        at = old['cols'].index('alcohol')
+        self.assertNotIn('narcotic', old['cols'])
+        self.assertEqual(new['cols'].index('narcotic'), at)
+        self.assertEqual(old['cols'][:at] + old['cols'][at + 1:], new['cols'][:at] + new['cols'][at + 1:])
+        self.assertEqual(self.named_caps(old), self.named_caps(new))   # the session sets neither column
 
 
 class OldEngineColumns(TempWork):

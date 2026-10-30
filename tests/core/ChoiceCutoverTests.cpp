@@ -224,32 +224,61 @@ TEST_CASE("cosave merge: a key saved twice keeps the last value; an empty save k
     CHECK(rep.unknown == 0);
 }
 
-TEST_CASE("cosave merge: a save from before the alcohol column (0.24.8) keeps its weights; the new column takes the file's")
+TEST_CASE("cosave merge: a save from before the narcotic column (0.24.8) keeps its weights; the new column takes the file's")
 {
     // THTA is keyed by name (Bootstrap::StableKey), never by position: inserting
-    // alcohol after kind_light moved every later column's index, not its key.
+    // the column after kind_light (0.24.9, then named alcohol) moved every later
+    // column's index, not its key.
     using Bootstrap::StableKey;
     const std::string_view need = Needs::kNeeds[0].id;
     std::vector<std::uint64_t> buildKeys;
-    std::vector<CC::ThetaEntry> saved;   // what a 0.24.8 save holds: every column but alcohol
+    std::vector<CC::ThetaEntry> saved;   // what a 0.24.8 save holds: every column but this one
     for (std::size_t j = 0; j < C::J; ++j) {
         const auto key = StableKey("theta", need, Effect::kColumns[j].id);
         buildKeys.push_back(key);
-        if (Effect::kColumns[j].id != "alcohol") saved.push_back(CC::ThetaEntry{ key, 0.25 + 0.001 * j, 0.5 });
+        if (Effect::kColumns[j].id != "narcotic") saved.push_back(CC::ThetaEntry{ key, 0.25 + 0.001 * j, 0.5 });
     }
     CC::MergeReport rep;
     const auto merged = CC::MergeTheta(buildKeys, saved, rep);
     CHECK(rep.applied == C::J - 1);
-    CHECK(rep.fromFile == 1);    // alcohol: the bootstrap's value (the prior: the file has no such column)
+    CHECK(rep.fromFile == 1);    // narcotic: the bootstrap's value (the prior: the file has no such column)
     CHECK(rep.unknown == 0);
     REQUIRE(merged.size() == C::J - 1);
-    const auto alcoholKey = StableKey("theta", need, "alcohol");
-    CHECK(std::none_of(merged.begin(), merged.end(), [&](const CC::ThetaEntry& e) { return e.key == alcoholKey; }));
+    const auto narcoticKey = StableKey("theta", need, "narcotic");
+    CHECK(std::none_of(merged.begin(), merged.end(), [&](const CC::ThetaEntry& e) { return e.key == narcoticKey; }));
     // school_alteration moved from index 192 to 193; its saved weight still lands on it.
     const auto school = StableKey("theta", need, "school_alteration");
     const auto at = std::find_if(merged.begin(), merged.end(), [&](const CC::ThetaEntry& e) { return e.key == school; });
     REQUIRE(at != merged.end());
     CHECK(at->mu == doctest::Approx(0.25 + 0.001 * static_cast<double>(Effect::Index(Effect::Col::school_alteration))));
+}
+
+TEST_CASE("cosave merge: a 0.24.9 save's alcohol weights are dropped; narcotic starts at the file's")
+{
+    // 0.24.16 renamed the column (the user, 2026-10-30: alcohol and drugs are one
+    // group, narcotics). The key is the name, so a 0.24.9 save's alcohol key is
+    // one the build no longer knows: dropped and counted, never carried over
+    // (no backward-compatibility path; the column relearns from the prior).
+    using Bootstrap::StableKey;
+    const std::string_view need = Needs::kNeeds[0].id;
+    std::vector<std::uint64_t> buildKeys;
+    std::vector<CC::ThetaEntry> saved;
+    for (std::size_t j = 0; j < C::J; ++j) {
+        const std::string_view col = Effect::kColumns[j].id;
+        buildKeys.push_back(StableKey("theta", need, col));
+        const std::string_view savedAs = col == "narcotic" ? std::string_view("alcohol") : col;
+        saved.push_back(CC::ThetaEntry{ StableKey("theta", need, savedAs), 0.25 + 0.001 * j, 0.5 });
+    }
+    CC::MergeReport rep;
+    const auto merged = CC::MergeTheta(buildKeys, saved, rep);
+    CHECK(rep.applied == C::J - 1);
+    CHECK(rep.fromFile == 1);    // narcotic
+    CHECK(rep.unknown == 1);     // alcohol
+    REQUIRE(merged.size() == C::J - 1);
+    for (const std::string_view gone : { std::string_view("alcohol"), std::string_view("narcotic") }) {
+        const auto key = StableKey("theta", need, gone);
+        CHECK(std::none_of(merged.begin(), merged.end(), [&](const CC::ThetaEntry& e) { return e.key == key; }));
+    }
 }
 
 // ---------------------------------------------------------------------------

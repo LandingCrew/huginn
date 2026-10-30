@@ -109,7 +109,7 @@ namespace Huginn::Slot
             case SlotClassification::WeaponsMelee: return "WeaponsMelee";
             case SlotClassification::WeaponsRanged: return "WeaponsRanged";
             case SlotClassification::FoodAny:      return "FoodAny";
-            case SlotClassification::AlcoholAny:   return "AlcoholAny";
+            case SlotClassification::NarcoticsAny: return "NarcoticsAny";
             case SlotClassification::AmmoAny:      return "AmmoAny";
             case SlotClassification::ApparelAny:   return "ApparelAny";
             case SlotClassification::Regular:      return "Regular";
