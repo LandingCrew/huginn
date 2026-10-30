@@ -1501,8 +1501,8 @@ press in the heartbeat against the R8 session.
   one row anyway (`Engine::MarkShadowed` / `OwnerOf`: the first ranked row
   with the key; the rest are never placed, found or drawn), so no caller can
   bring the churn back. Host-tested: the R9 property test with duplicate keys
-  and names settles on both paths (fails without the fix: 6 worlds
-  unsettled), a named case, and the golden test's page invariant (no shadowed
+  and names settles on both paths (fails without the fix: some worlds stay
+  unsettled, how many depends on how the fix is taken out), a named case, and the golden test's page invariant (no shadowed
   row shown).
 
 ### R10. Wildcards by uncertainty

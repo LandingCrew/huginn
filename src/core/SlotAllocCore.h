@@ -1200,6 +1200,13 @@ namespace Huginn::Core::SlotAlloc
                         // seat is somewhere else and not its to give up. An
                         // owner an override displaced stays out of the
                         // challengers even so (code review of #179).
+                        // A loser sharing a displaced owner's form keeps it
+                        // excluded (displacedOwners is by form); one sharing
+                        // only its NAME erases the name, but the displaced
+                        // owner's form stays in excludedIDs and FindBest
+                        // skips a row on either, so it does not come back
+                        // as a challenger. The fill reads m_ids/m_names,
+                        // not these sets (verification of #232).
                         if (!displacedOwners.contains(it.formID)) {
                             excludedIDs.erase(it.formID);
                             excludedNames.erase(it.name);
