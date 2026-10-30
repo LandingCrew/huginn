@@ -77,7 +77,7 @@ Picks come back through the equip event bus: a press on a key, a Wheeler pick, a
 
 Since **R11** the live engine asks every yes/no question of an item through this catalog, in one place, `src/core/CapFacets.h`: the slot classes (`sClassification = HealingAny` still names the same classes; their rules are re-derived from cap(i), reviewed in [5-slots.md](architecture/5-slots.md)), the candidate filters, the override finders, the "Ally Support" label and the widget's potion styling.
 
-**Effect overrides**, the per-load-order layer (doc 9's layer 2): a mod ships `Data/SKSE/Plugins/Huginn/EffectOverrides/<name>.ini`, the player keeps `Data/SKSE/Plugins/Huginn_EffectOverrides.ini` (applied last); each line pins an effect to a column by plugin and local FormID (`MyMod.esp|0x800 = resist_frost`), under `[Overrides]`, with `[Huginn] iFormatVersion = 1`. A file that does not parse is skipped and named; entries for plugins not loaded are skipped quietly (`src/core/OverrideFiles.h`).
+**Effect overrides**, the per-load-order layer (doc 9's layer 2): a mod ships `Data/SKSE/Plugins/Huginn/EffectOverrides/<name>.ini`, the player keeps `Data/SKSE/Plugins/Huginn_EffectOverrides.ini` (applied last); each line pins an effect to a column by plugin and local FormID (`MyMod.esp|0x800 = resist_frost`), under `[Overrides]`, with `[Huginn] iFormatVersion = 1`. A file that cannot be read, or is for a newer format, is skipped and named; a malformed line is ignored and counted; entries for plugins not active in the load order are skipped quietly (`src/core/OverrideFiles.h`).
 
 ### What the situation needs: the need vector
 

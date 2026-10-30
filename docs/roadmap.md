@@ -1640,8 +1640,9 @@ passes R6's gate, or the user's call).
       it keeps its place (docs/playtest/LongPlaySoak.md).
 - [x] **Docs:** CLAUDE.md and docs/README.md describe the new pipeline;
       `4-contextual-bandits.md` archived (`architecture/archive/`, banner);
-      R11 banners on the pre-rewrite pages (0, 1, 2, 3, 6, 7, 8, Performance,
-      classifier-coverage, candidate-system, TESTING-INDEX) say what changed;
+      R11 banners on the pre-rewrite pages (0, 1, 2, 3, 6, 7, 8, 11,
+      Performance, classifier-coverage, candidate-system, TESTING-INDEX) say
+      what changed;
       5-slots.md's class section rewritten; the Nexus page (bbcode) rewritten
       where it described the old engine (how Huginn decides, effect overrides,
       the class list, the console, darkness); `page.md` flagged as not
@@ -1657,7 +1658,10 @@ passes R6's gate, or the user's call).
   an item (the review above), which candidates the filters drop (by facet:
   e.g. an armour-spell filter no longer drops a ward; a multi-resist spell is
   redundant when any one of its resists is covered; Resist Magic counts for
-  spells), which items an override may surface, and the "Ally Support" label;
+  spells; a hostile or damaging spell, an elemental cloak with its resist
+  rider, is never resist-filtered), which items an override may surface (pure
+  by the self_harm / intoxication / hostile facets; a restore potion ranked by its restore
+  row, not its costliest effect), and the "Ally Support" label;
   the v3 rows' `fb` follows the filters.
 - **In game (you):** see the R11 PR: a typed page (page 2 on the shipped
   layout) fills as before with the reviewed classes; `hg theta`, `hg theta

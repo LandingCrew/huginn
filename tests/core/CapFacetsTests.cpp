@@ -524,3 +524,50 @@ TEST_CASE("cap facets on real items: Simonrim and LoreRim drinks, poisons, scrol
     const auto noise = lr.Of(0x8D005EC8, Kind::Spell);         // Noise Rune
     CHECK(noise.facets.Has(F::Muffle));
 }
+
+TEST_CASE("resist filter: a cloak's resist rider never makes it redundant")
+{
+    // Synthetic: a pure resist potion or ward is judged; a damage aura with a
+    // resist rider, or a poison, is not.
+    CHECK(Facets::ResistJudgeable(Facets::FromCap(CapOf({ Col::resist, Col::resist_fire }), Kind::Potion)));
+    CHECK(Facets::ResistJudgeable(Facets::FromCap(CapOf({ Col::resist, Col::resist_magic }), Kind::Spell)));
+    CHECK_FALSE(Facets::ResistJudgeable(Facets::FromCap(
+        CapOf({ Col::damage, Col::resist, Col::resist_frost, Col::hostile, Col::aura }), Kind::Spell)));
+    CHECK_FALSE(Facets::ResistJudgeable(Facets::FromCap(CapOf({ Col::resist, Col::resist_fire, Col::hostile }), Kind::Poison)));
+    CHECK_FALSE(Facets::ResistJudgeable(Facets::FromCap(CapOf({ Col::restore, Col::restore_health }), Kind::Potion)));
+
+    // Real items: LoreRim's elemental cloaks carry the opposite element's
+    // resistance beside their damage (huginn_effect_report on the LoreRim
+    // dump). Each must stay out of the resist filter's reach.
+    const Fixture lr("lorerim");
+    const auto flame = lr.Of(0x0003AE9F, Kind::Spell);          // Flame Cloak: damage + resist_frost
+    CHECK(flame.facets.Has(F::ResistFrost));
+    CHECK(flame.facets.Has(F::Damage));
+    CHECK_FALSE(Facets::ResistJudgeable(flame.facets));
+    const auto frost = lr.Of(0x0003AEA2, Kind::Spell);          // Frost Cloak: damage + resist_fire
+    CHECK(frost.facets.Has(F::ResistFire));
+    CHECK_FALSE(Facets::ResistJudgeable(frost.facets));
+    const auto shock = lr.Of(0x0003AEA3, Kind::Spell);          // Lightning Cloak: damage + resist_shock
+    CHECK(shock.facets.Has(F::ResistShock));
+    CHECK_FALSE(Facets::ResistJudgeable(shock.facets));
+
+    const Fixture va("vanilla");
+    const auto philter = va.Of(0x00039B4B, Kind::Potion);       // Philter of Resist Fire: judged
+    CHECK(Facets::ResistJudgeable(philter.facets));
+}
+
+TEST_CASE("override finders: side effects from cap")
+{
+    CHECK_FALSE(Facets::HasSideEffect(Facets::FromCap(CapOf({ Col::restore, Col::restore_health }), Kind::Potion)));
+    CHECK(Facets::HasSideEffect(Facets::FromCap(
+        CapOf({ Col::restore, Col::restore_stamina, Col::self_harm, Col::self_harm_health }), Kind::Food)));
+    CHECK(Facets::HasSideEffect(Facets::FromCap(CapOf({ Col::damage, Col::hostile }), Kind::Poison)));
+
+    const Fixture sr("simonrim");
+    const auto skooma = sr.Of(0x0003F4BD, Kind::Food);          // Double-Distilled Skooma: Fortify|Intoxicating
+    CHECK(Facets::HasSideEffect(skooma.facets));
+    CHECK(Facets::HasSideEffect(Facets::FromCap(CapOf({ Col::fortify_vital, Col::survival_intoxication }), Kind::Food)));
+    const Fixture va("vanilla");
+    const auto curePoison = va.Of(0x00065A64, Kind::Potion);    // Potion of Cure Poison: pure
+    CHECK_FALSE(Facets::HasSideEffect(curePoison.facets));
+}

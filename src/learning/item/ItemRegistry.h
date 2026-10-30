@@ -366,8 +366,6 @@ namespace Huginn::Item
       [[nodiscard]] const InventoryItem* GetBestResistShockPotion() const noexcept;
       [[nodiscard]] const InventoryItem* GetBestResistPoisonPotion() const noexcept;
       [[nodiscard]] const InventoryItem* GetBestCureDiseasePotion() const noexcept;
-      [[nodiscard]] const InventoryItem* GetBestCurePoisonPotion() const noexcept;
-      [[nodiscard]] const InventoryItem* GetBestWaterbreathingPotion() const noexcept;  // Longest duration
 
       // =============================================================================
       // SOUL GEM ACCESSORS (SoulGemScanner v0.7.8)
@@ -411,22 +409,9 @@ namespace Huginn::Item
        */
       [[nodiscard]] const InventoryItem* GetBestSoulGem() const noexcept;
 
-      /**
-       * @brief Best available potion of a type, found in one O(n) pass
-       *
-       * No allocation or sort — for hot paths (per-tick override evaluation)
-       * that only need the best pick, unlike Get*PotionsByMagnitude.
-       */
-      struct BestPotionPick
-      {
-         const InventoryItem* pure = nullptr;  // Restores most without harmful side effects
-         const InventoryItem* any = nullptr;   // Restores most overall
-      };
-
-      // R11: the restore potion pick by the old classifier's type
-      // is gone; OverrideManager picks by the effect catalog's restore facet
-      // and ItemData::RestoredWithin (BestRestorePotion), into this struct.
-
+      // R11: the potion picks by the old classifier's type and tags are gone
+      // (the restore pick, the cure, waterbreathing); OverrideManager picks
+      // by the effect catalog's facets (BestRestorePotion and its finders).
 
       // Thin forwarders keeping the historical public names (zero call-site churn).
       // Count / copy-out / loading-flag / iteration all live in the shared core.

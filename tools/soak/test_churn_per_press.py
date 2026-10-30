@@ -1,4 +1,4 @@
-"""Self-test for churn_per_press.py: an R8-format heartbeat and an R9-format one.
+"""Self-test for churn_per_press.py: R8-, R9- and R11-format heartbeats.
 
 usage:  python -I tools/soak/test_churn_per_press.py
 """
@@ -25,6 +25,11 @@ R9 = ('[x][I]: [Soak] up=0h05m00s | equips hit=0 | slotChurn=6 peak5s=1@slot2 (f
       '<4=1 >=4=0 nosd=0) under=1 tenure(<1s=0) | learn items=1 | goals reachIns=0 (candidate=0) '
       'presses=8 (regular=8 labeled=0 offPage=0) pageFlips=0 | choice theta=1/2 | rate runs/s=1.00 | '
       'perPress churn=4 presses=8 churn/press=0.50 bounce10s=1 (hold=1)')
+# R11 (0.24.4) shape: R9's line with the theta-drift section appended (SoakMetrics.cpp), whose
+# b= and covered= pairs must not be read as churn, presses or a group.
+R11 = R9 + (' | drift mu-moved=12 dmean=0.0031 drms=0.0102 dmax=+0.084 at=low_health:restore_health '
+            'var-moved=40 lnvar=-0.052 b=7 bmean=0.041 bmax=0.130 covered=-0.012')
+R11_OFF = R9 + ' | drift off'
 
 
 def check(cond, what):
@@ -48,6 +53,16 @@ def main():
     check(whole.dsd['<0'] == 1 and whole.dsd['<4'] == 1 and whole.under == 1, 'R9 dsd')
     check(whole.has_r9 and whole.bounce == 1 and whole.bounce_hold == 1, 'R9 bounce')
     check(whole.per_press(whole.churn) == '0.50', 'R9 per press')
+
+    # R11: the drift suffix changes nothing the tally reads.
+    for line, what in ((R11, 'R11'), (R11_OFF, 'R11 drift off')):
+        launches, whole = cpp.read([line])
+        check(whole.windows == 1 and whole.churn == 4 and whole.presses == 8,
+              '%s churn %d presses %d' % (what, whole.churn, whole.presses))
+        check(whole.dsd['<0'] == 1 and whole.dsd['<4'] == 1 and whole.under == 1, '%s dsd' % what)
+        check(whole.has_r9 and whole.bounce == 1 and whole.bounce_hold == 1, '%s bounce' % what)
+        check(dict(whole.causes) == dict(cpp.read([R9])[1].causes), '%s causes' % what)
+        check('b' not in whole.causes and 'covered' not in whole.ratio, '%s drift pairs leaked' % what)
 
     # A launch boundary: up= goes backwards.
     launches, whole = cpp.read([R8, QUIET, R9])

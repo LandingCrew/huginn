@@ -5,6 +5,9 @@
 #include "spell/SpellRegistry.h"
 #include "Globals.h"                   // g_spellRegistry: spell fallback
 #include "effect/Facets.h"             // R11: what an item restores or cures (core/CapFacets.h)
+#include "effect/EffectCatalog.h"      // R11: a scripted restore's amount (PotionRestoreWithin)
+
+#include <limits>
 
 namespace Huginn::Override
 {
@@ -430,13 +433,64 @@ namespace Huginn::Override
     // ITEM FINDERS
     // =============================================================================
 
+    // The best potion of a kind, found in one pass of the registry.
+    struct PotionPick
+    {
+        const Item::InventoryItem* pure = nullptr;  // restores most without a side effect
+        const Item::InventoryItem* any = nullptr;   // restores most overall
+    };
+
     // Shared selection policy: prefer pure, optionally fall back to impure
-    static const Item::InventoryItem* SelectPotion(
-        const Item::ItemRegistry::BestPotionPick& pick,
-        bool allowImpure)
+    static const Item::InventoryItem* SelectPotion(const PotionPick& pick, bool allowImpure)
     {
         if (pick.pure) return pick.pure;
         return allowImpure ? pick.any : nullptr;
+    }
+
+    // R11: a consumable's side effect (pure before impure), from the effect
+    // catalog's self_harm, intoxication and hostile facets (core/CapFacets.h HasSideEffect),
+    // not the old classifier's damage / ravage / weakness tags.
+    [[nodiscard]] static bool HasSideEffect(const Effect::FormFacets& ff) noexcept
+    {
+        return Core::Facets::HasSideEffect(ff.facets);
+    }
+
+    // A row of a potion that restores `av` to its drinker: not hostile, not
+    // detrimental, and not a fortify (a Recover effect gives the points back
+    // when it ends, so a Fortify Health rider is not a restore). The spell
+    // fallback below keeps its own, older test (hostile, actor value).
+    [[nodiscard]] static bool IsRestoreRow(const RE::Effect* effect, RE::ActorValue av) noexcept
+    {
+        if (!effect || !effect->baseEffect) return false;
+        const auto* mgef = effect->baseEffect;
+        if (mgef->IsHostile() || mgef->IsDetrimental()) return false;
+        if (mgef->data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kRecover)) return false;
+        return mgef->data.primaryAV == av;
+    }
+
+    // What a potion restores of `av` within `windowSec`: the best of its own
+    // restore rows (Item::RestoredWithin on that row's magnitude and
+    // duration). Not ItemData::magnitude / duration: those are the costliest
+    // effect's, so a mixed "Restore Health 120 + Restore Magicka 30" potion
+    // scored 120 as a magicka potion and beat a dedicated Restore Magicka 100.
+    // A potion whose restore is not a plain value row (a scripted restore the
+    // catalog maps by its description) falls back to the catalog's restore
+    // amount for that vital (its total, the whole duration).
+    [[nodiscard]] static float PotionRestoreWithin(RE::FormID formID, RE::ActorValue av, std::size_t vital, float windowSec)
+    {
+        float restored = 0.0f;
+        if (const auto* potion = RE::TESForm::LookupByID<RE::AlchemyItem>(formID)) {
+            for (const auto* effect : potion->effects) {
+                if (!IsRestoreRow(effect, av)) continue;
+                restored = std::max(restored, Item::RestoredWithin(effect->effectItem.magnitude,
+                                                                   static_cast<float>(effect->effectItem.duration), windowSec));
+            }
+        }
+        if (restored > 0.0f) return restored;
+        if (const auto* entry = Effect::EffectCatalog::GetSingleton().FindOrMapId(formID); entry && vital < 3) {
+            return entry->fullRestore[vital] ? std::numeric_limits<float>::max() : entry->restoreAmount[vital];
+        }
+        return 0.0f;
     }
 
     // Per-finder dedup state so each vitals finder logs independently
@@ -562,27 +616,47 @@ namespace Huginn::Override
         return result;
     }
 
+    // The actor value and the catalog's vital index (health, magicka,
+    // stamina: CatalogEntry::restoreAmount) a restore facet stands for.
+    struct RestoreTarget
+    {
+        RE::ActorValue av = RE::ActorValue::kNone;
+        std::size_t vital = 3;
+    };
+    [[nodiscard]] static RestoreTarget TargetOf(Core::Facets::F restore) noexcept
+    {
+        using F = Core::Facets::F;
+        switch (restore) {
+            case F::RestoreHealth: return { RE::ActorValue::kHealth, 0 };
+            case F::RestoreMagicka: return { RE::ActorValue::kMagicka, 1 };
+            case F::RestoreStamina: return { RE::ActorValue::kStamina, 2 };
+            default: return {};
+        }
+    }
+
     // R11: the potions that restore `restore` (the effect catalog's facet,
     // core/CapFacets.h; a potion, not a food or a poison), the one that
-    // restores most within `windowSec` (ItemData::RestoredWithin), pure and
+    // restores most of that vital within `windowSec` (PotionRestoreWithin:
+    // the restore row's own magnitude, not the costliest effect's), pure and
     // any -- what the item registry's potion pick did by the old classifier's
-    // potion type.
-    static Item::ItemRegistry::BestPotionPick BestRestorePotion(
+    // potion type. Pure: no self_harm, intoxication or hostile facet (HasSideEffect).
+    static PotionPick BestRestorePotion(
         const Item::ItemRegistry& registry, Core::Facets::F restore, float windowSec)
     {
-        Item::ItemRegistry::BestPotionPick pick;
+        const auto target = TargetOf(restore);
+        PotionPick pick;
         float anyBest = 0.0f;
         float pureBest = 0.0f;
         registry.ForEachItem([&](const Item::InventoryItem& item) {
             if (item.count <= 0) return;
             const auto ff = Effect::FacetsOfForm(item.data.formID);
             if (!ff.known || ff.kind != Core::Effect::Kind::Potion || !ff.facets.Has(restore)) return;
-            const float restored = item.data.RestoredWithin(windowSec);
+            const float restored = PotionRestoreWithin(item.data.formID, target.av, target.vital, windowSec);
             if (!pick.any || restored > anyBest) {
                 pick.any = &item;
                 anyBest = restored;
             }
-            if ((!pick.pure || restored > pureBest) && !item.data.HasHarmfulSideEffects()) {
+            if ((!pick.pure || restored > pureBest) && !HasSideEffect(ff)) {
                 pick.pure = &item;
                 pureBest = restored;
             }
@@ -615,7 +689,7 @@ namespace Huginn::Override
 
         // Only log when selected potion changes (suppress per-frame spam)
         if (bestPotion->data.formID != logState.lastLogged) {
-            bool isPure = !bestPotion->data.HasHarmfulSideEffects();
+            const bool isPure = !HasSideEffect(Effect::FacetsOfForm(bestPotion->data.formID));
             logger::info("[OverrideManager] {}: '{}' FormID={:08X} count={}{}"sv,
                 label, bestPotion->data.name, bestPotion->data.formID, bestPotion->count,
                 isPure ? "" : " (has side effects)");
@@ -715,11 +789,11 @@ namespace Huginn::Override
             return std::nullopt;
         }
 
-        // A cure is binary, so the cheapest one goes first (as
-        // GetBestCurePoisonPotion ranks them), pure before impure. A weapon
-        // poison never qualifies, whatever it carries. R11: the effect
-        // catalog's cure_poison facet and kind (core/CapFacets.h), not the old
-        // classifier's tag and type.
+        // A cure is binary, so the cheapest one goes first, pure before
+        // impure. A weapon poison never qualifies, whatever it carries. R11:
+        // the effect catalog's cure_poison facet and kind, and its self_harm /
+        // hostile facets for pure (core/CapFacets.h), not the old classifier's
+        // tags and type.
         const Item::InventoryItem* pure = nullptr;
         const Item::InventoryItem* any = nullptr;
         m_itemRegistry->ForEachItem([&](const Item::InventoryItem& i) {
@@ -732,7 +806,7 @@ namespace Huginn::Override
                 return !best || i.data.value < best->data.value;
             };
             if (cheaper(any)) any = &i;
-            if (!i.data.HasHarmfulSideEffects() && cheaper(pure)) pure = &i;
+            if (!HasSideEffect(ff) && cheaper(pure)) pure = &i;
         });
         const auto* best = pure ? pure : (Config::ALLOW_IMPURE_POTIONS() ? any : nullptr);
 
@@ -755,6 +829,25 @@ namespace Huginn::Override
         return candidate;
     }
 
+    // How long an item lets its user breathe water: the longest of its
+    // waterbreathing rows (primary actor value WaterBreathing, not hostile).
+    // An item whose waterbreathing is not such a row (a scripted one the
+    // catalog maps by its description) falls back to ItemData::duration.
+    [[nodiscard]] static float WaterbreathingSeconds(const Item::ItemData& data)
+    {
+        float seconds = 0.0f;
+        bool found = false;
+        if (const auto* item = RE::TESForm::LookupByID<RE::AlchemyItem>(data.formID)) {
+            for (const auto* effect : item->effects) {
+                if (!effect || !effect->baseEffect || effect->baseEffect->IsHostile()) continue;
+                if (effect->baseEffect->data.primaryAV != RE::ActorValue::kWaterBreathing) continue;
+                found = true;
+                seconds = std::max(seconds, static_cast<float>(effect->effectItem.duration));
+            }
+        }
+        return found ? seconds : data.duration;
+    }
+
     std::optional<Candidate::CandidateVariant> OverrideManager::FindWaterbreathingItem() const
     {
         // A waterbreathing item in the inventory (potions, and food that
@@ -762,18 +855,25 @@ namespace Huginn::Override
         // the page through the scorer (the underwater need), so this looks at
         // items only. R11: the effect catalog's utility_water_breathing facet
         // (core/CapFacets.h), not the old classifier's tag; a poison never
-        // qualifies.
+        // qualifies. Ranked by the waterbreathing row's own duration
+        // (WaterbreathingSeconds), not ItemData::duration: that is the
+        // costliest effect's, which on a food is its restore or fortify.
         if (m_itemRegistry) {
             // Single-pass longest-duration scan (no per-tick allocation/sort)
             const Item::InventoryItem* bestPotion = nullptr;
-            m_itemRegistry->ForEachItem([&bestPotion](const Item::InventoryItem& i) {
+            float bestSeconds = 0.0f;
+            m_itemRegistry->ForEachItem([&](const Item::InventoryItem& i) {
                 if (i.count <= 0) return;
                 const auto ff = Effect::FacetsOfForm(i.data.formID);
                 if (!ff.known || ff.kind == Core::Effect::Kind::Poison ||
                     !ff.facets.Has(Core::Facets::F::Waterbreathing)) {
                     return;
                 }
-                if (!bestPotion || i.data.duration > bestPotion->data.duration) bestPotion = &i;
+                const float seconds = WaterbreathingSeconds(i.data);
+                if (!bestPotion || seconds > bestSeconds) {
+                    bestPotion = &i;
+                    bestSeconds = seconds;
+                }
             });
             if (bestPotion) {
                 auto candidate = Candidate::ItemCandidate::FromInventoryItem(*bestPotion);

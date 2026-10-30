@@ -3,6 +3,7 @@
 #include "effect/EffectCatalog.h"
 
 #include <mutex>
+#include <thread>
 
 namespace Huginn::Effect
 {
@@ -11,6 +12,7 @@ namespace Huginn::Effect
 #ifndef NDEBUG
         std::mutex g_testMutex;
         TestResolver g_testResolver;
+        std::thread::id g_testThread;   // the thread that set the resolver: the only one it answers
 #endif
 
         Core::Facets::School SchoolOf(Spell::MagicSchool s) noexcept
@@ -98,7 +100,7 @@ namespace Huginn::Effect
 #ifndef NDEBUG
         {
             std::lock_guard lock(g_testMutex);
-            if (g_testResolver) {
+            if (g_testResolver && std::this_thread::get_id() == g_testThread) {
                 if (const auto t = g_testResolver(candidate)) {
                     s.known = t->known;
                     s.facets = t->facets;
@@ -115,6 +117,7 @@ namespace Huginn::Effect
     {
         std::lock_guard lock(g_testMutex);
         g_testResolver = std::move(resolver);
+        g_testThread = g_testResolver ? std::this_thread::get_id() : std::thread::id{};
     }
 #endif
 }

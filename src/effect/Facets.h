@@ -52,8 +52,10 @@ namespace Huginn::Effect
     /// The Debug test suites (Tests.cpp) build candidates with made-up FormIDs
     /// the catalog does not hold. A resolver set here answers for a candidate
     /// the catalog has no entry for; nothing in the plugin sets one. Pass an
-    /// empty function to clear it. Guarded by a mutex (a pipeline tick may
-    /// run beside an after-load suite).
+    /// empty function to clear it. It answers only on the thread that set it
+    /// (the suites run synchronously on it): a pipeline tick on another
+    /// thread beside an after-load suite still sees a real form the catalog
+    /// does not map as unknown, not as a synthetic one. Guarded by a mutex.
     using TestResolver = std::function<std::optional<FormFacets>(const Candidate::CandidateVariant&)>;
     void SetTestResolver(TestResolver resolver);
 #endif

@@ -173,9 +173,10 @@ and logs carry the rest.
       the game launch), `gen` (the load within it) and, from 0.22.11, `char`
       (the character ID). (`Huginn_AB.log`, which carried the same stamps,
       went with the A|B shadow arm in 0.23.8.)
-- [ ] At the first and last burst of the run: `hg dump weights`, `hg dump
-      potions`, `hg dump scrolls` (the learner state the run started and ended
-      with)
+- [ ] At the first and last burst of the run: `hg dump weights` and `hg
+      dump theta` (the learner state the run started and ended with; the
+      per-type `hg dump potions` / `hg dump scrolls` went in R11, and `hg dump
+      all` is the load-order dump if one is wanted)
 - [ ] The `.tracy` capture (Release+Tracy runs)
 - [ ] Any SKSE crash log (CrashLogger / NetScriptFramework)
 - [ ] Cosave size (`.skse` next to the save)

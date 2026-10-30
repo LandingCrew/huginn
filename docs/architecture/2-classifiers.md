@@ -362,10 +362,11 @@ enum class ItemTagExt : uint16_t
 };
 ```
 
-`ItemData::HasHarmfulSideEffects()` reads the ravage / damage-regen / weakness
-bits alongside `isHostile` and the primary damage tags — Skooma carries
-`DamageHealth` beside `RestoreStamina` without the hostile flag, and emergency
-overrides only surface pure potions.
+*(Deleted in R11.)* `ItemData::HasHarmfulSideEffects()` read the ravage /
+damage-regen / weakness bits alongside `isHostile` and the primary damage tags —
+Skooma carries `DamageHealth` beside `RestoreStamina` without the hostile flag,
+and emergency overrides only surface pure potions. The override finders now ask
+the effect catalog's self_harm, intoxication and hostile facets (`Core::Facets::HasSideEffect`).
 
 > **Not currently set by the classifier:** the `Ravage*` and `Damage*Regen`
 > bits are declared and *read* (by `HasHarmfulSideEffects`), but

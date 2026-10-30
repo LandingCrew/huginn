@@ -220,6 +220,34 @@ namespace Huginn::Core::Facets
                (s.facets.Has(F::Intoxicating) || s.facets.Has(F::DrinkCost));
     }
 
+    /// Whether the resist-redundancy filter may judge an item: it gives its
+    /// user a resistance (a resist_* facet) and is neither hostile nor
+    /// damaging. LoreRim's elemental cloaks carry a resistance to the opposite
+    /// element beside their damage aura (Flame Cloak: damage, resist_frost,
+    /// hostile); judged by that rider, a Nord mage over the frost threshold
+    /// lost Flame Cloak to the resist filter. The rider is not why anyone
+    /// casts a cloak, so it does not make the cloak redundant (doc 11: cloaks
+    /// are not resist-filtered). A poison never reaches the question (hostile).
+    [[nodiscard]] constexpr bool ResistJudgeable(const Set& f) noexcept
+    {
+        return !f.Has(F::Hostile) && !f.Has(F::Damage) &&
+               (f.Has(F::ResistFire) || f.Has(F::ResistFrost) || f.Has(F::ResistShock) ||
+                f.Has(F::ResistPoison) || f.Has(F::ResistMagic));
+    }
+
+    /// A consumable's side effect on its drinker, as the override finders ask
+    /// it (pure before impure): the self_harm family (a damage, weakness,
+    /// ravage or regen drain on the drinker: effects.csv's self_harm rows),
+    /// intoxication (survival_intoxication: Skooma's Drugged; Simonrim's
+    /// Skooma keeps its Damage Health under it, not under self_harm), or a
+    /// hostile row (a poison; a wrapper's payload aimed at others). Replaces
+    /// the old ItemData tag test (DamageHealth/Magicka/Stamina, Ravage*,
+    /// Damage*Regen, WeaknessElement, isHostile).
+    [[nodiscard]] constexpr bool HasSideEffect(const Set& f) noexcept
+    {
+        return f.Has(F::SelfHarm) || f.Has(F::Intoxicating) || f.Has(F::Hostile);
+    }
+
     // -------------------------------------------------------------------------
     // The slot classes, re-derived from cap(i) (R11; docs/architecture/5-slots.md
     // has the review of each against what the classifiers did)

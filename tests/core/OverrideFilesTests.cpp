@@ -112,7 +112,7 @@ TEST_CASE("effect override files: one bad file does not break the rest")
     CHECK(m.table.Find("MyMod.esp", 0x804u) == Col::resist_fire);
     CHECK(m.entries == 2);
     CHECK(m.files[0].skipped);
-    CHECK(m.files[0].why == "does not parse");
+    CHECK(m.files[0].why == "cannot be read");
     CHECK(m.files[1].skipped);
     CHECK(m.files[1].why.find("newer") != std::string::npos);
     CHECK_FALSE(m.files[2].skipped);

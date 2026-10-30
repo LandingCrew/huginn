@@ -540,12 +540,16 @@ namespace Huginn::Candidate
     // of fire, frost, shock, poison); resist_* columns are set only by a
     // resistance the item GIVES, so a poison aura (Strider's Shroud: damage,
     // not resist_poison) still passes, and Resist Magic now counts for spells
-    // as it did for potions.
+    // as it did for potions. A hostile or damaging item is never judged by
+    // its resistance (Core::Facets::ResistJudgeable): LoreRim's elemental
+    // cloaks carry a resist rider for the opposite element, and before R11
+    // only a Defensive spell reached this check, so a cloak never did.
     bool CandidateFilters::IsResistRedundant(
         Core::Facets::Set facets,
         const State::ActorResistances& resistances,
         Core::Refresh::DueBits refreshDue) const
     {
+        if (!Core::Facets::ResistJudgeable(facets)) return false;
         const float threshold = m_config.resistThresholdToFilter;
         using E = Core::Refresh::Element;
         using F = Core::Facets::F;

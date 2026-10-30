@@ -507,14 +507,6 @@ namespace Huginn::Item
    // CONVENIENCE "BEST" ACCESSORS — single-pass FindBest (O(n), no allocation)
    // =============================================================================
 
-   const InventoryItem* ItemRegistry::GetBestWaterbreathingPotion() const noexcept
-   {
-      // Longest duration wins (matches GetWaterbreathingPotions ordering)
-      return FindBest(
-      [](const InventoryItem& i) { return HasTag(i.data.tags, ItemTag::Waterbreathing) && i.count > 0; },
-      [](const InventoryItem& i) { return i.data.duration; });
-   }
-
    const InventoryItem* ItemRegistry::GetBestHealthPotion() const noexcept
    {
       return FindBest(
@@ -570,13 +562,6 @@ namespace Huginn::Item
    {
       return FindBest(
       [](const InventoryItem& i) { return HasTag(i.data.tags, ItemTag::CureDisease) && i.count > 0; },
-      [](const InventoryItem& i) { return -static_cast<int64_t>(i.data.value); });
-   }
-
-   const InventoryItem* ItemRegistry::GetBestCurePoisonPotion() const noexcept
-   {
-      return FindBest(
-      [](const InventoryItem& i) { return HasTag(i.data.tags, ItemTag::CurePoison) && i.count > 0; },
       [](const InventoryItem& i) { return -static_cast<int64_t>(i.data.value); });
    }
 

@@ -153,6 +153,11 @@ PRUNED = {
     'MatchesSpell': 'R11: SlotClassifier\'s tag arms (core/CapFacets.h Matches)',
     'MatchesItem': 'R11: SlotClassifier\'s tag arms', 'MatchesScroll': 'R11: SlotClassifier\'s tag arms',
     'MatchesWeapon': 'R11: SlotClassifier\'s tag arms',
+    # R11 (the verifier's round): the classifier readers the override finders still reached
+    'HasHarmfulSideEffects': 'R11: ItemData\'s side-effect test by tags (core/CapFacets.h HasSideEffect)',
+    'GetBestCurePoisonPotion': 'R11: ItemRegistry\'s cure pick by tag (OverrideManager::FindCurePoisonItem)',
+    'GetBestWaterbreathingPotion': 'R11: ItemRegistry\'s waterbreathing pick by tag (FindWaterbreathingItem)',
+    'BestPotionPick': 'R11: ItemRegistry\'s pick struct (OverrideManager\'s own PotionPick)',
 }
 # Words too common to search repo-wide: pruned only in the files that had them.
 PRUNED_SCOPED = [
@@ -196,6 +201,13 @@ REQUIRED += [
      'R11: the filters read the candidate\'s facets'),
     ('src/override/OverrideManager.cpp', r'Effect::FacetsOfForm\(sd\.formID\)\.facets\.Has\(restore\)',
      'R11: the restore-spell fallback reads the restore facet'),
+    ('src/override/OverrideManager.cpp', r'return\s+Core::Facets::HasSideEffect\(ff\.facets\);',
+     'R11: the override finders\' pure-before-impure split reads the self_harm / intoxication / hostile facets'),
+    ('src/override/OverrideManager.cpp',
+     r'const float restored = PotionRestoreWithin\(item\.data\.formID, target\.av, target\.vital, windowSec\);',
+     'R11: a restore potion ranks on its restore row, not the costliest effect\'s magnitude'),
+    ('src/candidate/CandidateFilters.cpp', r'if \(!Core::Facets::ResistJudgeable\(facets\)\) return false;',
+     'R11: a hostile or damaging spell (an elemental cloak\'s resist rider) is never resist-filtered'),
     ('src/pipeline/PipelineCoordinator.cpp', r'sc\.subject = Effect::SubjectOf\(sc\.candidate\);\s*sc\.hasSubject = true;',
      'R11: every ranked row carries its facets for the slot code'),
 ]
@@ -485,6 +497,12 @@ CLASSIFIER_CPP_PATTERNS = {
     'SpellType': r'(?<!MagicSystem::)(?<![A-Za-z0-9_])SpellType(?![A-Za-z0-9_])',
     '.tags': r'(?:\.|->)\s*(?:tags|tagsExt)\b',
     '.element': r'(?:\.|->)\s*element\b',
+    # The registries' and ItemData's own views by classifier type or tag: a call from a live file
+    # reads the classifiers through an allowlisted file's member function (how the override
+    # finders kept reading tags through ItemData::HasHarmfulSideEffects).
+    'potion views': r'\bGet(?:Best)?(?:Health|Magicka|Stamina|Resist(?:Fire|Frost|Shock|Poison|Magic)|'
+                    r'Cure(?:Disease|Poison)|Fortify(?:School|Combat|Utility)|Invisibility|Waterbreathing)'
+                    r'Potions?(?:ByMagnitude)?\b|\bGetItemsWithTag\b|\bIsFortify(?:Destruction|Smithing)\b',
 }
 CLASSIFIER_ALLOW = [
     ('src/spell/*', 'the spell classifier, its data, overrides and registry (the D2 inputs\' producer)'),
@@ -510,8 +528,9 @@ CLASSIFIER_BUDGET = {
         r'^\s*if \(item\.data\.type != Item::ItemType::SoulGem\) return;$',
     ], 'the soul gem split (the registry\'s form kind)'),
     # The in-game Debug suite: the classifier and D2 tests, the synthetic candidates stated in the
-    # old vocabulary, and their facet resolver (InstallSyntheticFacetResolver). Counted.
-    'src/Tests.cpp': (153, None, 'the Debug suite: classifier and D2 tests, synthetic candidates and their resolver'),
+    # old vocabulary, and their facet resolver (InstallSyntheticFacetResolver). Counted. 178:
+    # 153 plus the 25 lines of the item registry's own tests that call its potion views.
+    'src/Tests.cpp': (178, None, 'the Debug suite: classifier and D2 tests, synthetic candidates and their resolver'),
 }
 
 

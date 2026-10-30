@@ -768,9 +768,10 @@ namespace Huginn::Item
            // Damage effects (hostile). A Ravage is a damage to the vital
            // that recovers when it ends (the kRecover flag), so it keeps the
            // Damage* tag and gains its Ravage* one. The regen cases and the
-           // weakness one below are what let HasHarmfulSideEffects() see an
+           // weakness one below are what let the old side-effect test see an
            // impure potion (Restore Health + Damage Magicka Regen) -- before,
-           // they fell to default and the potion read as pure.
+           // they fell to default and the potion read as pure. (R11: the
+           // override finders ask the catalog's self_harm facet now.)
            const bool recovers = effect->baseEffect->data.flags.all(
                RE::EffectSetting::EffectSettingData::Flag::kRecover);
            switch (primaryAV) {

@@ -21,8 +21,10 @@
 //   - a later file's entry for the same effect replaces an earlier one (and is
 //     counted, so a conflict between two mods shows in the log);
 //   - an entry for a plugin that is not loaded is skipped quietly (counted);
-//   - a file that does not parse, or says it is for a newer format, is skipped
-//     whole and named in the log; the other files still load;
+//   - a file that cannot be read (CSimpleIniA::LoadFile fails: an I/O error;
+//     the INI reader takes almost any text), or says it is for a newer
+//     format, is skipped whole and named in the log; the other files still
+//     load. A malformed LINE is ignored and counted, not the file;
 //   - the vocabulary is the effects.csv column ids (`hg dump all`'s
 //     effectColumn); `iFormatVersion` absent reads as 1, the first format.
 //
@@ -59,7 +61,7 @@ namespace Huginn::Core::Effect
     struct OverrideFile
     {
         std::string name;                                         // for the log
-        bool readOk = true;                                       // false: did not parse
+        bool readOk = true;                                       // false: could not be read
         int version = 0;                                          // [Huginn] iFormatVersion; 0 = absent (reads as 1)
         bool player = false;                                      // the player's own file: applied last
         std::vector<std::pair<std::string, std::string>> lines;   // [Overrides] key = value, in file order
@@ -106,7 +108,7 @@ namespace Huginn::Core::Effect
     struct OverrideFileReport
     {
         std::string name;
-        bool skipped = false;          // the whole file (did not parse, or a newer format)
+        bool skipped = false;          // the whole file (could not be read, or a newer format)
         std::string why;
         std::size_t loaded = 0;        // entries that went into the table
         std::size_t ignored = 0;       // lines that did not read
@@ -153,7 +155,7 @@ namespace Huginn::Core::Effect
             rep.name = f.name;
             if (!f.readOk) {
                 rep.skipped = true;
-                rep.why = "does not parse";
+                rep.why = "cannot be read";
             }
             else if (f.version > kOverrideFormatVersion) {
                 rep.skipped = true;

@@ -269,10 +269,16 @@ a poison): the longest-lasting one with the catalog's Waterbreathing facet
 **R11: the finders read the effect catalog.** Which items each override may
 surface is decided by `core/CapFacets.h` facets of the item's form, not by the
 old classifiers' types and tags: a restore potion is catalog kind Potion with
-the RestoreHealth / RestoreMagicka / RestoreStamina facet; the restore-spell
-fallback takes the spells with that facet (and its effect walk still measures
-the amount); the Poisoned cure is CurePoison and not a poison. An item the
-catalog has no entry for is not offered by an override.
+the RestoreHealth / RestoreMagicka / RestoreStamina facet, ranked by what
+its restore row of that vital gives back within the urgent window (an effect
+walk, `PotionRestoreWithin`; not `ItemData::magnitude`, which is the costliest
+effect's, so a "Restore Health 120 + Restore Magicka 30" potion counts 30 as a
+magicka potion); the restore-spell fallback takes the spells with that facet
+(its own effect walk measures the amount); the Poisoned cure is CurePoison and
+not a poison; waterbreathing ranks on its own row's duration. Pure before
+impure is the catalog's self_harm, intoxication and hostile facets
+(`Core::Facets::HasSideEffect`), not `ItemData`'s damage / ravage / weakness
+tags. An item the catalog has no entry for is not offered by an override.
 
 **Override category** (`src/override/OverrideConditions.h:38`):
 ```cpp

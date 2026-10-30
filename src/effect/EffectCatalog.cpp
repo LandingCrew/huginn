@@ -126,8 +126,9 @@ namespace Huginn::Effect
     {
         // R11: the override layer is a directory (core/OverrideFiles.h): every
         // Data/SKSE/Plugins/Huginn/EffectOverrides/*.ini a mod ships, then the
-        // player's own Huginn_EffectOverrides.ini last. One file that does not
-        // parse is skipped and named; the rest still load.
+        // player's own Huginn_EffectOverrides.ini last. One file that cannot be
+        // read (an I/O error) or is for a newer format is skipped and named; the
+        // rest still load. A malformed line is ignored and counted.
         namespace fs = std::filesystem;
         std::vector<OverrideFile> files;
         const auto readFile = [&files](const fs::path& path, bool player) {
@@ -168,9 +169,13 @@ namespace Huginn::Effect
             return;
         }
 
-        auto* dh = RE::TESDataHandler::GetSingleton();   // LookupModByName is non-const
+        // "Loaded" is active in the load order: LookupModByName also finds a
+        // plugin that is present in Data but not active, whose entries would
+        // then count as loaded rather than "for plugins not loaded".
+        auto* dh = RE::TESDataHandler::GetSingleton();   // the lookups are non-const
         const auto merged = MergeOverrides(files, [dh](std::string_view plugin) {
-            return dh && dh->LookupModByName(plugin) != nullptr;
+            return dh && (dh->LookupLoadedModByName(plugin) != nullptr ||
+                          dh->LookupLoadedLightModByName(plugin) != nullptr);
         });
         overrides_ = merged.table;
         std::size_t ignored = 0, notLoaded = 0, replaced = 0, skipped = 0;
