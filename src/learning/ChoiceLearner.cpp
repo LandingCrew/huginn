@@ -412,17 +412,23 @@ namespace Huginn::Learning
     // =========================================================================
     void ChoiceLearner::OnPick(const DL::Decision& d, double pickTime)
     {
-        if (!Ready()) return;
         const bool nothing = d.outcome == DL::Outcome::Nothing;
-        const bool usable = C::UsablePick(nothing, d.ctx != nullptr, d.row >= 0, d.name, d.list);
-        std::unique_lock lock(m_mutex);
         // The item's first pick ends its discovery boost (core/DiscoveryBoost.h),
-        // whether or not the update can use the decision: the player found it.
-        if (!nothing && d.form != 0 && m_discovery.EndOnPick(d.form)) {
-            Touch();
+        // whether or not the update can use the decision, and with the model
+        // off too (the fallback ranking still has picks): the player found it.
+        bool boostEnded = false;
+        {
+            std::unique_lock lock(m_mutex);
+            boostEnded = m_discovery.OnDecision(nothing, d.form);
+            if (boostEnded) Touch();
+        }
+        if (boostEnded) {
             logger::debug("[Discovery] {:08X} '{}' picked ({}): its discovery boost ends"sv, d.form, d.name,
                 DL::OutcomeName(d.outcome));
         }
+        if (!Ready()) return;
+        const bool usable = C::UsablePick(nothing, d.ctx != nullptr, d.row >= 0, d.name, d.list);
+        std::unique_lock lock(m_mutex);
         if (!usable) return;
         const DL::Context& ctx = *d.ctx;
         std::vector<const DL::Row*> rows;
@@ -656,6 +662,13 @@ namespace Huginn::Learning
     Core::Discovery::Tracker::Gain ChoiceLearner::OnGained(std::uint32_t form, const char* via)
     {
         using Gain = Core::Discovery::Tracker::Gain;
+        {
+            // Most gains are forms already seen (arrows picked back up, a
+            // potion restocked): answer those under the shared lock.
+            std::shared_lock lock(m_mutex);
+            if (!m_discovery.Live() || form == 0) return Gain::Dropped;
+            if (m_discovery.Seen(form)) return Gain::Known;
+        }
         Gain g = Gain::Dropped;
         Core::Discovery::Params p;
         {
@@ -682,20 +695,36 @@ namespace Huginn::Learning
 
     std::size_t ChoiceLearner::PrimeDiscovery(const std::vector<std::uint32_t>& present)
     {
-        std::size_t added = 0, seen = 0, boosted = 0;
+        std::size_t added = 0, fromB = 0, gone = 0, seen = 0, boosted = 0;
         Core::Discovery::Params p;
         {
             std::unique_lock lock(m_mutex);
+            // Dynamic forms (0xFF) the save named that no longer exist: the
+            // engine reuses those IDs, so a later item under one must not read
+            // as seen. Game thread, after the load (InitializeGameSystems).
+            gone = m_discovery.DropDynamicIf([](std::uint32_t f) { return RE::TESForm::LookupByID(f) == nullptr; });
             added = m_discovery.Prime(present);
+            // A b entry proves the character held the item (it was picked, or
+            // a candidate passed over): seen, though it may be used up, sold
+            // or in a chest now -- on the first load with DISC those would
+            // otherwise read as newly gained when they come back.
+            std::vector<std::uint32_t> bForms;
+            bForms.reserve(m_b.size());
+            for (const auto& [form, belief] : m_b) {
+                (void)belief;
+                bForms.push_back(form);
+            }
+            fromB = m_discovery.Prime(bForms);
             seen = m_discovery.SeenCount();
             boosted = m_discovery.BoostedCount();
             p = m_settings.discovery;
             Touch();
         }
-        logger::info("[Discovery] Load: {} forms present ({} new to this character's seen set, not boosted); {} known "
-                     "in all, {} boosted (bDiscoveryBoost = {}, x{:.2f} halving every {:.0f} min of play)"sv,
-            present.size(), added, seen, boosted, p.enabled, p.varMult, p.halfLifeSec / 60.0);
-        return added;
+        logger::info("[Discovery] Load: {} forms present ({} new to this character's seen set, not boosted; {} more from "
+                     "b's entries; {} vanished dynamic forms dropped); {} known in all, {} boosted (bDiscoveryBoost = {}, "
+                     "x{:.2f} halving every {:.0f} min of play)"sv,
+            present.size(), added, fromB, gone, seen, boosted, p.enabled, p.varMult, p.halfLifeSec / 60.0);
+        return added + fromB;
     }
 
     Core::Discovery::Saved ChoiceLearner::ExportDiscovery() const

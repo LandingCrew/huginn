@@ -183,8 +183,10 @@ namespace Huginn::Learning
         Core::Discovery::Tracker::Gain OnGained(std::uint32_t form, const char* via);
         /// A load starts: gains are dropped until PrimeDiscovery.
         void SuspendDiscovery();
-        /// What the load found: seen, not boosted; gains count from here. Logs
-        /// the per-load summary. Returns how many were new to the seen set.
+        /// What the load found, and every form b holds an entry for (the
+        /// character held it): seen, not boosted; dynamic forms that no longer
+        /// exist dropped first; gains count from here. Game thread. Logs the
+        /// per-load summary. Returns how many were new to the seen set.
         std::size_t PrimeDiscovery(const std::vector<std::uint32_t>& present);
         [[nodiscard]] Core::Discovery::Saved ExportDiscovery() const;
         /// Replaces the state with a save's (another character, a later save).

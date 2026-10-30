@@ -1352,9 +1352,11 @@ the edge of the page does (its w reaches wRef at rel 0.25 instead of 0.5).
   or the spell registry adds a spell in play (`SpellRegistry::TakeNewlyLearned`,
   `LearnedAt`'s meaning) -- and the form is not in the character's seen set.
   Not gained: anything present when a character or a save loads (the load
-  primes the seen set with the inventory's entries and base container and the
-  registry's spells, without a boost; gains arriving while a load is under way
-  are dropped), a count change of a form already seen, or a form gained again
+  primes the seen set with the inventory's entries and base container, the
+  registry's spells and every form b holds an entry for, without a boost;
+  gains arriving while a load is under way are dropped; a chest's contents
+  with no b entry cannot be primed, so on the first load with DISC such an
+  item reads as new when it comes back), a count change of a form already seen, or a form gained again
   after it left (sold, used up, a spell removed and re-added). The seen set is
   never pruned; b's forget pass returns an unused item to its prior, and that
   item is not new.
@@ -1368,7 +1370,8 @@ the edge of the page does (its w reaches wRef at rel 0.25 instead of 0.5).
   pull covered toward 0.5 and move mu.
 - **Saved** in the cosave record DISC (seen forms; boosted forms with their
   play seconds since the gain), under the load decisions BIAS follows (a
-  reload of the same character keeps memory, dynamic forms from the save),
+  reload of the same character keeps memory, dynamic forms from the save; a
+  saved dynamic form that no longer exists is dropped at the load),
   written whether or not the bootstrap is usable.
 - **Seen in game:** `[Discovery] ... newly gained (inventory|spell)` (debug),
   one `[Discovery] Load: ...` summary per load (info), `new xM sd_w=` on the

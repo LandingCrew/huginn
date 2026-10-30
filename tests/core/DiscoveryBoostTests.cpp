@@ -183,6 +183,46 @@ TEST_CASE("discovery tracker: the first pick ends the boost, and a form once see
     CHECK_FALSE(t.EndOnPick(0x00999999u));
 }
 
+TEST_CASE("discovery tracker: any decision but 'nothing' ends the boost -- the model need not be ready")
+{
+    // ChoiceLearner::OnPick calls OnDecision before its Ready() check, so a
+    // pick in the fallback ranking ends the boost too; this is the rule it runs.
+    D::Tracker t;
+    t.Prime({});
+    REQUIRE(t.OnGained(0x51u, 0.0) == Gain::New);
+    REQUIRE(t.OnGained(0x52u, 0.0) == Gain::New);
+    CHECK_FALSE(t.OnDecision(/*nothing=*/true, 0x51u));   // a need episode with no press
+    CHECK(t.Boosted(0x51u));
+    CHECK_FALSE(t.OnDecision(false, 0u));                  // no form
+    CHECK(t.OnDecision(false, 0x51u));                     // a pick (usable or not)
+    CHECK_FALSE(t.Boosted(0x51u));
+    CHECK_FALSE(t.OnDecision(false, 0x51u));               // a second pick: nothing left
+    CHECK(t.Boosted(0x52u));
+}
+
+TEST_CASE("discovery tracker: dynamic forms that no longer exist are dropped; static ones never")
+{
+    D::Tracker t;
+    t.Prime(std::vector<std::uint32_t>{ 0x01u, 0xFF000001u, 0xFF000002u });
+    t.OnGained(0xFF000003u, 0.0);
+    t.OnGained(0x02u, 0.0);
+    // the "lookup" says every form is gone: only the dynamic ones may go
+    const auto n = t.DropDynamicIf([](std::uint32_t) { return true; });
+    CHECK(n == 3);
+    CHECK(t.Seen(0x01u));
+    CHECK(t.Seen(0x02u));
+    CHECK(t.Boosted(0x02u));
+    CHECK_FALSE(t.Seen(0xFF000001u));
+    CHECK_FALSE(t.Boosted(0xFF000003u));
+    // a reused ID is new again
+    CHECK(t.OnGained(0xFF000001u, 5.0) == Gain::New);
+    // and one that still exists stays
+    D::Tracker u;
+    u.Prime(std::vector<std::uint32_t>{ 0xFF000010u, 0xFF000011u });
+    CHECK(u.DropDynamicIf([](std::uint32_t f) { return f == 0xFF000011u; }) == 1);
+    CHECK(u.Seen(0xFF000010u));
+}
+
 TEST_CASE("discovery tracker: Expire drops the boosts that ran out and keeps the rest, and the seen set")
 {
     D::Tracker t;

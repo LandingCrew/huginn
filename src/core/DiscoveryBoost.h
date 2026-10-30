@@ -49,9 +49,16 @@
 //   - a spell the spell registry adds in play (not one a load brought:
 //     SpellRegistry::TakeNewlyLearned);
 // and NOT: anything present when a character or a save loads (Prime puts it
-// in the seen set with no boost), a stack count change of a form already
-// seen, or a form gained again after it left (sold, dropped, used up, a
-// spell removed and re-added: Arcane Anchor's churn).
+// in the seen set with no boost), anything b holds an entry for (picked or
+// passed over: the character held it, even if it is used up or sold now), a
+// stack count change of a form already seen, or a form gained again after it
+// left (sold, dropped, used up, a spell removed and re-added: Arcane
+// Anchor's churn). What sits in a chest and has no b entry cannot be primed
+// (the plugin reads only the player's inventory), so on the first load with
+// DISC such an item reads as new when it comes back.
+//
+// Dynamic forms (0xFF......) the save names that no longer exist are dropped
+// at the load (DropDynamicIf): the engine reuses those IDs.
 //
 // Tracker: the seen set (every form this character has held or known since
 // the feature existed: the first load primes it with the inventory and the
@@ -186,6 +193,36 @@ namespace Huginn::Core::Discovery
 
         /// The item's first pick ends its boost. True when it had one.
         bool EndOnPick(std::uint32_t form) { return m_boosted.erase(form) != 0; }
+
+        /// A decision of the selection log: any outcome but "nothing" with a
+        /// form is a pick and ends that form's boost -- whether or not the
+        /// learner can use the decision, and whether or not the model is
+        /// ready (the fallback ranking still has picks). True when it did.
+        bool OnDecision(bool nothing, std::uint32_t form)
+        {
+            return !nothing && form != 0 && EndOnPick(form);
+        }
+
+        /// Drops the dynamic forms (0xFF......) `gone` says no longer exist
+        /// from the seen set and the boosts: the engine reuses such IDs, so a
+        /// later item under one must not read as already seen. Returns how
+        /// many seen entries went.
+        template <class Gone>
+        std::size_t DropDynamicIf(Gone&& gone)
+        {
+            std::size_t n = 0;
+            for (auto it = m_seen.begin(); it != m_seen.end();) {
+                if (IsDynamic(*it) && gone(*it)) {
+                    m_boosted.erase(*it);
+                    it = m_seen.erase(it);
+                    ++n;
+                }
+                else {
+                    ++it;
+                }
+            }
+            return n;
+        }
 
         /// Drops the boosts that are over at `now`; returns how many.
         std::size_t Expire(const Params& p, double now)
