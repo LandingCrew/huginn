@@ -799,9 +799,11 @@ namespace Huginn::UI
         // explanation.
         if (mode == DisplayMode::Verbose && !assignment.IsOverride() && !scored.isRememberedOnly) {
             const auto& t = scored.choice.top[0];
-            // The assignment's score, not the held candidate's: SlotLocker can
-            // refresh a held key's item data without its score (a Remembrance
-            // row, the pre-filter lookup), and the assignment is what ranked.
+            // The assignment's score, not the held candidate's. The two differ
+            // only on a pinned key refreshed from a ranked row: SlotLocker takes
+            // the whole row (this run's score with it) but keeps the pinned
+            // slot score. Elsewhere they are equal (a Remembrance-only row or
+            // the pre-filter lookup replaces only the item data). Display only.
             const double s = assignment.score;
             std::string scores;
             if (scored.fallbackRanked) {

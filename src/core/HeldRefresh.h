@@ -14,14 +14,15 @@
 // filters drop the very item just used -- a potion on cooldown (3 s), a health
 // potion at full health, a resist potion while its resist is up. All of them
 // are exactly the moment the count changed. So:
-//   - in this run's SCORED list (same form and stack): take its item data and
-//     its utility; its score too, unless the row was added for a Remembrance
-//     hold only (an unranked -inf score must not land on an ordinary key) or
-//     the held key is pinned (an override's score is the pinned +inf);
+//   - in this run's SCORED list (same form and stack): take the whole ranked
+//     row (item data, score parts and explanation; R8.4) and its slot score,
+//     unless the row was added for a Remembrance hold only (item data only: an
+//     unranked -inf score must not land on an ordinary key) or the held key is
+//     pinned (the row, but not its score: an override's score is the pinned +inf);
 //   - else the item's CURRENT data, read from what the generator gathered from
 //     the registries this run BEFORE any filter (the caller's lookup,
-//     SlotLocker::RunContext::lookupItem): item data only, keep the utility and
-//     score the key had;
+//     SlotLocker::RunContext::lookupItem): item data only, keep the rest of the
+//     row and the score the key had;
 //   - else keep everything: nothing fresher exists (the item is gone -- the
 //     Gone path frees the key -- or not gathered at all).
 // An OVERRIDE key is different: only OverrideManager's own candidate carries
@@ -65,8 +66,8 @@ namespace Huginn::Core
 
     struct HeldRefreshPlan
     {
-        /// Take the item data (and, per the flags, utility/score) from this
-        /// scored row.
+        /// Take the item data (and, per the flags, the whole row / its score)
+        /// from this scored row.
         std::optional<std::size_t> scoredIndex;
         /// Not scored: take the item data only from the current (pre-filter)
         /// lookup.
@@ -74,7 +75,9 @@ namespace Huginn::Core
         /// An override key: take the data from the override's own current
         /// candidate (it carries the reason).
         bool useOverride = false;
-        bool refreshUtility = false;
+        /// A ranked row: take all of it (data, parts, explanation), not just
+        /// the item data.
+        bool refreshRow = false;
         bool refreshScore = false;
         /// Keep the stored override reason if the new data carries none.
         bool keepOverrideReason = false;
@@ -99,7 +102,7 @@ namespace Huginn::Core
         if (const auto s = FindHeldRefresh(formID, uniqueID, scored)) {
             plan.scoredIndex = s;
             const bool ranked = !scored[*s].rememberedOnly;
-            plan.refreshUtility = ranked;
+            plan.refreshRow = ranked;
             plan.refreshScore = ranked && !heldPinned;
             return plan;
         }

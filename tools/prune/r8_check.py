@@ -22,6 +22,11 @@ learner's learning score on the rows the old floors pass. So two lists:
             - a member read of the old utility or its parts: `.utility`, `.breakdown`, and the
               breakdown's fields (`.contextWeight`, `.learningScore`, ...), C++ only. Reading
               them is how utility would rank or display again, whatever the symbols are called.
+              The v3 row's copy of it (`.util`, DecisionLog::Row::util) too: that is how the
+              live learner sees the old utility;
+            - the old floors' keep flag: `legacyScored` (ScoredCandidate) and `.Scored()` (the
+              legacy module's Row), C++ only for the call. Reading either is how the floors
+              would filter or rank again.
           The utility -> rank-score bridge (RankOnUtility, BridgeScore, DisplayUtility) is
           LEGACY too, so utility cannot rank outside the fallback in the legacy module and the
           slot harness that states scores as utilities. A few words are LEGACY in one file only
@@ -29,7 +34,8 @@ learner's learning score on the rows the old floors pass. So two lists:
           `Suppress` in PipelineCoordinator.cpp. A file that ranks or does slot math live
           (ScoredCandidate.h, SlotScoreMath.h, UtilityScorer, PipelineCoordinator) is never
           allowed whole: it is a patterned budget. Nor is a file on the live learner's path
-          (ChoiceSubscriber.h: no LEGACY line; SelectionLogV3.cpp, which builds the v3 rows the
+          (ChoiceSubscriber.h: no LEGACY line; ChoiceLearner.cpp, which reads the v3 row's `util`
+          only as the util_missing flag, and SelectionLogV3.cpp, which builds the v3 rows the
           learner trains on: patterned).
           The old utility's row feature (`ln_util`) is LEGACY too: the bootstrap refuses a weight
           on it, and nothing but that refusal, its enum line and its host test may name it.
@@ -174,6 +180,9 @@ LEGACY = [
     # the old utility's row feature (format v1 `ln util`): the bootstrap refuses a weight on it
     # (core/Bootstrap.cpp); no row, live or logged, may set it
     'ln_util',
+    # the old floors' keep flag on ScoredCandidate: D2 reads it through um (the legacy module's
+    # Row); a live read elsewhere is the floors filtering or ranking again
+    'legacyScored',
 ]
 # The old score's config fields (ScorerConfig.h): C++ only.
 LEGACY_CPP = [
@@ -193,6 +202,10 @@ LEGACY_CPP_PATTERNS = {
     # effect column enum (core/EffectColumns.h), not the old utility.
     '.utility': r'(?:\.|->|(?<!\bCol)::)\s*utility\b',
     '.breakdown': r'(?:\.|->|::)\s*breakdown\b',
+    # the v3 row's copy of the old utility (DecisionLog::Row::util): the live learner's view of it
+    '.util': r'(?:\.|->)\s*util\b',
+    # the old floors' keep test on a legacy module Row (Legacy::Row::Scored)
+    '.Scored()': r'(?:\.|->)\s*Scored\s*\(',
     'breakdown part': r'(?:\.|->|::)\s*(?:contextWeight|rewardEstimate|learningScore|recencyBoost|correlationBonus'
                       r'|potionMultiplier|favoritesMultiplier|ToCompactString|ToDetailString)\b',
 }
@@ -258,7 +271,7 @@ ALLOW = [
 COMMENT = r'^\s*//'
 BUDGET = {
     # The live pipeline (PipelineCoordinator): the legacy pass and everything it reads off it.
-    'src/pipeline/PipelineCoordinator.cpp': (24, [
+    'src/pipeline/PipelineCoordinator.cpp': (30, [
         COMMENT,
         # the pass (or its skip with the switch off), and the switch
         r'^\s*ctx\.legacy = Scoring::Legacy::LegacyPass\(',
@@ -277,6 +290,9 @@ BUDGET = {
         r'^\s*sc\.utility = L->utility;$',
         r'^\s*sc\.breakdown = L->breakdown;$',
         r'^\s*sc\.isColdStartBoosted = L->isColdStartBoosted;$',
+        r'^\s*sc\.legacyScored = true;$',
+        r'^\s*C::SetLegacy\(x\.feat, C::LegacyFeature\(legacyOn, lg\.Scored\(\), '
+        r'static_cast<double>\(lg\.lnLearnMult\)\)\);$',
         # the favourites mode for the favorite_suppressed filter's input (HardGateInputs): the
         # one read of Suppress (R8.1's skips are that filter now)
         r'^\s*g_utilityScorer->GetConfig\(\)\.favoritesMode == Scoring::FavoritesMode::Suppress\);$',
@@ -288,6 +304,11 @@ BUDGET = {
         r'^\s*ctx\.legacy\.rowOf\.size\(\) == candidates\.size\(\);$',
         r'^\s*const auto lg = ctx\.legacy\.RowFor\(ci\);$',
         r'^\s*row\.utility = it->second->utility;$',
+        # CaptureEligible: the v3 rows' `scored` keeps its old meaning (the floors kept the row),
+        # the OldRun head's kept count, and the v3 row's lm off a kept row
+        r'^\s*if \(sc\.legacyScored\) scoredByKey\.try_emplace\(key, &sc\);$',
+        r'^\s*\[\]\(const Scoring::ScoredCandidate& sc\) \{ return sc\.legacyScored && !sc\.isRememberedOnly; \}\)\)\);$',
+        r'^\s*row\.lnLearnMult = lg\.Scored\(\) \? lg\.lnLearnMult : 0\.0f;$',
     ], 'the legacy pass, the switch, the fallback, the weights latch, the D2 feature per candidate, '
        'the v2 / v3 log copies, the Suppress filter input, the Debug widget cold-start count'),
     'src/pipeline/PipelineCoordinator.h': (6, [
@@ -313,7 +334,8 @@ BUDGET = {
     # The live scorer that ranks (sort, wildcards, envelopes): no old engine, but its [Recs]
     # lines log lm's inputs (hg recs detail) and the fallback's line.
     'src/learning/UtilityScorer.h': (0, None, 'the live scorer: no old engine'),
-    'src/learning/UtilityScorer.cpp': (6, [
+    'src/learning/UtilityScorer.cpp': (7, [
+        r'^\s*const std::string legacy = !scored\.legacyScored \? std::string\(" \| lm: under the old floors"\)$',
         r'^\s*const auto& bd = scored\.breakdown;$',
         r'^\s*: detail\s+\? fmt::format\(" \| lm from \{\}", bd\.ToDetailString\(\)\)$',
         r'^\s*scored\.score, scored\.utility,$',
@@ -333,15 +355,16 @@ BUDGET = {
     # ScoredCandidate holds live ranking code (operator<, SlotScore()), so it is budgeted, not
     # allowed: only the old utility's fields, the cold-start flag and RankOnUtility (the bridge
     # for the fallback and the slot harness). A bare `utility` in its code is tagged (FILE_PATTERNS).
-    'src/learning/ScoredCandidate.h': (9, [
+    'src/learning/ScoredCandidate.h': (11, [
         COMMENT,
         r'^\s*float utility = 0\.0f;$',
         r'^\s*ScoreBreakdown breakdown;\s+// ',
         r'^\s*bool isColdStartBoosted = false;\s+// ',
+        r'^\s*bool legacyScored = false;$',
         r'^\s*void RankOnUtility\(float u\) noexcept \{$',
         r'^\s*utility = u;$',
         r'^\s*score = Core::BridgeScore\(u\);$',
-    ], 'the old utility fields, the cold-start flag and RankOnUtility (the bridge of the fallback)'),
+    ], 'the old utility fields, the cold-start flag, the floors\' keep flag and RankOnUtility (the bridge of the fallback)'),
     # The R7 slot math (RanksBefore, BucketLogRatio) is live: only the bridge's two definitions.
     'src/core/SlotScoreMath.h': (2, [
         r'^\s*\[\[nodiscard\]\] inline SlotScore BridgeScore\(float utility\) noexcept$',
@@ -355,6 +378,10 @@ BUDGET = {
                                   'host legacy slot policy (no live core reads it)'),
     # The live learner's path. ChoiceSubscriber feeds ChoiceLearner::OnPick: no old engine.
     'src/learning/ChoiceSubscriber.h': (0, None, 'the live learner\'s subscriber: no old engine'),
+    # ChoiceLearner trains on the v3 rows: it reads the row's old-utility copy once, as the
+    # util_missing flag (whether the old floors scored the row), never as a value.
+    'src/learning/ChoiceLearner.cpp': (1, [r'^\s*const bool scored = std::isfinite\(r\.util\);$'],
+                                       'the live learner: `util` read only as the util_missing flag'),
     # SelectionLogV3 builds the v3 Decision rows the live learner trains on (util, lm): only the
     # row's old-utility copy and the OldScore columns' learner fill, each in its exact form.
     'src/learning/SelectionLogV3.cpp': (10, [

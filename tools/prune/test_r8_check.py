@@ -28,6 +28,17 @@ SC_SLOT = 'return isRememberedOnly ? Core::kUnrankedScore : score;'
 D2 = 'C::SetLegacy(x.feat,'
 
 PROBES = [
+    # --- round 5: the v3 row's `.util` and the old floors' keep flag are LEGACY ---
+    ('R5 A: lm from the v3 row\'s util in the learner\'s RowFeatures', 'src/learning/ChoiceLearner.cpp',
+     'const bool scored = std::isfinite(r.util);',
+     '            f[static_cast<std::size_t>(C::Feature::ln_learn_mult)] = '
+     'std::log(std::max(static_cast<double>(r.util), 1e-6));', 'after'),
+    ('R5 E: the live scorer filters on the old floors\' keep flag', US,
+     'std::stable_sort(scored.begin(), scored.end());',
+     '            std::erase_if(scored, [](const ScoredCandidate& s) { return !s.legacyScored; });', 'after'),
+    ('R5 F: RankOnChoice boosts the old floors\' rows', PC,
+     'x.feat[static_cast<size_t>(C::Feature::eligible)] = 1.0;',
+     '        if (lg.Scored()) x.bMu += 1.0;', 'after'),
     # --- round 4: ln_util is LEGACY; the live learner's path is not allowed whole ---
     ('R4: ln util back in the learner\'s RowFeatures', 'src/learning/ChoiceLearner.cpp',
      'if (std::isfinite(r.lm))',
