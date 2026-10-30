@@ -30,16 +30,8 @@ namespace Huginn::Persist
    inline constexpr uint32_t kBanditSerializationVersion = 4;
    inline constexpr uint32_t kUniqueID                = 'QCNO';  // 'ONCQ' on disk
 
-   // Which character a save belongs to, and how far its learning had got:
-   //   v2: [characterID: uint64] [learning clock: uint64]
-   // The ID is random at new game; a save without the record is treated as a
-   // different character and given a new one. Lets a load tell "the
-   // same character, reloaded" from "a different character", and "this save
-   // is behind what is in memory" from "this save is ahead" -- see
-   // ResolveLoadedLearner. Older Huginn versions skip the record with one
-   // warning.
-   inline constexpr uint32_t kRecordType_CharacterID = 'DICH';  // 'HCID' on disk
-   inline constexpr uint32_t kCharacterIDVersion     = 2;
+   // HCID (the character and its learning clock) is persist/CharacterRecord.h
+   // since 0.24.22: it outlives this record.
 
    // Safety cap — prevents corrupted data from causing huge allocations
    inline constexpr uint32_t kMaxBanditItems        = 50'000;
@@ -86,19 +78,14 @@ namespace Huginn::Persist
    // Returns true on success. Clears the buffer regardless.
    bool ApplyPendingBanditData(Learning::FeatureBanditLearner& learner);
 
-   // Decide what the learner holds after a new game or a load (kNewGame /
-   // kPostLoadGame), and apply it. Learning survives a reload (decided with
-   // the user, 2026-10-02): the fight that killed you is not forgotten.
-   //   - New game: a fresh learner and a new character ID.
-   //   - Failed load (`loadSucceeded` false): change nothing.
-   //   - Load of the character already in memory, whose learning clock is NOT
-   //     ahead of memory (a reload): keep the in-memory learner, except
-   //     dynamic-form (0xFF) entries, which are taken from the save.
-   //   - Anything else -- a different character, the first load since launch,
-   //     or a later save of the same character (its clock is ahead): the
-   //     save's learner, as before.
-   // Returns which of these it was (R8.3): ResolveLoadedChoice applies the
-   // same decision to the choice learner, so the two never disagree.
-   LoadDecision ResolveLoadedLearner(Learning::FeatureBanditLearner& learner, bool isNewGame,
-      bool loadSucceeded = true);
+   // The old learner follows the load's decision (persist/CharacterRecord.h
+   // DecideCharacterLoad; core/LearningClock.h DecideLoad), at kPostLoadGame /
+   // kNewGame, before CommitLoad sets the learning clock (its Clear ticks it).
+   //   - New game: cleared.
+   //   - Failed load: unchanged.
+   //   - Reload (the character in memory, the save not ahead): the in-memory
+   //     learner kept, except dynamic-form (0xFF) entries, taken from the save.
+   //   - Replace: the save's learner (cleared if the save has none).
+   // R12 deletes this with the old learner; the decision stays.
+   void ResolveLoadedLearner(Learning::FeatureBanditLearner& learner, LoadDecision decision);
 }

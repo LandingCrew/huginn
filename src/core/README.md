@@ -206,6 +206,9 @@ The new model (R8.2, 0.23.56, in shadow then; it ranks since R8.3, 0.24.0):
   variance x m(age) in the wildcard draw only (m decays by a half-life of
   play, ends at the first pick); the tracker of what the character has held
   (present at a load: never boosted) and what it gained since.
+- `LearningClock.h` (0.24.22): the one learning clock both learners and the
+  resets tick (saved in HCID), the table of which learning events tick it,
+  and the load's keep-or-replace decision (`DecideLoad`).
 
 Their tests: `MiniJsonTests.cpp`, `BootstrapTests.cpp` (the golden fixtures, a
 negative case per reader rule, the prior fill), `ChoiceModelTests.cpp` (the
@@ -213,6 +216,9 @@ score per grading, kappa, the explanation, recent and its exclusions, covered
 and the gate, the update, Plackett-Luce, onsets, the battery, the bias modes),
 `DiscoveryBoostTests.cpp` (the boost's math and decay, the tracker's rules
 -- an item present at load gets no boost --, the DISC codec),
+`LearningClockTests.cpp` (ticks under threads, the table, every decision,
+the choice-only-change regression, a load's steps adding no ticks, a reset
+holding over an older save),
 `ChoiceReplayTests.cpp` (fitlib's per-row logits under the shipped bootstrap
 to 1e-5, from `tools/fit/export_scores.py`'s fixture; the real log through
 `HUGINN_REPLAY_FIXTURE`), `ChoiceCostTests.cpp` (the parse and one 500-row

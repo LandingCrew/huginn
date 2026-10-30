@@ -63,6 +63,7 @@
 #include "console/ConsoleCommands.h"
 #include "effect/EffectCatalog.h"
 #include "persist/BanditSerializer.h"
+#include "persist/CharacterRecord.h"
 #include "learning/EquipEventBus.h"
 #include "learning/EquipSourceTracker.h"  // MarkHuginnEquip (Wheeler environment)
 #include "learning/SelectionTracker.h"
@@ -297,14 +298,21 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
 
     // ── 5. FeatureBanditLearner + UtilityScorer + ScorerSettings ──────────────
     if (!g_featureBanditLearner) {
-        g_featureBanditLearner = std::make_unique<Huginn::Learning::FeatureBanditLearner>();
+        g_featureBanditLearner = std::make_unique<Huginn::Learning::FeatureBanditLearner>(&g_learningClock);
         logger::info("FeatureBanditLearner initialized"sv);
     }
 
-    // What the learner holds now: fresh for a new game, the in-memory learning
-    // for a reload of the same character, the save's for anything else.
-    // R8.3: the same decision goes to the choice learner at step 6c.
-    const auto loadDecision = Persist::ResolveLoadedLearner(*g_featureBanditLearner, isNewGame, loadSucceeded);
+    // What the learning becomes: fresh for a new game, the in-memory learning
+    // for a reload of the same character, the save's for anything else, by
+    // the save's character ID and learning clock (persist/CharacterRecord.h;
+    // core/LearningClock.h DecideLoad, which names no learner). The old
+    // learner follows it here, the choice learner at step 6c. CommitLoad sets
+    // the clock after the old learner's Clear (which ticks); nothing at step
+    // 6c ticks.
+    const auto characterLoad = Persist::DecideCharacterLoad(isNewGame, loadSucceeded);
+    const auto loadDecision = characterLoad.verdict.decision;
+    Persist::ResolveLoadedLearner(*g_featureBanditLearner, loadDecision);
+    Persist::CommitLoad(characterLoad);
 
     if (!g_usageMemory) {
         g_usageMemory = std::make_unique<Huginn::Learning::UsageMemory>();
@@ -395,7 +403,7 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
         Scoring::Legacy::SetEnabled(choiceSettings.legacyLearnFeature);
         Scoring::Legacy::SetShadowEnabled(choiceSettings.shadowLegacy);
         const bool firstTime = !g_choiceLearner;
-        if (firstTime) g_choiceLearner = std::make_unique<Learning::ChoiceLearner>();
+        if (firstTime) g_choiceLearner = std::make_unique<Learning::ChoiceLearner>(&g_learningClock);
         g_choiceLearner->SetSettings(choiceSettings);
         g_choiceLearner->SetMemoryLife(Learning::LearningSettings::GetSingleton().BuildConfig().memory);
         g_choiceLearner->SetFavoritesBoost(g_utilityScorer->GetConfig().favoritesMode == Scoring::FavoritesMode::Boost);

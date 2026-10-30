@@ -80,6 +80,7 @@ std::atomic<uint32_t> g_loadGeneration{ 0 };
 std::string g_launchStamp;
 std::string g_listName;
 std::atomic<uint64_t> g_activeCharacterID{ 0 };
+Huginn::Core::LearningClock::Clock g_learningClock;
 
 // Degraded mode flag - tracks if core update system failed to initialize
 // (Issue #4: Silent failure when UpdateHandler::Register() fails leaves plugin non-functional)

@@ -93,7 +93,7 @@ namespace Huginn::Console
       // via RunExclusive and resets SlotLocker alongside the weight table.
       const auto reset = Settings::SettingsReloader::ResetLearningData();
       if (!reset) {
-         Print("FeatureBanditLearner not initialized (load a game first)");
+         Print("No learning to reset (load a game first)");
          return;
       }
 
@@ -158,8 +158,9 @@ namespace Huginn::Console
       // Without this, the console thread could reset subsystems mid-update.
       Huginn::Update::UpdateHandler::GetSingleton()->RunExclusive([&] {
          // 1. Clear learning data. A reload of the same character keeps this
-         //    cleared state (Clear ticks the learning clock past any older
-         //    save); a different character or a later save restores from it.
+         //    cleared state (the tick below moves the learning clock past any
+         //    older save); a different character or a later save restores
+         //    from it.
          size_t learnerItems = 0;
          if (g_featureBanditLearner) {
             learnerItems = g_featureBanditLearner->GetItemCount();
@@ -168,6 +169,9 @@ namespace Huginn::Console
          // R8.3: theta back to the bootstrap, b cleared (as `hg reset weights`);
          // with the model off, the THTA / BIAS carried from the load emptied.
          const char* choice = Persist::ResetChoiceLearning(g_activeCharacterID.load(std::memory_order_relaxed));
+         // Once, here, as ResetLearningData (which this cannot call: it takes
+         // RunExclusive itself), whether or not either learner exists.
+         Core::LearningClock::Note(&g_learningClock, Core::LearningClock::Event::Reset);
 
          // 2. Rebuild all registries (console does full rebuild; init path reconciles)
          RebuildRegistries();

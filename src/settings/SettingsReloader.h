@@ -77,9 +77,12 @@ namespace Huginn::Settings
         /// to the bootstrap and b cleared, or, with the model off, the
         /// records carried from the load emptied.
         ///
+        /// Ticks the learning clock once (core/LearningClock.h, 0.24.22), so
+        /// a reload of an older save keeps the reset.
+        ///
         /// @return The old learner's items cleared and what the choice reset
-        ///         did (for the player's message), or nullopt if the
-        ///         FeatureBanditLearner is not initialized (nothing was reset).
+        ///         did (for the player's message), or nullopt before the first
+        ///         game load (no learner exists: nothing was reset).
         struct LearningReset
         {
             size_t learnerItems = 0;

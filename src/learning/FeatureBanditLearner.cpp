@@ -68,7 +68,7 @@ namespace Huginn::Learning
          m_totalTrains += data.trainCount - before;
          data.chosenAt = now;
       }
-      m_clock++;
+      Core::LearningClock::Note(m_learningClock, Core::LearningClock::Event::OldLearnerUpdate);
 
       logger::trace("Learner update: item={:08X}, reward={:.2f}, error={:.3f}, est {:.3f}->{:.3f}"sv,
          formID, reward, error, prediction, DotProduct(w, phi));
@@ -320,22 +320,10 @@ namespace Huginn::Learning
 
       m_items.clear();
       m_totalTrains = 0.0f;
-      m_clock++;
+      Core::LearningClock::Note(m_learningClock, Core::LearningClock::Event::OldLearnerClear);
 
       logger::info("FeatureBanditLearner cleared: {} items, {:.0f} total trains removed"sv,
          itemCount, totalTrains);
-   }
-
-   uint64_t FeatureBanditLearner::GetClock() const
-   {
-      std::shared_lock lock(m_mutex);
-      return m_clock;
-   }
-
-   void FeatureBanditLearner::SetClock(uint64_t clock)
-   {
-      std::unique_lock lock(m_mutex);
-      m_clock = clock;
    }
 
    size_t FeatureBanditLearner::ReplaceDynamicEntries(const std::vector<SerializedEntry>& saveEntries)

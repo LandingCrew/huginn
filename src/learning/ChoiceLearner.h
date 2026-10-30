@@ -47,6 +47,7 @@
 #include "core/ChoiceUpdate.h"
 #include "core/DecisionLog.h"
 #include "core/DiscoveryBoost.h"
+#include "core/LearningClock.h"
 #include "core/NeedEvaluator.h"
 #include "core/ThetaDrift.h"
 
@@ -122,7 +123,9 @@ namespace Huginn::Learning
             std::size_t bEntries = 0;
         };
 
-        ChoiceLearner() = default;
+        /// `clock`: the shared learning clock (g_learningClock) the changes a
+        /// save writes tick (core/LearningClock.h kEvents); none: no ticks.
+        explicit ChoiceLearner(Core::LearningClock::Clock* clock = nullptr) noexcept : m_learningClock(clock) {}
 
         /// Read, check and map the bootstrap file (once, at kDataLoaded or the
         /// first game load). A missing or invalid file logs ONE error and leaves
@@ -283,6 +286,11 @@ namespace Huginn::Learning
         /// Slot `slot`'s weight differs from the bootstrap's (lock held).
         [[nodiscard]] bool MovedLocked(std::size_t slot) const;
         void Touch() noexcept { ++m_version; }
+        /// Every change to the learning goes through the clock's table
+        /// (core/LearningClock.h): the ones a save writes, made by play, tick
+        /// it; a load's do not. Under m_mutex, after the change, so a save
+        /// that exported the change reads the clock past it.
+        void Note(Core::LearningClock::Event e) noexcept { Core::LearningClock::Note(m_learningClock, e); }
         /// A change to mu (theta or b): Touch and raise the latch.
         void Moved() noexcept
         {
@@ -290,6 +298,7 @@ namespace Huginn::Learning
             m_weightsChanged.store(true, std::memory_order_release);
         }
 
+        Core::LearningClock::Clock* m_learningClock = nullptr;   // shared, atomic; set at construction
         mutable std::shared_mutex m_mutex;
         std::atomic<bool> m_ready{ false };
         ChoiceSettings m_settings;

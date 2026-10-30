@@ -219,7 +219,7 @@ namespace Huginn::Settings
                 const auto msg = std::format("Huginn: Learning reset ({})", reset->choice);
                 RE::DebugNotification(msg.c_str());
             } else {
-                logger::warn("[SettingsReloader] g_featureBanditLearner is null, cannot reset"sv);
+                logger::warn("[SettingsReloader] No game loaded yet: no learning to reset"sv);
             }
         }
         else if (buttonId == "Huginn_reset_defaults"sv) {
@@ -246,15 +246,19 @@ namespace Huginn::Settings
         // learning being reset.
         Learning::EquipEventBus::GetSingleton().Reset();
         Learning::SelectionTracker::GetSingleton().ForgetRepeats();
+        // No game loaded yet (both learners are built at the first load):
+        // nothing to reset.
         auto* learner = g_featureBanditLearner.get();
-        if (!learner) {
+        if (!learner && !g_choiceLearner) {
             return std::nullopt;
         }
 
         LearningReset reset;
         Update::UpdateHandler::GetSingleton()->RunExclusive([&] {
-            reset.learnerItems = learner->GetItemCount();
-            learner->Clear();
+            if (learner) {
+                reset.learnerItems = learner->GetItemCount();
+                learner->Clear();
+            }
 
             // R8.3: the choice learner too -- theta back to the bootstrap and b
             // cleared (no sBootstrapBias seed: a reset forgets this character's
@@ -262,6 +266,11 @@ namespace Huginn::Settings
             // BIAS carried from the load emptied. The old learner above is
             // reset as before: it feeds the D2 legacy feature.
             reset.choice = Persist::ResetChoiceLearning(g_activeCharacterID.load(std::memory_order_relaxed));
+            // 0.24.22: the reset ticks the learning clock, once, here -- not
+            // in ResetToBootstrap (a load's too, and a no-op with the model
+            // off) -- so a reload of an older save of this character keeps
+            // the reset (core/LearningClock.h).
+            Core::LearningClock::Note(&g_learningClock, Core::LearningClock::Event::Reset);
 
             // Unlock all slots so the next scoring cycle can reassign immediately —
             // otherwise locked slots keep pinning recommendations scored by the
