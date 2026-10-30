@@ -683,11 +683,12 @@ Scoring::ScoredCandidateList PipelineCoordinator::RankOnChoice(PipelineContext& 
     // row's attributes, covered after the upgrade gate and b's variance,
     // beside the tick's column variances (core/ChoiceBeliefs.h). One table,
     // shared by every row, so sigma_Delta between any two rows of the run
-    // reads the same tick the scores did.
+    // reads the same tick the scores did. b is keyed by form (snap->B above),
+    // so the form is each row's b key: two stacks of one form share one b.
     auto beliefs = std::make_shared<C::BeliefTable>(tick, model.covered.var);
     beliefs->Reserve(rows);
     for (size_t i = 0; i < rows; ++i) {
-        beliefs->Add(attrs[i], extras[i].covered, extras[i].bVar);
+        beliefs->Add(attrs[i], extras[i].covered, extras[i].bVar, out[i].GetFormID());
     }
     std::shared_ptr<const C::BeliefTable> sharedBeliefs = std::move(beliefs);
 

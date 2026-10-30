@@ -20,6 +20,7 @@
 #include <optional>
 #include <random>
 #include <set>
+#include <string>
 #include <tuple>
 #include <vector>
 
@@ -232,10 +233,29 @@ TEST_CASE("challenger rule: sigma_Delta -- what two items share cancels; disjoin
     CHECK(table.Var(magicka) == doctest::Approx(0.36 * wRM + 0.25));
     // covered enters through its difference too; the cross-feature column.
     CHECK(table.DeltaVar(over, plentiful) == doctest::Approx(0.25 * wOH + 0.36 * 0.4 + 0.09 + 0.09));
-    // The same row against itself: 2 var(b) (a different stack of one item
-    // would differ in its b's draw); out of range: NaN.
+    // Rows with no b key keep independent b's, even against themselves:
+    // 2 var(b). Out of range: NaN.
     CHECK(table.DeltaVar(minor, minor) == doctest::Approx(0.08));
     CHECK(std::isnan(table.DeltaVar(minor, 99)));
+    // Two stacks of ONE form (another uniqueID or temper) read one b, keyed
+    // by form: it cancels like a shared weight. The same attributes: 0.
+    const auto stackA = table.Add(C::MakeAttr(C::Grading::Graded, std::vector<C::SparseCol>{ { kRH, 0.3 } }, {}), 0.0, 0.04, 0x1234);
+    const auto stackB = table.Add(C::MakeAttr(C::Grading::Graded, std::vector<C::SparseCol>{ { kRH, 0.3 } }, {}), 0.0, 0.04, 0x1234);
+    CHECK(table.DeltaVar(stackA, stackB) == doctest::Approx(0.0));
+    // A tempered stack (stronger): only the strength difference is left.
+    const auto tempered = table.Add(C::MakeAttr(C::Grading::Graded, std::vector<C::SparseCol>{ { kRH, 0.5 } }, {}), 0.0, 0.04, 0x1234);
+    CHECK(table.DeltaVar(tempered, stackA) == doctest::Approx(0.2 * 0.2 * wRH));
+    // A favorite stack reads b's life with the favorite multiplier, so its
+    // variance differs: one b read twice is perfectly correlated, the gap's
+    // b part is (sd - sd')^2 = (0.3 - 0.2)^2.
+    const auto favorite = table.Add(C::MakeAttr(C::Grading::Graded, std::vector<C::SparseCol>{ { kRH, 0.3 } }, {}), 0.0, 0.09, 0x1234);
+    CHECK(table.DeltaVar(favorite, stackA) == doctest::Approx(0.01));
+    CHECK(table.DeltaVar(stackA, favorite) == table.DeltaVar(favorite, stackA));
+    // Another form keeps its own b: both variances add.
+    const auto other = table.Add(C::MakeAttr(C::Grading::Graded, std::vector<C::SparseCol>{ { kRH, 0.3 } }, {}), 0.0, 0.04, 0x5678);
+    CHECK(table.DeltaVar(other, stackA) == doctest::Approx(0.08));
+    // A row's own sigma^2 does not read the key.
+    CHECK(table.Var(stackA) == doctest::Approx(table.Var(minor)));
     CHECK(std::isnan(table.Var(99)));
 
     // Each row's own sigma^2 is RowScore::var -- the table and the ranking
@@ -451,9 +471,19 @@ namespace
         in.settings = settings;
         in.slots = gen.RandomLayout();
         in.nowNs = 1'000'000'000'000LL;
-        const int count = gen.Int(2, 30);
-        for (int i = 0; i < count; ++i) {
+        // Every dedup key and name unique: two candidates sharing a key make
+        // the seat-owner lookup (first match) read a taken key as free, and
+        // the page can churn with nothing moving -- allocator behaviour that
+        // predates R9 (the fixed margin churns more on such pages), not what
+        // this test is about.
+        const int wanted = gen.Int(2, 30);
+        std::set<std::uint64_t> keys;
+        std::set<std::string> names;
+        for (int tries = 0; static_cast<int>(in.candidates.size()) < wanted && tries < 400; ++tries) {
             auto c = gen.RandomCandidate();
+            if (keys.contains(c.dedupKey) || names.contains(c.name)) continue;
+            keys.insert(c.dedupKey);
+            names.insert(c.name);
             c.isWildcard = false;   // wildcards are placed by position, not challenged on score
             // Scores close together, so the line decides often: a spread of
             // about one sigma_Delta.
@@ -468,6 +498,7 @@ namespace
         }
         std::stable_sort(in.candidates.begin(), in.candidates.end(),
             [](const SA::CandidateRec& a, const SA::CandidateRec& b) { return a.score > b.score; });
+        const int count = static_cast<int>(in.candidates.size());
         // The page as the beliefs before these ones left it: random items
         // seated, so the hold has holders to judge (with an empty memory the
         // first fill seats the best items and nothing is ever challenged).
@@ -548,6 +579,9 @@ TEST_CASE("challenger rule: no swap-back on fixed beliefs (property test over ra
     }
     // The worlds exercise the rule (give-ways happen), and every one settles:
     // with nothing moving, no key changes hands in the last three passes.
+    // Evidence for the algebra in ChallengerRule.h, not the proof: it counts
+    // direct (holder, challenger) reversals, not longer cycles, and settling
+    // holds on unique dedup keys (MakeWorld) -- see the note there.
     MESSAGE("fixed beliefs: " << giveWays << " give-ways in " << worlds << " worlds, no swap-back");
     CHECK(worlds == 600);
     CHECK(giveWays > 200);

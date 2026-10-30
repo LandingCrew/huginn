@@ -26,7 +26,8 @@
 //     sigma_Delta^2 = sum_k (x_c,k - x_i,k)^2 Var(theta_k) + Var(b_c) + Var(b_i)
 //
 // under the learner's diagonal posterior, so the weights the two items share
-// cancel (two healing potions differ only in their strength and their own b).
+// cancel (two healing potions differ only in their strength and their own b;
+// two stacks of ONE form share their b too, and it cancels with the rest).
 // core/ChoiceBeliefs.h computes it from the ranking's tick; this file is the
 // rule itself and knows nothing of the model.
 //
@@ -186,10 +187,14 @@ namespace Huginn::Core::Challenger
 
     /// A change the rule would NOT have let through: the newcomer is still a
     /// candidate's replacement (incumbent ranked) and its lead is at or under
-    /// the line, mu_c - mu_i <= ln m + z sigma_Delta. Under R9 the hold passes
-    /// none of these, so the ones the heartbeat counts came by another route
-    /// (seating, a home-key return moving the gap-filler, the fill after the
-    /// holder left its seat). False when there is no belief or no incumbent.
+    /// the line, mu_c - mu_i <= ln m + z sigma_Delta, on the RAW slot scores.
+    /// The hold decides on Regular keys after the class cap (SlotAllocCore.h,
+    /// PASS 1c), so a holder past its class's free count (capped at ln d, e.g.
+    /// -0.69 at d = 0.5) can give way to a challenger whose raw lead is under
+    /// this line: the hold's own capped give-ways can show up here. The rest
+    /// came by another route (seating, a home-key return moving the
+    /// gap-filler, the fill after the holder left its seat). False when there
+    /// is no belief or no incumbent.
     [[nodiscard]] inline bool UnderLine(SlotScore challenger, std::optional<SlotScore> incumbent,
                                         std::optional<double> sigmaDelta, double minGap, double z) noexcept
     {

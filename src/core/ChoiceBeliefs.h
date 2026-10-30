@@ -11,6 +11,13 @@
 //                 + (covered(c) - covered(i))^2 var(theta_covered)
 //                 + var(b_c) + var(b_i)
 //
+// b is keyed by form (ChoiceLearner::Snapshot::B), so two rows of one form --
+// two stacks with different uniqueIDs or tempers -- read ONE b: it cancels
+// like a shared weight and the last term is (sd(b_c) - sd(b_i))^2, 0 when the
+// two reads agree (they differ only when one stack is a favorite and reads
+// b's life with the favorite multiplier). Each row carries its b's key for
+// that; key 0 = a b of its own (never shared).
+//
 // with W_j = sum_k n_k^2 var(theta_kj) (+ recent) the tick's column variances
 // (core/ChoiceScore.h, MakeTick). A weight the two rows share enters through
 // the DIFFERENCE of their attributes, so it cancels where they agree; the
@@ -30,6 +37,7 @@
 #include "core/ChoiceScore.h"
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -46,6 +54,7 @@ namespace Huginn::Core::Choice
             Attr attr;
             double covered = 0.0;
             double bVar = 0.0;
+            std::uint32_t bKey = 0;   ///< the form b is keyed by; 0 = its own b, shared with no row
         };
 
         BeliefTable() = default;
@@ -55,10 +64,11 @@ namespace Huginn::Core::Choice
 
         void Reserve(std::size_t n) { m_rows.reserve(n); }
 
-        /// Adds a row; returns its index.
-        std::uint32_t Add(Attr attr, double covered, double bVar)
+        /// Adds a row; returns its index. bKey: the form its b is read for
+        /// (rows with one nonzero key share one b).
+        std::uint32_t Add(Attr attr, double covered, double bVar, std::uint32_t bKey = 0)
         {
-            m_rows.push_back(Row{ std::move(attr), covered, bVar });
+            m_rows.push_back(Row{ std::move(attr), covered, bVar, bKey });
             return static_cast<std::uint32_t>(m_rows.size() - 1);
         }
 
@@ -72,7 +82,15 @@ namespace Huginn::Core::Choice
             const Row& x = m_rows[a];
             const Row& y = m_rows[b];
             const double dc = x.covered - y.covered;
-            return Choice::DeltaVar(m_W, m_Ws, x.attr, y.attr, x.bVar, y.bVar) + dc * dc * m_varCovered;
+            const double cov = dc * dc * m_varCovered;
+            if (x.bKey != 0 && x.bKey == y.bKey) {
+                // One b, read twice: perfectly correlated, so its part of the
+                // gap's variance is (sd_x - sd_y)^2 (header).
+                const double sx = x.bVar > 0.0 ? std::sqrt(x.bVar) : 0.0;
+                const double sy = y.bVar > 0.0 ? std::sqrt(y.bVar) : 0.0;
+                return Choice::DeltaVar(m_W, m_Ws, x.attr, y.attr, 0.0, 0.0) + (sx - sy) * (sx - sy) + cov;
+            }
+            return Choice::DeltaVar(m_W, m_Ws, x.attr, y.attr, x.bVar, y.bVar) + cov;
         }
 
         /// A row's own sigma^2: RowScore::var for that row.

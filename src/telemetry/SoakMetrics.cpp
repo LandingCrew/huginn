@@ -311,7 +311,8 @@ namespace Huginn::Telemetry
                     ChallengerRatioName(static_cast<ChallengerRatio>(r)), ratios[r]);
             }
             // R9: the same changes on Delta / sigma_Delta, and how many were
-            // at or under the challenger rule's line (none from the hold).
+            // at or under the challenger rule's line on raw scores (the hold
+            // passes none of those but its class-capped give-ways).
             churnStr += ") dsd(";
             for (std::size_t b = 0; b < deltaSd.size(); ++b) {
                 churnStr += std::format("{}{}={}", b ? " " : "",

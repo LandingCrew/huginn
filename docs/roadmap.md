@@ -1398,6 +1398,9 @@ press in the heartbeat against the R8 session.
 - [x] **σ_Δ** (`core/ChoiceBeliefs.h`): σ_Δ² = Σⱼ (aⱼ(c) − aⱼ(i))² Wⱼ (+ the
       strength block) + (covered(c) − covered(i))² var(θ_covered) + var(b_c) +
       var(b_i), Wⱼ = Σₖ nₖ² var(θₖⱼ) (+ recent) from the ranking's own tick.
+      b is keyed by form, so two stacks of one form (another uniqueID or
+      temper) share one b and it cancels: their b part is (sd(b_c) −
+      sd(b_i))², 0 unless one stack reads b as a favorite.
       `RankOnChoice` builds one `BeliefTable` per run after the ranking pass
       (covered after the upgrade gate) and every ranked row carries it and
       its index (`ScoredCandidate::ChoiceParts::beliefs`, `beliefRow`), so
@@ -1408,20 +1411,28 @@ press in the heartbeat against the R8 session.
       σ² equal to `RowScore::var`.
 - [x] **No swap-back on fixed beliefs** (`tests/core/ChallengerRuleTests.cpp`):
       the argument is in `ChallengerRule.h` (the line is ≥ 0 and symmetric in
-      the pair, so a reversed swap, or any cycle, would need 0 > 0). Proven
-      on 600 random pages (random layouts, settings, τ, ln m, sparse
-      attributes, scores about one σ_Δ apart, random holders seated), 12
-      passes each with the seating memory carried: 616 give-ways, 0
-      swap-backs, and every page settles (no give-way in the last 3 passes).
+      the pair, so a reversed swap, or any cycle, would need 0 > 0). That
+      argument is the proof; the property test is evidence for it: 600
+      random pages (random layouts, settings, τ, ln m, sparse attributes,
+      scores about one σ_Δ apart, random holders seated, every candidate's
+      dedup key and name unique), 12 passes each with the seating memory
+      carried, no direct (holder, challenger) reversal, and no give-way in
+      the last 3 passes on that seed. It counts direct reversals only, not
+      longer cycles or visible A→B→A bounces (the verifier's adversarial run,
+      3,000 worlds x 30 passes with the class cap forced, found neither with
+      unique keys).
       The same worlds under per-pass sampling (Thompson, ruled out in doc 9)
-      give 3,051 swap-backs, so the test sees one when there is one.
+      give 3,523 swap-backs (735 give-ways under the rule), so the test sees
+      one when there is one.
 - [x] **Churn buckets on Δ/σ_Δ:** `[SlotChurn]` prints the pair's σ_Δ and
       Δ/σ_Δ (and "under the line"); the heartbeat's slotChurn gains
       `dsd(gone <0 <0.5 <1 <2 <4 >=4 nosd)` beside `ratio(...)` (kept, so a
       session compares against R8's) and `under=` (changes at or under the
-      rule's line: none come from the hold, so these are seating, home-key
-      moves and the fill). `[Hold]` prints the gap against ln m + z·sd and
-      P(better).
+      rule's line, on raw scores: mostly seating, home-key moves and the
+      fill; the hold decides on Regular keys after the class cap, so a
+      holder past its class's free count can give way to a challenger whose
+      raw lead is under the line, and those capped give-ways count here
+      too). `[Hold]` prints the gap against ln m + z·sd and P(better).
 - [x] **Churn per press in the heartbeat:** a last section, `| perPress
       churn=N presses=M churn/press=X bounce10s=B (hold=H)`. churn = every
       visible change but a page switch, a Used backfill, a Remembrance hold
@@ -1471,6 +1482,16 @@ press in the heartbeat against the R8 session.
   either way); slot captures (Debug `--capture-slots`) do not record the
   beliefs, so a capture from a choice-ranked session replays with the
   fixed margin.
+- Open (allocator, predates R9): two candidates with ONE dedup key on a
+  page. Seating and the hold find a key's owner by the first match
+  (`SlotAllocCore.h`, the `seats[j]` lookups), so a key already taken can
+  read as free again and the page can churn with nothing moving -- the R9
+  verifier's synthetic worlds (shared keys from a 40-form pool) left a few
+  pages unsettled and one logged the same `HoldGaveWay` every pass, on both
+  the rule and the fixed margin (worse on the margin); with unique keys all
+  of it vanished. Not checked: whether the pipeline can hand the allocator
+  two rows with one `GetDeduplicationKey()` in game. Check that first; fix
+  only if it can.
 
 ### R10. Wildcards by uncertainty
 
