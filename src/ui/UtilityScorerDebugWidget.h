@@ -80,11 +80,6 @@ namespace Huginn::UI
          */
         void ToggleVisible() { m_isVisible = !m_isVisible; }
 
-        /**
-         * @brief Set max candidates to cache (total across all slots)
-         */
-        void SetMaxDisplay(size_t count) { m_maxDisplay = count; }
-
     private:
         UtilityScorerDebugWidget() = default;
         ~UtilityScorerDebugWidget() = default;

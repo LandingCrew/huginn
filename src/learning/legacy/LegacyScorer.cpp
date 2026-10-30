@@ -52,8 +52,9 @@ namespace Huginn::Scoring::Legacy
 
         // Magicka and stamina are scored at their recent low while they
         // regenerate (VitalEnvelope, held by the live scorer), on a COPY: the
-        // rule engine stays pure, and nothing but the context weights sees the
-        // held value. Health is not held; see VitalEnvelope.
+        // rule engine stays pure. The needs (HeldMagicka/HeldStamina) and the
+        // context weights read the held value. Health is not held; see
+        // VitalEnvelope.
         State::PlayerActorState scoringPlayer = player;
         scoringPlayer.vitals.magicka = heldMagicka;
         scoringPlayer.vitals.stamina = heldStamina;

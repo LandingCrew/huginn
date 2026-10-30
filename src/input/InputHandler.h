@@ -97,18 +97,6 @@ namespace Huginn::Input
       bool IsEnabled() const { return m_enabled; }
 
       /**
-       * @brief Set hold threshold for equip keys
-       * @param seconds Time in seconds to trigger hold action
-       */
-      void SetHoldThreshold(float seconds) { m_holdThreshold = seconds; }
-
-      /**
-       * @brief Set double-tap window
-       * @param seconds Maximum time between taps for double-tap
-       */
-      void SetDoubleTapWindow(float seconds) { m_doubleTapWindow = seconds; }
-
-      /**
        * @brief Set the key codes for each action from keybinding settings
        */
       void SetKeyCodes(const KeybindingSettings& settings);
@@ -128,11 +116,6 @@ namespace Huginn::Input
       /// to be consistent with them.
       void SetReadOnly(bool readOnly) noexcept { m_readOnly.store(readOnly, std::memory_order_relaxed); }
       [[nodiscard]] bool IsReadOnly() const noexcept { return m_readOnly.load(std::memory_order_relaxed); }
-
-      /**
-       * @brief Get the current keybinding settings (copy-out for thread safety)
-       */
-      [[nodiscard]] KeybindingSettings GetKeybindings() const;
 
       /**
        * @brief Called each frame to handle deferred double-tap detection

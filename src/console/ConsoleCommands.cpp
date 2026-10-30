@@ -6,21 +6,14 @@
 #include "learning/ChoiceLearner.h"
 #include "learning/legacy/LegacyLearnFeature.h"
 #include "learning/StateFeatures.h"
-#include "learning/PipelineStateCache.h"
 #include "state/StateManager.h"
 #include "state/DropAheadProbe.h"
 #include "state/HandModelProbe.h"
 #include "Profiling.h"
 #include "core/ActorTypeClassifier.h"
-#include "candidate/CandidateGenerator.h"
-#include "override/OverrideManager.h"
-#include "override/OverrideConfig.h"
 #include "slot/SlotAllocator.h"
 #include "slot/SlotLocker.h"
 #include "slot/SlotSettings.h"
-#include "learning/ScorerSettings.h"
-#include "learning/LearningSettings.h"
-#include "learning/ExternalEquipLearner.h"
 #include "spell/SpellRegistry.h"
 #include "effect/Facets.h"
 #include "core/Bootstrap.h"
@@ -34,13 +27,6 @@
 #include <fstream>
 #include <map>
 #include <unordered_map>
-#include <unordered_set>
-#include "context/ContextWeightSettings.h"
-#include "context/ContextWeightConfig.h"
-#include "ui/IntuitionMenu.h"
-#include "ui/IntuitionSettings.h"
-#include "wheeler/WheelerSettings.h"
-#include "wheeler/WheelerClient.h"
 #include "settings/SettingsReloader.h"
 #include "pipeline/PipelineCoordinator.h"
 #include "needs/NeedSnapshotBuilder.h"
@@ -855,7 +841,8 @@ namespace Huginn::Console
    // `hg cap <FormID>` -- one item's cap(i) from the effect catalog: the
    // static columns, and for each stack the player carries its per-instance
    // cap (tempered / player-enchanted) and the runtime cross-features. To the
-   // console and the log. Nothing reads these for scoring yet (R2).
+   // console and the log. Since R8.3 (0.24.0) these are the choice score's
+   // attributes (theta n a; `hg theta <FormID>` shows the score).
    static void Cmd_Cap(std::string_view arg)
    {
       std::string_view hex = arg;

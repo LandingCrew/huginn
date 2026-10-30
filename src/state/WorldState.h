@@ -63,10 +63,6 @@ namespace Huginn::State
       return timeOfDay < LightLevel::NIGHT_END || timeOfDay > LightLevel::NIGHT_START;
       }
 
-      [[nodiscard]] bool IsDayTime() const noexcept {
-      return timeOfDay >= LightLevel::DAYTIME_START && timeOfDay <= LightLevel::DAYTIME_END;
-      }
-
       // Light helpers
       [[nodiscard]] bool IsDark() const noexcept {
       return isDark;
@@ -74,31 +70,6 @@ namespace Huginn::State
 
       [[nodiscard]] bool IsWellLit() const noexcept {
       return lightLevel > LightLevel::WELL_LIT_THRESHOLD;
-      }
-
-      // Lock helpers
-      [[nodiscard]] bool IsNoviceLock() const noexcept {
-      return isLookingAtLock && lockLevel == LockLevel::NOVICE;
-      }
-
-      [[nodiscard]] bool IsApprenticeLock() const noexcept {
-      return isLookingAtLock && lockLevel == LockLevel::APPRENTICE;
-      }
-
-      [[nodiscard]] bool IsAdeptLock() const noexcept {
-      return isLookingAtLock && lockLevel == LockLevel::ADEPT;
-      }
-
-      [[nodiscard]] bool IsExpertLock() const noexcept {
-      return isLookingAtLock && lockLevel == LockLevel::EXPERT;
-      }
-
-      [[nodiscard]] bool IsMasterLock() const noexcept {
-      return isLookingAtLock && lockLevel == LockLevel::MASTER;
-      }
-
-      [[nodiscard]] bool RequiresKey() const noexcept {
-      return isLookingAtLock && lockLevel == LockLevel::REQUIRES_KEY;
       }
 
       // =============================================================================

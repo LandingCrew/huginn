@@ -37,8 +37,9 @@ namespace Huginn::Learning
     {
         bool learnFromExternalEquips = LearningDefaults::LEARN_FROM_EXTERNAL_EQUIPS;
         float externalEquipTimeWindow = LearningDefaults::EXTERNAL_EQUIP_TIME_WINDOW;
-        // Memory with a useful life (FeatureBanditLearner::SetMemoryLife);
-        // the defaults live on the struct.
+        // Memory with a useful life (ChoiceLearner::SetMemoryLife, its b
+        // battery; FeatureBanditLearner::SetMemoryLife for D2); the defaults
+        // live on the struct.
         MemoryLife memory{};
     };
 

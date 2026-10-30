@@ -282,7 +282,7 @@ namespace Huginn::Candidate
             ItemCandidate candidate = ItemCandidate::FromInventoryItem(invItem);
 
             // Stage 1g: baseRelevance removed (R8.3: ranked on the choice score)
-            // Stage 1g: preference multipliers removed - can be added to ContextWeightSettings if needed
+            // Stage 1g: preference multipliers removed
 
             out.push_back(std::move(candidate));
         });
@@ -397,7 +397,7 @@ namespace Huginn::Candidate
             ScrollCandidate candidate = ScrollCandidate::FromInventoryScroll(invScroll);
 
             // Stage 1g: baseRelevance removed (R8.3: ranked on the choice score)
-            // Stage 1g: scroll preference multiplier removed - can be added to ContextWeightSettings if needed
+            // Stage 1g: scroll preference multiplier removed
 
             out.push_back(std::move(candidate));
         });
@@ -518,8 +518,8 @@ namespace Huginn::Candidate
 
         size_t gathered = 0;
         m_apparelRegistry->ForEachApparel([&](const Apparel::InventoryApparel& apparel) {
-            // Already worn — nothing to recommend. Cheaper to skip here than to
-            // build a candidate for PassesBasicFilters() to throw away.
+            // Already worn — nothing to recommend, and no filter downstream
+            // drops worn apparel: this skip is the drop.
             if (apparel.isEquipped) return;
 
             // Unknown and Other lump unrelated body slots under one value, so a
@@ -577,7 +577,8 @@ namespace Huginn::Candidate
             candidate.formID = torch.formID;
             candidate.name = torch.name;
             candidate.count = torch.count;
-            // A torch already in hand: nothing to recommend (PassesBasicFilters).
+            // A torch already in hand: nothing to recommend (the filter
+            // visitor drops it as Reason::equipped).
             candidate.isEquipped = player.hasTorchEquipped &&
                                    player.equippedTorchFormID == torch.formID;
             out.push_back(candidate);
@@ -593,40 +594,5 @@ namespace Huginn::Candidate
     // The old Compute*Relevance() methods have been removed.
     // baseRelevance is no longer set in Gather methods (the legacy context
     // weight, the D2 feature's floor input, lives in context/).
-
-    // =========================================================================
-    // DEBUG LOGGING
-    // =========================================================================
-
-    void CandidateGenerator::LogCandidates(const std::vector<CandidateVariant>& candidates) const
-    {
-        logger::info("=== CandidateGenerator: {} candidates ===", candidates.size());
-        logger::info("NOTE: baseRelevance is deprecated (Stage 1g) - candidates rank on the choice score (R8.3)");
-
-        for (size_t i = 0; i < candidates.size() && i < 20; ++i) {
-            const auto& base = GetBase(candidates[i]);
-            logger::info("  [{}] {} ({})",
-                i,
-                base.name,
-                SourceTypeToString(base.sourceType));
-        }
-
-        if (candidates.size() > 20) {
-            logger::info("  ... and {} more", candidates.size() - 20);
-        }
-
-        logger::info("=== Generation Stats ===");
-        logger::info("  Scanned: {} spells, {} potions, {} weapons, {} scrolls",
-            m_stats.spellsScanned, m_stats.potionsScanned,
-            m_stats.weaponsScanned, m_stats.scrollsScanned);
-        logger::info("  Filtered: {} afford, {} equipped, {} cooldown, {} buff, {} gate, {} dupe",
-            m_stats.filterStats.filteredByAffordability,
-            m_stats.filterStats.filteredByEquipped,
-            m_stats.filterStats.filteredByCooldown,
-            m_stats.filterStats.filteredByActiveBuff,
-            m_stats.filterStats.filteredByHardGate,
-            m_stats.filterStats.filteredByDuplication);
-        logger::info("  Time: {:.2f}ms", m_stats.generationTimeMs);
-    }
 
 }  // namespace Huginn::Candidate

@@ -9,8 +9,8 @@
 // is the csv's default (curve_kind, curve_p1, curve_p2) or the [Needs] INI
 // override.
 //
-// Logged only in R3: the rules keep scoring and nothing reads the vector but
-// the log and `hg needs` (needs/NeedMonitor.h).
+// Logged from R3; since R8.3 (0.24.0) the choice score reads the vector
+// (needs/NeedMonitor.h), and the log and `hg needs` show it.
 //
 // Signature() quantises each need to 0.05 (21 levels): the monitor logs a
 // line when it changes, and from R8 it joins the pipeline's skip gate (map

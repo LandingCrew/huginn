@@ -217,7 +217,7 @@ to the UI thread.
 | C++ | AS2 | Parameters | Purpose |
 |---|---|---|---|
 | `SetSlot` | `setSlot` | index, name, type, confidence, detail, visualState | Update one slot; a name change triggers the slot-change animation |
-| `ClearSlot` | `clearSlot` | index | Hide a slot and reset its animation state |
+| (none since 0.24.5) | `clearSlot` | index | Hide a slot and reset its animation state; the C++ `ClearSlot` wrapper had no caller and went in 0.24.5 |
 | `SetSlotCount` | `setSlotCount` | count | Set visible slot count, resize background |
 | `SetPage` | `setPage` | current, total, name | Page pips + inline page-name label (hidden when `total <= 1`) |
 | `SetWidgetAlpha` | `setWidgetAlpha` | alpha (0–100) | Overall widget opacity |
@@ -1212,5 +1212,5 @@ reason from the old one.
 - [3-candidate-filtering.md](3-candidate-filtering.md) — candidate scoring pipeline
 - [7-dmenu-integration.md](7-dmenu-integration.md) — the dMenu panel that owns `[Widget]`
 - [../reference/intuition-scaleform-build.md](../reference/intuition-scaleform-build.md) — SWF toolchain
-- [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) — `hg reload`, `hg recs`, `hg page`
+- [Console commands](../../CLAUDE.md#console-commands) — `hg reload`, `hg recs`, `hg page`
 - [../README.md](../README.md) — overall system design

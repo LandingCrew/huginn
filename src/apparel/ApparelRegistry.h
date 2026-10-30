@@ -84,17 +84,9 @@ namespace Huginn::Apparel
       // ACCESSORS
       // =============================================================================
       //
-      // LIFETIME CONTRACT: as with WeaponRegistry, GetApparel() hands out a raw
-      // pointer into m_apparel but releases the shared_lock on return. A later
-      // ReconcileApparel() can reallocate the vector and dangle it. Safe only
-      // synchronously on the update thread; use ForEachApparel() for anything
-      // that outlives the call.
-
-      /**
-       * @brief Look up one entry by its composite key (see InventoryApparel::Key)
-       * @return Pointer into storage, or nullptr if not tracked
-       */
-      [[nodiscard]] const InventoryApparel* GetApparel(RE::FormID formID, uint16_t uniqueID = 0) const;
+      // No accessor hands out a pointer into m_apparel (GetApparel went in
+      // 0.24.5): a later ReconcileApparel() can reallocate the vector, so read
+      // it through ForEachApparel(), which holds the shared_lock for the visit.
 
       /**
        * @brief Mark one entry as worn (or no longer worn) without a full scan
@@ -140,9 +132,6 @@ namespace Huginn::Apparel
       [[nodiscard]] bool IsLoading() const noexcept {
          return m_isLoading.load(std::memory_order_acquire);
       }
-
-      /// Log every tracked piece at debug level.
-      void LogAllApparel() const;
 
    private:
       /// Forms whose rejection reason has already been logged this session.

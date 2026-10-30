@@ -74,12 +74,6 @@ namespace Huginn::Input
        */
       void SetEquipCallback(EquipCallback callback) { m_equipCallback = std::move(callback); }
 
-      /**
-       * @brief Enable or disable equip sounds
-       * @param enabled true to play sounds
-       */
-      void SetSoundsEnabled(bool enabled) { m_soundsEnabled = enabled; }
-
 
    private:
       EquipManager() = default;

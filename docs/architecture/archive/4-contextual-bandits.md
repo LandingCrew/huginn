@@ -1504,5 +1504,5 @@ the learning clock past it); a new game also clears the learner.
 - [1-states.md](../1-states.md) — State models (WorldState, PlayerActorState, TargetCollection)
 - [3-candidate-filtering.md](../3-candidate-filtering.md) — Where the candidates being scored come from
 - [5-slots.md](../5-slots.md) — Slot classification, locking and the multi-page layout
-- [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) — Full console command reference
+- [Console commands](../../../CLAUDE.md#console-commands) — Full console command reference
 - [Mod Compatibility](https://github.com/LandingCrew/huginn/wiki/Mod-Compatibility#wheeler-integration) — Wheeler integration notes

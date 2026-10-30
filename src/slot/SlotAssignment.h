@@ -153,8 +153,6 @@ namespace Huginn::Slot
         // neither moves it nor gives it a seat, and dedup keeps it.
         [[nodiscard]] bool IsPinned() const noexcept { return IsOverride() || IsRemembered(); }
         [[nodiscard]] bool HasCandidate() const noexcept { return candidate.has_value(); }
-        [[nodiscard]] bool IsConfirmed() const noexcept { return visualState == SlotVisualState::Confirmed; }
-        [[nodiscard]] bool IsExpiring() const noexcept { return visualState == SlotVisualState::Expiring; }
 
         // Get source type (Spell, Potion, etc.) - returns Spell if empty
         [[nodiscard]] Candidate::SourceType GetSourceType() const noexcept

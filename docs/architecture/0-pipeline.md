@@ -1,6 +1,6 @@
 # Huginn Recommendation Pipeline
 
-> **R11 (0.24.4):** this page predates the engine rewrite. Since R8.3 the hand-tuned engine (context weights × the bandit's learning score × multipliers) no longer ranks: every candidate is ranked on the choice score μ (θ over need × effect columns, b per item; doc 9, [9-implementation-map.md](9-implementation-map.md)), and the old engine runs only for the D2 feature `ln learn mult` (`[Scoring] bLegacyLearnFeature`, confined by `tools/prune/r8_check.py`). The steps that changed: the skip gate also keys on the need signature; scoring is `RankOnChoice`, not UtilityScorer's floors; the slot classes, filters, override finders and the label read the effect catalog's facets (`core/CapFacets.h`, R11), not the classifiers' tags; the hold uses the challenger rule (R9); the wildcard has a key of its own (R10). docs/README.md has the current tick.
+> **R11 (0.24.4):** this page predates the engine rewrite. Since R8.3 the hand-tuned engine (context weights × the bandit's learning score × multipliers) no longer ranks: every candidate is ranked on the choice score μ (θ over need × effect columns, b per item; doc 9, [9-implementation-map.md](9-implementation-map.md)), and the old engine runs only for the D2 feature `ln learn mult` (`[Scoring] bLegacyLearnFeature`, confined by `tools/prune/r8_check.py`). The steps that changed: the skip gate keys on the need signature in place of the ambient signature and the elemental window; the display reason comes from the page's explanations (`PipelineCoordinator::UpdateContextReason`), not the context weights; scoring is `RankOnChoice`, not UtilityScorer's floors; the slot classes, filters, override finders and the label read the effect catalog's facets (`core/CapFacets.h`, R11), not the classifiers' tags; the hold uses the challenger rule (R9); the wildcard has a key of its own (R10). docs/README.md has the current tick.
 
 This document describes the data flow from game state to slot recommendations as currently implemented in v0.20.0.
 
@@ -189,14 +189,14 @@ The data bundle shared between steps. It is a *member* of the coordinator (`m_ct
 
 - **Inputs:** `deltaMs`, `player`, `actorValue`, `now`
 - **State snapshots:** `currentState` (`GameState`), `playerState`, `targets`, `worldState`, `healthTracking`, `currentMagicka`, `stateHash`
-- **Unhashed-state flags:** `elementalDamageActive`, `fallingActive`, `underwaterActive`
+- **Unhashed-state flags:** `fallingActive`, `underwaterActive`, `workstationActive`
 - **Pipeline outputs:** `scoredCandidates`, `overrides`, `rawAssignments`, `assignments`, `contextReason`
 - **Page snapshot:** `displayPageIndex`, `displayPageCount`, `displaySlotCount`, `displayWildcardSeat`, `displayPageName`
 
 > Only `HealthTrackingState` is snapshotted. `MagickaTrackingState` and
 > `StaminaTrackingState` used to ride along for the relevance tags; nothing consumes
-> them now that the display reason is derived from the context weights (#10), so they
-> are no longer copied onto the context each tick. `StateManager` still polls all
+> them now that the display reason comes from the page's explanations
+> (`UpdateContextReason`, R8.3), so they are no longer copied onto the context each tick. `StateManager` still polls all
 > three — see `GetPollTable()`.
 
 ### Two skip gates, one latch list
@@ -205,8 +205,8 @@ The skip check exists in two places and they consult the same list of latches.
 
 | Gate | Where | Asks |
 |---|---|---|
-| Outer | `RunPipelineIfNeeded()` in `src/UpdateLoop.cpp` | `StateManager::DidLastUpdateChangeState()`, `SlotAllocator::PeekPageChanged()`, `StateManager::IsElementalWindowActive()`, `PipelineCoordinator::NeedsForcedRun()` |
-| Inner | `PipelineCoordinator::CheckHashSkip()` | `stateHash == m_lastPipelineHash`, page changed, this tick's unhashed-state flags, `NeedsForcedRun()` |
+| Outer | `RunPipelineIfNeeded()` in `src/UpdateLoop.cpp` | `StateManager::DidLastUpdateChangeState()`, `SlotAllocator::PeekPageChanged()`, `PipelineCoordinator::NeedsForcedRun()` |
+| Inner | `PipelineCoordinator::CheckHashSkip()` | `stateHash == m_lastPipelineHash`, page changed, this tick's unhashed-state flags, the need / override / refresh signatures, `NeedsForcedRun()` |
 
 The outer gate returns before `RunPipeline` is ever called, so a latch wired into only
 the inner gate is dead in a static scene. `NeedsForcedRun()` is the single list, and it

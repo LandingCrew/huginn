@@ -30,7 +30,8 @@ namespace Huginn::Scoring
         size_t seat = SIZE_MAX;      // its wildcard key (SlotAllocator::GetWildcardSeat), SIZE_MAX = none
         // The locker counts the player in combat (SlotLocker::IsInCombat): no
         // wildcard is placed, and every page's cached one is dropped
-        // (core::WildcardMayBePlaced). An exploration pick held a key through
+        // (StepWildcardsForCombat in core/CombatLock.h, stepped in
+        // core/WildcardGate.h). An exploration pick held a key through
         // a whole fight under the combat freeze (2026-10-12).
         bool inCombat = false;
         // The page feeds a Wheeler wheel, which cannot show a weapon or armour
@@ -123,7 +124,6 @@ namespace Huginn::Scoring
         void SetCooldown(float seconds) { m_gate.settings.cooldownSec = std::max(0.0f, seconds); }
         void SetRefractoryPeriod(float seconds) { m_gate.settings.refractorySec = std::max(0.0f, seconds); }
 
-        [[nodiscard]] bool IsEnabled() const noexcept { return m_gate.settings.enabled; }
         [[nodiscard]] float GetBaseProbability() const noexcept { return static_cast<float>(m_params.baseRoll); }
         [[nodiscard]] float GetMaxProbability() const noexcept { return static_cast<float>(m_params.maxRoll); }
         [[nodiscard]] float GetUniformShare() const noexcept { return static_cast<float>(m_params.uniformShare); }
@@ -131,10 +131,8 @@ namespace Huginn::Scoring
         [[nodiscard]] float GetRefractoryPeriod() const noexcept { return static_cast<float>(m_gate.settings.refractorySec); }
 
         // Query the current wildcard state. Page-scoped.
-        [[nodiscard]] bool HasActiveWildcard(size_t pageIndex) const;
         [[nodiscard]] RE::FormID GetWildcard(size_t pageIndex) const;
         [[nodiscard]] uint16_t GetWildcardUniqueID(size_t pageIndex) const;
-        [[nodiscard]] size_t GetActiveWildcardCount(size_t pageIndex) const { return HasActiveWildcard(pageIndex) ? 1 : 0; }
 
         /// R4, logging only: the propensity of `formID`'s cached wildcard on
         /// `pageIndex` -- P(the window's roll came up) x P(the draw showed that

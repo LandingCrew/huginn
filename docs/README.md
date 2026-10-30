@@ -147,7 +147,7 @@ R6 (the offline fit, [roadmap](roadmap.md) R6) found that no variant without the
 |---|---|
 | [Compatibility (wiki)](https://github.com/LandingCrew/huginn/wiki/Mod-Compatibility) | LoreRim, Survival Mode, unknown-spell handling, general mod compatibility |
 | [testing/](testing/) | Test index (host tests, in-game suites, the unattended runner) and profiling guide |
-| [refactor/](refactor/) | Fix patterns, form registry, performance work, Wheeler push spikes |
+| [refactor/](refactor/) | Wheeler push spikes |
 | [profiling/](profiling/), [playtest/](playtest/) | Tracy captures, long-play soak protocol and reports |
 | [roadmap.md](roadmap.md) | Open work |
 

@@ -448,8 +448,9 @@ namespace Huginn::Learning::SelectionLogV3
             r.wildcardP = e.wildcardPropensity;
             r.old = e.old;   // 0.23.53: the run's score parts
             if (e.old.favorite) r.flags |= Flag::Favorite;
-            // 0.23.56 (R8.2): the new model in shadow, and the D2 legacy
-            // feature, as the run computed them (PipelineCoordinator::RankOnChoice / LogChoiceRows).
+            // 0.23.56 (R8.2): the new model (in shadow at 0.23.56; the live
+            // ranking since 0.24.0), and the D2 legacy feature, as the run
+            // computed them (PipelineCoordinator::RankOnChoice / LogChoiceRows).
             r.mu = e.shadowMu;
             r.sd = e.shadowSd;
             r.lm = e.lnLearnMult;

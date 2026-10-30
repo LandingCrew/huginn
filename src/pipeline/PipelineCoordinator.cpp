@@ -212,10 +212,14 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
     // can stand at a bench for minutes, and the slot has to stay populated the
     // whole time, not just on the tick they walk up.
     //
-    // Gated on the bench actually producing a fortify weight, not merely on
-    // being furniture with a bench type. The context rules only raise a weight
-    // for the seven vanilla craft benches; for a cooking spit or a modded bench
-    // outside that enum there is nothing for the pipeline to find, and holding
+    // Gated on the bench mapping to a craft skill (CraftSkillForWorkstation,
+    // the mapping the no_workstation gate reads through
+    // Core::Gate::CraftOfBench), not merely on being furniture with a bench
+    // type. Since R8.3 the workstation_* needs read the bench by its keyword
+    // (core/BenchKind.h) and open the gate through the need signature on their
+    // own; this flag keeps the gate's drops current while the player stands
+    // there. For a modded bench outside that mapping the gate has nothing to
+    // change, and holding
     // this true would run the full gather/score/allocate path every 100 ms for
     // as long as the player's crosshair rested on it — exactly the workload the
     // skip gate exists to avoid.
@@ -421,8 +425,8 @@ namespace
     }
 
     /// cap(i)'s attributes and the runtime cross-features of one catalog
-    /// entry for a stack (as the selection log v3 and R8.2's shadow read
-    /// them).
+    /// entry for a stack: what the choice score ranks on (R8.3) and the
+    /// selection log v3 records.
     Core::Choice::Attr AttrOf(const Core::Choice::Model& model, const Effect::CatalogEntry& entry,
         const State::PlayerActorState& player, const StackFacts& sf)
     {

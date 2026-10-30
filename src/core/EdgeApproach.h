@@ -7,8 +7,8 @@
 // drop over three points ~70 / 175 / 280 units ahead. It reads the same
 // standing beside a ledge as walking off one, and every ledge the player
 // stood near opened a drop_ahead episode in the selection log that ended in
-// a "nothing" record. Two needs (0.23.50, logged only like every need since
-// R3) tell the cases apart, both from the same probe pass:
+// a "nothing" record. Two needs (0.23.50; since R8.3 every need is a score
+// input) tell the cases apart, both from the same probe pass:
 //
 // time_to_edge -- seconds until the player reaches the edge at the current
 //   pace. Distance: along the probe direction to the NEAREST KNOWN probe point

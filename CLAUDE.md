@@ -80,15 +80,18 @@ See [docs/README.md](docs/README.md) for the full system design.
 
 **INI settings**: `Data/SKSE/Plugins/Huginn.ini`:
 - `[Scoring]`: `bLegacyLearnFeature` (D2's feature, hot-reloadable; off is a fallback), `fCoveredPrior`, `fRefreshPriorSec` (the active-buff filters' refresh window); the old scoring params (`ScorerSettings`) are D2's inputs only
-- `[Learning]`: `sBootstrapBias` (b's seed from the bootstrap), `fThetaProcessNoise`, the old learner's memory life
+- `[Learning]`: `sBootstrapBias` (b's seed from the bootstrap), `fThetaProcessNoise`, and the memory life, which both learners use (ChoiceLearner's b battery; the old learner's for D2)
 - `[Favorites]`: the favourites mode (Boost / Suppress) and `fFavoriteLifeMult`
 - `[ContextWeights]`: the old context weights (`ContextWeightSettings`), D2's floors' input only
 - `[Needs]`: one response curve per need (`<need> = <kind> <p1> <p2>`; defaults from `docs/architecture/9-data/needs.csv`, `tools/needs/make_need_ids.py`); a curve the bootstrap carries (encumbrance) overrides its line
-- `[Wildcards]`, `[Subtexts]`, `[SlotLocker]` (the hold, the challenger rule, the class cap, Remembrance, home keys): slot behaviour
-- `[Widget]`: Scaleform HUD position, alpha, scale, display mode; `[Wheeler]`: Wheeler integration
-- `[Candidates]`: uncastable spell policy, the filters' switches
+- `[Wildcards]`, `[SlotLocker]` (the hold, the challenger rule, the class cap, Remembrance, home keys): slot behaviour
+- `[Wheeler]`: Wheeler integration; `[Subtexts]`: Wheeler's entry labels (v2 API)
+- `[Keybindings]`: the slot keys and page keys (main INI since 0.19.0)
+- `[Candidates]`: uncastable spell policy, soul-gem recharge candidates
 - `[Overrides]`: the urgent overrides' thresholds
 - `[Pages]`, `[PageN]`, `[PageN.SlotM]`: multi-page slot layout (`sClassification` names a slot class; what it matches comes from cap(i), docs/architecture/5-slots.md)
+
+**dMenu INI**: `Data/SKSE/Plugins/dmenu/customSettings/ini/Huginn.ini`, bound by `Data/SKSE/Plugins/dmenu/customSettings/Huginn.json`: `[Widget]` (Scaleform HUD position, alpha, scale, display mode) and `[Debug]`; read from the main Huginn.ini only when that file is absent (`GetDMenuIniPath`).
 
 **Bootstrap**: `configs/Huginn_Bootstrap.json` (installed to `Data/SKSE/Plugins/`): R6's fit (θ, κ, `recent_<family>`, b, the encumbrance curve, the D2 weights; format: `docs/architecture/9-bootstrap-format.md`). Missing or invalid: the FALLBACK ranking.
 

@@ -35,14 +35,14 @@ namespace Huginn::Scoring
         }
     }
 
-    bool UtilityScorer::Update(float deltaSeconds)
+    bool UtilityScorer::Update()
     {
-        (void)deltaSeconds;   // R8.1: the potion multiplier's combat timer, its one reader, is gone
         bool forceRun = m_wildcardMgr.UpdateExpiry();
 
         // Vital envelopes tick every frame, not just when the pipeline runs: a
-        // hold ending, or a potion, changes the context weights without
-        // changing anything the skip gate hashes. Release -> one re-run.
+        // hold ending, or a potion, changes the held magicka / stamina the
+        // needs (and D2's rules) read without changing anything the skip gate
+        // hashes. Release -> one re-run.
         const auto vitals = State::StateManager::GetSingleton().GetPlayerVitals();
         const auto now = Context::VitalEnvelope::Clock::now();
         forceRun |= m_magickaEnvelope.Tick(vitals.magicka, now);
@@ -69,7 +69,7 @@ namespace Huginn::Scoring
 
         if (!force) {
             // Dedup: skip the dump unless the ranking's membership/order changed.
-            // Utilities are continuous in the vitals, so they drift every scoring
+            // Scores are continuous in the vitals, so they drift every scoring
             // run — including them here would defeat the dedup. Forced dumps
             // (hg recs) bypass and don't update the signature.
             // NOTE: Single-threaded (called from update thread only)

@@ -765,39 +765,19 @@ namespace Huginn::Item
             break;
            }
         } else {
-           // Damage effects (hostile). A Ravage is a damage to the vital
-           // that recovers when it ends (the kRecover flag), so it keeps the
-           // Damage* tag and gains its Ravage* one. The regen cases and the
-           // weakness one below are what let the old side-effect test see an
-           // impure potion (Restore Health + Damage Magicka Regen) -- before,
-           // they fell to default and the potion read as pure. (R11: the
-           // override finders ask the catalog's self_harm facet now.)
-           const bool recovers = effect->baseEffect->data.flags.all(
-               RE::EffectSetting::EffectSettingData::Flag::kRecover);
+           // Damage effects (hostile). A Ravage (a damage that recovers when
+           // it ends) keeps its Damage* tag. (0.24.5: the Ravage, regen-drain
+           // and weakness ext bits had no reader and are gone; R11: the
+           // override finders ask the catalog's self_harm facet.)
            switch (primaryAV) {
            case RE::ActorValue::kHealth:
             data.tags |= ItemTag::DamageHealth;
-            if (recovers) data.tagsExt |= ItemTagExt::RavageHealth;
             break;
            case RE::ActorValue::kMagicka:
             data.tags |= ItemTag::DamageMagicka;
-            if (recovers) data.tagsExt |= ItemTagExt::RavageMagicka;
             break;
            case RE::ActorValue::kStamina:
             data.tags |= ItemTag::DamageStamina;
-            if (recovers) data.tagsExt |= ItemTagExt::RavageStamina;
-            break;
-           case RE::ActorValue::kHealRate:
-           case RE::ActorValue::kHealRateMult:
-            data.tagsExt |= ItemTagExt::DamageHealthRegen;
-            break;
-           case RE::ActorValue::kMagickaRate:
-           case RE::ActorValue::kMagickaRateMult:
-            data.tagsExt |= ItemTagExt::DamageMagickaRegen;
-            break;
-           case RE::ActorValue::kStaminaRate:
-           case RE::ActorValue::kStaminaRateMult:
-            data.tagsExt |= ItemTagExt::DamageStaminaRegen;
             break;
            case RE::ActorValue::kSpeedMult:
             data.tags |= ItemTag::Slow;
@@ -819,7 +799,6 @@ namespace Huginn::Item
                primaryAV == RE::ActorValue::kResistShock || primaryAV == RE::ActorValue::kResistMagic ||
                primaryAV == RE::ActorValue::kPoisonResist;
            if (isWeakness) {
-            data.tagsExt |= ItemTagExt::WeaknessElement;
             switch (weaknessAV) {
             case RE::ActorValue::kResistFire:
               data.element = ElementType::Fire;

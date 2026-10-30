@@ -34,17 +34,3 @@ void RunNeedVectorTests();          // R3 (0.23.14): the need vector on the live
 // which has no entry for a made-up form. Install around the suite runs.
 void InstallSyntheticFacetResolver();
 void RemoveSyntheticFacetResolver();
-
-// =============================================================================
-// CONSOLE COMMANDS - Manual testing via Skyrim console (debug mode only)
-// =============================================================================
-
-#ifndef NDEBUG
-void ConsoleCmd_ShowEquippedSpells();
-
-#ifdef _DEBUG
-void ConsoleCmd_ToggleStateManagerDebug();
-void ConsoleCmd_ForceUpdateStateManager();
-#endif
-
-#endif  // !NDEBUG

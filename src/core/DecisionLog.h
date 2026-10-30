@@ -83,8 +83,9 @@ namespace Huginn::Core::DecisionLog
         ammo_matches_launcher,
         school_fortified,
         /// 0.23.46: how much of the item's effect is already active on the
-        /// player (core/Coverage.h; doc 11 step 3). Logged only, and not an
-        /// effects.csv column: R8 gives it one shared weight, not a pair.
+        /// player (core/Coverage.h; doc 11 step 3). Not an effects.csv column:
+        /// scored with one shared weight, theta_covered, since R8.3 (0.24.0;
+        /// core/ChoiceScore.h).
         covered,
         _Count
     };
@@ -148,7 +149,8 @@ namespace Huginn::Core::DecisionLog
         /// the item (0-7 = keys 1-8), kNoHotkey when none.
         std::int8_t hotkey = kNoHotkey;
         /// 0.23.56 (R8.2), row columns "mu", "sd", "lm", "um", "ex": the new
-        /// model in shadow (core/ChoiceScore.h; the old engine still ranks).
+        /// model (core/ChoiceScore.h), in shadow at 0.23.56; from 0.24.0
+        /// (R8.3) the live ranking's values.
         /// mu and sd the row's score and its sd under the diagonal posterior
         /// (no kappa); lm the D2 legacy feature ln learn mult (0 off the
         /// floors) and um util missing (0/1), for a candidate of the run;
@@ -181,7 +183,7 @@ namespace Huginn::Core::DecisionLog
         int pageSlots = 0;          // keys on that page
         float pipeAgeMs = 0.0f;     // how old that page was when the context was taken
         std::string race;           // the hostile primary target's race editor ID, if any
-        float wildcardBase = 0.0f;  // the wildcard settings (base, max probability per slot)
+        float wildcardBase = 0.0f;  // the roll's chance, base and max (per-slot probability before 0.24.3)
         float wildcardMax = 0.0f;
         /// The held rows were read in full: per-stack unique IDs, per-instance
         /// caps, charges and worn armour. False inside the post-load window in
@@ -299,9 +301,10 @@ namespace Huginn::Core::DecisionLog
         /// new segment, as the curves do. A head without it (before 0.23.55)
         /// centred left(r) at 5 s.
         float refreshPriorSec = 5.0f;
-        /// 0.23.56 (R8.2): the bootstrap file the shadow model was seeded from
-        /// (its created_utc and SHA-256), written as "bootstrap" when the file
-        /// was read; absent when the new model is off or before 0.23.56.
+        /// 0.23.56 (R8.2): the bootstrap file the choice model was seeded from
+        /// (its created_utc and SHA-256; the shadow model at 0.23.56, the
+        /// ranking one since 0.24.0), written as "bootstrap" when the file was
+        /// read; absent when the new model is off or before 0.23.56.
         std::string bootstrapCreatedUtc;
         std::string bootstrapSha256;
     };

@@ -1110,9 +1110,9 @@ changed in the same PR, and the shipped INI loses the dead keys.
         `hg status` say so) -- now `Legacy::Run::FallbackRanking` in the legacy
         module, the one place utility still ranks; and the R7 bridge
         (`ScoredCandidate::RankOnUtility`, `Core::BridgeScore`,
-        `Core::DisplayUtility`), which the fallback, the R7 golden snapshot
-        format, the Debug capture harness and the slot tests use to state slot
-        scores as utilities. `r8_check` confines both. Pruned in the review: the
+        `Core::DisplayUtility`, deleted in 0.24.5), which the fallback, the R7
+        golden snapshot format, the Debug capture harness and the slot tests use
+        to state slot scores as utilities. `r8_check` confines both. Pruned in the review: the
         choice score's `ln util` feature (computed live from the old utility,
         off D2's path: the bootstrap reader now refuses a weight on it, read as
         0, and warns), the widget's `confidence` payload (exp(score), never read

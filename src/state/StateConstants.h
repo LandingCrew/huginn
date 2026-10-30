@@ -206,7 +206,7 @@ namespace Huginn::State
    {
       // Player health/magicka/stamina "Critical" threshold
       // Why 0.15f: Below 15% is critically low - emergency healing needed
-      // Used by IsHealthCritical(), IsMagickaCritical(), IsStaminaCritical()
+      // Used by IsHealthCritical(), IsMagickaCritical()
       // Units: percentage (0.15 = 15%)
       inline constexpr float CRITICAL = 0.15f;
 
@@ -388,7 +388,6 @@ namespace Huginn::State
       // Hunger level: Starving (critical)
       // Why 5: Critical hunger - severe penalties
       // Survival Mode Improved SKSE: "Starving" effect
-      // Helper method: IsStarving() checks >= 4 (works for vanilla CC too)
       inline constexpr int HUNGER_STARVING = 5;
 
       // Cold level: Warm
@@ -414,7 +413,6 @@ namespace Huginn::State
       // Cold level: Freezing
       // Why 4: Freezing - significant penalties
       // Survival Mode Improved SKSE: "Freezing" effect
-      // Helper method: IsFreezing() checks >= 4 (works for vanilla CC too)
       inline constexpr int COLD_FREEZING = 4;
 
       // Cold level: Numb (critical)
@@ -455,7 +453,6 @@ namespace Huginn::State
       // Fatigue level: Weary
       // Why 3: Weary - significant penalty
       // Survival Mode Improved SKSE: "Weary" effect
-      // Helper method: IsExhausted() checks >= 3 (works for vanilla CC too)
       inline constexpr int FATIGUE_WEARY = 3;
 
       // Fatigue level: Debilitated (critical)

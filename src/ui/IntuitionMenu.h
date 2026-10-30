@@ -77,7 +77,6 @@ namespace Huginn::UI
         void SetSlot(int index, std::string_view name, IntuitionSlotType type,
                      double confidence, std::string_view detail = "",
                      Slot::SlotVisualState visualState = Slot::SlotVisualState::Normal);
-        void ClearSlot(int index);
         void SetSlotCount(int count);
         void SetPage(int current, int total, std::string_view name);
         void SetWidgetAlpha(double alpha);

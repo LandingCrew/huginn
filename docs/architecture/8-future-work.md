@@ -14,7 +14,7 @@ one-off ideas kept here so they are not lost.
 
 > **Related documentation:**
 > - [../roadmap.md](../roadmap.md) — open work, and the only planning source of truth
-> - [../roadmap-archive.md](../roadmap-archive.md) — completed items, several recording *why* an approach was rejected
+> - `docs/roadmap-archive.md` (removed in dd73d24; `git show dd73d24^:docs/roadmap-archive.md`) — completed items, several recording *why* an approach was rejected
 > - [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) — the learner as it exists
 > - [1-states.md](1-states.md) — the state models the prediction ideas below would draw on
 

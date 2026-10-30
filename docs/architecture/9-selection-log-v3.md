@@ -188,7 +188,7 @@ Each row is an array, in the order `head.row` names:
 | 19 | `fl` | int or null | (0.23.53) the floor, an index into `head.floors`; null for a row that is not eligible |
 | 20 | `wu` | float or null | (0.23.53) for an unscored eligible row and a filter drop: the utility the scorer computes for it with no floor |
 | 21 | `hk` | int or null | (0.23.53) the vanilla favourites hotkey bound to the item, 0-7 (keys 1-8) |
-| 22 | `mu` | float or null | (0.23.56, R8.2) the new model's score of the row, in shadow ([below](#the-new-model-in-shadow-02356)): mu_i with no kappa |
+| 22 | `mu` | float or null | (0.23.56, R8.2) the new model's score of the row ([below](#the-new-model-in-shadow-02356); in shadow at 0.23.56, the live ranking's score from 0.24.0): mu_i with no kappa |
 | 23 | `sd` | float or null | (0.23.56) its standard deviation under the diagonal posterior |
 | 24 | `lm` | float or null | (0.23.56) the D2 legacy feature `ln learn mult` the score read: ln(max(1 + λ·learn, 1e-6)) on a row the old floors passed, 0 on any other |
 | 25 | `um` | int or null | (0.23.56) `util missing` the score read: 0 on a row the old floors passed, 1 on any other |
@@ -257,12 +257,14 @@ eligibility across 0.23.55.
 
 R8.2 runs the new model (doc 9; `core/ChoiceScore.h`) beside the old engine,
 seeded from the R6 bootstrap (`Data/SKSE/Plugins/Huginn_Bootstrap.json`,
-[9-bootstrap-format.md](9-bootstrap-format.md)); the old engine still ranks,
-so these columns are logged only:
+[9-bootstrap-format.md](9-bootstrap-format.md)); at 0.23.56 the old engine still
+ranked, so these columns were logged only. **From 0.24.0 (R8.3) the new model
+ranks:** the same columns carry the live ranking's values (format, names and order
+unchanged):
 
 | Row | `mu` `sd` `ex` | `lm` `um` | computed |
 |---|---|---|---|
-| eligible | the run's (`PipelineCoordinator::ScoreShadow`, after the old scoring and the allocation): the run's need vector, recent_<family> at the run, the row's cap and cross-features, covered(i) with doc 11's greedy upgrade gate, b with its battery | off the same pass that ranked (`learning/legacy/LegacyLearnFeature.h`) | the run |
+| eligible | the run's (`PipelineCoordinator::LogChoiceRows`, named `ScoreShadow` before R8.3, after `RankOnChoice` and the allocation): the run's need vector, recent_<family> at the run, the row's cap and cross-features, covered(i) with doc 11's greedy upgrade gate, b with its battery | off the same pass that ranked (`learning/legacy/LegacyLearnFeature.h`) | the run |
 | held, never gathered | with the SAME run's tick (its v and W), the row's own cap, cross-features and covered (no upgrade gate) | 0 and 1 (the old engine did not score it) | the context |
 | neither held nor eligible (a shown row missing from both) | null | null | -- |
 

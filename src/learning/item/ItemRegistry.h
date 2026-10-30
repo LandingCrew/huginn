@@ -89,9 +89,10 @@ namespace Huginn::Item
    // =============================================================================
    // ITEM CHANGE EVENT (v0.7.4)
    // =============================================================================
-   // Emitted when item counts change. Used for contextual bandit feedback:
-   // - Consumed item (delta < 0) → potential reward signal
-   // - Acquired item (delta > 0) → inventory update notification
+   // Emitted when item counts change. A consumed item (delta < 0) breaks its
+   // slot lock and confirms the consumption through SelectionTracker::OnConsumed,
+   // which feeds both learners; an acquired one (delta > 0) is an inventory
+   // update.
    // =============================================================================
 
    struct ItemChangeEvent
@@ -210,13 +211,6 @@ namespace Huginn::Item
        * @return Vector of pointers to matching items
        */
       [[nodiscard]] std::vector<const InventoryItem*> GetItemsByType(ItemType type) const;
-
-      /**
-       * @brief Get all items with a specific tag
-       * @param tag ItemTag to filter by (bitflag check)
-       * @return Vector of pointers to matching items
-       */
-      [[nodiscard]] std::vector<const InventoryItem*> GetItemsWithTag(ItemTag tag) const;
 
       /**
        * @brief Get health potions sorted by magnitude (highest first)
@@ -361,11 +355,6 @@ namespace Huginn::Item
       [[nodiscard]] const InventoryItem* GetBestHealthPotion() const noexcept;
       [[nodiscard]] const InventoryItem* GetBestMagickaPotion() const noexcept;
       [[nodiscard]] const InventoryItem* GetBestStaminaPotion() const noexcept;
-      [[nodiscard]] const InventoryItem* GetBestResistFirePotion() const noexcept;
-      [[nodiscard]] const InventoryItem* GetBestResistFrostPotion() const noexcept;
-      [[nodiscard]] const InventoryItem* GetBestResistShockPotion() const noexcept;
-      [[nodiscard]] const InventoryItem* GetBestResistPoisonPotion() const noexcept;
-      [[nodiscard]] const InventoryItem* GetBestCureDiseasePotion() const noexcept;
 
       // =============================================================================
       // SOUL GEM ACCESSORS (SoulGemScanner v0.7.8)
@@ -380,28 +369,12 @@ namespace Huginn::Item
       [[nodiscard]] std::vector<const InventoryItem*> GetSoulGems(size_t topK = 3) const;
 
       /**
-       * @brief Get soul gems by minimum SOUL HELD (1=Petty ... 5=Grand, 0=empty)
-       * @param minSoulLevel Minimum soul level threshold
-       * @param topK Maximum number of results (default 3, 0 = all)
-       * @return Vector of pointers to gems holding >= minSoulLevel, sorted descending
-       * @note Was GetSoulGemsByCapacity. magnitude is the soul held, not the
-       *       gem's capacity, so the old name described the opposite filter.
-       */
-      [[nodiscard]] std::vector<const InventoryItem*> GetSoulGemsBySoulLevel(float minSoulLevel, size_t topK = 3) const;
-
-      /**
        * @brief Get soul gems by minimum CAPACITY (the size of the gem itself)
        * @param minCapacity Minimum capacity tag (ItemTagExt::SoulGemPetty ... SoulGemGrand)
        * @param topK Maximum number of results (default 3, 0 = all)
        * @return Vector of pointers to gems of at least that capacity, sorted by soul held
        */
       [[nodiscard]] std::vector<const InventoryItem*> GetSoulGemsByCapacity(ItemTagExt minCapacity, size_t topK = 3) const;
-
-      /**
-       * @brief Get black soul gems only (for future archetype tracking)
-       * @return Vector of pointers to gems flagged as able to hold NPC souls
-       */
-      [[nodiscard]] std::vector<const InventoryItem*> GetBlackSoulGems() const;
 
       /**
        * @brief Get best soul gem for recharge (largest soul HELD, filled only)

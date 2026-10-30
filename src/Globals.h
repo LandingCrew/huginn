@@ -67,7 +67,6 @@ struct RegistryTimers {
 extern RegistryTimers g_registryTimers;
 
 // Non-registry timers (kept separate — different lifecycle)
-extern std::chrono::steady_clock::time_point g_lastStateLog;
 // Atomic: written by the load (main thread), read by the update loop
 // (Util::IsExtraListStable). Ordered by g_loadGeneration's release/acquire
 // pair, see core/InstanceDetail.h.
@@ -90,24 +89,7 @@ extern std::string g_listName;
 extern std::atomic<uint64_t> g_activeCharacterID;
 
 // Flags
-extern bool g_hasShownWelcomeNotification;
 extern std::atomic<bool> g_updateSystemFailed;
-
-// =============================================================================
-// HELPER: Evaluate Current Game State
-// =============================================================================
-
-/// @brief Helper struct to return both GameState and PlayerActorState together
-/// @details Reduces code duplication across multiple call sites
-struct EvaluatedGameState {
-  Huginn::State::GameState gameState;
-  Huginn::State::PlayerActorState playerState;
-};
-
-/// @brief Fetches state from StateManager and evaluates current GameState
-/// @return Struct containing evaluated GameState and PlayerActorState
-/// @note C++17 structured bindings: auto [state, player] = EvaluateCurrentGameState();
-[[nodiscard]] EvaluatedGameState EvaluateCurrentGameState();
 
 /// @brief Reset all stateful pipeline subsystems to a clean state.
 /// @details Shared by InitializeGameSystems() and Cmd_ResetAll to prevent

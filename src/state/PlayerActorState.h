@@ -16,7 +16,7 @@ namespace Huginn::State
   // to eliminate duplication and enable consistent vitals/effects/buffs handling.
   //
   // DESIGN RATIONALE:
-  // - Fixes duplication identified in state-refactoring.md (player vs target vitals)
+  // - Fixes the duplication between player and target vitals
   // - Enables future target buff/debuff detection (Phase 7)
   // - All structs trivially copyable for thread safety
   // =============================================================================
@@ -59,10 +59,6 @@ namespace Huginn::State
 
     [[nodiscard]] bool IsStaminaLow() const noexcept {
       return stamina < VitalThreshold::LOW;
-    }
-
-    [[nodiscard]] bool IsStaminaCritical() const noexcept {
-      return stamina < VitalThreshold::CRITICAL;
     }
 
 #ifdef _DEBUG
@@ -135,10 +131,6 @@ namespace Huginn::State
     bool hasMagickaPoison = false;  // Magicka damage over time
     bool hasStaminaPoison = false;  // Stamina damage over time
     bool hasHealthDrain = false;    // Health damage over time (bleeding)
-
-    [[nodiscard]] bool HasAnyDamageEffect() const noexcept {
-      return isOnFire || isPoisoned || isFrozen || isShocked || hasMagickaPoison || hasStaminaPoison || hasHealthDrain;
-    }
 
 #ifdef _DEBUG
     void LogDifferences(const ActorEffects& other, std::string_view prefix = "") const {
@@ -239,23 +231,6 @@ namespace Huginn::State
     bool hasFortifyAlteration = false;
     bool hasFortifyIllusion = false;
     bool hasFortifyEnchanting = false;   // Not a school, but same pattern
-
-    [[nodiscard]] bool HasAnyBuff() const noexcept {
-      return hasWaterBreathing || isInvisible || hasMuffle || hasNightEye || hasLightSpell ||
-             hasArmorBuff || hasCloakActive || hasActiveSummon ||
-             hasHealthRegenBuff || hasMagickaRegenBuff || hasStaminaRegenBuff ||
-             hasFortifyDestruction || hasFortifyConjuration || hasFortifyRestoration ||
-             hasFortifyAlteration || hasFortifyIllusion || hasFortifyEnchanting;
-    }
-
-    [[nodiscard]] bool HasAnyFortifySchool() const noexcept {
-      return hasFortifyDestruction || hasFortifyConjuration || hasFortifyRestoration ||
-             hasFortifyAlteration || hasFortifyIllusion;
-    }
-
-    [[nodiscard]] bool HasAnyRegenDebuff() const noexcept {
-      return hasHealthRegenDebuff || hasMagickaRegenDebuff || hasStaminaRegenDebuff;
-    }
 
 #ifdef _DEBUG
     void LogDifferences(const ActorBuffs& other, std::string_view prefix = "") const {
@@ -538,40 +513,6 @@ namespace Huginn::State
              (formID != 0 && equippedTorchFormID == formID);
     }
 
-    // Survival helpers
-    [[nodiscard]] bool IsStarving() const noexcept {
-      return survivalModeActive && hungerLevel >= SurvivalThreshold::HUNGER_FAMISHED;
-    }
-
-    [[nodiscard]] bool IsFreezing() const noexcept {
-      return survivalModeActive && coldLevel >= SurvivalThreshold::COLD_FREEZING;
-    }
-
-    [[nodiscard]] bool IsExhausted() const noexcept {
-      return survivalModeActive && fatigueLevel >= SurvivalThreshold::FATIGUE_WEARY;
-    }
-
-    [[nodiscard]] bool HasRestBonus() const noexcept {
-      return survivalModeActive && fatigueLevel < DefaultState::NEUTRAL_SURVIVAL;
-    }
-
-    // Warmth helpers (v0.6.6)
-    [[nodiscard]] bool IsWarmthLow() const noexcept {
-      return survivalModeActive && warmthRating < WarmthThreshold::LOW;
-    }
-
-    [[nodiscard]] bool HasGoodWarmth() const noexcept {
-      return warmthRating >= WarmthThreshold::HIGH;
-    }
-
-    [[nodiscard]] float GetWarmthContextWeight() const noexcept {
-      if (!survivalModeActive) return 0.0f;
-      // Higher weight when warmth is low (need warming items/spells)
-      if (warmthRating < WarmthThreshold::LOW) return 0.30f;
-      if (warmthRating < WarmthThreshold::MODERATE) return 0.15f;
-      return 0.0f;
-    }
-
     // Vampire/Werewolf helpers (v0.6.6)
     [[nodiscard]] bool IsVampire() const noexcept {
       return vampireStage > VampireThreshold::NOT_VAMPIRE;
@@ -579,32 +520,6 @@ namespace Huginn::State
 
     [[nodiscard]] bool IsSunVulnerable() const noexcept {
       return vampireStage >= VampireThreshold::SUN_VULNERABLE_STAGE;
-    }
-
-    [[nodiscard]] bool CanTransformToWerewolf() const noexcept {
-      return isWerewolf && !isInBeastForm;
-    }
-
-    // Survival context weight helpers (for recommendation engine)
-    [[nodiscard]] float GetHungerContextWeight() const noexcept {
-      if (!survivalModeActive) return 0.0f;
-      if (hungerLevel >= SurvivalThreshold::HUNGER_FAMISHED) return 0.30f;
-      if (hungerLevel >= SurvivalThreshold::HUNGER_HUNGRY) return 0.15f;
-      return 0.0f;
-    }
-
-    [[nodiscard]] float GetColdContextWeight() const noexcept {
-      if (!survivalModeActive) return 0.0f;
-      if (coldLevel >= SurvivalThreshold::COLD_FREEZING) return 0.30f;
-      if (coldLevel >= SurvivalThreshold::COLD_VERY_COLD) return 0.15f;
-      return 0.0f;
-    }
-
-    [[nodiscard]] float GetFatigueContextWeight() const noexcept {
-      if (!survivalModeActive) return 0.0f;
-      if (fatigueLevel >= SurvivalThreshold::FATIGUE_WEARY) return 0.30f;
-      if (fatigueLevel >= SurvivalThreshold::FATIGUE_TIRED) return 0.15f;
-      return 0.0f;
     }
 
     // Equality comparison (epsilon-tolerant)

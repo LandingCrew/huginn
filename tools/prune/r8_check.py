@@ -27,9 +27,10 @@ learner's learning score on the rows the old floors pass. So two lists:
             - the old floors' keep flag: `legacyScored` (ScoredCandidate) and `.Scored()` (the
               legacy module's Row), C++ only for the call. Reading either is how the floors
               would filter or rank again.
-          The utility -> rank-score bridge (RankOnUtility, BridgeScore, DisplayUtility) is
-          LEGACY too, so utility cannot rank outside the fallback in the legacy module and the
-          slot harness that states scores as utilities. A few words are LEGACY in one file only
+          The utility -> rank-score bridge (RankOnUtility, BridgeScore) is LEGACY too, so
+          utility cannot rank outside the fallback in the legacy module and the slot harness
+          that states scores as utilities. DisplayUtility, its inverse, was deleted in 0.24.5;
+          it stays a LEGACY word so a revival fails. A few words are LEGACY in one file only
           (FILE_PATTERNS): a bare `utility` / `breakdown` in ScoredCandidate.h's code, and
           `Suppress` in PipelineCoordinator.cpp. A file that ranks or does slot math live
           (ScoredCandidate.h, SlotScoreMath.h, UtilityScorer, PipelineCoordinator) is never
@@ -310,7 +311,7 @@ ALLOW = [
     ('tests/core/DecisionLogTests.cpp', 'the v3 format\'s host test (the OldRun head)'),
     ('src/learning/ScorerSettings.*', 'settings loader: [Scoring] / [Favorites]'),
     ('src/learning/ScorerConfig.h', 'settings loader: the config it builds'),
-    ('src/learning/LearningSettings.h', 'settings loader: [Learning] (the old learner\'s memory life)'),
+    ('src/learning/LearningSettings.h', 'settings loader: [Learning] (the memory life: ChoiceLearner\'s b battery and the old learner)'),
     ('src/context/ContextWeightSettings.*', 'settings loader: [ContextWeights]'),
     ('tests/core/LegacyFloorPassTests.cpp', 'the host test of the moved floor loop (bit for bit)'),
     ('tests/core/LegacyRunTests.cpp', 'the host test of the legacy module\'s row resolution'),
@@ -428,10 +429,9 @@ BUDGET = {
         r'^\s*score = Core::BridgeScore\(u\);$',
     ], 'the old utility fields, the cold-start flag, the floors\' keep flag and RankOnUtility (the bridge of the fallback)'),
     # The R7 slot math (RanksBefore, BucketLogRatio) is live: only the bridge's two definitions.
-    'src/core/SlotScoreMath.h': (2, [
+    'src/core/SlotScoreMath.h': (1, [
         r'^\s*\[\[nodiscard\]\] inline SlotScore BridgeScore\(float utility\) noexcept$',
-        r'^\s*\[\[nodiscard\]\] inline float DisplayUtility\(SlotScore score\) noexcept$',
-    ], 'the bridge: the BridgeScore / DisplayUtility definitions'),
+    ], 'the bridge: the BridgeScore definition'),
     # BuildAllocInput, the live allocation's input (SlotAllocator calls it on every allocation):
     # it carries the old utility as the CandidateRec's token for the R7 capture and the host legacy
     # slot policy. No live core reads CandidateRec::utility; the slots rank on c.score.
@@ -476,7 +476,7 @@ BUDGET = {
     'src/Globals.cpp': (6, None, 'construction and the reset'),
     'src/settings/SettingsReloader.cpp': (9, None, 'settings loader: hot reload, the switch and the dMenu reset'),
     'src/settings/SettingsReloader.h': (2, None, 'settings loader: the reset-weights doc comment'),
-    'src/Tests.cpp': (294, None, 'the in-game Debug suite\'s legacy and slot-harness tests'),
+    'src/Tests.cpp': (282, None, 'the in-game Debug suite\'s legacy and slot-harness tests'),
 }
 
 
@@ -536,9 +536,10 @@ CLASSIFIER_BUDGET = {
         r'^\s*if \(item\.data\.type != Item::ItemType::SoulGem\) return;$',
     ], 'the soul gem split (the registry\'s form kind)'),
     # The in-game Debug suite: the classifier and D2 tests, the synthetic candidates stated in the
-    # old vocabulary, and their facet resolver (InstallSyntheticFacetResolver). Counted. 178:
-    # 153 plus the 25 lines of the item registry's own tests that call its potion views.
-    'src/Tests.cpp': (178, None, 'the Debug suite: classifier and D2 tests, synthetic candidates and their resolver'),
+    # old vocabulary, and their facet resolver (InstallSyntheticFacetResolver). Counted. 177:
+    # 153 plus the 25 lines of the item registry's own tests that call its potion views, less
+    # the healingSpell SpellTag local that went out of RunMultiplicativeScoringTests' Test 1.
+    'src/Tests.cpp': (177, None, 'the Debug suite: classifier and D2 tests, synthetic candidates and their resolver'),
 }
 
 

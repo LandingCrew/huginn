@@ -93,18 +93,6 @@ namespace Huginn::Update
       [[nodiscard]] bool IsEnabled() const noexcept { return m_enabled.load(std::memory_order_acquire); }
 
       /**
-       * @brief Get the configured update interval in milliseconds
-       * @return Update interval in milliseconds
-       */
-      [[nodiscard]] float GetUpdateInterval() const noexcept { return Config::UPDATE_INTERVAL_MS; }
-
-      /**
-       * @brief Get the time since last update in milliseconds
-       * @return Milliseconds elapsed since last update
-       */
-      [[nodiscard]] float GetTimeSinceLastUpdate() const;
-
-      /**
        * @brief Seconds since the player's latest input (0.23.51)
        *
        * Any key, mouse or gamepad button event (down, held or released), the

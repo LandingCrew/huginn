@@ -354,7 +354,8 @@ namespace Huginn::Core::DecisionLog
         if (o.floor != kNoFloor) last = 7;
         if (std::isfinite(o.wouldUtil)) last = 8;
         if (r.hotkey != kNoHotkey) last = 9;
-        // 0.23.56 (R8.2): mu, sd, lm, um, ex -- the new model in shadow.
+        // 0.23.56 (R8.2): mu, sd, lm, um, ex -- the new model (in shadow at
+        // 0.23.56; the live ranking's values since 0.24.0).
         if (std::isfinite(r.mu)) last = 10;
         if (std::isfinite(r.sd)) last = 11;
         if (std::isfinite(r.lm)) last = 12;

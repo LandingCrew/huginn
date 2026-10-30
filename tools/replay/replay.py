@@ -59,11 +59,8 @@ PAGE = 8
 class Policy:
     name = "?"
 
-    def utility(self, c, phi) -> float:
+    def utility(self, c) -> float:
         raise NotImplementedError
-
-    def learn(self, rec, chosen, phi):
-        pass
 
     @staticmethod
     def multipliers(c):
@@ -74,7 +71,7 @@ class Logged(Policy):
     """The utility the game computed (A*: live utility, ranked plainly)."""
     name = "logged (A*)"
 
-    def utility(self, c, phi):
+    def utility(self, c):
         return c["util"]
 
 
@@ -82,7 +79,7 @@ class ContextOnly(Policy):
     """No learning at all (B in Huginn_AB.log)."""
     name = "context only (B)"
 
-    def utility(self, c, phi):
+    def utility(self, c):
         return c["ctx"] * self.multipliers(c)
 
 
@@ -108,14 +105,6 @@ def load(path, char, from_launch, to_launch=None):
                 continue
             cols = r["cols"]
             r["_cands"] = [dict(zip(cols, c)) for c in r["cands"]]
-            # The recency term on ONE scale, the pre-0.23.0 one (1.5): since
-            # the choice target the game logs it already divided by 8
-            # (0.1875). (The R8.4-pruned learner policies divided by 8 again
-            # through their rec_scale; the field stays on one scale for any
-            # reader of `_cands`.)
-            for c in r["_cands"]:
-                if 0.0 < c.get("rec", 0.0) < 1.0:
-                    c["rec"] *= 8.0
             recs.append(r)
     recs.sort(key=lambda r: r["utc"])
     return recs
@@ -124,11 +113,10 @@ def load(path, char, from_launch, to_launch=None):
 def replay(recs, policy):
     stats = defaultdict(lambda: [0, 0, 0.0])   # group -> [selections, hits@8, sum reciprocal rank]
     for r in recs:
-        phi = r["phi"]
         cands = r["_cands"]
         chosen = next((c for c in cands if c["form"] == r["form"]), None)
         if chosen is not None:
-            ranked = sorted(cands, key=lambda c: policy.utility(c, phi), reverse=True)
+            ranked = sorted(cands, key=policy.utility, reverse=True)
             rank = next(i for i, c in enumerate(ranked) if c["form"] == r["form"])
             groups = ["all", "outside" if r["src"] == "External" else "huginn", "type:" + chosen["type"]]
             for g in groups:
@@ -136,7 +124,6 @@ def replay(recs, policy):
                 s[0] += 1
                 s[1] += rank < PAGE
                 s[2] += 1.0 / (rank + 1)
-        policy.learn(r, chosen, phi)
     return stats
 
 
@@ -171,11 +158,10 @@ def replay_class_cap(recs, make_policy, free, discount):
     crowded = 0
     policy = make_policy()
     for r in recs:
-        phi = r["phi"]
         cands = r["_cands"]
         chosen = next((c for c in cands if c["form"] == r["form"]), None)
         if chosen is not None:
-            shown = capped_page(cands, lambda c: policy.utility(c, phi), free, discount)
+            shown = capped_page(cands, policy.utility, free, discount)
             hit = any(c["form"] == r["form"] for c in shown)
             for g in ["all", "outside" if r["src"] == "External" else "huginn", "type:" + chosen["type"]]:
                 stats[g][0] += 1
@@ -184,7 +170,6 @@ def replay_class_cap(recs, make_policy, free, discount):
             for c in shown:
                 per_class[class_of(c)] += 1
             crowded += max(per_class.values(), default=0) >= 5
-        policy.learn(r, chosen, phi)
     return stats, crowded
 
 

@@ -130,55 +130,9 @@ namespace Huginn::Candidate
         m_cooldowns.clear();
     }
 
-    size_t CooldownManager::GetActiveCount() const noexcept
-    {
-        READ_LOCK;
-        const auto now = std::chrono::steady_clock::now();
-        size_t count = 0;
-
-        for (const auto& [key, entry] : m_cooldowns) {
-            if (now < entry.expiryTime) {
-                ++count;
-            }
-        }
-
-        return count;
-    }
-
-    float CooldownManager::GetRemainingCooldown(RE::FormID formID, SourceType type) const noexcept
-    {
-        READ_LOCK;
-        const uint64_t key = MakeKey(formID, type);
-        auto it = m_cooldowns.find(key);
-
-        if (it == m_cooldowns.end()) {
-            return 0.0f;
-        }
-
-        const auto now = std::chrono::steady_clock::now();
-        if (now >= it->second.expiryTime) {
-            return 0.0f;
-        }
-
-        return std::chrono::duration<float>(it->second.expiryTime - now).count();
-    }
-
-    bool CooldownManager::CancelCooldown(RE::FormID formID, SourceType type)
-    {
-        WRITE_LOCK;
-        const uint64_t key = MakeKey(formID, type);
-        return m_cooldowns.erase(key) > 0;
-    }
-
-    void CooldownManager::CleanupExpired()
-    {
-        WRITE_LOCK;
-        CleanupExpiredLocked();
-    }
-
     void CooldownManager::CleanupExpiredLocked()
     {
-        // Note: Caller must hold m_mutex (either shared or unique lock)
+        // Caller holds the write lock (unique on m_mutex): this erases.
         const auto now = std::chrono::steady_clock::now();
 
         // C++20 erase_if for efficient removal

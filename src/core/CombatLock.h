@@ -162,13 +162,6 @@ namespace Huginn::Core
         return !shownEmpty && !alreadyLocked && !wildcard;
     }
 
-    /// Whether a wildcard may be placed on a key: never in combat (the lock's
-    /// own notion of it, CombatPresence).
-    [[nodiscard]] constexpr bool WildcardMayBePlaced(bool inCombat) noexcept
-    {
-        return !inCombat;
-    }
-
     /// What WildcardManager does on a pipeline run, given the combat flag it
     /// saw last run and now. In combat: place none and drop every page's
     /// cached ones. On the first run after combat: restart every page's
@@ -176,7 +169,7 @@ namespace Huginn::Core
     /// a page that just settled. Otherwise: as before combat existed.
     struct WildcardCombatStep
     {
-        bool mayPlace = true;            ///< roll and swap wildcards this run
+        bool mayPlace = true;            ///< roll and place wildcards this run
         bool dropCached = false;         ///< clear every page's cached wildcards
         bool restartRefractory = false;  ///< stamp every page's wildcard end time now
     };

@@ -8,7 +8,7 @@ namespace Huginn::Candidate
     enum class SourceType : uint8_t;
 
     /// Policy for handling spells the player can't currently afford (insufficient magicka).
-    /// Disallow removes them in PassesAffordabilityFilter(); Allow keeps them.
+    /// Disallow removes them in the filter visitor (RunVisitorFilters, Reason::affordability); Allow keeps them.
     /// A legacy INI value of "Penalize" loads as Allow -- it never had a penalty behind it.
     enum class UncastableSpellPolicy : uint8_t {
         Disallow,   // Filter out uncastable spells (current behavior)
@@ -120,22 +120,6 @@ namespace Huginn::Candidate
         // =============================================================================
         // METHODS
         // =============================================================================
-
-        /// Get cooldown duration for a specific source type (type-safe version)
-        [[nodiscard]] float GetCooldownForSourceType(SourceType sourceType) const noexcept
-        {
-            switch (sourceType) {
-                case SourceType::Spell:   return spellCooldown;
-                case SourceType::Potion:  return potionCooldown;
-                case SourceType::Scroll:  return scrollCooldown;
-                case SourceType::Weapon:  return weaponCooldown;
-                case SourceType::Ammo:    return ammoCooldown;
-                case SourceType::SoulGem: return soulGemCooldown;
-                case SourceType::Food:    return foodCooldown;
-                case SourceType::Staff:   return spellCooldown;  // Staff uses spell cooldown
-                default: return 2.0f;  // Fallback for _Count or unknown
-            }
-        }
 
         /// Reset all settings to defaults
         void ResetToDefaults()

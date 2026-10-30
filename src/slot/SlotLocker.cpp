@@ -1154,16 +1154,6 @@ namespace Huginn::Slot
         return m_lockedSlots[slotIndex].isLocked;
     }
 
-    float SlotLocker::GetRemainingLockTime(size_t slotIndex) const
-    {
-        if (slotIndex >= MAX_SLOTS) {
-            return 0.0f;
-        }
-        std::lock_guard<std::mutex> lock(m_mutex);
-        const auto& slot = m_lockedSlots[slotIndex];
-        return slot.isLocked ? slot.remainingMs : 0.0f;
-    }
-
     bool SlotLocker::WasConfirmed(size_t slotIndex, RE::FormID currentFormID) const
     {
         if (slotIndex >= MAX_SLOTS || currentFormID == 0) {

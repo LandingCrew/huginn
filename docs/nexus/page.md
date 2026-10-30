@@ -1,6 +1,6 @@
 # Huginn
 
-> **Maintainer note (R11, 0.24.4):** `page.bbcode.txt` is the Nexus source and was updated for the engine rewrite (How Huginn decides, Effect Overrides, the slot class list, the console commands, darkness). This Markdown copy was not: its Algorithm configuration ([ContextWeights], fLambda*, fMinimumUtility), Classification Overrides, console table (`hg weights`) and darkness (`fWeightDarkness`) describe the old engine. Regenerate it from the bbcode before using it.
+> **Maintainer note (R11, 0.24.4):** `page.bbcode.txt` is the Nexus source and was updated for the engine rewrite (How Huginn decides, Effect Overrides, the slot class list, the console commands, darkness). This Markdown copy was not: its Algorithm configuration ([ContextWeights], fLambda*, fMinimumUtility), Classification Overrides, console table (`hg weights`) and darkness (`fWeightDarkness`) describe the old engine. There is no generator: it is a hand-maintained copy, so update it by hand from `page.bbcode.txt` before using it.
 
 Huginn is an SKSE plugin that watches how your fight is going and keeps your hotkeys stocked with whatever suits the moment — the right spell, potion, weapon, or item, already on the key, before you have to go digging for it in the menus.
 

@@ -177,16 +177,6 @@ namespace Huginn::Candidate
         void RefreshConfigFromGlobal() noexcept;
 
         /**
-         * @brief Get the cooldown manager (for external cooldown queries).
-         */
-        [[nodiscard]] CooldownManager& GetCooldownManager() noexcept { return m_cooldownMgr; }
-
-        /**
-         * @brief Log candidates to debug log.
-         */
-        void LogCandidates(const std::vector<CandidateVariant>& candidates) const;
-
-        /**
          * @brief Reset generator state (clear cooldowns, reset stats).
          */
         void Reset();

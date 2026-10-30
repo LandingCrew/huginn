@@ -21,10 +21,6 @@ namespace Huginn::Config
    // State Evaluation Configuration
    // -----------------------------------------------------------------------------
 
-   // How often to log game state in debug mode (in milliseconds)
-   // Only affects debug builds
-   inline constexpr float STATE_LOG_INTERVAL_MS = 1000.0f;
-
    // How long a context reason stays on the wheel after it stops being true (#62).
    // Only damps a DOWNGRADE — a more urgent reason is adopted instantly — so this
    // is the longest a stale label can linger, not a delay on real news.
@@ -33,7 +29,7 @@ namespace Huginn::Config
    // SlotLocker's DEFAULT 3000ms content lock, so the label cannot outlive the
    // slot contents it is explaining — but that lock is fLockDurationMs, which
    // the player can lower or zero out, so this is a ceiling and not the whole
-   // guarantee. ScoreCandidates clamps the effective hold to the live lock
+   // guarantee. UpdateContextReason clamps the effective hold to the live lock
    // duration; keep the two arguments together if this number changes.
    inline constexpr float REASON_HOLD_MS = 1500.0f;
 
