@@ -1244,7 +1244,11 @@ changed in the same PR, and the shipped INI loses the dead keys.
         and the load's keep-or-replace decision stay (0.24.22: one shared
         clock in `core/LearningClock.h`, HCID in `persist/CharacterRecord.*`):
         the retirement deletes the old learner's two tick calls and its
-        `ResolveLoadedLearner`, nothing of the decision. 0.24.19: the fit
+        `ResolveLoadedLearner`, and moves the save/load callback registration
+        (`SaveCharacterRecord`, `LoadCharacterRecord`,
+        `ResetPendingCharacter`, called from BanditSerializer's SKSE
+        callbacks under its unique ID `'QCNO'`) out of BanditSerializer;
+        nothing of the decision changes. 0.24.19: the fit
         tools read 0.24 logs for that refit (tools/fit/README.md): the v2
         log's rows the old floors dropped (written 0.24.0-0.24.18 with an
         all-zero breakdown) are skipped and no longer written, and a fit of

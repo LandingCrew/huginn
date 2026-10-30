@@ -287,9 +287,10 @@ namespace Huginn::Learning
         [[nodiscard]] bool MovedLocked(std::size_t slot) const;
         void Touch() noexcept { ++m_version; }
         /// Every change to the learning goes through the clock's table
-        /// (core/LearningClock.h): the ones a save writes, made by play, tick
-        /// it; a load's do not. Under m_mutex, after the change, so a save
-        /// that exported the change reads the clock past it.
+        /// (core/LearningClock.h): the ones a save writes, taught by play,
+        /// tick it; a load's do not, nor the forget sweep's (they re-occur on
+        /// their own). Under m_mutex, after the change, so a save that
+        /// exported the change reads the clock past it.
         void Note(Core::LearningClock::Event e) noexcept { Core::LearningClock::Note(m_learningClock, e); }
         /// A change to mu (theta or b): Touch and raise the latch.
         void Moved() noexcept

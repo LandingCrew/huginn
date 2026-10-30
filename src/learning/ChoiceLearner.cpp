@@ -677,7 +677,11 @@ namespace Huginn::Learning
         {
             std::unique_lock lock(m_mutex);
             // The discovery boosts that ran out (their excess under 1%): a
-            // variance-only change, so Touch, no latch.
+            // variance-only change, so Touch, no latch. Neither this nor the
+            // b erase below ticks the learning clock (the table says so):
+            // each entry's age (play time since chosen or gained) travels
+            // with every save, so whatever a load keeps, its next sweep
+            // forgets the same ones.
             boostsEnded = m_discovery.Expire(m_settings.discovery, now);
             if (boostsEnded) {
                 Touch();

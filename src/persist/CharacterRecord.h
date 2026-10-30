@@ -12,7 +12,8 @@ namespace Huginn::Persist
    // moved out of BanditSerializer, which R12 retires with the old learner)
    // =========================================================================
    // Written and read inside BanditSerializer's callbacks (one SKSE unique ID
-   // per plugin), beside THTA / BIAS / DISC and BNDW:
+   // per plugin, 'QCNO'), beside THTA / BIAS / DISC and BNDW -- so R12, which
+   // retires BanditSerializer, has to move that registration out of it first:
    //   v2: [characterID: uint64] [learning clock: uint64]
    // The ID is random at new game; a save without the record is treated as a
    // different character and given a new one. Lets a load tell "the same

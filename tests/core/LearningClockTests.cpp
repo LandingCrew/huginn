@@ -3,10 +3,14 @@
 
 #include "core/LearningClock.h"
 
+#include "core/Battery.h"
+#include "core/DiscoveryBoost.h"
+
 #include <doctest/doctest.h>
 
 #include <cstdint>
 #include <initializer_list>
+#include <map>
 #include <optional>
 #include <thread>
 #include <vector>
@@ -74,6 +78,38 @@ namespace
             }
         }
     };
+
+    constexpr double kHour = 3600.0;
+
+    /// ChoiceLearner::MaybeForgetFaded's body over the core pieces it calls
+    /// (the learner itself is not host-built: it logs and takes the game's
+    /// locks): the boosts that ran out (Discovery::Tracker::Expire), then the
+    /// b entries past their life (Battery::Faded), each noted to the clock as
+    /// the learner notes them. Returns {boosts expired, b entries forgotten}.
+    struct SweepResult
+    {
+        std::size_t expired = 0;
+        std::size_t forgotten = 0;
+    };
+    SweepResult Sweep(Clock& clock, Huginn::Core::Discovery::Tracker& discovery, std::map<std::uint32_t, double>& bChosenAt,
+                      double now)
+    {
+        namespace Battery = Huginn::Core::Battery;
+        SweepResult r;
+        r.expired = discovery.Expire(Huginn::Core::Discovery::Params{}, now);
+        if (r.expired) Note(&clock, Event::BoostsExpired);
+        for (auto it = bChosenAt.begin(); it != bChosenAt.end();) {
+            if (Battery::Faded(Battery::MemoryLife{}, now, it->second, 1.0f)) {
+                it = bChosenAt.erase(it);
+                ++r.forgotten;
+            }
+            else {
+                ++it;
+            }
+        }
+        if (r.forgotten) Note(&clock, Event::BForgotten);
+        return r;
+    }
 }
 
 TEST_CASE("learning clock: tick, set, get")
@@ -106,17 +142,18 @@ TEST_CASE("learning clock: concurrent ticks are not lost")
     CHECK(c.Get() == static_cast<std::uint64_t>(kThreads) * kTicks);
 }
 
-TEST_CASE("learning clock: the table -- play and resets tick, loads, settings and transients do not")
+TEST_CASE("learning clock: the table -- play and resets tick; the forget sweep, loads, settings and transients do not")
 {
-    for (const Event e : { Event::PickLearned, Event::BoostEnded, Event::NeedGrown, Event::BForgotten,
-                           Event::BoostsExpired, Event::NewlyGained, Event::Reset, Event::OldLearnerUpdate,
-                           Event::OldLearnerClear }) {
+    for (const Event e : { Event::PickLearned, Event::BoostEnded, Event::NeedGrown, Event::NewlyGained, Event::Reset,
+                           Event::OldLearnerUpdate, Event::OldLearnerClear }) {
         CAPTURE(EventName(e));
         CHECK(Ticks(e));
     }
-    for (const Event e : { Event::RepeatPick, Event::UnusablePick, Event::Transient, Event::Rebootstrap,
-                           Event::LoadImport, Event::LoadReplaceDynamic, Event::LoadClearDiscovery, Event::LoadPrime,
-                           Event::LoadSuspend, Event::Settings, Event::PlayTime }) {
+    // the forget sweep's erasures re-occur on their own: nothing the player taught
+    for (const Event e : { Event::BForgotten, Event::BoostsExpired, Event::RepeatPick, Event::UnusablePick,
+                           Event::Transient, Event::Rebootstrap, Event::LoadImport, Event::LoadReplaceDynamic,
+                           Event::LoadClearDiscovery, Event::LoadPrime, Event::LoadSuspend, Event::Settings,
+                           Event::PlayTime }) {
         CAPTURE(EventName(e));
         CHECK_FALSE(Ticks(e));
     }
@@ -126,8 +163,55 @@ TEST_CASE("learning clock: the table -- play and resets tick, loads, settings an
         CHECK(row.name != nullptr);
         ticking += row.ticks ? 1 : 0;
     }
-    CHECK(ticking == 9);
+    CHECK(ticking == 7);
     CHECK(kEvents.size() == 20);
+}
+
+TEST_CASE("learning clock: a forget sweep that forgets b entries and expires boosts leaves the clock unchanged")
+{
+    namespace D = Huginn::Core::Discovery;
+    Clock clock;
+    D::Tracker discovery;
+    discovery.Prime({});
+    std::map<std::uint32_t, double> b;   // form -> chosenAt (play seconds)
+
+    // Taught by play: a pick learned (b for A1, B2) and two forms gained.
+    b[0xA1u] = 0.0;
+    b[0xB2u] = 0.0;
+    Note(&clock, Event::PickLearned);
+    REQUIRE(discovery.OnGained(0xC1u, 0.0) == D::Tracker::Gain::New);
+    Note(&clock, Event::NewlyGained);
+    REQUIRE(discovery.OnGained(0xC2u, 0.0) == D::Tracker::Gain::New);
+    Note(&clock, Event::NewlyGained);
+    const std::uint64_t taught = clock.Get();
+    REQUIRE(taught == 3);
+
+    // An hour on: nothing due, nothing changes.
+    auto r = Sweep(clock, discovery, b, 1.0 * kHour);
+    CHECK(r.expired == 0);
+    CHECK(r.forgotten == 0);
+    const Save before{ kHero, clock.Get() };
+
+    // A day of play on: both boosts ran out (~8.2 h) and both b entries are
+    // past their life (8 h + 2 h ln 2, a 1 h knee). The sweep erased them all
+    // and the clock did not move.
+    r = Sweep(clock, discovery, b, 24.0 * kHour);
+    CHECK(r.expired == 2);
+    CHECK(r.forgotten == 2);
+    CHECK(b.empty());
+    CHECK(discovery.BoostedCount() == 0);
+    CHECK(clock.Get() == taught);
+    const Save after{ kHero, clock.Get() };
+
+    // So a save after the sweep is not ahead of one before it: a fresh
+    // session that loads the earlier save and then the later one keeps
+    // memory, which forgets the same entries at its next sweep (their ages
+    // travel with the save).
+    Session two;
+    CHECK(two.Load(before).why == LoadWhy::FirstLoad);
+    two.RunLoadSteps();
+    CHECK(two.Load(after).decision == LoadDecision::Reload);
+    CHECK(two.clock.Get() == taught);
 }
 
 TEST_CASE("learning clock: Note ticks only the events that tick, and nothing without a clock")

@@ -167,8 +167,9 @@ namespace Huginn::Learning
 
       // The learning clock (learning survives a reload, 0.22.11) is shared
       // since 0.24.22 (core/LearningClock.h): Update() and Clear() tick it,
-      // as the choice learner's changes and the resets do. R12 deletes those
-      // two calls with this class.
+      // as the choice learner's changes and the resets do (a reset ticks
+      // twice while this class exists: Clear, then the reset site). R12
+      // deletes those two calls with this class.
 
       // Same-character reload: replace every DYNAMIC-form entry (0xFF------:
       // brewed potions, player enchantments, created spells) with the save's.

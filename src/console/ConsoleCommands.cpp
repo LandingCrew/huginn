@@ -169,8 +169,9 @@ namespace Huginn::Console
          // R8.3: theta back to the bootstrap, b cleared (as `hg reset weights`);
          // with the model off, the THTA / BIAS carried from the load emptied.
          const char* choice = Persist::ResetChoiceLearning(g_activeCharacterID.load(std::memory_order_relaxed));
-         // Once, here, as ResetLearningData (which this cannot call: it takes
-         // RunExclusive itself), whether or not either learner exists.
+         // Here, as ResetLearningData (which this cannot call: it takes
+         // RunExclusive itself), whether or not either learner exists; the
+         // old learner's Clear above ticked it too (twice in all, until R12).
          Core::LearningClock::Note(&g_learningClock, Core::LearningClock::Event::Reset);
 
          // 2. Rebuild all registries (console does full rebuild; init path reconciles)

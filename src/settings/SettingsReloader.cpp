@@ -266,10 +266,11 @@ namespace Huginn::Settings
             // BIAS carried from the load emptied. The old learner above is
             // reset as before: it feeds the D2 legacy feature.
             reset.choice = Persist::ResetChoiceLearning(g_activeCharacterID.load(std::memory_order_relaxed));
-            // 0.24.22: the reset ticks the learning clock, once, here -- not
-            // in ResetToBootstrap (a load's too, and a no-op with the model
-            // off) -- so a reload of an older save of this character keeps
-            // the reset (core/LearningClock.h).
+            // 0.24.22: the reset ticks the learning clock here -- not in
+            // ResetToBootstrap (a load's too, and a no-op with the model off)
+            // -- so a reload of an older save of this character keeps the
+            // reset (core/LearningClock.h). With the old learner present its
+            // Clear above ticked it too: twice in all, until R12.
             Core::LearningClock::Note(&g_learningClock, Core::LearningClock::Event::Reset);
 
             // Unlock all slots so the next scoring cycle can reassign immediately —

@@ -77,8 +77,9 @@ namespace Huginn::Settings
         /// to the bootstrap and b cleared, or, with the model off, the
         /// records carried from the load emptied.
         ///
-        /// Ticks the learning clock once (core/LearningClock.h, 0.24.22), so
-        /// a reload of an older save keeps the reset.
+        /// Ticks the learning clock (core/LearningClock.h, 0.24.22), so a
+        /// reload of an older save keeps the reset: once at the reset, and
+        /// once more in the old learner's Clear while it exists (until R12).
         ///
         /// @return The old learner's items cleared and what the choice reset
         ///         did (for the player's message), or nullopt before the first

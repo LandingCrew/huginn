@@ -86,6 +86,9 @@ namespace Huginn::Persist
    //   - Reload (the character in memory, the save not ahead): the in-memory
    //     learner kept, except dynamic-form (0xFF) entries, taken from the save.
    //   - Replace: the save's learner (cleared if the save has none).
-   // R12 deletes this with the old learner; the decision stays.
+   // R12 deletes this with the old learner; the decision stays. R12 must also
+   // move the save/load callback registration (RegisterSerialization, unique
+   // ID 'QCNO', whose callbacks call SaveCharacterRecord, LoadCharacterRecord
+   // and ResetPendingCharacter beside THTA / BIAS / DISC) out of this file.
    void ResolveLoadedLearner(Learning::FeatureBanditLearner& learner, LoadDecision decision);
 }

@@ -16,16 +16,24 @@
 // the same clock as an earlier one, and a fresh session that loaded the
 // earlier save and then the later one kept memory and lost the later save's
 // learning. One clock, outside both learners, fixes that and
-// outlives the old learner: R12 deletes its two tick calls and nothing else.
+// outlives the old learner: R12 deletes its two tick calls and moves the
+// save/load callback registration (SaveCharacterRecord, LoadCharacterRecord,
+// ResetPendingCharacter, called from BanditSerializer's SKSE callbacks under
+// its unique ID 'QCNO') out of BanditSerializer; nothing of the clock or the
+// decision changes.
 //
 // What ticks is a table (kEvents), so the host tests read the same list the
 // plugin calls through (Note). The rule: a change to what the next save
-// writes, made by play or by a reset. A load's own changes do NOT tick -- the
+// writes, taught by play, or a reset. A load's own changes do NOT tick -- the
 // decision sets the clock for them, and a tick there would leave memory one
 // past the save it loaded, so the next, later save of that session would read
 // as "not ahead" (the bug above again). Settings (a hot reload) are not
-// learning, and the play clock's passing changes nothing a save writes until
-// the sweep erases an entry.
+// learning, and the play clock's passing is not either: the forget sweep's
+// erasures (b entries past their life, discovery boosts run out) re-occur on
+// their own -- each entry's age (play time since chosen, or since the gain)
+// travels with every save, so whichever learning a load keeps, its next sweep
+// (at most a minute of play away) forgets the same ones. Nothing the player
+// taught is lost by not ticking them.
 //
 // Threads: the update thread, the container-event thread and the console tick
 // it; the game thread reads it at a save and sets it at a load. One atomic.
@@ -61,13 +69,14 @@ namespace Huginn::Core::LearningClock
         PickLearned,        // ChoiceLearner::OnPick moved theta / b (THTA, BIAS): the equip bus and v3-only picks
         BoostEnded,         // OnPick: an item's first pick ended its discovery boost (DISC)
         NeedGrown,          // OnPipelineRun: an answered onset grew theta's variances (THTA)
-        BForgotten,         // MaybeForgetFaded: b entries past their life erased (BIAS)
-        BoostsExpired,      // MaybeForgetFaded: discovery boosts ran out (DISC)
         NewlyGained,        // OnGained: a form new to the character, boosted (DISC)
-        Reset,              // Reset Learned Weights, `hg reset weights`, `hg reset all`: once, at the reset site
+        Reset,              // Reset Learned Weights, `hg reset weights`, `hg reset all`: at the reset site
+                            // (with the old learner present a reset ticks twice: its Clear, then the site)
         OldLearnerUpdate,   // the old learner's Update (BNDW) -- R12 deletes the call
         OldLearnerClear,    // the old learner's Clear (BNDW) -- R12 deletes the call
         // ---- no tick ----
+        BForgotten,         // MaybeForgetFaded: b entries past their life erased (BIAS) -- re-occurs on its own
+        BoostsExpired,      // MaybeForgetFaded: discovery boosts ran out (DISC) -- re-occurs on its own
         RepeatPick,         // the same decision again (the timeline only; not saved)
         UnusablePick,       // a pick the update cannot use
         Transient,          // the timeline, the Plackett-Luce memory, the onset counter (not saved)
@@ -92,12 +101,12 @@ namespace Huginn::Core::LearningClock
         EventRow{ Event::PickLearned, true, "pick learned" },
         EventRow{ Event::BoostEnded, true, "discovery boost ended by a pick" },
         EventRow{ Event::NeedGrown, true, "answered onset grew theta" },
-        EventRow{ Event::BForgotten, true, "b entries forgotten" },
-        EventRow{ Event::BoostsExpired, true, "discovery boosts expired" },
         EventRow{ Event::NewlyGained, true, "form newly gained" },
         EventRow{ Event::Reset, true, "reset" },
         EventRow{ Event::OldLearnerUpdate, true, "old learner update" },
         EventRow{ Event::OldLearnerClear, true, "old learner clear" },
+        EventRow{ Event::BForgotten, false, "b entries forgotten" },
+        EventRow{ Event::BoostsExpired, false, "discovery boosts expired" },
         EventRow{ Event::RepeatPick, false, "repeat pick" },
         EventRow{ Event::UnusablePick, false, "unusable pick" },
         EventRow{ Event::Transient, false, "transient state" },
