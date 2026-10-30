@@ -17,6 +17,8 @@ namespace Huginn::Persist
    static std::optional<CC::ThetaRecord> s_pendingTheta;
    static std::optional<std::vector<Learning::ChoiceLearner::BEntry>> s_pendingBias;
    static std::size_t s_biasUnresolved = 0;
+   // 0.24.14: DISC, FormIDs resolved to this session's load order.
+   static std::optional<Core::Discovery::Saved> s_pendingDiscovery;
 
    // Fallback mode (no bootstrap, or an invalid one): the records the load
    // read, kept as they were and written back by every save in this session.
@@ -45,6 +47,25 @@ namespace Huginn::Persist
       s_pendingTheta.reset();
       s_pendingBias.reset();
       s_biasUnresolved = 0;
+      s_pendingDiscovery.reset();
+   }
+
+   // DISC (0.24.14): the discovery boost's sets, written whether or not the
+   // model is ready (the record is the character's: what it has held).
+   static void SaveDiscovery(SKSE::SerializationInterface* a_intfc)
+   {
+      if (!g_choiceLearner) return;
+      const auto saved = g_choiceLearner->ExportDiscovery();
+      CC::DiscoveryRecord rec;
+      rec.seen = saved.seen;
+      rec.boosted = saved.boosted;
+      const auto blob = CC::EncodeDiscovery(rec);
+      if (!a_intfc->OpenRecord(kRecordType_Discovery, CC::kDiscoveryVersion) ||
+          !a_intfc->WriteRecordData(blob.data(), static_cast<uint32_t>(blob.size()))) {
+         logger::error("[Cosave] Failed to write the DISC record ({} bytes)"sv, blob.size());
+         return;
+      }
+      logger::info("[Cosave] Saved DISC: {} forms seen, {} discovery boosts"sv, rec.seen.size(), rec.boosted.size());
    }
 
    static bool WriteTheta(SKSE::SerializationInterface* a_intfc, const CC::ThetaRecord& rec)
@@ -71,6 +92,7 @@ namespace Huginn::Persist
 
    void SaveChoiceRecords(SKSE::SerializationInterface* a_intfc)
    {
+      SaveDiscovery(a_intfc);
       if (!g_choiceLearner || !g_choiceLearner->Ready()) {
          // Fallback ranking (no bootstrap): no theta lives in memory. Write
          // back what the load read, unchanged, so the next load with the
@@ -178,11 +200,72 @@ namespace Huginn::Persist
       s_pendingBias = std::move(out);
    }
 
+   void LoadDiscoveryRecord(SKSE::SerializationInterface* a_intfc, uint32_t version, uint32_t length)
+   {
+      const auto blob = ReadBlob(a_intfc, length, CC::kMaxDiscoveryBlobBytes, "DISC");
+      if (!blob) return;
+      std::string why;
+      auto rec = CC::DecodeDiscovery(*blob, version, &why);
+      if (!rec) {
+         logger::warn("[Cosave] DISC unreadable ({}): this load starts the discovery boost's seen set from what the "
+                      "character holds"sv, why);
+         return;
+      }
+      Core::Discovery::Saved out;
+      out.seen.reserve(rec->seen.size());
+      std::size_t unresolved = 0;
+      for (const auto f : rec->seen) {
+         RE::FormID resolved = 0;
+         if (a_intfc->ResolveFormID(f, resolved) && resolved != 0) out.seen.push_back(resolved);
+         else ++unresolved;
+      }
+      for (const auto& [f, sec] : rec->boosted) {
+         RE::FormID resolved = 0;
+         if (a_intfc->ResolveFormID(f, resolved) && resolved != 0) out.boosted.emplace_back(resolved, sec);
+         else ++unresolved;
+      }
+      logger::info("[Cosave] Read DISC: {} forms seen, {} discovery boosts ({} unresolved, {} form 0, dropped)"sv,
+         out.seen.size(), out.boosted.size(), unresolved, rec->dropped);
+      s_pendingDiscovery = std::move(out);
+   }
+
+   /// DISC under the load's decision (the header); before the model check.
+   static void ResolveDiscovery(Learning::ChoiceLearner& learner, LoadDecision decision,
+      std::optional<Core::Discovery::Saved> disc)
+   {
+      switch (decision) {
+      case LoadDecision::Failed:
+         return;
+      case LoadDecision::NewGame:
+         learner.ClearDiscovery();
+         return;
+      case LoadDecision::Reload: {
+         const auto [removed, added] = learner.ReplaceDynamicDiscovery(disc ? *disc : Core::Discovery::Saved{});
+         if (removed || added) {
+            logger::info("[Cosave] Reload: the discovery boost's dynamic forms from the save ({} dropped, {} taken)"sv,
+               removed, added);
+         }
+         return;
+      }
+      case LoadDecision::Replace:
+         if (disc) {
+            learner.ImportDiscovery(*disc);
+         } else {
+            learner.ClearDiscovery();
+            logger::info("[Cosave] No DISC in this save (older than 0.24.14, or unreadable): the discovery boost's "
+                         "seen set starts from what the character holds"sv);
+         }
+         return;
+      }
+   }
+
    void ResolveLoadedChoice(Learning::ChoiceLearner& learner, LoadDecision decision, uint64_t characterID)
    {
       auto theta = std::move(s_pendingTheta);
       auto bias = std::move(s_pendingBias);
+      auto disc = std::move(s_pendingDiscovery);
       ResetPendingChoice();
+      ResolveDiscovery(learner, decision, std::move(disc));
       if (!learner.Ready()) {
          // Fallback mode: nothing to apply them to. Keep this save's records
          // (what it holds, or nothing) for the saves this session makes; a new

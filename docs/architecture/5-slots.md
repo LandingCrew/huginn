@@ -1324,9 +1324,62 @@ bootstrap) weigh 0 and the draw is uniform.
 
 **What lands on the list** (doc 9): items never picked and items whose battery
 ran down (b back at its prior N(0, 0.25)), pairings with little evidence
-(theta's variance where an active need meets the row's effects), newly learned
-spells (no b yet) -- all through sd; and only those close enough to the page
-to matter, through rel.
+(theta's variance where an active need meets the row's effects), newly gained
+spells and items (below) -- all through sd; and only those close enough to the
+page to matter, through rel.
+
+**The discovery boost (0.24.14).** A newly learned spell has no b, so up to
+0.24.13 its sd carried b's prior sd (0.5) -- the same as each of the hundreds
+of items the character carries and has never picked, so nothing set it apart.
+Now an item the player newly GAINS during play draws with b's variance
+multiplied by
+
+    m(age) = 1 + (M - 1) * 2^(-age / H)      age = play seconds since the gain
+    sd_w   = sqrt(var + (m - 1) * var_b)     var_b = b's variance as read now
+
+(`[Learning] bDiscoveryBoost = true`, `fDiscoveryBoostVarMult` M = 4,
+`fDiscoveryBoostHalfLifeSec` H = 3600; hot-reloadable; `core/DiscoveryBoost.h`,
+host-tested in `tests/core/DiscoveryBoostTests.cpp`). At the gain its b's sd
+is twice the prior's (1.0); after an hour of play the multiplier is 2.5, and
+the boost is dropped once m - 1 < 0.01 (8.2 hours at the defaults, about b's
+useful life) or at the item's first pick, whichever comes first. With b's part
+dominating the row's sd, a new item weighs up to twice what an equally
+relevant never-picked item weighs, and it lifts P(roll) as an unknown item at
+the edge of the page does (its w reaches wRef at rel 0.25 instead of 0.5).
+
+- **Gained** means: a `TESContainerChangedEvent` puts a form into the player's
+  inventory from anywhere else (picked up, bought, looted, crafted, given),
+  or the spell registry adds a spell in play (`SpellRegistry::TakeNewlyLearned`,
+  `LearnedAt`'s meaning) -- and the form is not in the character's seen set.
+  Not gained: anything present when a character or a save loads (the load
+  primes the seen set with the inventory's entries and base container, the
+  registry's spells and every form b holds an entry for, without a boost;
+  gains arriving while a load is under way are dropped; a chest's contents
+  with no b entry cannot be primed, so on the first load with DISC such an
+  item reads as new when it comes back), a count change of a form already seen, or a form gained again
+  after it left (sold, used up, a spell removed and re-added). The seen set is
+  never pruned; b's forget pass returns an unused item to its prior, and that
+  item is not new.
+- **The wildcard only.** The row's score variance (`ScoredCandidate::ChoiceParts::var`),
+  the challenger rule's sigma_Delta, the summon upgrade gate and the logged sd
+  stay the unboosted posterior; only `SlotSnapshot` reads `WildcardVar()`
+  for the draw's `sd`. A boosted sigma in the challenger rule would work
+  against discovery: c takes i's key only when mu_c - mu_i > ln m +
+  z sigma_Delta (z >= 0), so a larger var(b_c) makes a new item take a held
+  key LATER (and a seated one harder to move); in the upgrade gate it would
+  pull covered toward 0.5 and move mu.
+- **Saved** in the cosave record DISC (seen forms; boosted forms with their
+  play seconds since the gain), under the load decisions BIAS follows (a
+  reload of the same character keeps memory, dynamic forms from the save; a
+  saved dynamic form that no longer exists is dropped at the load),
+  written whether or not the bootstrap is usable.
+- **Seen in game:** `[Discovery] ... newly gained (inventory|spell)` (debug),
+  one `[Discovery] Load: ...` summary per load (info), `new xM sd_w=` on the
+  `[Recs]` line, the `[Wildcard]` line's `sd=` (the draw's), `hg theta <id>`
+  and `hg status`.
+- **Off** (`bDiscoveryBoost = false`): m = 1 and a new item starts no more
+  uncertain than any never-picked item; the tracker keeps running, so turning
+  it back on boosts nothing old.
 
 **The manager** (`src/learning/WildcardManager.{h,cpp}`) owns, per page, the
 cached wildcard, its propensity and its clocks, and nothing else. Its

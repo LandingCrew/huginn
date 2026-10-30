@@ -103,6 +103,10 @@ namespace Huginn::Learning
         s.coveredPrior = std::clamp(ini.GetDoubleValue("Scoring", "fCoveredPrior", s.coveredPrior), -10.0, 10.0);
         s.legacyLearnFeature = ini.GetBoolValue("Scoring", "bLegacyLearnFeature", s.legacyLearnFeature);
         s.favoriteLifeMult = std::clamp(ini.GetDoubleValue("Favorites", "fFavoriteLifeMult", s.favoriteLifeMult), 1.0, 100.0);
+        s.discovery.enabled = ini.GetBoolValue("Learning", "bDiscoveryBoost", s.discovery.enabled);
+        s.discovery.varMult = ini.GetDoubleValue("Learning", "fDiscoveryBoostVarMult", s.discovery.varMult);
+        s.discovery.halfLifeSec = ini.GetDoubleValue("Learning", "fDiscoveryBoostHalfLifeSec", s.discovery.halfLifeSec);
+        s.discovery = s.discovery.Clamped();
         return s;
     }
 
@@ -121,6 +125,13 @@ namespace Huginn::Learning
         if (it == b.end()) return C::BRead{};
         const double mult = (favorite && favoritesBoost) ? favoriteLifeMult : 1.0;
         return C::ReadB(it->second, life, playNow, mult);
+    }
+
+    double ChoiceLearner::Snapshot::DiscoveryMult(std::uint32_t form, double playNow) const
+    {
+        if (!discovery.enabled) return 1.0;
+        const auto it = discovered.find(form);
+        return it == discovered.end() ? 1.0 : Core::Discovery::Mult(discovery, playNow - it->second);
     }
 
     // =========================================================================
@@ -383,6 +394,8 @@ namespace Huginn::Learning
         s->life = m_life;
         s->favoriteLifeMult = m_settings.favoriteLifeMult;
         s->favoritesBoost = m_favoritesBoost;
+        s->discovered = m_discovery.BoostedMap();
+        s->discovery = m_settings.discovery;
         s->version = m_version;
         m_snapshot = std::move(s);
         return m_snapshot;
@@ -399,8 +412,21 @@ namespace Huginn::Learning
     // =========================================================================
     void ChoiceLearner::OnPick(const DL::Decision& d, double pickTime)
     {
-        if (!Ready()) return;
         const bool nothing = d.outcome == DL::Outcome::Nothing;
+        // The item's first pick ends its discovery boost (core/DiscoveryBoost.h),
+        // whether or not the update can use the decision, and with the model
+        // off too (the fallback ranking still has picks): the player found it.
+        bool boostEnded = false;
+        {
+            std::unique_lock lock(m_mutex);
+            boostEnded = m_discovery.OnDecision(nothing, d.form);
+            if (boostEnded) Touch();
+        }
+        if (boostEnded) {
+            logger::debug("[Discovery] {:08X} '{}' picked ({}): its discovery boost ends"sv, d.form, d.name,
+                DL::OutcomeName(d.outcome));
+        }
+        if (!Ready()) return;
         const bool usable = C::UsablePick(nothing, d.ctx != nullptr, d.row >= 0, d.name, d.list);
         std::unique_lock lock(m_mutex);
         if (!usable) return;
@@ -603,8 +629,13 @@ namespace Huginn::Learning
             return 0;
         }
         std::size_t forgotten = 0;
+        std::size_t boostsEnded = 0;
         {
             std::unique_lock lock(m_mutex);
+            // The discovery boosts that ran out (their excess under 1%): a
+            // variance-only change, so Touch, no latch.
+            boostsEnded = m_discovery.Expire(m_settings.discovery, now);
+            if (boostsEnded) Touch();
             for (auto it = m_b.begin(); it != m_b.end();) {
                 const double mult = (it->second.favorite && m_favoritesBoost) ? m_settings.favoriteLifeMult : 1.0;
                 if (Core::Battery::Faded(m_life, now, it->second.chosenAt, it->second.n, mult)) {
@@ -621,7 +652,123 @@ namespace Huginn::Learning
             }
         }
         if (forgotten) logger::info("[Choice] {} b entr{} past their useful life of play forgotten"sv, forgotten, forgotten == 1 ? "y" : "ies");
+        if (boostsEnded) logger::debug("[Discovery] {} discovery boost{} ran out"sv, boostsEnded, boostsEnded == 1 ? "" : "s");
         return forgotten;
+    }
+
+    // =========================================================================
+    // THE DISCOVERY BOOST (0.24.14, core/DiscoveryBoost.h)
+    // =========================================================================
+    Core::Discovery::Tracker::Gain ChoiceLearner::OnGained(std::uint32_t form, const char* via)
+    {
+        using Gain = Core::Discovery::Tracker::Gain;
+        {
+            // Most gains are forms already seen (arrows picked back up, a
+            // potion restocked): answer those under the shared lock.
+            std::shared_lock lock(m_mutex);
+            if (!m_discovery.Live() || form == 0) return Gain::Dropped;
+            if (m_discovery.Seen(form)) return Gain::Known;
+        }
+        Gain g = Gain::Dropped;
+        Core::Discovery::Params p;
+        {
+            std::unique_lock lock(m_mutex);
+            g = m_discovery.OnGained(form, m_playSeconds.load(std::memory_order_relaxed));
+            if (g == Gain::New) Touch();   // the snapshot carries the boosts; mu unchanged: no latch
+            p = m_settings.discovery;
+        }
+        if (g == Gain::New) {
+            const auto* f = RE::TESForm::LookupByID(form);
+            const char* name = f ? f->GetName() : "";
+            logger::debug("[Discovery] {:08X} '{}' newly gained ({}): b's variance x{:.2f} for the wildcard draw, "
+                          "halving every {:.0f} min of play{}"sv,
+                form, name ? name : "", via, p.varMult, p.halfLifeSec / 60.0, p.enabled ? "" : " (bDiscoveryBoost off)");
+        }
+        return g;
+    }
+
+    void ChoiceLearner::SuspendDiscovery()
+    {
+        std::unique_lock lock(m_mutex);
+        m_discovery.Suspend();
+    }
+
+    std::size_t ChoiceLearner::PrimeDiscovery(const std::vector<std::uint32_t>& present)
+    {
+        std::size_t added = 0, fromB = 0, gone = 0, seen = 0, boosted = 0;
+        Core::Discovery::Params p;
+        {
+            std::unique_lock lock(m_mutex);
+            // Dynamic forms (0xFF) the save named that no longer exist: the
+            // engine reuses those IDs, so a later item under one must not read
+            // as seen. Game thread, after the load (InitializeGameSystems).
+            gone = m_discovery.DropDynamicIf([](std::uint32_t f) { return RE::TESForm::LookupByID(f) == nullptr; });
+            added = m_discovery.Prime(present);
+            // A b entry proves the character held the item (it was picked, or
+            // a candidate passed over): seen, though it may be used up, sold
+            // or in a chest now -- on the first load with DISC those would
+            // otherwise read as newly gained when they come back.
+            std::vector<std::uint32_t> bForms;
+            bForms.reserve(m_b.size());
+            for (const auto& [form, belief] : m_b) {
+                (void)belief;
+                bForms.push_back(form);
+            }
+            fromB = m_discovery.Prime(bForms);
+            seen = m_discovery.SeenCount();
+            boosted = m_discovery.BoostedCount();
+            p = m_settings.discovery;
+            Touch();
+        }
+        logger::info("[Discovery] Load: {} forms present ({} new to this character's seen set, not boosted; {} more from "
+                     "b's entries; {} vanished dynamic forms dropped); {} known in all, {} boosted (bDiscoveryBoost = {}, "
+                     "x{:.2f} halving every {:.0f} min of play)"sv,
+            present.size(), added, fromB, gone, seen, boosted, p.enabled, p.varMult, p.halfLifeSec / 60.0);
+        return added + fromB;
+    }
+
+    Core::Discovery::Saved ChoiceLearner::ExportDiscovery() const
+    {
+        std::shared_lock lock(m_mutex);
+        return m_discovery.Export(m_playSeconds.load(std::memory_order_relaxed));
+    }
+
+    void ChoiceLearner::ImportDiscovery(const Core::Discovery::Saved& saved)
+    {
+        std::unique_lock lock(m_mutex);
+        m_discovery.Import(saved, m_playSeconds.load(std::memory_order_relaxed));
+        Touch();
+    }
+
+    std::pair<std::size_t, std::size_t> ChoiceLearner::ReplaceDynamicDiscovery(const Core::Discovery::Saved& saved)
+    {
+        std::unique_lock lock(m_mutex);
+        const auto r = m_discovery.ReplaceDynamic(saved, m_playSeconds.load(std::memory_order_relaxed));
+        Touch();
+        return r;
+    }
+
+    void ChoiceLearner::ClearDiscovery()
+    {
+        std::unique_lock lock(m_mutex);
+        m_discovery.Clear();
+        Touch();
+    }
+
+    ChoiceLearner::DiscoveryStats ChoiceLearner::GetDiscoveryStats() const
+    {
+        std::shared_lock lock(m_mutex);
+        return DiscoveryStats{ m_discovery.SeenCount(), m_discovery.BoostedCount(), m_discovery.Live() };
+    }
+
+    std::pair<double, double> ChoiceLearner::DiscoveryOf(std::uint32_t form) const
+    {
+        std::shared_lock lock(m_mutex);
+        const auto& map = m_discovery.BoostedMap();
+        const auto it = map.find(form);
+        if (it == map.end()) return { 1.0, -1.0 };
+        const double age = m_playSeconds.load(std::memory_order_relaxed) - it->second;
+        return { Core::Discovery::Mult(m_settings.discovery, age), age };
     }
 
     // =========================================================================

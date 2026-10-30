@@ -88,9 +88,10 @@ Each need is a curve (`linear`, `logistic`, `gaussian`, ...) over a sensor readi
 `ChoiceLearner` holds the model (`src/core/ChoiceScore.h`, `src/core/ChoiceUpdate.h`):
 - θ[k][j]: one Gaussian belief {μ, σ²} per need × effect column (and per `recent_<family>` × column), shared by every item that carries the column;
 - b(i): one belief per item, prior N(0, 0.25), with a battery: it fades with play time since the item was last chosen;
+- the discovery boost (0.24.14, `src/core/DiscoveryBoost.h`): a spell learned or an item gained for the first time on this character reads b's variance × m(age) = 1 + (M − 1)·2^(−age/H) in the wildcard draw only (`[Learning] bDiscoveryBoost`, `fDiscoveryBoostVarMult` M = 4, `fDiscoveryBoostHalfLifeSec` H = 1 h of play), until it decays or the item's first pick ends it. What a load finds is never boosted. The mean, the challenger rule and the summon gate read the unboosted posterior (a larger σ would make a challenger take a key later, and would move μ at the summon limit);
 - κ, the feature weights and the outside option u0 (θ[need, out] and an intercept): fixed by the file (format v1 gives them no precision).
 
-It starts from `Huginn_Bootstrap.json`, R6's offline fit on the logged decisions ([9-bootstrap-format.md](architecture/9-bootstrap-format.md)), and is saved in the cosave as THTA (θ by stable key, only the weights that moved) and BIAS (b per form). `hg reset weights` returns it to the bootstrap. `hg theta` shows it: the drift from the bootstrap, and one item's terms.
+It starts from `Huginn_Bootstrap.json`, R6's offline fit on the logged decisions ([9-bootstrap-format.md](architecture/9-bootstrap-format.md)), and is saved in the cosave as THTA (θ by stable key, only the weights that moved), BIAS (b per form) and DISC (the forms this character has held, and the boosted ones). `hg reset weights` returns it to the bootstrap. `hg theta` shows it: the drift from the bootstrap, and one item's terms.
 
 ### D2: the one part of the old engine kept
 

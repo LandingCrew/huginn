@@ -182,6 +182,78 @@ namespace Huginn::Core::ChoiceCosave
         return r;
     }
 
+    std::vector<std::byte> EncodeDiscovery(const DiscoveryRecord& r)
+    {
+        Writer w;
+        w.out.reserve(12 + r.seen.size() * kSeenStride + r.boosted.size() * kBoostStride);
+        w.Put(kDiscoveryVersion);
+        w.Put(static_cast<std::uint32_t>(r.seen.size()));
+        for (const auto f : r.seen) w.Put(f);
+        w.Put(static_cast<std::uint32_t>(r.boosted.size()));
+        for (const auto& [f, sec] : r.boosted) {
+            w.Put(f);
+            w.Put(sec);
+        }
+        return std::move(w.out);
+    }
+
+    std::optional<DiscoveryRecord> DecodeDiscovery(std::span<const std::byte> blob, std::uint32_t headerVersion,
+                                                   std::string* why)
+    {
+        Reader rd(blob);
+        std::uint32_t version = 0;
+        if (!rd.Get(version)) {
+            Say(why, "DISC: shorter than its version");
+            return std::nullopt;
+        }
+        if (version != kDiscoveryVersion || headerVersion != kDiscoveryVersion) {
+            Say(why, std::format("DISC: version {} (record header {}), this build reads {}", version, headerVersion,
+                                 kDiscoveryVersion));
+            return std::nullopt;
+        }
+        std::uint32_t seenCount = 0;
+        if (!rd.Get(seenCount)) {
+            Say(why, "DISC: no seen count");
+            return std::nullopt;
+        }
+        if (seenCount > kMaxSeenEntries) {
+            Say(why, std::format("DISC: {} seen forms, above the cap {}", seenCount, kMaxSeenEntries));
+            return std::nullopt;
+        }
+        // The seen list and the boost count must fit before either is read.
+        if (rd.Left() < static_cast<std::size_t>(seenCount) * kSeenStride + 4) {
+            Say(why, std::format("DISC: {} bytes for {} seen forms and a boost count", rd.Left(), seenCount));
+            return std::nullopt;
+        }
+        DiscoveryRecord r;
+        r.seen.reserve(seenCount);
+        for (std::uint32_t i = 0; i < seenCount; ++i) {
+            std::uint32_t f = 0;
+            rd.Get(f);
+            if (f != 0) r.seen.push_back(f);
+            else ++r.dropped;
+        }
+        std::uint32_t boostCount = 0;
+        rd.Get(boostCount);
+        if (boostCount > kMaxBoostEntries) {
+            Say(why, std::format("DISC: {} boosts, above the cap {}", boostCount, kMaxBoostEntries));
+            return std::nullopt;
+        }
+        if (rd.Left() != static_cast<std::size_t>(boostCount) * kBoostStride) {
+            Say(why, std::format("DISC: {} bytes for {} boosts of {}", rd.Left(), boostCount, kBoostStride));
+            return std::nullopt;
+        }
+        r.boosted.reserve(boostCount);
+        for (std::uint32_t i = 0; i < boostCount; ++i) {
+            std::uint32_t f = 0, sec = 0;
+            rd.Get(f);
+            rd.Get(sec);
+            if (f != 0) r.boosted.emplace_back(f, sec);
+            else ++r.dropped;
+        }
+        return r;
+    }
+
     std::vector<ThetaEntry> MergeTheta(std::span<const std::uint64_t> buildKeys, std::span<const ThetaEntry> saved,
                                        MergeReport& rep)
     {

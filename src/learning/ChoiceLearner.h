@@ -31,6 +31,10 @@
 //   seeded from the file's items under [Learning] sBootstrapBias.
 //   kappa and the feature weights: the file's, fixed (format v1 gives them no
 //   precision, so there is no belief to update).
+//   The discovery boost (0.24.14, core/DiscoveryBoost.h): the forms this
+//   character has held or known, and the newly gained ones with the play
+//   second they came; the snapshot hands the boosts to the wildcard draw
+//   (b's variance x m(age) there only). Cosave record DISC.
 //
 // Threading: a shared_mutex. The update thread writes (OnPick, the onset
 // counter, the battery sweep); a scoring pass takes one copy-out Snapshot
@@ -42,6 +46,7 @@
 #include "core/ChoiceScore.h"
 #include "core/ChoiceUpdate.h"
 #include "core/DecisionLog.h"
+#include "core/DiscoveryBoost.h"
 #include "core/NeedEvaluator.h"
 #include "core/ThetaDrift.h"
 
@@ -70,6 +75,8 @@ namespace Huginn::Learning
         double coveredPrior = -1.0;          // [Scoring] fCoveredPrior (precision 1)
         double favoriteLifeMult = 2.0;       // [Favorites] fFavoriteLifeMult (Boost mode)
         bool legacyLearnFeature = true;      // [Scoring] bLegacyLearnFeature (R8.3: live, hot-reloaded)
+        Core::Discovery::Params discovery;   // [Learning] bDiscoveryBoost, fDiscoveryBoostVarMult,
+                                             // fDiscoveryBoostHalfLifeSec (0.24.14, hot-reloaded)
 
         static ChoiceSettings FromIni(const CSimpleIniA& ini);
     };
@@ -88,6 +95,8 @@ namespace Huginn::Learning
             Core::Battery::MemoryLife life;
             double favoriteLifeMult = 2.0;
             bool favoritesBoost = true;
+            std::unordered_map<std::uint32_t, double> discovered;   // boosted form -> play seconds when gained
+            Core::Discovery::Params discovery;
             std::uint64_t version = 0;
 
             /// The need vector the model reads: the live curve outputs, with each
@@ -97,6 +106,9 @@ namespace Huginn::Learning
                                                                     const Core::Needs::NeedArray& input) const;
             /// b as the score reads it now (the battery applied).
             [[nodiscard]] Core::Choice::BRead B(std::uint32_t form, bool favorite, double playNow) const;
+            /// The discovery boost's multiplier on b's variance for the
+            /// wildcard draw (core/DiscoveryBoost.h); 1 when not boosted or off.
+            [[nodiscard]] double DiscoveryMult(std::uint32_t form, double playNow) const;
         };
 
         struct Stats
@@ -159,8 +171,41 @@ namespace Huginn::Learning
 
         void AdvancePlayTime(float seconds) noexcept;
         [[nodiscard]] double GetPlaySeconds() const noexcept { return m_playSeconds.load(std::memory_order_relaxed); }
-        /// At most once a minute of play: delete the b entries past their life.
+        /// At most once a minute of play: delete the b entries past their
+        /// life, and end the discovery boosts that have run out.
         std::size_t MaybeForgetFaded();
+
+        // ---- the discovery boost (core/DiscoveryBoost.h, 0.24.14) -------------
+        // Runs whether or not the model is ready (its record is the
+        // character's, not the model's); only the snapshot reads the boosts.
+        /// A form the player just gained (`via`: "inventory" or "spell", for
+        /// the log). Any thread (the container event's, the update thread).
+        Core::Discovery::Tracker::Gain OnGained(std::uint32_t form, const char* via);
+        /// A load starts: gains are dropped until PrimeDiscovery.
+        void SuspendDiscovery();
+        /// What the load found, and every form b holds an entry for (the
+        /// character held it): seen, not boosted; dynamic forms that no longer
+        /// exist dropped first; gains count from here. Game thread. Logs the
+        /// per-load summary. Returns how many were new to the seen set.
+        std::size_t PrimeDiscovery(const std::vector<std::uint32_t>& present);
+        [[nodiscard]] Core::Discovery::Saved ExportDiscovery() const;
+        /// Replaces the state with a save's (another character, a later save).
+        void ImportDiscovery(const Core::Discovery::Saved& saved);
+        /// A reload of the same character: in-memory kept, dynamic forms from
+        /// the save. Returns {removed, added}.
+        std::pair<std::size_t, std::size_t> ReplaceDynamicDiscovery(const Core::Discovery::Saved& saved);
+        /// A new character.
+        void ClearDiscovery();
+        struct DiscoveryStats
+        {
+            std::size_t seen = 0;
+            std::size_t boosted = 0;
+            bool live = false;
+        };
+        [[nodiscard]] DiscoveryStats GetDiscoveryStats() const;
+        /// The multiplier `form` reads now and its play seconds since the gain
+        /// (`hg theta`); {1, -1} when not boosted.
+        [[nodiscard]] std::pair<double, double> DiscoveryOf(std::uint32_t form) const;
 
         // ---- the cosave (persist/ChoiceSerializer.h, THTA / BIAS) ------------
         struct Entry
@@ -267,6 +312,7 @@ namespace Huginn::Learning
         std::deque<std::pair<std::uint64_t, std::set<std::uint64_t>>> m_taken;   // context id -> stacks taken
         std::uint64_t m_nextPickId = 1;
         Stats m_stats;
+        Core::Discovery::Tracker m_discovery;
 
         std::uint64_t m_version = 1;
         std::atomic<bool> m_weightsChanged{ false };

@@ -94,6 +94,7 @@ namespace Huginn::Spell
       // Clear existing data
       ClearStoreLocked();
       m_learnedAt.clear();
+      m_newlyLearned.clear();
 
       // Classify and add each spell (AddSpell assumes lock is held by caller)
       for (auto* spell : playerSpells) {
@@ -219,6 +220,7 @@ namespace Huginn::Spell
       // Add to registry (fast in-memory operations only)
       PushEntryLocked(std::move(spellData), formID);
       m_learnedAt[formID] = std::chrono::steady_clock::now();
+      m_newlyLearned.push_back(formID);
       }
 
       logger::info("Dynamically added new spell: {} ({:08X})"sv, spell->GetName(), spell->GetFormID());
@@ -297,6 +299,7 @@ namespace Huginn::Spell
       const RE::FormID formID = data.formID;
       PushEntryLocked(std::move(data), formID);
       m_learnedAt[formID] = now;
+      m_newlyLearned.push_back(formID);
       newSpellsAdded++;
       }
 
@@ -408,6 +411,18 @@ namespace Huginn::Spell
    {
       std::unique_lock lock(m_mutex);
       m_learnedAt.clear();
+      m_newlyLearned.clear();
+   }
+
+   std::vector<RE::FormID> SpellRegistry::TakeNewlyLearned()
+   {
+      {
+         // Every tick asks; almost always empty: no write lock for that.
+         std::shared_lock lock(m_mutex);
+         if (m_newlyLearned.empty()) return {};
+      }
+      std::unique_lock lock(m_mutex);
+      return std::exchange(m_newlyLearned, {});
    }
 
    size_t SpellRegistry::GetSpellCountByType(SpellType type) const

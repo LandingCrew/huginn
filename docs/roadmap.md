@@ -1566,6 +1566,14 @@ wildcard picks against the soak's 8 of 333.
         never-picked item; it weighs high when its score is also near the
         page. Whether that brings new spells up often enough is the in-game
         check below.
+        **0.24.14, the discovery boost** (the user's call, 2026-10-30: an INI
+        option, default on): a spell learned or an item gained for the first
+        time on the character draws with b's variance × m(age) =
+        1 + (M − 1)·2^(−age/H), M = 4, H = 1 h of play, until it decays or its
+        first pick; never what a load finds. Wildcard draw only: in the
+        challenger rule a larger σ would make it take a key later, and in the
+        summon gate it would move μ. Cosave record DISC.
+        `docs/architecture/5-slots.md`, "The discovery boost".
       - **Telemetry:** `[Soak] ... wildcards rolled= relevant= picked=`
         (relevant: a need the player had at the draw values the item's
         effects); one `[Wildcard] Page P key K: 'name' (p=..)` info line per

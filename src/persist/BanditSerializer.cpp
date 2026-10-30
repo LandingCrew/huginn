@@ -325,6 +325,9 @@ namespace Huginn::Persist
          case kRecordType_Bias:
             LoadBiasRecord(a_intfc, version, length);
             break;
+         case kRecordType_Discovery:
+            LoadDiscoveryRecord(a_intfc, version, length);
+            break;
          default:
             logger::warn("[Cosave] Unknown record type {:08X} — skipping"sv, type);
             break;
@@ -346,6 +349,9 @@ namespace Huginn::Persist
       s_loadedCharacterID.reset();
       s_loadedClock.reset();
       ResetPendingChoice();
+      // 0.24.14: no discovery-boost gains until the load's prime (Main.cpp
+      // step 6c): nothing this load restores may count as newly gained.
+      if (g_choiceLearner) g_choiceLearner->SuspendDiscovery();
       logger::debug("[Cosave] Revert: learner kept until the load decides"sv);
    }
 

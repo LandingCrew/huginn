@@ -7,7 +7,7 @@
 namespace Huginn::Persist
 {
    // =========================================================================
-   // SKSE Cosave -- the choice learner (R8.3): THTA and BIAS
+   // SKSE Cosave -- the choice learner (R8.3): THTA and BIAS; DISC (0.24.14)
    // =========================================================================
    // Written and read inside BanditSerializer's callbacks (one SKSE unique ID
    // per plugin), beside HCID and BNDW. The byte formats are the pure codec's
@@ -24,6 +24,10 @@ namespace Huginn::Persist
    //   BIAS v1  b per item {formID, mu, var, n, play minutes since chosen,
    //            favourite bit}. The map's plan was {formID, b, n, minutes};
    //            the variance and the favourite bit are added (ChoiceCosave.h).
+   //   DISC v1  the discovery boost (core/DiscoveryBoost.h): every form this
+   //            character has held or known, and the boosted ones with their
+   //            play seconds since the gain. The character's, not the model's:
+   //            written and applied whether or not the bootstrap is usable.
    //
    // BNDW STAYS. R6's D2 reads the old learner's per-item state, which goes
    // back before the logs; the map's "THTA/BIAS replace BNDW" waits until D2
@@ -41,6 +45,11 @@ namespace Huginn::Persist
    //                      longer knows are dropped and counted), then BIAS in
    //                      place of b; with no THTA / BIAS (an older save) b
    //                      follows sBootstrapBias.
+   // DISC follows the same decision, before the model check: new game
+   // cleared; failed load unchanged; reload of the same character the
+   // in-memory sets kept, dynamic forms from the save; anything else the
+   // save's sets (none in the save: cleared). Main.cpp then primes it with
+   // what the load holds (seen, not boosted).
    //   model off          (no or invalid bootstrap) nothing is applied; the
    //                      records this save holds are kept and every save
    //                      this session makes writes them back unchanged, so
@@ -49,6 +58,7 @@ namespace Huginn::Persist
 
    inline constexpr uint32_t kRecordType_Theta = 'ATHT';  // 'THTA' on disk
    inline constexpr uint32_t kRecordType_Bias  = 'SAIB';  // 'BIAS' on disk
+   inline constexpr uint32_t kRecordType_Discovery = 'CSID';  // 'DISC' on disk
 
    /// What kind of load ResolveLoadedLearner decided (BanditSerializer.h).
    enum class LoadDecision : uint8_t
@@ -67,6 +77,7 @@ namespace Huginn::Persist
    /// LoadCallback: one record each; `length` is the SKSE record length.
    void LoadThetaRecord(SKSE::SerializationInterface* a_intfc, uint32_t version, uint32_t length);
    void LoadBiasRecord(SKSE::SerializationInterface* a_intfc, uint32_t version, uint32_t length);
+   void LoadDiscoveryRecord(SKSE::SerializationInterface* a_intfc, uint32_t version, uint32_t length);
    /// LoadCallback start and RevertCallback: drop the buffered records.
    void ResetPendingChoice();
 

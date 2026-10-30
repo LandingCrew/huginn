@@ -17,6 +17,7 @@
 #include "weapon/WeaponRegistry.h"
 #include "util/ExtraListStability.h"
 #include "scroll/ScrollRegistry.h"
+#include "learning/DiscoveryListener.h"
 #include "learning/FeatureBanditLearner.h"
 #include "learning/StateFeatures.h"
 #include "learning/UtilityScorer.h"
@@ -401,14 +402,23 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
             s_choiceSub.emplace(*g_choiceLearner);
             Learning::EquipEventBus::GetSingleton().Subscribe(&*s_choiceSub);
             logger::info("[Choice] bLegacyLearnFeature = {} (R8.3: a live score input, w = the bootstrap's), "
-                         "fCoveredPrior = {:.3g}, fThetaProcessNoise = {:.3g}, fFavoriteLifeMult = {:.3g}, sBootstrapBias = {}"sv,
+                         "fCoveredPrior = {:.3g}, fThetaProcessNoise = {:.3g}, fFavoriteLifeMult = {:.3g}, sBootstrapBias = {}, "
+                         "bDiscoveryBoost = {} (x{:.3g}, half-life {:.0f} s)"sv,
                 choiceSettings.legacyLearnFeature, choiceSettings.coveredPrior, choiceSettings.thetaProcessNoise,
-                choiceSettings.favoriteLifeMult, Core::Bootstrap::BiasModeName(choiceSettings.biasMode));
+                choiceSettings.favoriteLifeMult, Core::Bootstrap::BiasModeName(choiceSettings.biasMode),
+                choiceSettings.discovery.enabled, choiceSettings.discovery.varMult, choiceSettings.discovery.halfLifeSec);
             // R8.3: the bootstrap's curves replace the [Needs] lines of the
             // needs they name (theta was fitted with them).
             Needs::NeedSettings::GetSingleton().SetBootstrapCurves(g_choiceLearner->Curves());
         }
         Persist::ResolveLoadedChoice(*g_choiceLearner, loadDecision, g_activeCharacterID.load(std::memory_order_relaxed));
+
+        // 0.24.14: the discovery boost (core/DiscoveryBoost.h). After the
+        // cosave's DISC is applied (ResolveLoadedChoice): what this load holds
+        // -- the inventory and the spells, read at step 3 -- is seen, never
+        // boosted, and gains count from here (SKSE's revert suspended them).
+        Learning::Discovery::Register();
+        g_choiceLearner->PrimeDiscovery(Learning::Discovery::PresentForms());
     }
 
     // ── 7. OverrideManager ─────────────────────────────────────────────
