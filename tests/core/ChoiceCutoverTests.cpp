@@ -1,5 +1,6 @@
 // Host tests for R8.3, the cutover: the THTA and BIAS cosave codec
 // (core/ChoiceCosave.h: round trip, version rejection, an unknown key dropped,
+// a reset with the model off emptying the carried records (0.24.18),
 // the bootstrap merge), the need signature that joins the skip gate
 // (core/NeedEvaluator.h: kNever inputs, a boundary step), the ranking's order
 // (core/SlotScoreMath.h RanksBefore: score first, ties keep generation order
@@ -26,6 +27,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <ostream>
 #include <string>
 #include <vector>
@@ -279,6 +281,46 @@ TEST_CASE("cosave merge: a 0.24.9 save's alcohol weights are dropped; narcotic s
         const auto key = StableKey("theta", need, gone);
         CHECK(std::none_of(merged.begin(), merged.end(), [&](const CC::ThetaEntry& e) { return e.key == key; }));
     }
+}
+
+TEST_CASE("cosave reset with the model off: the carried THTA keeps its identity and no entries, BIAS is present and empty")
+{
+    // 0.24.18: a reset in fallback mode (no bootstrap) used to leave the
+    // records carried from the load in place, so every save wrote the learning
+    // from before the reset back.
+    std::optional<CC::ThetaRecord> theta = SampleTheta();
+    theta->dropped = 2;
+    std::optional<CC::BiasRecord> bias = SampleBias();
+    CC::ResetCarried(theta, bias);
+    REQUIRE(theta.has_value());
+    CHECK(theta->entries.empty());
+    CHECK(theta->dropped == 0);
+    CHECK(theta->createdUtc == SampleTheta().createdUtc);
+    CHECK(theta->sha256 == SampleTheta().sha256);
+    REQUIRE(bias.has_value());   // present: the next load does not seed b under sBootstrapBias
+    CHECK(bias->entries.empty());
+
+    // What the saves then write reads back as the reset: no theta entry (every
+    // key takes the file's value), no b.
+    const auto tb = CC::DecodeTheta(CC::EncodeTheta(*theta), CC::kThetaVersion);
+    REQUIRE(tb.has_value());
+    CC::MergeReport rep;
+    const std::vector<std::uint64_t> buildKeys{ 0x1111111111111111ull, 0x2222ull };
+    CHECK(CC::MergeTheta(buildKeys, tb->entries, rep).empty());
+    CHECK(rep.fromFile == buildKeys.size());
+    const auto bb = CC::DecodeBias(CC::EncodeBias(*bias), CC::kBiasVersion);
+    REQUIRE(bb.has_value());
+    CHECK(bb->entries.empty());
+}
+
+TEST_CASE("cosave reset with the model off: a load that carried nothing writes no THTA and an empty BIAS")
+{
+    std::optional<CC::ThetaRecord> theta;
+    std::optional<CC::BiasRecord> bias;
+    CC::ResetCarried(theta, bias);
+    CHECK_FALSE(theta.has_value());   // the load starts theta from the file either way
+    REQUIRE(bias.has_value());
+    CHECK(bias->entries.empty());
 }
 
 // ---------------------------------------------------------------------------

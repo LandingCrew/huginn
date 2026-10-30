@@ -155,4 +155,14 @@ namespace Huginn::Core::ChoiceCosave
     };
     [[nodiscard]] std::vector<ThetaEntry> MergeTheta(std::span<const std::uint64_t> buildKeys,
                                                      std::span<const ThetaEntry> saved, MergeReport& rep);
+
+    /// A reset (Reset Learned Weights, `hg reset weights`, `hg reset all`)
+    /// while the model is off (no or an invalid bootstrap; 0.24.18): the
+    /// records carried over from the load become what a reset model saves.
+    /// THTA keeps its bootstrap identity and loses every entry (nothing moved
+    /// from that file); an absent THTA stays absent (the load starts theta
+    /// from the file either way). BIAS becomes present and empty: b cleared,
+    /// as the reset clears it -- an absent BIAS would let the next load seed b
+    /// under sBootstrapBias, which a reset does not.
+    void ResetCarried(std::optional<ThetaRecord>& theta, std::optional<BiasRecord>& bias);
 }

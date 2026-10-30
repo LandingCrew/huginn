@@ -13,7 +13,6 @@
 #include "core/WildcardGate.h"   // GateSettings: the [Wildcards] clocks' defaults
 #include "core/WildcardPick.h"   // Params: the [Wildcards] odds' defaults
 #include "core/ChallengerRule.h"   // the combat upsert confidence range (0.24.13)
-#include "settings/ShippedDefaults.h"   // LoadMainIni: the shipped Huginn.ini under the player's
 
 #include <algorithm>
 #include <filesystem>
@@ -117,9 +116,12 @@ void ResetPipelineSubsystems() {
     // caches so first-time "no candidate"/unplaced-override messages aren't
     // suppressed across a game load.
     Slot::SlotAllocator::GetSingleton().Reset();
-    auto& slotLocker = Slot::SlotLocker::GetSingleton();
-    slotLocker.Reset();
-    slotLocker.SetConfig(LoadSlotLockerConfigFromINI());
+    // The locks only: Reset keeps the [SlotLocker] config, which the caller
+    // owns (InitializeGameSystems loads it from the INI it parsed; a hot
+    // reload or Reset to Defaults sets it). `hg reset all` keeps the config in
+    // force: re-reading Huginn.ini here brought the file's lock settings back
+    // over a Reset to Defaults that could not write it (0.24.18).
+    Slot::SlotLocker::GetSingleton().Reset();
     Slot::Remembrance::GetSingleton().Reset();
 
     // A selection pending across a load belongs to the abandoned session.
@@ -211,14 +213,6 @@ void LoadCandidateConfigFromINI(const CSimpleIniA& ini) {
   logger::info("[CandidateConfig] Uncastable spell policy: {}, soul gem recharge: {}",
     Candidate::ToString(Candidate::g_candidateConfig.uncastableSpellPolicy),
     Candidate::g_candidateConfig.enableSoulGemRecharge ? "enabled" : "disabled");
-}
-
-Slot::SlotLockConfig LoadSlotLockerConfigFromINI() {
-  // The shipped Huginn.ini with the player's over it: a key the player's file
-  // leaves out (or no file at all) reads the shipped value.
-  CSimpleIniA ini;
-  Settings::LoadMainIni(ini, "SlotLockerConfig"sv);
-  return LoadSlotLockerConfigFromINI(ini);
 }
 
 Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {

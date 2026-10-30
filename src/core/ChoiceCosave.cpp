@@ -287,4 +287,13 @@ namespace Huginn::Core::ChoiceCosave
         }
         return out;
     }
+
+    void ResetCarried(std::optional<ThetaRecord>& theta, std::optional<BiasRecord>& bias)
+    {
+        if (theta) {
+            theta->entries.clear();
+            theta->dropped = 0;
+        }
+        bias = BiasRecord{};
+    }
 }

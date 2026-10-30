@@ -54,6 +54,7 @@ namespace Huginn::Persist
    //                      records this save holds are kept and every save
    //                      this session makes writes them back unchanged, so
    //                      a session without the bootstrap loses no learning.
+   //                      A reset empties them (ResetChoiceLearning).
    // =========================================================================
 
    inline constexpr uint32_t kRecordType_Theta = 'ATHT';  // 'THTA' on disk
@@ -80,6 +81,15 @@ namespace Huginn::Persist
    void LoadDiscoveryRecord(SKSE::SerializationInterface* a_intfc, uint32_t version, uint32_t length);
    /// LoadCallback start and RevertCallback: drop the buffered records.
    void ResetPendingChoice();
+
+   /// Reset Learned Weights, `hg reset weights` and `hg reset all` (inside
+   /// RunExclusive): theta back to the bootstrap and b cleared, no
+   /// sBootstrapBias seed. With the model off (no bootstrap) there is no theta
+   /// to reset, so the records carried from the load are emptied instead
+   /// (core/ChoiceCosave.h ResetCarried, 0.24.18): the saves stop writing the
+   /// learning from before the reset. Returns what was done, for the player's
+   /// message.
+   [[nodiscard]] const char* ResetChoiceLearning(uint64_t characterID);
 
    /// kPostLoadGame / kNewGame, once the learner exists and its bootstrap
    /// was read (Main.cpp step 6c). `characterID`: the character the load

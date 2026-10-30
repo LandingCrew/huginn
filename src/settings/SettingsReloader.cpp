@@ -25,6 +25,7 @@
 #include "input/InputHandler.h"
 #include "candidate/CandidateGenerator.h"
 #include "settings/ShippedDefaults.h"
+#include "persist/ChoiceSerializer.h"
 
 #include <filesystem>
 
@@ -212,9 +213,11 @@ namespace Huginn::Settings
         }
         else if (buttonId == "Huginn_reset_weights"sv) {
             logger::info("[SettingsReloader] Resetting learning data"sv);
-            if (const auto learnerItems = ResetLearningData()) {
-                logger::info("[SettingsReloader] Learning data reset complete ({} learner items)"sv, *learnerItems);
-                RE::DebugNotification("Huginn: Learning reset (theta back to the bootstrap, b cleared)");
+            if (const auto reset = ResetLearningData()) {
+                logger::info("[SettingsReloader] Learning data reset complete ({} learner items; {})"sv,
+                    reset->learnerItems, reset->choice);
+                const auto msg = std::format("Huginn: Learning reset ({})", reset->choice);
+                RE::DebugNotification(msg.c_str());
             } else {
                 logger::warn("[SettingsReloader] g_featureBanditLearner is null, cannot reset"sv);
             }
@@ -237,7 +240,7 @@ namespace Huginn::Settings
         }
     }
 
-    std::optional<size_t> SettingsReloader::ResetLearningData()
+    std::optional<SettingsReloader::LearningReset> SettingsReloader::ResetLearningData()
     {
         // Deferred passed-over updates and the repeat window belong to the
         // learning being reset.
@@ -248,25 +251,24 @@ namespace Huginn::Settings
             return std::nullopt;
         }
 
-        size_t learnerItems = 0;
+        LearningReset reset;
         Update::UpdateHandler::GetSingleton()->RunExclusive([&] {
-            learnerItems = learner->GetItemCount();
+            reset.learnerItems = learner->GetItemCount();
             learner->Clear();
 
             // R8.3: the choice learner too -- theta back to the bootstrap and b
             // cleared (no sBootstrapBias seed: a reset forgets this character's
-            // b, the file's included). The old learner above is reset as before:
-            // it feeds the D2 legacy feature.
-            if (g_choiceLearner) {
-                g_choiceLearner->ResetToBootstrap(g_activeCharacterID.load(std::memory_order_relaxed), /*seedB=*/false);
-            }
+            // b, the file's included); 0.24.18: with the model off, the THTA /
+            // BIAS carried from the load emptied. The old learner above is
+            // reset as before: it feeds the D2 legacy feature.
+            reset.choice = Persist::ResetChoiceLearning(g_activeCharacterID.load(std::memory_order_relaxed));
 
             // Unlock all slots so the next scoring cycle can reassign immediately —
             // otherwise locked slots keep pinning recommendations scored by the
             // just-cleared table for the remainder of their lock duration.
             Slot::SlotLocker::GetSingleton().Reset();
         });
-        return learnerItems;
+        return reset;
     }
 
     void SettingsReloader::ResetAllToDefaults()

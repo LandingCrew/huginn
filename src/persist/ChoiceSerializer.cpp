@@ -4,6 +4,7 @@
 #include "core/ChoiceCosave.h"
 
 #include <cstddef>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -27,7 +28,10 @@ namespace Huginn::Persist
    // BIAS holds the FormIDs as resolved at load, so a save writes them in this
    // session's load order. b's play minutes stay as read (the battery does
    // not run while the model is off). Unused once the model is ready, which
-   // is fixed for the session (LoadBootstrap runs once).
+   // is fixed for the session (LoadBootstrap runs once). A reset empties them
+   // (ResetChoiceLearning, 0.24.18), from the console and the dMenu button;
+   // a ModCallbackEvent may come on any thread, hence the mutex.
+   static std::mutex s_carriedMutex;
    static std::optional<CC::ThetaRecord> s_carriedTheta;
    static std::optional<CC::BiasRecord> s_carriedBias;
 
@@ -40,6 +44,31 @@ namespace Huginn::Persist
       case LoadDecision::Replace: return "load";
       }
       return "?";
+   }
+
+   const char* ResetChoiceLearning(uint64_t characterID)
+   {
+      if (!g_choiceLearner) return "no choice learner yet";
+      if (g_choiceLearner->Ready()) {
+         // No sBootstrapBias seed: a reset forgets this character's b, the
+         // file's included.
+         g_choiceLearner->ResetToBootstrap(characterID, /*seedB=*/false);
+         return "theta back to the bootstrap, b cleared";
+      }
+      // Fallback mode: no theta or b lives in memory, but the saves write the
+      // carried records back. Without this the reset would not reach them,
+      // and the learning from before it would return with the bootstrap.
+      std::size_t thetaWas = 0, biasWas = 0;
+      {
+         std::lock_guard lock(s_carriedMutex);
+         thetaWas = s_carriedTheta ? s_carriedTheta->entries.size() : 0;
+         biasWas = s_carriedBias ? s_carriedBias->entries.size() : 0;
+         CC::ResetCarried(s_carriedTheta, s_carriedBias);
+      }
+      logger::info("[Cosave] Reset with the choice model off (no bootstrap): the THTA / BIAS carried from the load "
+                   "dropped ({} theta entries, {} b entries); this session's saves write theta unmoved and b empty"sv,
+         thetaWas, biasWas);
+      return "choice model off, no bootstrap: the save's theta and b dropped";
    }
 
    void ResetPendingChoice()
@@ -95,8 +124,10 @@ namespace Huginn::Persist
       SaveDiscovery(a_intfc);
       if (!g_choiceLearner || !g_choiceLearner->Ready()) {
          // Fallback ranking (no bootstrap): no theta lives in memory. Write
-         // back what the load read, unchanged, so the next load with the
-         // bootstrap restored finds the learning this session could not use.
+         // back what the load read, unchanged (or emptied by a reset), so the
+         // next load with the bootstrap restored finds the learning this
+         // session could not use.
+         std::lock_guard lock(s_carriedMutex);
          const bool theta = s_carriedTheta && WriteTheta(a_intfc, *s_carriedTheta);
          const bool bias = s_carriedBias && WriteBias(a_intfc, *s_carriedBias);
          logger::warn("[Cosave] Choice model off (no bootstrap): THTA {} / BIAS {} carried over from the load "
@@ -266,6 +297,7 @@ namespace Huginn::Persist
       auto disc = std::move(s_pendingDiscovery);
       ResetPendingChoice();
       ResolveDiscovery(learner, decision, std::move(disc));
+      std::unique_lock carriedLock(s_carriedMutex);
       if (!learner.Ready()) {
          // Fallback mode: nothing to apply them to. Keep this save's records
          // (what it holds, or nothing) for the saves this session makes; a new
@@ -294,6 +326,7 @@ namespace Huginn::Persist
       }
       s_carriedTheta.reset();
       s_carriedBias.reset();
+      carriedLock.unlock();
       switch (decision) {
       case LoadDecision::Failed:
          logger::warn("[Cosave] Load failed -- the choice learner is left as it was"sv);
