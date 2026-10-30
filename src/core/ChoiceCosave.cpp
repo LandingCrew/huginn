@@ -287,4 +287,50 @@ namespace Huginn::Core::ChoiceCosave
         }
         return out;
     }
+
+    void ResetCarried(std::optional<ThetaRecord>& theta, std::optional<BiasRecord>& bias, bool& resetSinceLoad)
+    {
+        if (theta) {
+            theta->entries.clear();
+            theta->dropped = 0;
+        }
+        bias = BiasRecord{};
+        resetSinceLoad = true;
+    }
+
+    CarryReport CarryLoaded(LoadDecision decision, std::optional<ThetaRecord>& carriedTheta,
+        std::optional<BiasRecord>& carriedBias, bool& resetSinceLoad, std::optional<ThetaRecord> savedTheta,
+        std::optional<BiasRecord> savedBias)
+    {
+        // A failed load restored nothing: the carried records and the reset bit
+        // stay as they were, so a reset before it still holds at a reload.
+        if (decision == LoadDecision::Failed) return {};
+        const bool reset = std::exchange(resetSinceLoad, false);
+        switch (decision) {
+        case LoadDecision::NewGame:
+            carriedTheta.reset();
+            carriedBias.reset();
+            return {};
+        case LoadDecision::Reload: {
+            if (!reset) break;   // as a load: the save's records
+            CarryReport rep{ .keptCarried = true };
+            if (!carriedBias || !savedBias) return rep;
+            auto dynamic = [](std::uint32_t form) { return (form >> 24) == 0xFF; };
+            auto& kept = carriedBias->entries;
+            rep.dynamicDropped = std::erase_if(kept, [&](const BiasEntry& e) { return dynamic(e.form); });
+            for (const auto& e : savedBias->entries) {
+                if (!dynamic(e.form) || !(e.var > 0.0) || !std::isfinite(e.mu)) continue;
+                kept.push_back(e);
+                ++rep.dynamicTaken;
+            }
+            return rep;
+        }
+        case LoadDecision::Failed:   // returned above
+        case LoadDecision::Replace:
+            break;
+        }
+        carriedTheta = std::move(savedTheta);
+        carriedBias = std::move(savedBias);
+        return {};
+    }
 }

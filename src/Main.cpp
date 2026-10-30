@@ -445,7 +445,10 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
 
     // ── 8. Reset all stateful pipeline subsystems ────────────────────
     // Shared with Cmd_ResetAll — single source of truth for pipeline resets.
+    // The [SlotLocker] config from the INI parsed at step 0 (the reset keeps
+    // the config; `hg reset all` keeps the one in force).
     ResetPipelineSubsystems();
+    Slot::SlotLocker::GetSingleton().SetConfig(LoadSlotLockerConfigFromINI(mainIni));
 
     // ── 9. Timer reset ─────────────────────────────────────────────────
     // (g_lastGameLoad is stamped at the top of this function — the step 3

@@ -107,7 +107,11 @@ namespace Huginn::Learning
             logger::warn("[Choice] [Learning] sBootstrapBias = '{}' is not match, always or never: read as match"sv, bias);
         }
         s.thetaProcessNoise = std::clamp(ini.GetDoubleValue("Learning", "fThetaProcessNoise", s.thetaProcessNoise), 0.0, 1.0);
-        s.coveredPrior = std::clamp(ini.GetDoubleValue("Scoring", "fCoveredPrior", s.coveredPrior), -10.0, 10.0);
+        // A NaN passes std::clamp untouched (fCoveredPrior = nan): read as the
+        // default instead, as SlotSettings does; +-inf reads as the default too.
+        auto finiteOr = [](double v, double fallback) { return std::isfinite(v) ? v : fallback; };
+        s.coveredPrior = std::clamp(
+            finiteOr(ini.GetDoubleValue("Scoring", "fCoveredPrior", s.coveredPrior), s.coveredPrior), -10.0, 10.0);
         s.legacyLearnFeature = ini.GetBoolValue("Scoring", "bLegacyLearnFeature", s.legacyLearnFeature);
         s.shadowLegacy = ini.GetBoolValue("Scoring", "bShadowLegacy", s.shadowLegacy);
         s.favoriteLifeMult = std::clamp(ini.GetDoubleValue("Favorites", "fFavoriteLifeMult", s.favoriteLifeMult), 1.0, 100.0);
@@ -205,6 +209,10 @@ namespace Huginn::Learning
             m_createdUtc = read.doc->createdUtc;
             m_sha256 = Core::Sha256Hex(text);
             m_bootModel = std::move(mapped.model);
+            // covered starts at fCoveredPrior (MapToBuild read it outside the
+            // lock; a reload may have moved it since): the boot model holds
+            // the value the live one starts from, which MovedLocked compares.
+            m_bootModel.covered = C::Weight{ m_settings.coveredPrior, 1.0 };
             m_curves = std::move(mapped.curves);
             m_bootItems = std::move(items);
             m_doc = std::move(*read.doc);
@@ -213,7 +221,6 @@ namespace Huginn::Learning
             // ResetPipelineSubsystems (step 8), and it must never see an empty
             // theta. ResetToBootstrap later redoes this and seeds b.
             m_model = m_bootModel;
-            m_model.covered = C::Weight{ m_settings.coveredPrior, 1.0 };
             m_b.clear();
             BuildKeys();
             Touch();
@@ -345,8 +352,11 @@ namespace Huginn::Learning
         Core::Bootstrap::BiasMode mode{};
         {
             std::unique_lock lock(m_mutex);
+            // fCoveredPrior as it is now (a hot reload changes the setting,
+            // not the live weight): the boot model's covered is the start
+            // MovedLocked compares against, so it moves with the reset.
+            m_bootModel.covered = C::Weight{ m_settings.coveredPrior, 1.0 };
             m_model = m_bootModel;
-            m_model.covered = C::Weight{ m_settings.coveredPrior, 1.0 };
             m_b.clear();
             mode = m_settings.biasMode;
             fileChar = m_doc ? m_doc->sourceChar : std::string{};
@@ -786,15 +796,14 @@ namespace Huginn::Learning
     {
         const auto* a = SlotWeight(m_model, slot);
         if (!a) return false;
-        // covered (the last slot, BuildKeys) starts at fCoveredPrior with
-        // precision 1, not at the file's value
-        C::Weight boot{ m_settings.coveredPrior, 1.0 };
-        if (slot + 1 != m_keys.size()) {
-            const auto* b = SlotWeight(m_bootModel, slot);
-            if (!b) return true;
-            boot = *b;
-        }
-        return a->mu != boot.mu || a->var != boot.var;
+        // covered (the last slot, BuildKeys) is compared against the prior the
+        // model started from (m_bootModel.covered, set at the load or reset),
+        // not against fCoveredPrior now: after a hot reload changed the key,
+        // an untouched weight is not "moved", so THTA does not save the old
+        // prior over the new one (0.24.18).
+        const auto* b = SlotWeight(m_bootModel, slot);
+        if (!b) return true;
+        return a->mu != b->mu || a->var != b->var;
     }
 
     std::vector<ChoiceLearner::Entry> ChoiceLearner::ExportEntries(bool movedOnly) const
@@ -923,8 +932,9 @@ namespace Huginn::Learning
         for (const auto& [form, belief] : m_b) bs.emplace_back(form, belief.mu);
         r.b = Core::Choice::ComputeBDrift(bs);
         r.covered = m_model.covered;
-        // theta_covered starts at fCoveredPrior with precision 1 (MovedLocked).
-        r.coveredBoot = C::Weight{ m_settings.coveredPrior, 1.0 };
+        // theta_covered's start: fCoveredPrior with precision 1 as it was at
+        // the load or reset (MovedLocked).
+        r.coveredBoot = m_bootModel.covered;
         return r;
     }
 
