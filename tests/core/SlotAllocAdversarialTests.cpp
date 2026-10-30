@@ -193,8 +193,8 @@ TEST_CASE("slot adversarial: a challenger ON the hold's margin holds, in both ar
 {
     // The old hold asked u_c > u_i * 1.5f in float, so a challenger exactly on
     // the margin was decided by rounding. Not measure zero: the old potion
-    // tier preference divides a family's next tier by POTION_TIER_STEP = 1.5,
-    // the hold's own 1.5, and a recorded play snapshot had Potion of
+    // tier preference (pruned in R8.4) divided a family's next tier by a fixed
+    // 1.5, the hold's own 1.5, and a recorded play snapshot had Potion of
     // Plentiful Magicka (0.207614) against Minor (0.13840933 = 0.207614 / 1.5)
     // on exactly that boundary. The new test has a tie band of about four
     // float ulps (kHoldTieEpsilon): on the margin, the holder holds.

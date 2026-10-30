@@ -5,28 +5,8 @@
 
 namespace Huginn::Context
 {
-    // =============================================================================
-    // WORKSTATION -> CRAFT SKILL (#63/#65)
-    // =============================================================================
-    // RE::TESFurniture::WorkBenchData::BenchType enum values:
-    //   kCreateObject(1), kSmithingWeapon(2), kSmithingArmor(7) -> Fortify Smithing
-    //   kEnchanting(3), kEnchantingExperiment(4)                -> Fortify Enchanting
-    //   kAlchemy(5), kAlchemyExperiment(6)                      -> Fortify Alchemy
-    // Everything else -- kNone, cooking, and any bench a mod declares outside the
-    // vanilla enum -- is None. See the header for why this list has two readers.
-    // =============================================================================
-    Apparel::CraftSkill CraftSkillForWorkstation(int32_t benchType) noexcept
-    {
-        // The case list is Core::Gate::CraftOfBench (R8.1), shared with the
-        // no_workstation filter; this only converts the enum.
-        switch (Core::Gate::CraftOfBench(benchType)) {
-        case Core::Gate::Craft::Smithing: return Apparel::CraftSkill::Smithing;
-        case Core::Gate::Craft::Enchanting: return Apparel::CraftSkill::Enchanting;
-        case Core::Gate::Craft::Alchemy: return Apparel::CraftSkill::Alchemy;
-        case Core::Gate::Craft::None:
-        default: return Apparel::CraftSkill::None;
-        }
-    }
+    // CraftSkillForWorkstation moved to context/ContextFacts.h (R8.4, inline:
+    // the pipeline's skip gate reads it too).
 
     // =============================================================================
     // MAIN EVALUATION METHOD

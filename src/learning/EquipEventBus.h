@@ -33,7 +33,7 @@ namespace Huginn::Learning
     // Lock ordering (must be respected to avoid deadlocks):
     //   StateManager shared locks (acquired in Capture)
     //   → m_mutex (acquired to snapshot the subscriber list)
-    //   → subscriber internal locks (learner m_mutex, UsageMemory m_mutex, etc.)
+    //   → subscriber internal locks (each learner's m_mutex, the recency memory's, etc.)
     //
     // Capture takes no bus lock; Dispatch calls subscribers outside m_mutex.
     // =========================================================================

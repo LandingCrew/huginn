@@ -553,6 +553,15 @@ namespace Huginn::Core::Bootstrap
         for (const auto& [name, w] : doc.features) {
             for (std::size_t i = 0; i < Choice::kFeatureCount; ++i) {
                 if (Choice::kFeatureNames[i] == name) {
+                    // R8.4: the old utility does not rank. Format v1 names
+                    // `ln util`, and the fit tools can weigh it (R6's tbra),
+                    // but the build reads it as 0: no row supplies it, and a
+                    // weight on it is refused (counted, and the [Choice] load
+                    // line warns) rather than letting utility back in.
+                    if (static_cast<Choice::Feature>(i) == Choice::Feature::ln_util) {
+                        if (w != 0.0) ++rep.featuresRefused;
+                        continue;
+                    }
                     m.w[i] = w;
                     ++rep.featuresWeighted;
                 }

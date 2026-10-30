@@ -1011,8 +1011,8 @@ namespace Huginn::State
       // Outside the primary block: it is the closest hostile, not the primary.
       digest.closestEnemyDistance = m_targets.ClosestEnemyDistanceBucket();
 
-      // Scoring consumes the ANY-hostile-casting aggregate (ContextRuleEngine
-      // ward weights, GameState::anyCasting) — a background caster must produce
+      // Scoring consumes the ANY-hostile-casting aggregate (the legacy context
+      // rules' ward weights, GameState::anyCasting) — a background caster must produce
       // a dirty signal even when the primary target is unchanged.
       digest.anyCasting = m_targets.cachedAnyCasting;
 

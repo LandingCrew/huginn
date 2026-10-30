@@ -7,7 +7,7 @@
 #include "state/StateTypes.h"
 #include "learning/ScoredCandidate.h"
 #include "learning/PipelineStateCache.h"   // EligibleRow (R4, the selection log v3)
-#include "learning/legacy/LegacyLearnFeature.h"   // Legacy::Row (R8.2, the D2 feature)
+#include "learning/legacy/LegacyRun.h"   // Legacy::Run (R8.4: the pipeline's one handle on the D2 feature)
 #include "core/ChoiceLive.h"                      // the ranking pass's rows (R8.3)
 #include "candidate/CandidateTypes.h"
 #include "context/ContextReason.h"     // Context::ContextReason (per-tick display reason)
@@ -21,11 +21,6 @@
 #include <memory>
 #include <optional>
 #include <vector>
-
-namespace Huginn::Context
-{
-    struct ContextWeightMap;
-}
 
 namespace Huginn::Pipeline
 {
@@ -87,7 +82,7 @@ namespace Huginn::Pipeline
         Core::Refresh::DueBits refreshDue = 0;
         // R8.1: seconds since the current fight began, kNever out of combat
         // (core/CombatOnset.h): the combat_onset clock, read once per run for
-        // the PotionDiscriminator.
+        // the legacy pass's potion multiplier.
         float combatOnsetAgo = 0.0f;
 
         // Pipeline outputs (built by successive steps)
@@ -105,17 +100,11 @@ namespace Huginn::Pipeline
 
         // R8.3: the ranking pass. choiceLive = the bootstrap is read and the
         // pipeline ranks on mu; else the fallback ranks on the old utility.
-        // legacyRan = the legacy pass ran this run ([Scoring]
-        // bLegacyLearnFeature, or the fallback, which needs the utility).
         bool choiceLive = false;
-        bool legacyRan = false;
         // Index-aligned with the candidates (and so with `eligible`): each
-        // row's attributes and its ranking-pass score; legacyOf = the
-        // candidate whose legacy row this one reads (itself, or the kept one
-        // of its dedup key: see CaptureEligible).
+        // row's attributes and its ranking-pass score.
         std::vector<Core::Choice::Attr> choiceAttrs;
         std::vector<Core::Choice::LiveScore> choiceScores;
-        std::vector<size_t> legacyOf;
         std::shared_ptr<const Learning::ShadowRun> choiceRun;
 
         // Display page resolved once per tick by ResolveDisplayPage, then used by
@@ -151,13 +140,18 @@ namespace Huginn::Pipeline
         // learner's state features, the score parts of the filter drops), for
         // the selection log v3 only. The eligible rows carry their own parts.
         Learning::PipelineStateCache::OldScoreRun oldScore;
-        // 0.23.56 (R8.2): what the old floors said of each candidate (index-
-        // aligned with the candidates, and so with `eligible`), off the pass
-        // that ranked: the D2 legacy learn feature's input.
-        std::vector<Scoring::Legacy::Row> legacyRows;
+        // R8.4: this run's legacy pass (learning/legacy/LegacyRun.h), the D2
+        // feature's input: legacy.ran = it ran ([Scoring] bLegacyLearnFeature,
+        // or the fallback, which needs the utility); the floors' verdict per
+        // candidate (index-aligned with the candidates, and so with
+        // `eligible`), the row each candidate reads (itself, or the kept one of
+        // its dedup key), the kept rows and the weights the pass used.
+        Scoring::Legacy::Run legacy;
 
 
-        /// Reset all fields for reuse, preserving allocated container capacity.
+        /// Reset all fields for reuse, preserving allocated container capacity
+        /// (except the legacy pass's: since R8.4 the pass returns a fresh Run
+        /// that the pipeline move-assigns each run, a few small vectors).
         void Reset()
         {
             deltaMs = 0.0f;
@@ -198,12 +192,10 @@ namespace Huginn::Pipeline
             oldScore.stateHash = 0;
             oldScore.dropped.clear();
             oldScore.shadow.reset();
-            legacyRows.clear();
+            legacy.Clear();
             choiceLive = false;
-            legacyRan = false;
             choiceAttrs.clear();
             choiceScores.clear();
-            legacyOf.clear();
             choiceRun.reset();
         }
     };
@@ -329,17 +321,15 @@ namespace Huginn::Pipeline
         void ScoreCandidates(PipelineContext& ctx);
         /// R8.3: the ranking pass -- one ScoredCandidate per candidate, mu as
         /// its score (core/ChoiceLive.h), the legacy pass's utility and parts
-        /// on the rows the old floors kept. Fills ctx.choiceAttrs /
+        /// on the rows the old floors kept (ctx.legacy). Fills ctx.choiceAttrs /
         /// choiceScores / choiceRun.
         Scoring::ScoredCandidateList RankOnChoice(PipelineContext& ctx,
-            const std::vector<Candidate::CandidateVariant>& candidates,
-            const Scoring::ScoredCandidateList& legacyList);
+            const std::vector<Candidate::CandidateVariant>& candidates);
         /// R4: copy every generated candidate into ctx.eligible (reads only).
         /// 0.23.53: with the old engine's score parts of every candidate,
-        /// whatever the floors, scored against `weights` (the map the scoring
-        /// pass used), and of the filter drops (ctx.oldScore).
-        void CaptureEligible(PipelineContext& ctx, const std::vector<Candidate::CandidateVariant>& candidates,
-            const Context::ContextWeightMap& weights);
+        /// whatever the floors, and of the filter drops (ctx.oldScore), from
+        /// Legacy::OldScoreCapture over ctx.legacy (R8.4).
+        void CaptureEligible(PipelineContext& ctx, const std::vector<Candidate::CandidateVariant>& candidates);
         /// Allocate + lock + visual states. Returns false (abandon the tick) if an
         /// off-thread page switch landed after ResolveDisplayPage's snapshot —
         /// locking the stale page would leak page-blind locks across the switch.
@@ -359,7 +349,7 @@ namespace Huginn::Pipeline
         // under its own [Subtexts] toggles rather than inheriting these.
         void DeriveDisplayLabels(PipelineContext& ctx);
         /// R8.3: the tick's reason from the explanations of what the page
-        /// shows, through the hold (in place of DominantReason).
+        /// shows, through the hold (in place of the old weights' reason).
         void UpdateContextReason(PipelineContext& ctx);
 
 #ifndef NDEBUG

@@ -23,8 +23,9 @@
 // cold start stay live, as inputs to this feature only (R8.3 ranks by the new
 // score). The floor loop and the cold-start rescue moved here from
 // UtilityScorer::ScoreCandidates UNCHANGED IN ARITHMETIC: the same tests in the
-// same order on the same values; UtilityScorer::LegacyPass calls FloorPass
-// with its own ScoreCandidateInternal.
+// same order on the same values; LegacyScorer::Pass (LegacyScorer.h, split
+// out of UtilityScorer in R8.4) calls FloorPass with its own
+// ScoreCandidateInternal.
 //
 // The switch: [Scoring] bLegacyLearnFeature (default true, because the
 // bootstrap's weight w = 1.36 was fitted with it). Off, the feature is 0 and
@@ -48,6 +49,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <unordered_map>
 #include <vector>
 
 namespace Huginn::Scoring::Legacy
@@ -99,7 +101,7 @@ namespace Huginn::Scoring::Legacy
 
     struct PassResult
     {
-        float maxUtilitySeen = 0.0f;   // for UtilityScorer's "0 candidates passed" warning
+        float maxUtilitySeen = 0.0f;   // for the pass's "0 candidates passed" warning
         std::size_t coldStartCount = 0;
         bool coldStartRan = false;
     };
@@ -107,7 +109,7 @@ namespace Huginn::Scoring::Legacy
     // -------------------------------------------------------------------------
     // FloorPass -- the old pass's floor loop and cold-start rescue
     // -------------------------------------------------------------------------
-    // Hooks (UtilityScorer's; every call is the one ScoreCandidates made):
+    // Hooks (LegacyScorer's; every call is the one ScoreCandidates made):
     //   bool  Favorited(c)                       Candidate::IsFavorited
     //   float ContextWeight(c)                   Context::WeightForCandidate(c, weights)
     //   uint32 FormID(c)
@@ -246,6 +248,52 @@ namespace Huginn::Scoring::Legacy
             res.coldStartCount = coldStartCount;
         }
         return res;
+    }
+
+    // -------------------------------------------------------------------------
+    // The row each candidate reads (R8.3's rule; pure since R8.4, host-tested
+    // in tests/core/LegacyRunTests.cpp; Legacy::Run calls these)
+    // -------------------------------------------------------------------------
+    // Each candidate reads its own row, or, when the floors kept another
+    // candidate of its dedup key (type, uid, form) and not it, the FIRST kept
+    // one's (R8.2's CaptureEligible rule, so the score and the v3 row agree;
+    // the floor pass's cold start scores only the first of a form). `keys` is
+    // index-aligned with the candidates; `rows` may be shorter (a candidate
+    // past its end reads itself, and RowAt gives it an empty Row).
+
+    inline void ResolveRowOf(const std::vector<std::uint64_t>& keys, const std::vector<Row>& rows,
+                             std::vector<std::size_t>& rowOf)
+    {
+        rowOf.resize(keys.size());
+        std::unordered_map<std::uint64_t, std::size_t> keptByKey;
+        for (std::size_t i = 0; i < keys.size() && i < rows.size(); ++i) {
+            if (rows[i].Scored()) keptByKey.try_emplace(keys[i], i);
+        }
+        for (std::size_t i = 0; i < keys.size(); ++i) {
+            rowOf[i] = i;
+            if (i < rows.size() && !rows[i].Scored()) {
+                const auto k = keptByKey.find(keys[i]);
+                if (k != keptByKey.end()) rowOf[i] = k->second;
+            }
+        }
+    }
+
+    /// The row candidate i reads, or an empty Row (floor ctx, lm 0, um 1).
+    [[nodiscard]] inline Row RowAt(const std::vector<std::size_t>& rowOf, const std::vector<Row>& rows,
+                                   std::size_t i) noexcept
+    {
+        const std::size_t li = i < rowOf.size() ? rowOf[i] : i;
+        return li < rows.size() ? rows[li] : Row{};
+    }
+
+    /// The index in the kept list of the row candidate i reads, or -1 (not
+    /// kept, or an index the kept list does not hold).
+    [[nodiscard]] inline int KeptIndexAt(const std::vector<std::size_t>& rowOf, const std::vector<Row>& rows,
+                                         std::size_t i, std::size_t keptCount) noexcept
+    {
+        const Row r = RowAt(rowOf, rows, i);
+        if (!r.Scored() || r.scoredIndex < 0 || static_cast<std::size_t>(r.scoredIndex) >= keptCount) return -1;
+        return r.scoredIndex;
     }
 
     /// [Scoring] bLegacyLearnFeature (R8.3: live and hot-reloaded). On, the

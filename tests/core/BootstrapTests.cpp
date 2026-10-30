@@ -116,7 +116,9 @@ TEST_CASE("bootstrap: the golden fixtures read and map")
         CHECK(m.model.strength[hd * C::J + Col(Effect::Col::restore_health)].mu == 0.5);
         CHECK(m.model.strength[hd * C::J + Col(Effect::Col::restore_health)].var == doctest::Approx(1.0 / 15.0));
         CHECK(m.model.Th(hd, Col(Effect::Col::summon)).mu == -0.125);
-        CHECK(m.model.w[static_cast<std::size_t>(C::Feature::ln_util)] == 0.875);
+        // R8.4: the file weighs `ln util` 0.875; the build refuses it (read 0)
+        CHECK(m.model.w[static_cast<std::size_t>(C::Feature::ln_util)] == 0.0);
+        CHECK(m.report.featuresRefused == 1);
         CHECK(m.model.w[static_cast<std::size_t>(C::Feature::util_missing)] == -2.25);
         CHECK(m.model.w[static_cast<std::size_t>(C::Feature::ln_learn_mult)] == 0.0);
         // recent: the file's two rows, then every build family at both taus at the prior

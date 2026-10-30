@@ -23,6 +23,11 @@
 #include "slot/SlotLocker.h"
 #include "util/IntervalTimer.h"
 
+namespace Huginn::Scoring::Legacy
+{
+    class LegacyScorer;   // learning/legacy/LegacyScorer.h (R8.4)
+}
+
 // =============================================================================
 // GLOBAL INSTANCES - Declared here, defined in Globals.cpp
 // =============================================================================
@@ -37,6 +42,8 @@ extern std::unique_ptr<Huginn::Learning::UsageMemory> g_usageMemory;
 // R8.2, live from R8.3: the choice learner the pipeline ranks with (learning/ChoiceLearner.h); null until the first game load.
 extern std::unique_ptr<Huginn::Learning::ChoiceLearner> g_choiceLearner;
 extern std::unique_ptr<Huginn::Scoring::UtilityScorer> g_utilityScorer;
+// R8.4: the old engine's per-candidate score, kept for D2 only (learning/legacy/LegacyScorer.h)
+extern std::unique_ptr<Huginn::Scoring::Legacy::LegacyScorer> g_legacyScorer;
 extern std::unique_ptr<Huginn::Item::ItemRegistry> g_itemRegistry;
 extern std::unique_ptr<Huginn::Weapon::WeaponRegistry> g_weaponRegistry;
 extern std::unique_ptr<Huginn::Scroll::ScrollRegistry> g_scrollRegistry;
@@ -151,6 +158,4 @@ void LoadWildcardConfigFromINI(Huginn::Scoring::WildcardManager& wildcardMgr);
 // =============================================================================
 namespace Huginn {
     State::StateEvaluator* GetStateEvaluator();
-    Learning::FeatureBanditLearner* GetFeatureBanditLearner();
-    Learning::UsageMemory* GetUsageMemory();
 }

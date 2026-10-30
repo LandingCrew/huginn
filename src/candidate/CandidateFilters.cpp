@@ -19,8 +19,8 @@ namespace Huginn::Candidate
     // =========================================================================
     // Map Phase 6 item 1. Each test is a Core::Gate predicate (core/HardGates.h)
     // on facts Context::HardGateInputs read from the state, the same facts
-    // EvaluateRules raises the old weights by, so a gate drops exactly what the
-    // old context weight zeroed (WeightForCandidate's 0 arms) and what the
+    // the legacy context rules raise the old weights by, so a gate drops
+    // exactly what the old context weight zeroed (its 0 arms) and what the
     // Suppress skip in UtilityScorer used to skip. Run in the visitor after
     // full vitals and before the active-buff filters.
     // =========================================================================

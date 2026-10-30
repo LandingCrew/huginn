@@ -74,9 +74,9 @@ namespace Huginn::Spell
    // =========================================================================
    // SpellTag has all 32 bits spoken for, and that is the whole reason four
    // context weights sat computed-but-unread for as long as they existed.
-   // ContextRuleEngine raises unlockWeight, slowFallWeight, antiDragonWeight
-   // and waterbreathingWeight; DominantReason names them on the widget; and no
-   // candidate could draw on them because there was no bit left to match
+   // The old context rules raised unlockWeight, slowFallWeight, antiDragonWeight
+   // and waterbreathingWeight; the old reason label named them on the widget;
+   // and no candidate could draw on them because there was no bit left to match
    // against. The contexts fired, labelled themselves, and moved no ranking.
    //
    // A second field rather than widening SpellTag to uint64_t: ItemTagExt

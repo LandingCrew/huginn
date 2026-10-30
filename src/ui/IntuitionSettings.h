@@ -12,7 +12,7 @@ namespace Huginn::UI
     enum class DisplayMode : uint8_t {
         Minimal = 0,   // Name only (cleanest HUD)
         Normal  = 1,   // Name + contextual details (MP cost, damage, charge, count)
-        Verbose = 2    // Name + details + score breakdown (debug)
+        Verbose = 2    // Name + details + the score and its explanation term (R8.4; debug)
     };
 
     // =========================================================================

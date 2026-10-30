@@ -1,34 +1,15 @@
 #pragma once
 
-#include "apparel/ApparelData.h"   // Apparel::CraftSkill (#65)
 #include "state/PlayerActorState.h"
 #include "state/TargetActorState.h"
 #include "state/WorldState.h"
 #include "ContextWeightConfig.h"
-#include "ContextReason.h"
-#include "core/HardGates.h"   // R8.1: the hard gates read the same facts as the rules below
+#include "ContextFacts.h"   // R8.4: the facts the rules and the live filters share
 
 #include <algorithm>  // std::max (GetMaxWeight)
 
 namespace Huginn::Context
 {
-    // =============================================================================
-    // WORKSTATION -> CRAFT SKILL (#63/#65)
-    // =============================================================================
-    // The single case list mapping RE::TESFurniture::WorkBenchData::BenchType to
-    // the craft a bench fortifies. CraftSkill::None means "this furniture has a
-    // bench type, but not one that produces a fortify weight" — a modded bench
-    // outside the vanilla enum, or one of the cooking/other types.
-    //
-    // Two readers, deliberately sharing one list: EvaluateRules picks which
-    // fortify weight to raise, and PipelineCoordinator decides whether standing
-    // at this bench is worth defeating the hash skip for. Since R8.1 the list
-    // itself is Core::Gate::CraftOfBench (core/HardGates.h), which the
-    // no_workstation filter reads too. When those drifted, the
-    // coordinator kept the full pipeline running at 100 ms for benches that
-    // raised no weight at all.
-    [[nodiscard]] Apparel::CraftSkill CraftSkillForWorkstation(int32_t benchType) noexcept;
-
     // =============================================================================
     // CONTEXT WEIGHT MAP
     // =============================================================================
@@ -176,142 +157,24 @@ namespace Huginn::Context
             maxWeight = std::max(maxWeight, baseRelevanceWeight);
             return maxWeight;
         }
-
-        /**
-         * @brief Check if all weights are zero (no context).
-         */
-        /// constexpr so ReasonAppliesTo's one-hot probe can assert at compile
-        /// time that clearing baseRelevanceWeight really does zero the map.
-        [[nodiscard]] constexpr bool IsAllZero() const noexcept
-        {
-            return GetMaxWeight() < 0.001f;  // Epsilon for floating point comparison
-        }
     };
 
-    // =============================================================================
-    // REASON → WEIGHT FIELD
-    // =============================================================================
-    // Each weight-backed reason is derived from exactly one ContextWeightMap
-    // field. That pairing used to be implicit in DominantReason's Mark() calls;
-    // it is now named here because a second consumer needs it: the display asks
-    // "did THIS candidate draw weight from the field behind the tick's reason?"
-    // before letting the reason speak for a slot (Context::ReasonAppliesTo, #64).
-    //
-    // Single-sourcing matters more than the small indirection costs. If the two
-    // ever disagreed, a reason would fire off one field and be attributed off
-    // another — labels that are individually plausible and collectively wrong,
-    // which is precisely the failure #64 is about.
-    // =============================================================================
-
-    /// True when darknessWeight fires: dark, and the player has no way to see
-    /// yet -- no Night Eye, no light spell, no torch out. EvaluateRules, the
-    /// pipeline's skip gate and the torch gate (not_dark, R8.1) all read this,
-    /// so they cannot disagree.
-    [[nodiscard]] inline bool DarknessApplies(
-        const State::PlayerActorState& player, const State::WorldState& world) noexcept
-    {
-        return Core::Gate::DarknessApplies(world.isDark, player.buffs.hasNightEye,
-                                           player.buffs.hasLightSpell, player.hasTorchEquipped);
-    }
-
-    /// A living follower near: what followerPresent says, and so what gates a
-    /// spell for someone else (EvaluateRules and no_follower, R8.1).
-    [[nodiscard]] inline bool FollowerNear(const State::TargetCollection& targets) noexcept
-    {
-        return targets.GetFollowerCount() > 0;   // == !GetNearbyFollowers().empty(), without the copy
-    }
-
-    /// The craft whose fortify weight is up: the bench in the crosshair
-    /// (EvaluateRules and no_workstation, R8.1).
-    [[nodiscard]] inline Core::Gate::Craft StationCraft(const State::WorldState& world) noexcept
-    {
-        return Core::Gate::StationCraft(world.isLookingAtWorkstation, world.workstationType);
-    }
-
-    /// R8.1 (0.23.55): the facts the hard gates in CandidateFilters read, from
-    /// the same state and the same three functions EvaluateRules reads, so a
-    /// gate drops exactly what the old context weight zeroed. Never from a
-    /// ContextWeightMap: the filters run before scoring.
-    [[nodiscard]] inline Core::Gate::Inputs HardGateInputs(const State::PlayerActorState& player,
-        const State::TargetCollection& targets, const State::WorldState& world, bool suppressFavorites) noexcept
-    {
-        return Core::Gate::Inputs{
-            .followerNear = FollowerNear(targets),
-            .station = StationCraft(world),
-            .darknessApplies = DarknessApplies(player, world),
-            .suppressFavorites = suppressFavorites,
-        };
-    }
-
-    /// Survival need as a tier: 0 none, 1 half weight, 2 full weight.
-    /// Hunger: Hungry (3) is half, Famished (4) and worse full. Cold: Very Cold
-    /// (3) half, Freezing (4) and worse full. Shared by EvaluateRules and the
-    /// pipeline's skip gate, as DarknessApplies is.
-    ///
-    /// NOT silenced by a warming effect, though it was at first: a warm meal
-    /// drops the cold level itself within half a second, and LoreRim's
-    /// Warming Aura leaves a "Fortify Warmth" ability up for as long as it
-    /// runs -- the player froze from level 3 to 4 with it on and no prompt
-    /// (2026-09-29). The cold level is the signal. A running warming effect
-    /// only stops the warming SPELL being offered again (CandidateFilters).
-    [[nodiscard]] inline int HungerTier(const State::PlayerActorState& player) noexcept
-    {
-        if (!player.survivalModeActive) return 0;
-        if (player.hungerLevel >= State::SurvivalThreshold::HUNGER_FAMISHED) return 2;
-        if (player.hungerLevel >= State::SurvivalThreshold::HUNGER_HUNGRY) return 1;
-        return 0;
-    }
-
-    [[nodiscard]] inline int ColdTier(const State::PlayerActorState& player) noexcept
-    {
-        if (!player.survivalModeActive) return 0;
-        if (player.coldLevel >= State::SurvivalThreshold::COLD_FREEZING) return 2;
-        if (player.coldLevel >= State::SurvivalThreshold::COLD_VERY_COLD) return 1;
-        return 0;
-    }
-
-    /// Pointer-to-member for the weight a reason is read off.
-    using ReasonWeightField = float ContextWeightMap::*;
-
-    /// The field behind `reason`, or nullptr for reasons no weight backs:
-    /// None, and the two ContextReasonSignals facts (AllyInjured,
-    /// LookingAtOre) that nothing scores on.
-    [[nodiscard]] ReasonWeightField WeightFieldFor(ContextReason reason) noexcept;
+    // R8.4 (0.24.1): the reason derivation off this map (the dominant reason,
+    // its weight-field table, the per-slot attribution probe and the two
+    // label-only signals) is gone. The label reads each item's own
+    // explanation, the largest theta n cap term of its choice score
+    // (display/NeedReason.h, display/ExplanationLabel.h).
 
     // =============================================================================
-    // CONTEXT REASON SIGNALS
-    // =============================================================================
-    // Perceivable facts that DominantReason() reports but no scoring rule keys
-    // on, so they have no ContextWeightMap entry to read them off:
-    //   - injured follower: allyHealWeight exists since 2026-10-04 and drives
-    //     heals aimed at someone else; the label still reads this signal, so
-    //     the migration this comment asks for below is still to do
-    //   - ore vein: no mining weight exists
-    // Darkness used to be the third; it grew darknessWeight and left.
-    //
-    // They are passed in raw (not pre-thresholded) so every threshold in the
-    // reason vocabulary stays in one place — this file's implementation.
-    // If any of these ever grows a scoring rule, delete the field and read the
-    // weight instead.
-    //
-    // CAVEAT: having no weight also means having no INI knob. Every other reason
-    // can be tuned or silenced from [ContextWeights] (a rule at 0 never reports);
-    // these two always report at their hardcoded thresholds. That is the price
-    // of labelling a fact nothing scores on — and the reason to prefer adding a
-    // weight over adding a field here.
-    // =============================================================================
-
-    struct ContextReasonSignals
-    {
-        bool allyInjured = false;    // A follower is below the low-health threshold
-        bool lookingAtOre = false;   // Crosshair on an ore vein
-    };
-
-    // =============================================================================
-    // CONTEXT RULE ENGINE
+    // CONTEXT RULE ENGINE -- kept for D2 (R8.4 allowlist)
     // =============================================================================
     // Centralized context assessment engine that evaluates game state and produces
     // normalized [0,1] weights for each category.
+    //
+    // R8.3 / R8.4: nothing ranks on these weights. They feed only the legacy
+    // floors (fMinimumContextWeight, and the utility under fMinimumUtility),
+    // i.e. a binary gate on which rows get the choice score's ln learn mult
+    // (learning/legacy/LegacyLearnFeature.h), and the v3 log's old parts.
     //
     // REPLACES:
     // - CandidateGenerator::ComputeSpellRelevance() (old 0-10 scale)
@@ -365,28 +228,6 @@ namespace Huginn::Context
             const State::PlayerActorState& player,
             const State::TargetCollection& targets,
             const State::WorldState& world) const;
-
-        /**
-         * @brief Name the dominant reason the current context matters (#10).
-         *
-         * Reads the SAME ContextWeightMap the scorer consumes, so the display
-         * explanation and the utility ranking can never disagree: a reason is
-         * reported only while its weight is actually driving scoring. Threshold
-         * per category is derived from this engine's own config — vitals invert
-         * the smoothing curve (weight >= (1-pct)^exp is exactly "vital <= pct"),
-         * binary rules fire at half their configured weight, which also lets the
-         * resistance-scaled elemental rules go quiet for a resistant player.
-         *
-         * Returns the first reason in ContextReason order that clears its
-         * threshold, or ContextReason::None.
-         *
-         * @param weights Weight map from EvaluateRules() for THIS tick.
-         * @param signals Perceivable facts with no scoring weight of their own
-         *        (see ContextReasonSignals).
-         */
-        [[nodiscard]] ContextReason DominantReason(
-            const ContextWeightMap& weights,
-            const ContextReasonSignals& signals) const;
 
     private:
         State::ContextWeightConfig m_config;

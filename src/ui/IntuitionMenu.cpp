@@ -8,6 +8,8 @@
 #include "state/PlayerActorState.h"
 #include "weapon/WeaponData.h"
 #include "slot/SlotAllocator.h"
+#include "core/EffectColumns.h"   // Verbose: the explanation's column name (R8.4)
+#include "core/NeedIds.h"         // ... and need name
 
 #include <algorithm>
 #include <atomic>
@@ -787,13 +789,33 @@ namespace Huginn::UI
             }
         }
 
-        // === Verbose mode: append score breakdown ===
-        if (mode == DisplayMode::Verbose) {
-            const auto& b = scored.breakdown;
-            std::string scores = std::format("ctx:{:.1f} est:{:.1f} p:{:.1f}",
-                b.contextWeight, b.rewardEstimate, b.prior);
-            if (b.recencyBoost > 0.0f) {
-                scores += std::format(" rec:{:.1f}", b.recencyBoost);
+        // === Verbose mode: append the score and its explanation ===
+        // R8.4 (0.24.1): the choice score mu and the explanation term (the
+        // largest theta n cap term, need x column), or "learned" when no need
+        // term is positive; the old engine's context / estimate / prior
+        // breakdown is gone. An override shows no score (pinned); a row the
+        // Remembrance hold placed was never ranked (no score); the fallback
+        // ranking (no bootstrap) shows its s = ln u, labelled s, with no
+        // explanation.
+        if (mode == DisplayMode::Verbose && !assignment.IsOverride() && !scored.isRememberedOnly) {
+            const auto& t = scored.choice.top[0];
+            // The assignment's score, not the held candidate's. The two differ
+            // only on a pinned key refreshed from a ranked row: SlotLocker takes
+            // the whole row (this run's score with it) but keeps the pinned
+            // slot score. Elsewhere they are equal (a Remembrance-only row or
+            // the pre-filter lookup replaces only the item data). Display only.
+            const double s = assignment.score;
+            std::string scores;
+            if (scored.fallbackRanked) {
+                scores = std::format("s:{:+.1f} fallback", s);
+            } else if (t.need >= 0) {
+                const auto ni = static_cast<size_t>(t.need);
+                const auto ci = static_cast<size_t>(t.col);
+                scores = std::format("mu:{:+.1f} {}x{}", s,
+                    ni < Core::Needs::kNeedCount ? Core::Needs::kNeeds[ni].id : std::string_view("?"),
+                    ci < Core::Effect::kColumnCount ? Core::Effect::kColumns[ci].id : std::string_view("?"));
+            } else {
+                scores = std::format("mu:{:+.1f} learned", s);
             }
             if (!detail.empty()) {
                 detail += std::format(" \xC2\xB7 {}", scores);

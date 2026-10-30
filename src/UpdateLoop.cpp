@@ -15,7 +15,7 @@
 #include "learning/InventoryExitTracker.h"
 #include "learning/SelectionTracker.h"
 #include "learning/SelectionLogV3.h"
-#include "learning/FeatureBanditLearner.h"
+#include "learning/legacy/LegacyRun.h"   // the old learner's clock and sweep (D2, R8.4)
 #include "util/ScopedTimer.h"
 #include "util/InventoryUtil.h"
 #include "weapon/WeaponRegistry.h"
@@ -238,9 +238,9 @@ static void UpdateSubsystems(float deltaSeconds, float deltaMs)
         Huginn_ZONE_NAMED("UtilityScorer::Update");
         // Wildcard expiry: the exploration slot reverts to the ranked pick
         forcePipelineRun |= g_utilityScorer->Update(deltaSeconds);
-        // R8.1 (0.23.55): no combat transition to hand on. The
-        // PotionDiscriminator's own timer is gone; it reads the combat_onset
-        // clock (NeedSensorState::combatStartAt) through the pipeline.
+        // R8.1 (0.23.55): no combat transition to hand on. The legacy potion
+        // multiplier's own timer is gone; it reads the combat_onset clock
+        // (NeedSensorState::combatStartAt) through the pipeline.
     }
 
     {
@@ -690,10 +690,10 @@ void OnUpdate(float deltaSeconds)
     // The learner's play clock (memory with a useful life): loaded, unpaused
     // play only -- an open inventory or journal does not age what was learned.
     // deltaSeconds is already clamped to 1 s after an alt-tab.
-    if (g_featureBanditLearner) {
+    if (Scoring::Legacy::HasLearner()) {
         auto* ui = RE::UI::GetSingleton();
         if (ui && !ui->GameIsPaused()) {
-            g_featureBanditLearner->AdvancePlayTime(deltaSeconds);
+            Scoring::Legacy::AdvancePlayTime(deltaSeconds);
             // R8.2: the same play clock drives the new learner's b battery.
             if (g_choiceLearner) g_choiceLearner->AdvancePlayTime(deltaSeconds);
         }
@@ -701,7 +701,7 @@ void OnUpdate(float deltaSeconds)
     // Both forget sweeps run here, at most once a minute of play each. The old
     // learner's left UtilityScorer's legacy pass in R8.3, which does not run
     // with bLegacyLearnFeature off, so BNDW would grow while the switch is off.
-    if (g_featureBanditLearner) g_featureBanditLearner->MaybeForgetFaded();
+    Scoring::Legacy::MaybeForgetFaded();
     if (g_choiceLearner) g_choiceLearner->MaybeForgetFaded();
 
     float deltaMs = deltaSeconds * 1000.0f;

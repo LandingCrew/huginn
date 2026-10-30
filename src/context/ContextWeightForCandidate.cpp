@@ -145,8 +145,8 @@ namespace Huginn::Context
 
                 // Environmental (#79). These three, plus AntiDragon above, are
                 // why SpellTagExt exists: ContextRuleEngine has always computed
-                // their weights and DominantReason has always been willing to
-                // name them on the widget, but with SpellTag full there was no
+                // their weights and the old reason label was willing to name
+                // them on the widget, but with SpellTag full there was no
                 // bit for a candidate to match, so LookingAtLock, Falling and
                 // TargetDragon never moved a ranking in their lives.
                 //

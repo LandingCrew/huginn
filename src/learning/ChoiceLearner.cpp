@@ -66,14 +66,14 @@ namespace Huginn::Learning
 
         /// The extra features a logged row carries (format v1's list); the old
         /// engine's per-row multipliers (ln fav / corr / potion, ln learner) are
-        /// not in the row and read 0.
+        /// not in the row and read 0. R8.4: `ln util` reads 0 too (the build
+        /// refuses a weight on it, core/Bootstrap.cpp), as in the live ranking.
         C::Features RowFeatures(const DL::Row& r)
         {
             C::Features f{};
             const bool scored = std::isfinite(r.util);
             f[static_cast<std::size_t>(C::Feature::util_missing)] = scored ? 0.0 : 1.0;
             if (scored) {
-                f[static_cast<std::size_t>(C::Feature::ln_util)] = std::log(std::max(static_cast<double>(r.util), 1e-6));
                 if (std::isfinite(r.lm)) f[static_cast<std::size_t>(C::Feature::ln_learn_mult)] = r.lm;
             }
             if ((r.flags & DL::Flag::Shown) && r.slot >= 0 && r.slot < 8) {
@@ -174,7 +174,7 @@ namespace Huginn::Learning
         const double totalMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 
         // Features the file weighs that a logged row cannot supply (R8.2: lm,
-        // um, ln util, slot N and eligible are supplied).
+        // um, slot N and eligible are supplied; R8.4: ln util is refused, below).
         std::string unsupplied;
         for (const auto& [name, w] : read.doc->features) {
             if (name == "ln fav" || name == "ln corr" || name == "ln potion" || name == "ln learner") {
@@ -218,6 +218,10 @@ namespace Huginn::Learning
                                                                     : "when the save is that character",
             Core::Bootstrap::BiasModeName(settings.biasMode), d.sourceChar.empty() ? "several" : d.sourceChar,
             unsupplied.empty() ? "" : std::format("; WARNING: weighs {} which a row does not supply (read 0)", unsupplied));
+        if (rep.featuresRefused > 0) {
+            logger::warn("[Choice] The bootstrap weighs 'ln util': refused, read as 0 (R8.4: the old utility does not "
+                         "rank; D2 reads only 'ln learn mult' and 'util missing')"sv);
+        }
         if (C::WeighsSlots(m_bootModel)) {
             // core/ChoiceLive.h: a position is the allocation's output, so the
             // ranking cannot read it; only the logged mu and logit do.

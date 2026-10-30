@@ -153,12 +153,13 @@ namespace Huginn::Spell
 
       // A weapon coating carries the element of the damage it adds to the
       // WEAPON, and pairing that with type Buff is read downstream as a
-      // resistance spell: ContextWeightForCandidate promotes Buff+Fire when the
-      // player is burning, and the redundancy filter drops it once they have
-      // fire resistance. Flame Weapon would be offered as protection from fire
-      // and then suppressed for being redundant with it -- the same misread the
-      // cloak rule exists to stop, in a different archetype (12 spells carry an
-      // element here on LoreRim).
+      // resistance spell: the legacy context weight (ContextWeightForCandidate;
+      // since R8.3 only the D2 feature's floor gate, it ranks nothing) raises
+      // Buff+Fire when the player is burning, and the redundancy filter drops
+      // it once they have fire resistance. Flame Weapon would be offered as
+      // protection from fire and then suppressed for being redundant with it
+      // -- the same misread the cloak rule exists to stop, in a different
+      // archetype (12 spells carry an element here on LoreRim).
       //
       // Clearing the element rather than retyping the spell: it IS a buff, and
       // the element is the part that lies.
@@ -609,7 +610,9 @@ namespace Huginn::Spell
       // An elemental cloak is a Destruction damage aura wearing a self-cast
       // effect, and typing it Buff did real harm: the element survives into
       // ContextWeightForCandidate, where Buff + Fire reads as a FIRE RESISTANCE
-      // spell, so Flame Cloak was promoted when the player was burning. School
+      // spell, so Flame Cloak was promoted when the player was burning (the
+      // old engine ranked on that weight until R8.3; now it only gates which
+      // rows get the D2 feature, and a wrong type still misfiles it). School
       // is the honest test of what a cloak is for.
       case RE::EffectSetting::Archetype::kCloak:
       {
@@ -922,7 +925,7 @@ namespace Huginn::Spell
       // and Stealth — not because they are those things, but because that was
       // the only way to reach SpellType::Utility and ::Buff with no bit of
       // their own. Both now carry a real SpellTagExt and derive their type from
-      // it. The Stealth one had a live consequence: WeightForCandidate reads
+      // it. The Stealth one had a live consequence: the context weight reads
       // Stealth into stealthWeight, so every waterbreathing spell was ranked as
       // a sneaking tool (#79).
       if (contains("paralyze")) {

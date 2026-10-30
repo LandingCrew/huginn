@@ -76,9 +76,9 @@ namespace Huginn::Slot
                 held.candidate->candidate = *overrideCurrent;
             } else if (plan.scoredIndex && *plan.scoredIndex < scored.size()) {
                 const auto& sc = scored[*plan.scoredIndex];
-                if (plan.refreshUtility) {
-                    held.candidate = sc;
-                    held.utility = sc.utility;
+                if (plan.refreshRow) {
+                    held.candidate = sc;   // the whole row: data, parts and explanation (R8.4: the
+                                           // assignment no longer copies the old utility out)
                 } else {
                     held.candidate->candidate = sc.candidate;   // data only (a Remembrance-only row)
                 }
@@ -94,12 +94,12 @@ namespace Huginn::Slot
             if (plan.keepOverrideReason && base.overrideReason == Context::ContextReason::None) {
                 base.overrideReason = storedReason;
             }
-            // The explanation's reason (R8.3) is this run's, like the utility:
+            // The explanation's reason (R8.3) is this run's, like the score:
             // a key not refreshed from a ranked row this run (a Remembrance-only
             // row, the pre-filter data, an override's candidate, or nothing)
             // has none, so the label and UpdateContextReason cannot read the
             // situation of the tick it was locked on.
-            if (!plan.refreshUtility) {
+            if (!plan.refreshRow) {
                 held.candidate->explainedReason = Context::ContextReason::None;
             }
         }

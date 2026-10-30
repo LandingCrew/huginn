@@ -331,7 +331,7 @@ namespace Huginn::State
         m_isInCombat.store(newIsInCombat, std::memory_order_release);
         m_wasInCombat = newIsInCombat;
         // R3: the combat timers, on the same published transition. R8.1: the
-        // one combat clock -- combat_onset and the PotionDiscriminator read
+        // one combat clock -- combat_onset and the legacy potion multiplier read
         // combatStartAt (core/CombatOnset.h).
         const double nowSec = NeedClock::Now();
         UpdateNeedSensors([&](NeedSensorState& n) {

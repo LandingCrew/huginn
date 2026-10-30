@@ -601,7 +601,10 @@ Map Phase 4, in `tools/fit` (the scripts and their flags: [tools/fit/README.md](
     the old page showed, so they are biased toward A*, while menu picks are
     biased against it; pooling lets the two biases partly cancel.
   - Final test, after R8: `[Reach]` reach-ins per hour of play against the old
-    engine's baseline. R8 rolls back if it loses.
+    engine's baseline. R8 rolls back if it loses. The baseline (the October
+    soak, docs/playtest/Soak-2026-10-LoreRim.md): 92 reach-ins in 9.1 h, about
+    10 an hour, 1.1 to 20.8 per session and driven by the content (roads and
+    towns low, the dungeon session high), so compare like content.
 - **The rehearsal (2026-10-28, level 21; verified 2026-10-28, not the final
   fit).** Grouped 10-fold by launch over the mage's log. A* (the old ranking
   from the logged utilities): key/wheel hit@8 87.4%, menu 18.5% (82 of 443).
@@ -1059,6 +1062,184 @@ changed in the same PR, and the shipped INI loses the dead keys.
         to the bootstrap, `bLegacyLearnFeature = 0` through `hg reload` keeps the
         pages filled, a missing bootstrap ranks on the old utility, and the
         `[Soak]` `rate` field against the model below.
+- [x] **Step 6 of the order above, built in 0.24.1 (R8.4, the fourth and
+      last PR on `rewrite-r8`): the prune, SMALLER than the map's list on
+      purpose (the D2 deviation).** The map's Phase 6 item 6 lists what went
+      and what stayed ([9-implementation-map.md](architecture/9-implementation-map.md),
+      "As built (R8.4)").
+      - **Pruned, with every consumer:** the favourites rank scaling and
+        `fFavoritesBoostMin` (the uniform `fFavoritesBoostMax` multiplier stays
+        inside the legacy floors); the potion tier preference,
+        `sPotionTierPreference` and its 1.5 step; the old weights' reason (the
+        dominant reason, its weight-field table, the per-slot attribution and
+        its two label-only signals: `ContextReasonAttribution.*` and
+        `ContextRuleEngine_Reason.cpp` deleted); utility as a display value (the
+        Verbose display mode shows mu and the explanation term, the scorer
+        debug widget mu, sd, the top terms, b and lm, `[Reach]` prints the score
+        (`score=`, was `util=`), `[Recs]` the score alone; `SlotAssignment`
+        lost its utility copy); the debug widget's UsageMemory event buffer;
+        tools/replay's old learner (`Learner`, `Current`, `ChoiceTarget`,
+        `UsefulLife`: the v2 replay keeps the logged-utility and context-only
+        policies); the Debug suite's tests of pruned code (the rank-scaling
+        test; the reason derivation tests 17a-17h; what they checked of the
+        weights stays). The skip gate's ambient signature and elemental
+        window: R8.3 left no remnant (one local renamed). The shipped INI loses
+        `sPotionTierPreference` and `fFavoritesBoostMin`; no other `[Scoring]`
+        or `[ContextWeights]` key lost its only reader (each one checked by
+        grep), and the dMenu JSON holds none of them.
+      - **Kept for D2 (the allowlist).** R6 chose D2, which needs the old
+        learner's learning score on the rows the old floors pass, so these stay,
+        each used only to compute `ln learn mult` and `util missing` (and the
+        audit trail): FeatureBanditLearner, StateFeatures, BanditSubscriber and
+        the passed-over logic, UsageMemory and its subscriber; PriorCalculator,
+        CorrelationBooster, PotionDiscriminator::GetMultiplier;
+        ComputeAdaptiveLambda, ComputeUtility, the cold start; fMinimumUtility,
+        fMinimumContextWeight, fColdStartUCBBoost, iTopNCandidates (the cold
+        start only: the rank prefix `[Reach]` and the v2 / v3 logs report is
+        `PipelineStateCache::kReportedRankPrefix` = 10 since the R8.4 review),
+        fLambdaMin/Max, the exploration weight, the correlation keys and
+        `[ContextWeights]`; IsHardContextGated, ContextRuleEngine::EvaluateRules,
+        ContextWeightMap, WeightForCandidate; the Config.h learning constants;
+        BNDW; the v2 selection log and the v3 OldScore columns; `hg weights`,
+        `hg dump weights` and the dumps' train-count columns (`hg theta` comes
+        in R11).
+      - **Also kept, not for D2's feature (named here so the claim above is
+        exact):** the R8.3 FALLBACK ranking -- ln utility over the kept rows,
+        used only while the bootstrap is missing or invalid (an error line and
+        `hg status` say so) -- now `Legacy::Run::FallbackRanking` in the legacy
+        module, the one place utility still ranks; and the R7 bridge
+        (`ScoredCandidate::RankOnUtility`, `Core::BridgeScore`,
+        `Core::DisplayUtility`), which the fallback, the R7 golden snapshot
+        format, the Debug capture harness and the slot tests use to state slot
+        scores as utilities. `r8_check` confines both. Pruned in the review: the
+        choice score's `ln util` feature (computed live from the old utility,
+        off D2's path: the bootstrap reader now refuses a weight on it, read as
+        0, and warns), the widget's `confidence` payload (exp(score), never read
+        by AS2: now 0), `ScoredCandidate::GetContextWeight` and the
+        `Globals::GetFeatureBanditLearner` / `GetUsageMemory` accessors (no
+        callers).
+      - **Confinement, mechanical:** `tools/prune/r8_check.py` (standard
+        library): the PRUNED symbols appear nowhere in the code under `src/`,
+        `tools/` and `tests/` (comments included, Markdown excluded), nor the
+        pruned keys in the shipped INI, its templates or the dMenu JSON; the
+        LEGACY lines appear only in the allowlisted files, each with its reason
+        (the legacy module, the old learner's own files and subscribers,
+        BanditSerializer, the v2 selection log, `core/OldScore.h` and the v3
+        format, the settings loaders, the R7 snapshot format and capture
+        harness, the legacy host tests), or in a BUDGETED file within its
+        count, each line matching one of the file's allowed forms. A file that
+        ranks or does slot math live is never allowed whole (review 3:
+        `ScoredCandidate.h`, whose `operator<` and `SlotScore()` rank, and
+        `core/SlotScoreMath.h` had been), nor is a file on the live learner's
+        path (review 4: `ChoiceSubscriber` moved out of `EquipSubscribers.h`
+        to its own header, budget 0; `SelectionLogV3.cpp`, which builds the v3
+        rows the learner trains on, is budgeted). A LEGACY line names the old
+        engine's types, globals or config fields, the utility -> rank-score
+        bridge, the legacy module's facade (`Legacy::` / `Scoring::Legacy`, its
+        include, `ctx.legacy`, `FallbackRanking`, `KeptFor`, `RowFor`,
+        `OldScoreCapture`, ...), or reads the old utility's members (`.utility`,
+        `.breakdown` and its fields; C++ only) -- so utility cannot rank or
+        display again through a wrapper or a member read (review 2: the first
+        version listed only the inner names, and nine probes passed it;
+        review 3 added qualified reads, `X::utility`, and the cold-start flag
+        `isColdStartBoosted`; review 4 the old utility's row feature
+        `ln_util`, kept only on its enum line, the bootstrap's refusal and
+        that refusal's host test, and a REQUIRED check that the refusal itself
+        stays). A few words are LEGACY in one file only: a
+        bare `utility` / `breakdown` in `ScoredCandidate.h`'s code (an
+        accessor or comparator written on it) and `Suppress` in
+        `PipelineCoordinator.cpp` (its one read is the favorite_suppressed
+        filter's input). A STALE list fails comments that describe a pruned
+        behaviour as live (the display reason derived from the context
+        weights), and a missing shipped INI or dMenu JSON fails the INI-key
+        check instead of passing it unread.
+        Budgets, patterned: `PipelineCoordinator.cpp` 24 lines (the pass or its
+        skip, the switch, the fallback call, the old learner's weights-changed
+        latch, the D2 feature per candidate, the v2 / v3 log copies, the
+        filter's Suppress input, the Debug widget's cold-start count, five
+        comments) and its header 6; `ScoredCandidate.h` 9 (the old utility's
+        fields, the cold-start flag, `RankOnUtility`, three comments);
+        `core/SlotScoreMath.h` 2 (the bridge's two definitions); `UpdateLoop.cpp` 4 (the old learner's play
+        clock and forget sweep, which run with the switch off so BNDW ages);
+        `SoakMetrics.cpp` 2 (the `[Soak]` heartbeat's old-learner counts: the
+        soak's check that the forget sweep keeps BNDW bounded; reads only, off
+        the lm / um path); `UtilityScorer.cpp` 6 (only `[Recs]` lines logging
+        lm's inputs, the fallback's line and the `[COLD]` tag) and its header
+        0; `PipelineStateCache.h` 4 (the v2 log's cached rows);
+        `UtilityScorerDebugWidget.cpp` 1 (the cold-start badge);
+        `SlotSnapshot.cpp` 1 (`BuildAllocInput`, the live allocation's input:
+        the utility token it carries for the R7 capture and the host legacy
+        slot policy; no live core reads it); `SelectionLogV3.cpp` 10 (the v3
+        row's utility copy and the OldScore columns' learner fill);
+        `ChoiceSubscriber.h` 0; `core/ChoiceScore.h`, `core/Bootstrap.cpp` and
+        `BootstrapTests.cpp` 1 each (`ln_util`). Counted: ConsoleCommands, Main,
+        Globals, SettingsReloader and `Tests.cpp` on their R8.4 line counts, so
+        a new use anywhere in them fails. To get there the legacy half of UtilityScorer
+        (the pass, the per-candidate score, λ, the favourites helper and the
+        old learner, prior, correlation, potion and context-rule members) moved
+        to `learning/legacy/LegacyScorer.{h,cpp}` (`g_legacyScorer`, review
+        fix), the pipeline reads the pass through `learning/legacy/LegacyRun.h`
+        (`Legacy::Run`: the kept rows, the floors' rows, the row each candidate
+        reads (pure since the review, host-tested in `LegacyRunTests`), the
+        weights, the fallback ranking; `Legacy::OldScoreCapture`: the v3
+        OldScore columns, moved unchanged from `CaptureEligible`; the old
+        learner's clock, forget sweep, counts and weights-changed latch), and
+        the facts the live filters and the skip gate share with the context
+        rules moved to `context/ContextFacts.h`. `tools/prune/test_r8_check.py`
+        runs 43 mutation probes in memory, each of which must fail the check
+        (review 4 added: `ln util` back in the learner's RowFeatures or in
+        RankOnChoice, the bootstrap's refusal dropped (two ways), the v3 row's
+        lm taken from the old utility, the old learner read in
+        ChoiceSubscriber, the alloc input's score taken from the old utility;
+        review 3 added: utility ranking again through `operator<` or
+        `SlotScore()`, an accessor on the bare utility, a bridge call in the
+        slot math, the stale reason comment back, a pointer to the old
+        utility, the cold-start flag or a Suppress skip in RankOnChoice, and
+        a missing INI or dMenu JSON; the earlier set:
+        utility ranking again in the pipeline (`sc.score = log(sc.utility)`),
+        an `ln util` feature in RankOnChoice, the Verbose breakdown back in
+        IntuitionMenu, `utility * contextWeight` in UtilityScorer, a facade
+        call from SoakMetrics, a display backend or a `using namespace`, a
+        changed allowed form, a breakdown read in SlotLocker, an old learner
+        call in UtilityScorer, a `topNCandidates` or `lambdaMax` read, a
+        `RankOnUtility` call or a dead accessor in the pipeline, a legacy
+        global in a console command or test, `DisplayUtility` in the HUD menu,
+        `g_legacyScorer` in a display backend, a pruned symbol (the tier
+        preference, a Suppress branch, the discriminator's timer, the
+        elemental window) and a pruned INI key). PRUNED also covers what R8.1
+        pruned that has a name (the potion multiplier's own combat timer:
+        `OnCombatStart` / `OnCombatEnd` / `ConsumeCombatTransition`, and its
+        members scoped to PotionDiscriminator) and `Suppress` in
+        UtilityScorer; the R8.1 Suppress skips had no name of their own, and
+        `FavoritesMode::Suppress` stays (the INI mode, the filter's input, and
+        the legacy scorer's fav = 0 arm that keeps a filter drop's v3 OldScore
+        columns as they were). Stale comments in surviving code that named
+        the old engine were edited (the classifiers, GameState.h,
+        CandidateGenerator, WeaponData.h and about 30 other files).
+      - **Behaviour against 0.24.0:** none in the ranking (the pruned steps were
+        already uncalled since R8.3; `ln util` had weight 0 in the shipped
+        bootstrap; the rank prefix constant equals the shipped
+        `iTopNCandidates`). Visible: the Verbose mode's detail text (`mu:`, or
+        `s:` in the fallback, none on a row only the Remembrance hold placed),
+        the debug widget, `[Reach]`'s `score=` field, `[Recs]` without the old
+        utility (with `detail`, lm's inputs), and the v3 head's `favMin` now
+        equals `favMax` (the multiplier is uniform). `[Soak]`, the cosave and
+        the v2 log are unchanged.
+      - **Retirement condition for the allowlist:** a refit on 0.23.53+ logs
+        (the v3 rows log the old learner on every row) where a variant without
+        the old scorer passes R6's gate -- L1 / L7 with fresh per-row learner
+        columns, or θ + b + recent with more data -- or the user's call. Then
+        the LEGACY list in `r8_check.py` becomes PRUNED, BNDW gives way to
+        THTA/BIAS, and the map's full Phase 6 list goes.
+      - **Box status at R8.4:** steps 1-6 built ([x] above); the need signature
+        in the skip gate [x]; doc 11 step 7 [ ] (not R8's code: the sensors are
+        still to build); the update-loop thread [ ] (undecided, not blocking);
+        the "Done when" below: mechanical part met (r8_check, both builds, the
+        host tests), the in-game part open; the cure, churn and reach checks
+        [ ] (the in-game session after this PR).
+      - **In game (you):** the R8 session below -- the R6 bootstrap on the mage;
+        cures, potions and gear; the churn, reach and rate comparisons; a
+        save/reload; `bLegacyLearnFeature = 0` for a few minutes.
 - [ ] With those sensors, doc 11 step 7: the attacker's race on every hit and
       `poison_damage_rate`, for anticipatory resists.
 - [ ] **Decide: which thread runs the update loop** (2026-10-09, two Tracy
@@ -1127,6 +1308,11 @@ changed in the same PR, and the shipped INI loses the dead keys.
   term, the scorer reproduces R6's replay numbers on the logged data.
   **In game (you):** a session on the R6 bootstrap; cures, potions and gear
   rechecked (the old "cures reach the page" checks move here).
+  *R8.4 (0.24.1): the mechanical part is met -- `python -I
+  tools/prune/r8_check.py` passes (the grep, with D2's allowlist for what R8
+  keeps), Debug and Release build at /W4 /WX, the host tests are green and the
+  replay on the mage's 1,865 logged decisions is unchanged; the in-game part
+  is open.*
 - [ ] **In game (you): a cure reaches the page while poisoned.** Accept when,
       while `poisoned` is on and a cure-poison item is held, the new engine
       shows it on the displayed page within one tick and keeps it for the
@@ -1182,7 +1368,13 @@ changed in the same PR, and the shipped INI loses the dead keys.
       swings. R7's hold tie band was checked and is refuted as a cause. The
       new scorer reads cap(i), where that food is `fortify_vital_magicka`
       (0.23.16 fixture), and a continuous need replaces the tier flips; the
-      lock and the challenger rule are R9.
+      lock and the challenger rule are R9. **Accept (proposed at R8.4, the
+      user's call):** read from `[SlotChurn]` and the heartbeat, not worse
+      than the baseline on like content -- at most 6 a minute outdoors, at most
+      40.7 a minute in combat, a session median at most 7.2 a minute, and no
+      5-minute window above 141. Worse is not a rollback by itself (the
+      ranking is reach-ins' test); it goes to R9 as the challenger rule's
+      starting number.
 
 ### R9. Bayesian challenger rule
 

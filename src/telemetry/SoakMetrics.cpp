@@ -4,7 +4,7 @@
 #include "Globals.h"
 #include "Profiling.h"
 #include "learning/ChoiceLearner.h"
-#include "learning/FeatureBanditLearner.h"
+#include "learning/legacy/LegacyRun.h"   // the old learner's counts (D2, R8.4)
 
 #include <algorithm>
 #include <format>
@@ -320,14 +320,11 @@ namespace Huginn::Telemetry
         const float avgMs  = ticks ? (static_cast<float>(sumMicros) / 1000.0f / ticks) : 0.0f;
         const float peakMs = static_cast<float>(peakMicros) / 1000.0f;
 
-        std::size_t learnerItems = 0;
-        uint32_t learnerTrains = 0;
-        uint64_t learnerForgot = 0;
-        if (g_featureBanditLearner) {
-            learnerItems  = g_featureBanditLearner->GetItemCount();
-            learnerTrains = g_featureBanditLearner->GetTotalTrainCount();
-            learnerForgot = g_featureBanditLearner->GetForgottenTotal();
-        }
+        // The old learner (kept for D2's ln learn mult; BNDW).
+        const auto oldLearner = Scoring::Legacy::Counts();
+        const std::size_t learnerItems = oldLearner.items;
+        const uint32_t learnerTrains = oldLearner.trains;
+        const uint64_t learnerForgot = oldLearner.forgot;
         // R8.3: the choice learner beside the old one (theta entries moved
         // from the bootstrap / all keyed entries, b items), or "off" in the
         // fallback ranking.

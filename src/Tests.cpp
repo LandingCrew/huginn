@@ -23,6 +23,8 @@
 #include "learning/EquipSubscribers.h"
 #include "learning/EquipSourceTracker.h"
 #include "learning/UsageMemory.h"
+#include "learning/PriorCalculator.h"      // the legacy score parts (R8.4: no longer via UtilityScorer.h)
+#include "learning/CorrelationBooster.h"
 #include "util/ScopedTimer.h"
 #include "util/NameMatch.h"
 #include "context/ContextRuleEngine.h"
@@ -254,35 +256,9 @@ void RunMultiplicativeScoringTests()
             utility, contextWeight, lambda, learningScore, correlationBonus);
     }
 
-    // =========================================================================
-    // Test 6: Favorites boost scales with rank (max → min across the cohort)
-    // =========================================================================
-    {
-        logger::info("  Test 6: Favorites boost scales with rank..."sv);
-
-        Scoring::ScorerConfig cfg{};  // favoritesMode=Boost, min=1.3, max=2.5
-
-        // Rank 0 of N gets max; last rank gets min; midpoint is halfway.
-        bool ok =
-            std::abs(cfg.GetFavoritesMultiplier(0, 5) - cfg.favoritesBoostMax) < 0.001f &&
-            std::abs(cfg.GetFavoritesMultiplier(4, 5) - cfg.favoritesBoostMin) < 0.001f &&
-            std::abs(cfg.GetFavoritesMultiplier(2, 5) -
-                (cfg.favoritesBoostMax + cfg.favoritesBoostMin) * 0.5f) < 0.001f &&
-            // Single favorite: rank 0 of 1 gets max.
-            std::abs(cfg.GetFavoritesMultiplier(0, 1) - cfg.favoritesBoostMax) < 0.001f &&
-            // Degenerate/disabled cases are neutral.
-            std::abs(cfg.GetFavoritesMultiplier(0, 0) - 1.0f) < 0.001f;
-
-        cfg.favoritesMode = Scoring::FavoritesMode::Off;
-        ok = ok && std::abs(cfg.GetFavoritesMultiplier(0, 5) - 1.0f) < 0.001f;
-
-        if (!ok) {
-            logger::error("TEST FAIL: Favorites rank scaling should interpolate max→min by rank"sv);
-            return;
-        }
-        logger::info("  ✓ Favorites rank scaling: rank 0 → ×{:.1f}, last rank → ×{:.1f}"sv,
-            Scoring::ScorerConfig{}.favoritesBoostMax, Scoring::ScorerConfig{}.favoritesBoostMin);
-    }
+    // Test 6 (favourites boost scaled by rank) went with the rank scaling in
+    // R8.4 (0.24.1): the legacy utility's favourites multiplier is the
+    // uniform fFavoritesBoostMax.
 
     logger::info("TEST PASS: All multiplicative scoring formula tests passed!"sv);
 #endif
@@ -2778,20 +2754,15 @@ void RunUnitTests()
                 return;
             }
 
-            // And the reason must stay quiet for a shallow drop, so it cannot
-            // outrank a live combat reason for a tick (the observed harm).
+            // A shallow drop stays under half weight. (Before R8.4 this was
+            // "the Falling reason stays quiet", read off the weight at half
+            // the configured value; the reason derivation is gone, the ramp
+            // it relied on is what is left to test.)
             State::PlayerActorState shallow{};
             shallow.isFalling = true;
             shallow.fallDepth = State::PhysicsConstants::FALL_DEPTH_MIN + 1.0f;
-            const auto shallowWeights = engine.EvaluateRules(shallow, testTargets, testWorld);
-            if (engine.DominantReason(shallowWeights, {}) == Context::ContextReason::Falling) {
-                logger::error("TEST FAIL: a shallow drop must not report Falling");
-                return;
-            }
-            if (engine.DominantReason(
-                    engine.EvaluateRules(deepFall, testTargets, testWorld), {}) !=
-                Context::ContextReason::Falling) {
-                logger::error("TEST FAIL: a deep fall should report Falling");
+            if (engine.EvaluateRules(shallow, testTargets, testWorld).slowFallWeight >= 0.4f) {
+                logger::error("TEST FAIL: a shallow drop must stay under half the fall weight");
                 return;
             }
         }
@@ -4061,7 +4032,7 @@ void RunUnitTests()
             smithingPotion.combatSkill = Item::CombatSkill::Smithing;
             smithingPotion.name = "Fortify Smithing Potion";
 
-            // Extract weight using UtilityScorer's GetContextWeight logic
+            // Extract the weight as Context::WeightForCandidate does
             float weight = 0.0f;
             if (Item::HasTag(smithingPotion.tags, Item::ItemTag::FortifyCombatSkill)) {
                 if (smithingPotion.combatSkill == Item::CombatSkill::Smithing) {
@@ -4685,168 +4656,30 @@ void RunUnitTests()
             "B back at n {:.2f}, A forgotten at 14h)"sv, rA, rB, nB);
     }
 
-    // Test 17: ContextReason derivation (architecture-critique #10) — the display
-    // explanation is read off the SAME weight map that ranks candidates, so the
-    // reported boundaries must match the vital thresholds and the suppressions.
+    // Test 17: the explanation label, and the context weights the legacy
+    // floors read. R8.4 (0.24.1): the reason derived off the weight map (the
+    // dominant reason and its thresholds, suppressions and priority: 17a-17h
+    // before) is gone with it; the label reads each item's own explanation,
+    // whose need -> reason mapping is host-tested (tests/core/
+    // ChoiceCutoverTests.cpp, ExplainedReason). What stays here: the weights a
+    // torch and survival food draw (the D2 feature's floors), the not_dark
+    // filter, and the label ladder (17i-17k).
     {
-        logger::info("TEST: ContextReason derived from context weights..."sv);
+        logger::info("TEST: explanation label and context weights..."sv);
 
-        // Pinned to DEFAULT config, not settings.BuildConfig(): these assertions
-        // are about the derivation, and the live INI can legitimately zero a
-        // weight (a rule at 0 never reports — that is a documented feature of
-        // Fires()), which would fail the test for a correct build.
+        // Pinned to DEFAULT config, not settings.BuildConfig(): the live INI
+        // can legitimately zero a weight, which would fail the test for a
+        // correct build.
         Context::ContextRuleEngine engine(State::ContextWeightConfig{});
 
-        const Context::ContextReasonSignals kNoSignals{};
-
-        // Helper: evaluate + name the reason in one step
-        const auto reasonFor = [&](const State::PlayerActorState& player,
-                                   const State::TargetCollection& targets,
-                                   const State::WorldState& world,
-                                   const Context::ContextReasonSignals& signals) {
-            return engine.DominantReason(engine.EvaluateRules(player, targets, world), signals);
-        };
-
-        // 17a: Vital bands land exactly on the old thresholds (15% / 30% HP)
-        {
-            State::TargetCollection targets{};
-            State::WorldState world{};
-
-            State::PlayerActorState healthy{};
-            healthy.vitals.health = 0.9f;
-            if (reasonFor(healthy, targets, world, kNoSignals) != Context::ContextReason::None) {
-                logger::error("TEST FAIL: 90%% HP should report no reason");
-                return;
-            }
-
-            State::PlayerActorState low{};
-            low.vitals.health = 0.25f;  // below LOW (0.30), above CRITICAL (0.15)
-            if (reasonFor(low, targets, world, kNoSignals) != Context::ContextReason::LowHealth) {
-                logger::error("TEST FAIL: 25%% HP should report LowHealth");
-                return;
-            }
-
-            State::PlayerActorState critical{};
-            critical.vitals.health = 0.10f;
-            if (reasonFor(critical, targets, world, kNoSignals) != Context::ContextReason::CriticalHealth) {
-                logger::error("TEST FAIL: 10%% HP should report CriticalHealth");
-                return;
-            }
-
-            // Just inside the LOW threshold — the curve inversion must not drift
-            State::PlayerActorState edge{};
-            edge.vitals.health = 0.299f;
-            if (reasonFor(edge, targets, world, kNoSignals) != Context::ContextReason::LowHealth) {
-                logger::error("TEST FAIL: 29.9%% HP should report LowHealth (threshold drift)");
-                return;
-            }
-            State::PlayerActorState justAbove{};
-            justAbove.vitals.health = 0.301f;
-            if (reasonFor(justAbove, targets, world, kNoSignals) == Context::ContextReason::LowHealth) {
-                logger::error("TEST FAIL: 30.1%% HP must not report LowHealth (threshold drift)");
-                return;
-            }
-
-            // Magicka and stamina invert DIFFERENT exponents (stamina defaults to
-            // 1.5, not 2.0), so the HP cases above do not cover them.
-            State::PlayerActorState lowMagicka{};
-            lowMagicka.vitals.magicka = 0.299f;
-            if (reasonFor(lowMagicka, targets, world, kNoSignals) != Context::ContextReason::LowMagicka) {
-                logger::error("TEST FAIL: 29.9%% MP should report LowMagicka");
-                return;
-            }
-            State::PlayerActorState okMagicka{};
-            okMagicka.vitals.magicka = 0.301f;
-            if (reasonFor(okMagicka, targets, world, kNoSignals) == Context::ContextReason::LowMagicka) {
-                logger::error("TEST FAIL: 30.1%% MP must not report LowMagicka (threshold drift)");
-                return;
-            }
-
-            State::PlayerActorState lowStamina{};
-            lowStamina.vitals.stamina = 0.299f;
-            if (reasonFor(lowStamina, targets, world, kNoSignals) != Context::ContextReason::LowStamina) {
-                logger::error("TEST FAIL: 29.9%% SP should report LowStamina");
-                return;
-            }
-            State::PlayerActorState okStamina{};
-            okStamina.vitals.stamina = 0.301f;
-            if (reasonFor(okStamina, targets, world, kNoSignals) == Context::ContextReason::LowStamina) {
-                logger::error("TEST FAIL: 30.1%% SP must not report LowStamina (threshold drift)");
-                return;
-            }
-        }
-
-        // 17b: Suppressions the old threshold pass ignored — an already-active
-        // buff means the context isn't driving scoring, so it isn't a reason
-        {
-            State::TargetCollection targets{};
-            State::WorldState world{};
-
-            State::PlayerActorState drowning{};
-            drowning.isUnderwater = true;
-            if (reasonFor(drowning, targets, world, kNoSignals) != Context::ContextReason::Underwater) {
-                logger::error("TEST FAIL: underwater should report Underwater");
-                return;
-            }
-
-            State::PlayerActorState breathing{};
-            breathing.isUnderwater = true;
-            breathing.buffs.hasWaterBreathing = true;
-            if (reasonFor(breathing, targets, world, kNoSignals) == Context::ContextReason::Underwater) {
-                logger::error("TEST FAIL: waterbreathing active must suppress the Underwater reason");
-                return;
-            }
-        }
-
-        // 17c: Elemental reasons scale with resistance (binary rules fire at
-        // half their configured weight)
-        {
-            State::TargetCollection targets{};
-            State::WorldState world{};
-
-            State::PlayerActorState burning{};
-            burning.effects.isOnFire = true;
-            if (reasonFor(burning, targets, world, kNoSignals) != Context::ContextReason::OnFire) {
-                logger::error("TEST FAIL: taking fire damage should report OnFire");
-                return;
-            }
-
-            State::PlayerActorState fireproof{};
-            fireproof.effects.isOnFire = true;
-            fireproof.resistances.fire = 80.0f;  // 80% resist → weight scaled to 0.2×
-            if (reasonFor(fireproof, targets, world, kNoSignals) == Context::ContextReason::OnFire) {
-                logger::error("TEST FAIL: 80%% fire resist must suppress the OnFire reason");
-                return;
-            }
-        }
-
-        // 17d: Priority — a more urgent reason wins over a co-occurring one
-        {
-            State::TargetCollection targets{};
-            State::WorldState world{};
-            State::PlayerActorState player{};
-            player.vitals.health = 0.10f;  // Critical
-            player.isSneaking = true;      // also true, lower priority
-
-            if (reasonFor(player, targets, world, kNoSignals) != Context::ContextReason::CriticalHealth) {
-                logger::error("TEST FAIL: CriticalHealth must outrank Sneaking");
-                return;
-            }
-        }
-
-        // 17e: Darkness is weight-backed now (darknessWeight), and goes quiet
-        // once the player can see; AllyInjured is still a label-only signal.
+        // 17e: Darkness: a torch draws darknessWeight in the dark and nothing
+        // in daylight, and the not_dark filter drops it there.
         {
             State::TargetCollection targets{};
             State::WorldState dark{};
             dark.lightLevel = 0.1f;
             dark.isDark = true;
             State::PlayerActorState player{};
-
-            if (reasonFor(player, targets, dark, kNoSignals) != Context::ContextReason::InDarkness) {
-                logger::error("TEST FAIL: low light should report InDarkness");
-                return;
-            }
 
             // A torch draws darkness and nothing else: the dark weight in a
             // cave, exactly 0 in daylight (no baseline), and it is hard-gated
@@ -4880,57 +4713,38 @@ void RunUnitTests()
                 }
             }
 
+            // Night Eye up, or a torch out, zeroes the dark weight
+            // (DarknessApplies).
             State::PlayerActorState seeing = player;
             seeing.buffs.hasNightEye = true;
-            if (reasonFor(seeing, targets, dark, kNoSignals) == Context::ContextReason::InDarkness) {
-                logger::error("TEST FAIL: Night Eye up must silence InDarkness");
-                return;
-            }
             State::PlayerActorState torch = player;
             torch.hasTorchEquipped = true;
-            if (reasonFor(torch, targets, dark, kNoSignals) == Context::ContextReason::InDarkness) {
-                logger::error("TEST FAIL: a torch out must silence InDarkness");
-                return;
-            }
-
-            Context::ContextReasonSignals ally{};
-            ally.allyInjured = true;  // InDarkness is lower priority
-            if (reasonFor(player, targets, dark, ally) != Context::ContextReason::AllyInjured) {
-                logger::error("TEST FAIL: AllyInjured must outrank InDarkness");
+            if (engine.EvaluateRules(seeing, targets, dark).darknessWeight != 0.0f ||
+                engine.EvaluateRules(torch, targets, dark).darknessWeight != 0.0f) {
+                logger::error("TEST FAIL: Night Eye or a torch out must zero darknessWeight");
                 return;
             }
         }
 
-        // 17e2: Survival. Hunger and cold report from their first costly stage;
-        // a warming effect silences cold; survival off silences both.
+        // 17e2: Survival. Cold weighs in when freezing, a warming effect does
+        // not silence it (the cold level is the signal: LoreRim's aura is a
+        // long-lived ability), survival off does; alcohol is no meal by
+        // default, a warm stew answers the cold.
         {
             State::TargetCollection targets{};
             State::WorldState world{};
             State::PlayerActorState player{};
             player.survivalModeActive = true;
-            player.hungerLevel = State::SurvivalThreshold::HUNGER_HUNGRY;
-            if (reasonFor(player, targets, world, kNoSignals) != Context::ContextReason::Hungry) {
-                logger::error("TEST FAIL: Hungry should report Hungry");
-                return;
-            }
             player.hungerLevel = State::SurvivalThreshold::HUNGER_PECKISH;
             player.coldLevel = State::SurvivalThreshold::COLD_FREEZING;
-            if (reasonFor(player, targets, world, kNoSignals) != Context::ContextReason::Cold) {
-                logger::error("TEST FAIL: Freezing should report Cold");
-                return;
-            }
-            // A warming effect does NOT silence Cold: the cold level is the
-            // signal (LoreRim's aura is a long-lived ability).
             State::PlayerActorState warmed = player;
             warmed.buffs.hasWarmingEffect = true;
-            if (reasonFor(warmed, targets, world, kNoSignals) != Context::ContextReason::Cold) {
-                logger::error("TEST FAIL: Freezing with a warming effect should still report Cold");
-                return;
-            }
             State::PlayerActorState off = player;
             off.survivalModeActive = false;
-            if (reasonFor(off, targets, world, kNoSignals) == Context::ContextReason::Cold) {
-                logger::error("TEST FAIL: survival off must silence Cold");
+            if (engine.EvaluateRules(player, targets, world).coldWeight <= 0.0f ||
+                engine.EvaluateRules(warmed, targets, world).coldWeight <= 0.0f ||
+                engine.EvaluateRules(off, targets, world).coldWeight != 0.0f) {
+                logger::error("TEST FAIL: coldWeight should be up when freezing (warmed too) and 0 with survival off");
                 return;
             }
             const auto weights = engine.EvaluateRules(player, targets, world);
@@ -4952,81 +4766,6 @@ void RunUnitTests()
             if (Context::WeightForCandidate(stew, weights) < weights.coldWeight - 0.001f ||
                 weights.coldWeight <= 0.0f) {
                 logger::error("TEST FAIL: a warm stew should draw coldWeight when freezing");
-                return;
-            }
-        }
-
-        // 17f: Ambient combat weights are deliberately NOT reasons — otherwise
-        // every fight would relabel every slot "In Combat"
-        {
-            State::TargetCollection targets{};
-            State::WorldState world{};
-            State::PlayerActorState fighting{};
-            fighting.isInCombat = true;
-
-            if (reasonFor(fighting, targets, world, kNoSignals) != Context::ContextReason::None) {
-                logger::error("TEST FAIL: plain in-combat state must not produce a reason");
-                return;
-            }
-        }
-
-        // 17g: Workstation reasons report, but rank BELOW anything hurting you
-        {
-            State::TargetCollection targets{};
-            State::PlayerActorState player{};
-
-            State::WorldState forge{};
-            forge.isLookingAtWorkstation = true;
-            forge.workstationType = 1;  // kCreateObject
-            if (reasonFor(player, targets, forge, kNoSignals) != Context::ContextReason::AtForge) {
-                logger::error("TEST FAIL: crosshair on a forge should report AtForge");
-                return;
-            }
-
-            State::WorldState alchemy{};
-            alchemy.isLookingAtWorkstation = true;
-            alchemy.workstationType = 5;  // kAlchemy
-            if (reasonFor(player, targets, alchemy, kNoSignals) != Context::ContextReason::AtAlchemy) {
-                logger::error("TEST FAIL: crosshair on an alchemy lab should report AtAlchemy");
-                return;
-            }
-
-            // Standing at a forge while bleeding out must still say Low HP —
-            // crafting stations are ambient, not urgent
-            State::PlayerActorState hurt{};
-            hurt.vitals.health = 0.25f;
-            if (reasonFor(hurt, targets, forge, kNoSignals) != Context::ContextReason::LowHealth) {
-                logger::error("TEST FAIL: LowHealth must outrank AtForge");
-                return;
-            }
-        }
-
-        // 17h: Equipment reasons (weapon charge inverts its own curve; ammo is binary)
-        {
-            State::TargetCollection targets{};
-            State::WorldState world{};
-
-            State::PlayerActorState drained{};
-            drained.hasEnchantedWeapon = true;
-            drained.weaponChargePercent = 0.10f;
-            if (reasonFor(drained, targets, world, kNoSignals) != Context::ContextReason::WeaponLowCharge) {
-                logger::error("TEST FAIL: 10%% weapon charge should report WeaponLowCharge");
-                return;
-            }
-
-            // No enchanted weapon → no charge weight → no phantom label
-            State::PlayerActorState plain{};
-            plain.weaponChargePercent = 0.10f;
-            if (reasonFor(plain, targets, world, kNoSignals) == Context::ContextReason::WeaponLowCharge) {
-                logger::error("TEST FAIL: unenchanted weapon must not report WeaponLowCharge");
-                return;
-            }
-
-            State::PlayerActorState dry{};
-            dry.hasBowEquipped = true;
-            dry.arrowCount = 0;
-            if (reasonFor(dry, targets, world, kNoSignals) != Context::ContextReason::NeedsAmmo) {
-                logger::error("TEST FAIL: bow with no arrows should report NeedsAmmo");
                 return;
             }
         }
@@ -5099,7 +4838,7 @@ void RunUnitTests()
         // (#64). R8.3: "explains" = the item's own explanation (the largest
         // theta n cap term of its score, ScoredCandidate::explainedReason),
         // which the ranking sets; here each case states it. Before R8.3 the
-        // test derived it from the context weights (ReasonAppliesTo).
+        // test derived it from the context weights.
         {
             const auto labelFor = [](Candidate::CandidateVariant candidate,
                                      Context::ContextReason reason,
@@ -5142,9 +4881,8 @@ void RunUnitTests()
                 return;
             }
 
-            // Every candidate type gets its own mapping in WeightForCandidate,
-            // so each needs a positive case — an ItemCandidate-only suite would
-            // miss a regression in the spell, scroll or ammo arm.
+            // Every candidate type gets a positive case — an ItemCandidate-only
+            // suite would miss a regression in the spell, scroll or ammo arm.
             Candidate::SpellCandidate healingCase{};
             healingCase.name = "Healing";
             healingCase.tags = Spell::SpellTag::RestoreHealth;
@@ -5208,17 +4946,13 @@ void RunUnitTests()
                 return;
             }
 
-            // Signal-only reasons back no weight, so they can attribute nothing.
-            // `Ore Vein(Green Apple)` is the reported instance.
+            // A reason no explanation names attributes nothing (R8.4: no need
+            // maps to these two, display/NeedReason.h). `Ore Vein(Green Apple)`
+            // is the reported instance.
             Candidate::ItemCandidate apple{};
             apple.name = "Green Apple";
             for (const auto reason : {Context::ContextReason::LookingAtOre,
                                       Context::ContextReason::AllyInjured}) {
-                if (Context::WeightFieldFor(reason) != nullptr) {
-                    logger::error("TEST FAIL: signal-only reason {} gained a weight field",
-                        static_cast<int>(reason));
-                    return;
-                }
                 if (const auto label = labelFor(apple, reason); !label.empty()) {
                     logger::error("TEST FAIL: signal-only reason labelled an apple, got '{}'", label);
                     return;
@@ -5238,7 +4972,7 @@ void RunUnitTests()
             }
         }
 
-        logger::info("TEST PASS: ContextReason derivation (thresholds, suppression, priority)"sv);
+        logger::info("TEST PASS: explanation label and context weights (torch, survival, ladder)"sv);
     }
 
     // =========================================================================
@@ -5570,7 +5304,7 @@ void RunRegressionTests()
         healingWardSpell.tags = Spell::SpellTag::RestoreHealth | Spell::SpellTag::Ward;
         healingWardSpell.name = "Healing Ward (multi-tag test)";
 
-        // Simulate GetContextWeight logic with max() accumulation
+        // Simulate the per-candidate weight lookup with max() accumulation
         float contextWeight = weights.baseRelevanceWeight;
         if (Spell::HasTag(healingWardSpell.tags, Spell::SpellTag::RestoreHealth)) {
             contextWeight = std::max(contextWeight, weights.healingWeight);

@@ -45,7 +45,14 @@ namespace Huginn::Learning
             return instance;
         }
 
-        // Sentinel rank for candidates beyond the reported prefix (iTopNCandidates).
+        // How many leading rows of the ranked list get a reported rank (the
+        // [Reach] attribution's near / far miss, the rank column of the v2 and
+        // v3 logs). R8.4: a constant of its own, 10 -- what iTopNCandidates
+        // (default and shipped value) gave it before -- so the legacy floors'
+        // key no longer sets it.
+        static constexpr size_t kReportedRankPrefix = 10;
+
+        // Sentinel rank for candidates beyond the reported prefix (kReportedRankPrefix).
         // Until R7 their true rank was unknown (partial_sort left the tail
         // unordered); the list is fully sorted now, but attribution still
         // treats them as far-miss (B-low), never near-miss, as before. Consumers
@@ -61,7 +68,8 @@ namespace Huginn::Learning
             Candidate::SourceType sourceType{};
             Slot::SlotClassification slotClass = Slot::SlotClassification::Regular;  // SlotClassifier::Classify
             size_t rank = 0;            // kUnrankedTail past the sorted prefix
-            float utility = 0.0f;
+            float utility = 0.0f;       // the old engine's (the v2 log only): ranks nothing since R8.3
+            double score = 0.0;         // R8.4: what it ranked on (SlotScore: mu; ln u in the fallback)
             Scoring::ScoreBreakdown breakdown;
             bool isWildcard = false;
             bool isColdStartBoosted = false;
@@ -79,8 +87,8 @@ namespace Huginn::Learning
         };
 
         /// R4: one ELIGIBLE candidate of the run -- every item CandidateGenerator
-        /// produced, before the scorer's floors (fMinimumContextWeight,
-        /// fMinimumUtility) dropped any. One row per item: a weapon stack is
+        /// produced, whatever the old engine's floors said (R8.3: they drop
+        /// nothing from the ranking). One row per item: a weapon stack is
         /// its own row (formID + uniqueID). Copied out of the run for the
         /// selection log v3 (learning/SelectionLogV3); nothing scores from it.
         struct EligibleRow
@@ -171,7 +179,7 @@ namespace Huginn::Learning
         // attribution classifies them as far-miss exactly as before.
         // NOTE: wildcard swaps run after sorting, so a prefix rank may hold a
         // wildcard-promoted item — intentional: attribution should see what was
-        // actually surfaced, not the pre-wildcard utility order.
+        // actually surfaced, not the pre-wildcard score order.
         // R4: `eligible` (moved in) and `pageSlots` are kept for the selection
         // log v3 only; attribution and the v2 log read none of it.
         void Update(
@@ -213,6 +221,7 @@ namespace Huginn::Learning
                     .slotClass = Slot::SlotClassifier::Classify(sc),
                     .rank = (i < sortedPrefix) ? i : kUnrankedTail,
                     .utility = sc.utility,
+                    .score = sc.SlotScore(),
                     .breakdown = sc.breakdown,
                     .isWildcard = sc.isWildcard,
                     .isColdStartBoosted = sc.isColdStartBoosted,
@@ -247,7 +256,7 @@ namespace Huginn::Learning
         {
             bool wasCandidate = false;
             size_t rank = 0;
-            float utility = 0.0f;
+            double score = 0.0;   // R8.4: SlotScore (was the old utility)
             bool wasDisplayed = false;
             size_t displayPage = 0;
         };
@@ -262,7 +271,7 @@ namespace Huginn::Learning
                 const auto& row = m_scores[it->second];
                 info.wasCandidate = true;
                 info.rank = row.rank;
-                info.utility = row.utility;
+                info.score = row.score;
             }
 
             for (const auto& s : m_shown) {

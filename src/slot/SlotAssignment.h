@@ -19,7 +19,7 @@ namespace Huginn::Slot
     enum class AssignmentType : uint8_t
     {
         Empty,      // Slot has no content
-        Normal,     // Standard utility-based assignment
+        Normal,     // Standard ranked assignment (on SlotScore(): the choice score)
         Override,   // Forced by override condition (critical health, etc.)
         Wildcard,   // Exploration pick (blue styling in widget)
         Remembered, // What pressing this slot took off (Remembrance.h): not ranked
@@ -91,7 +91,6 @@ namespace Huginn::Slot
         // needs it to tell one instance's lock from the other's.
         uint16_t uniqueID = 0;
         std::string name;
-        float utility = 0.0f;   // the old engine's value: display and logs only
         // What the slot code ranked it on (ScoredCandidate::SlotScore): any
         // sign. An override carries Core::kPinnedScore (+inf), an empty slot
         // Core::kUnrankedScore (-inf); neither is ever compared.
@@ -118,7 +117,10 @@ namespace Huginn::Slot
 
         static SlotAssignment Empty(size_t index, SlotClassification classification)
         {
-            return { index, AssignmentType::Empty, classification, std::nullopt, 0, 0, "", 0.0f };
+            // The score is stated, not left to a trailing positional slot: R8.4
+            // removed `utility` from in front of it, and a stale trailing 0.0f
+            // then filled `score` (empty slots scored 0, not -inf).
+            return { index, AssignmentType::Empty, classification, std::nullopt, 0, 0, "", Core::kUnrankedScore };
         }
 
         static SlotAssignment FromCandidate(
@@ -135,7 +137,6 @@ namespace Huginn::Slot
                 sc.GetFormID(),
                 sc.GetUniqueID(),
                 std::string(sc.GetName()),
-                sc.utility,
                 sc.SlotScore()
             };
         }

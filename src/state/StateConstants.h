@@ -219,9 +219,8 @@ namespace Huginn::State
       // Enchanted-weapon charge "Low" threshold
       // Why 0.25f: a quarter charge is roughly a fight's worth of swings left —
       // early enough that a soul gem is still worth surfacing.
-      // Used by IsWeaponChargeLow() and by ContextRuleEngine::DominantReason,
-      // which inverts the charge curve at this same percentage so the "Low
-      // Charge" label and the predicate agree.
+      // Used by IsWeaponChargeLow(). (Until R8.4 the old reason label also
+      // inverted the charge curve at this same percentage.)
       // NOTE: WeaponRegistry separately flags low charge with the stricter
       // Config::WEAPON_CHARGE_LOW_THRESHOLD (0.20) — reconcile both if tuning.
       // Units: percentage (0.25 = 25%)

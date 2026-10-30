@@ -116,9 +116,9 @@ namespace Huginn::State
          return m_ammoCountChanged.exchange(false, std::memory_order_acq_rel);
       }
 
-      // R8.3: IsElementalWindowActive is gone. It only served the outer skip
-      // gate; the need signature (fire/frost/shock_damage_rate decay with
-      // time, NeedEvaluator) now opens that gate. The enrichment itself
+      // R8.3: no elemental window accessor for the outer skip gate any more;
+      // the need signature (fire/frost/shock_damage_rate decay with time,
+      // NeedEvaluator) opens that gate. The enrichment itself
       // (PipelineCoordinator::EnrichElementalDamage) stays: the legacy
       // context rules read isOnFire and the like.
 
@@ -127,9 +127,9 @@ namespace Huginn::State
       // =============================================================================
       // The published combat flag flips inside PollPlayerPosition, which also
       // stamps NeedSensorState::combatStartAt / combatEndAt on the same
-      // transition. R8.1 (0.23.55): the destructive ConsumeCombatTransition
-      // that fed PotionDiscriminator's own timer is gone; the discriminator
-      // reads combatStartAt (GetCombatStartAt), the combat_onset clock.
+      // transition. R8.1 (0.23.55): the destructive combat-transition latch
+      // that fed the legacy potion multiplier's own timer is gone; it reads
+      // combatStartAt (GetCombatStartAt), the combat_onset clock.
 
       /// Lightweight combat state check (no full PlayerActorState copy).
       [[nodiscard]] bool IsInCombat() const noexcept
@@ -179,8 +179,8 @@ namespace Huginn::State
 
       /// R8.1 (0.23.55): NeedSensorState::combatStartAt alone (NeedClock
       /// seconds the published combat flag last went true; -1 never), without
-      /// the whole copy. The combat_onset need's clock, which the
-      /// PotionDiscriminator now reads too (core/CombatOnset.h).
+      /// the whole copy. The combat_onset need's clock, which the legacy
+      /// potion multiplier now reads too (core/CombatOnset.h).
       [[nodiscard]] double GetCombatStartAt() const noexcept;
 
       /// 0.23.46 (selection log v3 only): what is active on the player in

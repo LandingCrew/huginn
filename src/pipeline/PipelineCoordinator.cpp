@@ -6,8 +6,7 @@
 #include "state/StateManager.h"
 #include "state/StateConstants.h"
 #include "candidate/CandidateGenerator.h"
-#include "context/ContextRuleEngine.h"   // Context::ContextReasonSignals (#10)
-#include "context/ContextWeightForCandidate.h"   // a candidate's raw context weight (0.23.53 log)
+#include "context/ContextFacts.h"   // the hard gates' facts and the skip gate's (R8.4)
 #include "override/OverrideManager.h"
 #include "override/OverrideConfig.h"
 #include "core/BucketHysteresis.h"
@@ -202,8 +201,8 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
     // never reach a slot.
     //
     // This is why the workstation context looked inert in play while unit test
-    // 6h passed: 6h calls EvaluateRules directly and never goes through the skip
-    // gate. Observed 2026-09-08 — the player stood at an alchemy lab with a
+    // 6h passed: 6h calls the context rules directly and never goes through the
+    // skip gate. Observed 2026-09-08 — the player stood at an alchemy lab with a
     // recognised craft item in the registry and the pipeline last scored 17
     // seconds before they arrived.
     //
@@ -212,8 +211,8 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
     // whole time, not just on the tick they walk up.
     //
     // Gated on the bench actually producing a fortify weight, not merely on
-    // being furniture with a bench type. EvaluateRules only raises a weight for
-    // the seven vanilla craft benches; for a cooking spit or a modded bench
+    // being furniture with a bench type. The context rules only raise a weight
+    // for the seven vanilla craft benches; for a cooking spit or a modded bench
     // outside that enum there is nothing for the pipeline to find, and holding
     // this true would run the full gather/score/allocate path every 100 ms for
     // as long as the player's crosshair rested on it — exactly the workload the
@@ -271,12 +270,12 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
     // needs decay with time, so their close moves it too). An override
     // threshold crossed. R8.1: a buff entering (or leaving) its refresh
     // window, so the active-buff filter lets its item through.
-    const bool ambientChanged = ctx.needSignature != m_lastNeedSignature.load(std::memory_order_relaxed) ||
+    const bool signatureChanged = ctx.needSignature != m_lastNeedSignature.load(std::memory_order_relaxed) ||
                                 ctx.overrideSignature != m_lastOverrideSignature ||
                                 ctx.refreshDue != m_lastRefreshDue;
 
     if (ctx.stateHash == m_lastPipelineHash && !pageChanged &&
-        !unhashedStateActive && !ambientChanged && !NeedsForcedRun()) {
+        !unhashedStateActive && !signatureChanged && !NeedsForcedRun()) {
         // Keep cache timestamp fresh so external equip events aren't rejected as stale
         Learning::PipelineStateCache::GetSingleton().RefreshTimestamp();
         return true;  // Skip
@@ -293,9 +292,8 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
     // Cleared here rather than in NeedsForcedRun() because that one is asked by
     // both gates and by neither exclusively — a consuming read there would let
     // the outer gate eat the flag and the inner gate skip anyway.
-    if (g_featureBanditLearner) {
-        g_featureBanditLearner->ClearWeightsChanged();
-    }
+    // The old learner's (a pick it trained on moves the D2 feature).
+    Scoring::Legacy::ClearWeightsChanged();
     // R8.3: and the choice learner's (theta or b moved: the ranking did).
     if (g_choiceLearner) {
         g_choiceLearner->ClearWeightsChanged();
@@ -306,7 +304,7 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
 
 bool PipelineCoordinator::LearnerWeightsChanged() noexcept
 {
-    return (g_featureBanditLearner && g_featureBanditLearner->WeightsChanged()) ||
+    return Scoring::Legacy::WeightsChanged() ||
            (g_choiceLearner && g_choiceLearner->WeightsChanged());
 }
 
@@ -380,14 +378,17 @@ void PipelineCoordinator::EnrichElementalDamage(PipelineContext& ctx)
 // its cap(i), b, recent_<family>, covered(i), and the D2 legacy feature
 // (ln learn mult, w = 1.36 in the R6 bootstrap) on the rows the old floors
 // keep. The old floors no longer drop rows from the ranking; they only decide
-// where that feature applies. The legacy pass (UtilityScorer::LegacyPass:
-// ContextRuleEngine, the old learner, prior, correlations, potion multiplier,
-// the floors) runs only for it, behind [Scoring] bLegacyLearnFeature.
+// where that feature applies. The legacy pass (the old context rules, learner,
+// prior, correlations, potion multiplier and floors; learning/legacy/) runs
+// only for it, behind [Scoring] bLegacyLearnFeature. R8.4: this file names the
+// old engine in exactly one call (the pass, below); everything else it reads
+// of it comes through learning/legacy/LegacyRun.h (tools/prune/r8_check.py).
 //
 // Without a usable bootstrap the pipeline ranks on the old utility instead
 // (ln u, the R7 bridge) over the rows the floors keep: the FALLBACK, so the
 // game stays playable; `hg status` and an error line say so. It has no
-// favourites rank scaling and no potion tier preference any more.
+// favourites rank scaling and no potion tier preference any more, and since
+// R8.4 it is built in the legacy module (Legacy::Run::FallbackRanking).
 
 namespace
 {
@@ -452,15 +453,14 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     // separately, for the hold alone (see the Remembrance loop below).
     const auto heldIDs = Slot::Remembrance::GetSingleton().ActiveFormIDs();
     std::vector<Candidate::CandidateVariant> heldAside;
-    // R8.1 (0.23.55): the hard gates read the same state EvaluateRules does
-    // (Context::HardGateInputs), and the favourites mode the scorer used to
-    // skip Suppress favourites by.
+    // R8.1 (0.23.55): the hard gates read the same state the legacy context
+    // rules do (Context::HardGateInputs), and the favourites mode the scorer
+    // used to skip Suppress favourites by.
     const auto gates = Context::HardGateInputs(ctx.playerState, ctx.targets, ctx.worldState,
         g_utilityScorer->GetConfig().favoritesMode == Scoring::FavoritesMode::Suppress);
     auto candidates = candidateGen.GenerateCandidates(ctx.playerState, ctx.currentMagicka, gates,
         heldIDs, &heldAside, &ctx.filtered);
 
-    Context::ContextWeightMap contextWeights{};
     // Read once for the tick: the wildcard roll below and AllocateAndLock
     // must agree on it.
     ctx.hideUidlessGear = Display::HidesUidlessGear(ctx.displayPageIndex);
@@ -468,11 +468,11 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     // Which model ranks, and whether the legacy pass runs. Logged on change.
     ctx.choiceLive = g_choiceLearner && g_choiceLearner->Ready();
     const bool legacyOn = Scoring::Legacy::Enabled();
-    ctx.legacyRan = legacyOn || !ctx.choiceLive;   // the fallback needs the utility
+    const bool runLegacy = legacyOn || !ctx.choiceLive;   // the fallback needs the utility
     {
         // NOTE: Single-threaded (pipeline runs on the update thread only)
         static int s_lastMode = -1;
-        const int mode = (ctx.choiceLive ? 1 : 0) | (ctx.legacyRan ? 2 : 0);
+        const int mode = (ctx.choiceLive ? 1 : 0) | (runLegacy ? 2 : 0);
         if (mode != s_lastMode) {
             if (!ctx.choiceLive) {
                 logger::error("[Pipeline] Ranking on the OLD UTILITY (fallback): the bootstrap is missing or invalid "
@@ -480,53 +480,34 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
             }
             else {
                 logger::info("[Pipeline] Ranking on the choice score{}"sv,
-                    ctx.legacyRan ? " with the D2 legacy feature (bLegacyLearnFeature on)"
+                    runLegacy ? " with the D2 legacy feature (bLegacyLearnFeature on)"
                                   : " WITHOUT the legacy feature (bLegacyLearnFeature off: plain theta + b + recent)");
             }
             s_lastMode = mode;
         }
     }
 
-    // The legacy pass: the old floors per candidate (the D2 feature) and the
+    // The legacy pass: the old floors per candidate (the D2 feature), the row
+    // each candidate reads (its own, or the kept one of its dedup key) and the
     // rows they keep with their utility. Off: none of it runs (no context
-    // rules, prior, correlation or potion work).
-    Scoring::ScoredCandidateList legacyList;
-    if (ctx.legacyRan) {
-        legacyList = g_utilityScorer->LegacyPass(candidates, ctx.currentState, ctx.playerState, ctx.targets,
-            ctx.worldState, ctx.combatOnsetAgo, &contextWeights, &ctx.legacyRows);
+    // rules, prior, correlation or potion work). THE one call into the old
+    // engine (R8.4, tools/prune/r8_check.py).
+    if (runLegacy) {
+        ctx.legacy = Scoring::Legacy::LegacyPass(candidates, ctx.currentState, ctx.playerState, ctx.targets, ctx.worldState, ctx.combatOnsetAgo);
     }
     else {
-        ctx.legacyRows.assign(candidates.size(), Scoring::Legacy::Row{});
-    }
-
-    // Each candidate reads its own legacy row, or, when the floors kept
-    // another candidate of its dedup key (type, uid, form) and not it, that
-    // one's (R8.2's CaptureEligible rule, so the score and the v3 row agree).
-    ctx.legacyOf.resize(candidates.size());
-    {
-        std::unordered_map<uint64_t, size_t> keptByKey;
-        for (size_t i = 0; i < candidates.size() && i < ctx.legacyRows.size(); ++i) {
-            if (ctx.legacyRows[i].Scored()) keptByKey.try_emplace(Candidate::GetBase(candidates[i]).GetDeduplicationKey(), i);
-        }
-        for (size_t i = 0; i < candidates.size(); ++i) {
-            ctx.legacyOf[i] = i;
-            if (i < ctx.legacyRows.size() && !ctx.legacyRows[i].Scored()) {
-                const auto k = keptByKey.find(Candidate::GetBase(candidates[i]).GetDeduplicationKey());
-                if (k != keptByKey.end()) ctx.legacyOf[i] = k->second;
-            }
-        }
+        ctx.legacy.Skip(candidates.size());
     }
 
     if (ctx.choiceLive) {
-        ctx.scoredCandidates = RankOnChoice(ctx, candidates, legacyList);
+        ctx.scoredCandidates = RankOnChoice(ctx, candidates);
     }
     else {
-        // FALLBACK: the old ranking, ln utility over the rows the floors kept.
-        for (auto& sc : legacyList) {
-            sc.legacyScored = true;
-            sc.RankOnUtility(sc.utility);
-        }
-        ctx.scoredCandidates = std::move(legacyList);
+        // FALLBACK (no bootstrap, or an invalid one; logged above as an
+        // error): the old ranking, ln utility over the rows the floors kept.
+        // It lives in the legacy module (Legacy::Run::FallbackRanking, R8.4):
+        // nothing in this file turns a utility into a rank score.
+        ctx.scoredCandidates = ctx.legacy.FallbackRanking();
     }
 
     // The display page comes from ResolveDisplayPage, which ran earlier this
@@ -574,11 +555,10 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
         }
     }
 
-    CaptureEligible(ctx, candidates, contextWeights);
+    CaptureEligible(ctx, candidates);
 
-    // R8.3: no DominantReason here any more. The reason label is derived
-    // from the explanations of what the page shows, after the allocation
-    // (DeriveDisplayLabels).
+    // R8.3: the reason label is derived from the explanations of what the
+    // page shows, after the allocation (DeriveDisplayLabels).
 }
 
 // -----------------------------------------------------------------------------
@@ -595,8 +575,7 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
 // it ranks on b and the legacy feature alone.
 
 Scoring::ScoredCandidateList PipelineCoordinator::RankOnChoice(PipelineContext& ctx,
-    const std::vector<Candidate::CandidateVariant>& candidates,
-    const Scoring::ScoredCandidateList& legacyList)
+    const std::vector<Candidate::CandidateVariant>& candidates)
 {
     Huginn_ZONE_NAMED("Pipeline::RankOnChoice");
     namespace C = Core::Choice;
@@ -621,7 +600,7 @@ Scoring::ScoredCandidateList PipelineCoordinator::RankOnChoice(PipelineContext& 
     auto& sm = State::StateManager::GetSingleton();
     const auto coverage = sm.GetCoverage();
     const float refreshPriorSec = sm.GetRefreshPriorSec();
-    const bool legacyOn = ctx.legacyRan;   // == bLegacyLearnFeature here (the model is live)
+    const bool legacyOn = ctx.legacy.ran;   // == bLegacyLearnFeature here (the model is live)
 
     const size_t rows = candidates.size();
     std::vector<C::Attr> attrs(rows);
@@ -641,13 +620,11 @@ Scoring::ScoredCandidateList PipelineCoordinator::RankOnChoice(PipelineContext& 
         Scoring::ScoredCandidate sc;
         sc.candidate = c;
         // The legacy pass's utility and parts on a row the floors kept.
-        const size_t li = i < ctx.legacyOf.size() ? ctx.legacyOf[i] : i;
-        const Scoring::Legacy::Row lg = li < ctx.legacyRows.size() ? ctx.legacyRows[li] : Scoring::Legacy::Row{};
-        if (lg.Scored() && lg.scoredIndex >= 0 && static_cast<size_t>(lg.scoredIndex) < legacyList.size()) {
-            const auto& L = legacyList[static_cast<size_t>(lg.scoredIndex)];
-            sc.utility = L.utility;
-            sc.breakdown = L.breakdown;
-            sc.isColdStartBoosted = L.isColdStartBoosted;
+        const Scoring::Legacy::Row lg = ctx.legacy.RowFor(i);
+        if (const auto* L = ctx.legacy.KeptFor(i)) {
+            sc.utility = L->utility;
+            sc.breakdown = L->breakdown;
+            sc.isColdStartBoosted = L->isColdStartBoosted;
             sc.legacyScored = true;
         }
 
@@ -669,9 +646,9 @@ Scoring::ScoredCandidateList PipelineCoordinator::RankOnChoice(PipelineContext& 
             }
         }
         C::SetLegacy(x.feat, C::LegacyFeature(legacyOn, lg.Scored(), static_cast<double>(lg.lnLearnMult)));
-        if (sc.legacyScored && std::isfinite(sc.utility)) {
-            x.feat[static_cast<size_t>(C::Feature::ln_util)] = std::log(std::max(static_cast<double>(sc.utility), 1e-6));
-        }
+        // R8.4: no `ln util` feature. D2 reads only ln learn mult and util
+        // missing; the old utility does not enter the choice score (the
+        // bootstrap reader zeroes an `ln util` weight, core/Bootstrap.cpp).
         x.feat[static_cast<size_t>(C::Feature::eligible)] = 1.0;
         const auto b = snap->B(form, Candidate::IsFavorited(c), run->playNow);
         x.bMu = b.mu;
@@ -736,8 +713,8 @@ Scoring::ScoredCandidateList PipelineCoordinator::RankOnChoice(PipelineContext& 
 // CaptureEligible — R4: every generated candidate, for the selection log v3
 // -----------------------------------------------------------------------------
 // The choice set the fit needs is every item the player could pick, not the
-// ones that cleared the old engine's floors (fMinimumContextWeight,
-// fMinimumUtility). So the list CandidateGenerator produced is copied out here
+// ones that cleared the old engine's floors (the context and utility floors).
+// So the list CandidateGenerator produced is copied out here
 // -- one row per item (a weapon stack is its own row) -- with the utility of the
 // rows the scorer kept and the propensity of a wildcard. Reads only: the scored
 // list, the candidates and the wildcard cache are not touched.
@@ -746,16 +723,12 @@ Scoring::ScoredCandidateList PipelineCoordinator::RankOnChoice(PipelineContext& 
 // floors (Core::DecisionLog::OldScore): the R6 component test needs the old
 // learner's estimate, confidence, evidence, UCB, recency and prior on the rows
 // the floors dropped too, and which floor dropped them, to tell the floors'
-// share of the gap from stale imputation. A scored row takes the parts its
-// utility was computed from (its breakdown); an unscored one, and every
-// candidate the filters dropped, is put through the scorer's own
-// ScoreCandidateInternal again (UtilityScorer::ExplainCandidate) with no
-// floor. Its floor is read off the same tests ScoreCandidates applies: the
-// context floor (favourites exempt), else the utility floor (the cold start
-// rescues only what it keeps, which is scored). R8.1 (0.23.55): no longer
-// "suppressed favourite" first: such a favourite is a filter drop now
-// (favorite_suppressed), never an eligible row, so Floor::suppressed stays in
-// the format for older files and is not written.
+// share of the gap from stale imputation. R8.4: the parts come from the legacy
+// module (Legacy::OldScoreCapture, learning/legacy/LegacyRun.cpp, moved there
+// unchanged): a scored row takes the parts its utility was computed from (its
+// breakdown); an unscored one, and every candidate the filters dropped, is
+// put through the old scorer's own per-candidate scoring again with no floor,
+// and its floor is read off the floor pass's own tests.
 // Logging only: nothing here changes what was scored.
 //
 // R8.3: every candidate is ranked now, so "scored" in this log keeps its old
@@ -768,8 +741,7 @@ Scoring::ScoredCandidateList PipelineCoordinator::RankOnChoice(PipelineContext& 
 // as the v3 reader already handles), lm 0 and um 1 on every row.
 
 void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
-    const std::vector<Candidate::CandidateVariant>& candidates,
-    const Context::ContextWeightMap& weights)
+    const std::vector<Candidate::CandidateVariant>& candidates)
 {
     Huginn_ZONE_NAMED("Pipeline::CaptureEligible");
     // First legacy-scored row per dedup key (type, uniqueID, formID) wins, as
@@ -791,88 +763,30 @@ void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
     // 0.23.53: the old engine's view of the run (see above). R8.3: only when
     // the legacy pass ran.
     namespace DL = Core::DecisionLog;
-    const auto& cfg = g_utilityScorer->GetConfig();
     auto& old = ctx.oldScore;
     old.dropped.clear();
     old.stateHash = ctx.currentState.GetHash();
     old.run = {};
-    const bool withOld = ctx.legacyRan;
-    const auto phi = Learning::StateFeatures::FromState(ctx.playerState, ctx.targets).ToArray();
-    std::optional<Learning::FeatureBanditLearner::LockedReader> learner;
-    if (withOld && g_featureBanditLearner) learner.emplace(g_featureBanditLearner->AcquireReader());
-    std::optional<Learning::UsageMemory::SnapshotReader> usage;
-    if (withOld && g_usageMemory) usage.emplace(g_usageMemory->AcquireReader(ctx.currentState));
+    const Scoring::Legacy::OldScoreCapture capture(ctx.legacy, ctx.currentState, ctx.playerState,
+        ctx.targets, ctx.worldState, ctx.combatOnsetAgo);
+    const bool withOld = capture.Valid();
     if (withOld) {
-        auto& run = old.run;
-        run = {};
-        run.valid = true;
-        run.minCtx = cfg.minimumContextWeight;
-        run.minUtil = cfg.minimumUtility;
-        run.topN = static_cast<int>(cfg.topNCandidates);
-        run.coldBoost = cfg.coldStartUCBBoost;
-        run.beta = cfg.explorationWeight;
-        run.lambdaMin = cfg.lambdaMin;
-        run.lambdaMax = cfg.lambdaMax;
-        run.n0 = Learning::FeatureBanditLearner::PriorPseudoObservations();
-        run.favMode = cfg.favoritesMode == Scoring::FavoritesMode::Boost ? "boost"
-                    : cfg.favoritesMode == Scoring::FavoritesMode::Off   ? "off"
-                                                                         : "suppress";
-        run.favMin = cfg.favoritesBoostMin;
-        run.favMax = cfg.favoritesBoostMax;
-        run.scored = static_cast<int>(std::ranges::count_if(ctx.scoredCandidates,
-            [](const Scoring::ScoredCandidate& sc) { return sc.legacyScored && !sc.isRememberedOnly; }));
-        run.totalTrains = learner ? learner->TotalTrains() : 0.0f;
-        run.phi.assign(phi.begin(), phi.end());
+        old.run = capture.Head(static_cast<int>(std::ranges::count_if(ctx.scoredCandidates,
+            [](const Scoring::ScoredCandidate& sc) { return sc.legacyScored && !sc.isRememberedOnly; })));
     }
-    // One candidate's parts. `scored`: its row in the scored list (the parts
-    // its utility used); `eligible`: a candidate of the run (it gets a floor).
-    const auto explain = [&](const Candidate::CandidateVariant& c, bool eligible,
-                             const Scoring::ScoredCandidate* scored) {
-        DL::OldScore o;
-        const RE::FormID form = Candidate::GetFormID(c);
-        o.favorite = Candidate::IsFavorited(c);
-        o.ctx = Context::WeightForCandidate(c, weights);   // before a cold-start boost
-        Learning::FeatureItemMetrics m{ 0.0f, 1.0f, 0.0f };
-        if (learner) m = learner->GetMetrics(form, phi);
-        o.trains = m.trains;
-        if (scored) {
-            const auto& b = scored->breakdown;
-            o.est = b.rewardEstimate;
-            o.alpha = b.confidence;
-            o.ucb = b.ucb;
-            o.rec = b.recencyBoost;
-            o.prior = b.prior;
-            o.floor = static_cast<uint8_t>(scored->isColdStartBoosted ? DL::Floor::cold : DL::Floor::pass);
-            return o;
-        }
-        const float rec = usage ? usage->GetRecencyBoost(form) : 0.0f;
-        o.est = m.rewardEstimate;
-        o.alpha = m.confidence;
-        o.ucb = m.ucb;
-        o.rec = rec;
-        const auto ex = g_utilityScorer->ExplainCandidate(c, ctx.currentState, ctx.playerState, ctx.targets,
-            ctx.worldState, ctx.combatOnsetAgo, weights, o.ctx, m, rec);
-        o.prior = ex.breakdown.prior;
-        o.wouldUtil = ex.utility;
-        if (eligible) {
-            const DL::Floor f = (o.ctx < cfg.minimumContextWeight && !o.favorite) ? DL::Floor::ctx : DL::Floor::util;
-            o.floor = static_cast<uint8_t>(f);
-        }
-        return o;
-    };
 
     ctx.eligible.reserve(candidates.size());
     // R8.2: the D2 feature off the same pass (index-aligned with candidates),
     // and a check that the moved floor loop reports the floors this capture
     // derives on its own (they are the same tests; a mismatch is a bug).
-    const bool haveLegacy = ctx.legacyRan && ctx.legacyRows.size() == candidates.size() &&
-                            ctx.legacyOf.size() == candidates.size();
+    const bool haveLegacy = ctx.legacy.ran && ctx.legacy.rows.size() == candidates.size() &&
+                            ctx.legacy.rowOf.size() == candidates.size();
     // Two candidates with one dedup key (type, uid, form) read the same scored
     // row here (scoredByKey), but the floor pass's cold start scores only the
     // first (alreadyScored by form): the second reads the legacy row of the
-    // candidate that was kept (ctx.legacyOf, R8.3: worked out once in
-    // ScoreCandidates, so the ranking reads the same row), and its floor, lm
-    // and um agree with its utility.
+    // candidate that was kept (Legacy::Run::RowFor, R8.3: worked out once by
+    // the pass, so the ranking reads the same row), and its floor, lm and um
+    // agree with its utility.
     const bool haveChoice = ctx.choiceLive && ctx.choiceScores.size() == candidates.size();
     size_t floorMismatch = 0;
     size_t candIndex = 0;
@@ -904,13 +818,13 @@ void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
             row.wildcardPropensity = wildcards.GetWildcardPropensity(ctx.displayPageIndex, base.formID);
         }
         if (withOld) {
-            row.old = explain(c, true, scored);
+            row.old = capture.Explain(c, true, scored);
         }
         else {
             row.old.favorite = Candidate::IsFavorited(c);   // the v3 Favorite flag reads it
         }
         if (haveLegacy) {
-            const auto& lg = ctx.legacyRows[ctx.legacyOf[ci]];
+            const auto lg = ctx.legacy.RowFor(ci);
             row.lnLearnMult = lg.Scored() ? lg.lnLearnMult : 0.0f;
             row.utilMissing = lg.utilMissing ? 1 : 0;
             if (static_cast<uint8_t>(lg.floor) != row.old.floor) ++floorMismatch;
@@ -957,7 +871,7 @@ void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
             row.formID = base.formID;
             row.uniqueID = base.uniqueID;
             row.sourceType = base.sourceType;
-            row.old = explain(c, false, nullptr);
+            row.old = capture.Explain(c, false, nullptr);
             old.dropped.push_back(row);
         }
     }
@@ -1214,15 +1128,17 @@ void PipelineCoordinator::UpdateCaches(PipelineContext& ctx)
     // counter beside the cache).
     LogChoiceRows(ctx);
     // Cache pipeline state for external equip attribution.
-    // sortedPrefix = topNCandidates: ranks are reported for that prefix only.
-    // The whole list is in score order since R7 (UtilityScorer sorts it all),
-    // but attribution classifies past the prefix as a far miss, and that stays
-    // as it was; see PipelineStateCache::Update. Page comes from the tick
+    // sortedPrefix = kReportedRankPrefix: ranks are reported for that prefix
+    // only. The whole list is in score order since R7 (UtilityScorer sorts it
+    // all), but attribution classifies past the prefix as a far miss, and that
+    // stays as it was; see PipelineStateCache::Update. R8.4: a constant of its
+    // own (10, the old iTopNCandidates default the logs were written with),
+    // no longer the legacy floors' iTopNCandidates. Page comes from the tick
     // snapshot so it matches ctx.assignments exactly.
     Learning::PipelineStateCache::GetSingleton().Update(
         ctx.scoredCandidates, ctx.assignments,
         ctx.displayPageIndex,
-        g_utilityScorer->GetConfig().topNCandidates,
+        Learning::PipelineStateCache::kReportedRankPrefix,
         std::move(ctx.eligible), ctx.displaySlotCount,    // R4: the selection log v3's rows
         std::move(ctx.filtered),                          // 0.23.46: and why the others were dropped
         std::move(ctx.oldScore));                         // 0.23.53: the old engine's view of the run
@@ -1360,11 +1276,12 @@ void PipelineCoordinator::LogRecommendations(PipelineContext& ctx)
             ctx.displayPageIndex, ctx.displayPageName);
         for (const auto& a : ctx.assignments) {
             if (a.IsEmpty() || a.formID == 0) continue;
-            // An override carries no utility, only the +inf "pinned" score.
+            // An override carries only the +inf "pinned" score. R8.4: the
+            // score alone (mu, or s = ln u in the fallback), no old utility.
             logger::info("[Recs]   slot {}: {} ({:08X}) {}{}"sv,
                 a.slotIndex, a.name, a.formID,
                 a.IsOverride() ? std::string("override")
-                               : fmt::format("{}={:+.3f} u={:.3f}", ctx.choiceLive ? "mu" : "s", a.score, a.utility),
+                               : fmt::format("{}={:+.3f}", ctx.choiceLive ? "mu" : "s", a.score),
                 a.subtextLabel.empty() ? "" : fmt::format(" [{}]", a.subtextLabel));
         }
         return;  // The dump covers this tick; skip the periodic log
@@ -1384,7 +1301,7 @@ void PipelineCoordinator::LogRecommendations(PipelineContext& ctx)
 // -----------------------------------------------------------------------------
 // UpdateContextReason — R8.3: the tick's reason, from the page's explanations
 // -----------------------------------------------------------------------------
-// In place of ContextRuleEngine::DominantReason (the old weights' reason):
+// In place of the old weights' dominant reason (R8.4: deleted with it):
 // each ranked row carries its explanation, the largest theta[k][j] n_k a_j
 // term of its score, mapped to a context reason when its need k is one
 // (display/NeedReason.h) and on (n_k >= 0.5). The tick's raw reason is the
@@ -1539,10 +1456,6 @@ void PipelineCoordinator::UpdateDebugWidgets(PipelineContext& ctx)
             ctx.displayPageName,
             ctx.displayPageCount,
             coldStartCount);
-        if (g_usageMemory) {
-            UI::UtilityScorerDebugWidget::GetSingleton().UpdateUsageMemory(
-                g_usageMemory->GetSnapshot(), ctx.stateHash);
-        }
     }
 #endif
 }

@@ -10,24 +10,27 @@
 namespace Huginn::Scoring
 {
     // =============================================================================
-    // SCORE BREAKDOWN - Transparency into how the final score was computed
+    // SCORE BREAKDOWN - the OLD utility's parts (R8.4: legacy rows only)
     // =============================================================================
+    // Set by the legacy pass (learning/legacy/) on the rows the old floors keep:
+    // the D2 feature's inputs (ln learn mult = ln(1 + lambda * learningScore))
+    // and the v2 / v3 logs' old columns. Nothing ranks or displays on it.
     struct ScoreBreakdown
     {
         // Input components
-        float contextWeight = 0.0f;     // From ContextRuleEngine (relevance to current situation)
-        float rewardEstimate = 0.0f;            // From FeatureBanditLearner (learned preference)
-        float prior = 0.0f;             // From PriorCalculator (intrinsic quality heuristic)
+        float contextWeight = 0.0f;     // the old context weight (relevance to current situation)
+        float rewardEstimate = 0.0f;            // the old learner (learned preference)
+        float prior = 0.0f;             // the old prior (intrinsic quality heuristic)
         float ucb = 0.0f;               // Upper Confidence Bound (exploration bonus)
         float confidence = 0.0f;        // α: How much to trust reward estimate vs prior (0-1)
 
         // Computed components
         float learningScore = 0.0f;     // α*R + (1-α)*prior + β*UCB
         float lambda = 0.0f;            // λ(confidence) — learning amplification actually applied
-        float recencyBoost = 0.0f;      // From UsageMemory (event-driven short-term recall)
-        float correlationBonus = 0.0f;  // From CorrelationBooster
-        float potionMultiplier = 1.0f;  // From PotionDiscriminator
-        float favoritesMultiplier = 1.0f; // From favorites system
+        float recencyBoost = 0.0f;      // the old learner's recency (event-driven short-term recall)
+        float correlationBonus = 0.0f;  // the old correlation bonus
+        float potionMultiplier = 1.0f;  // the old potion multiplier
+        float favoritesMultiplier = 1.0f; // the uniform favourites boost (fFavoritesBoostMax)
 
         // Log string, compact: only the factors that enter the utility formula
         // (u = ctx*(1+λ*learn)*mults), with neutral 1.00x multipliers omitted.
@@ -65,14 +68,16 @@ namespace Huginn::Scoring
     };
 
     // =============================================================================
-    // SCORED CANDIDATE - Wraps a candidate with its computed utility score
+    // SCORED CANDIDATE - Wraps a candidate with its rank score (R8.3: mu)
     // =============================================================================
     struct ScoredCandidate
     {
         Candidate::CandidateVariant candidate;  // The actual candidate (spell/item/weapon/etc)
         // The old engine's utility (R8.3: NOT the ranking). Set on the rows the
         // old floors kept (legacyScored), 0 on the others; the v2 selection
-        // log, [Recs] and the reach lines print it. Nothing orders on it.
+        // log and the fallback's [Recs] line print it. Nothing orders on it
+        // but the fallback ranking (legacy module); tools/prune/r8_check.py
+        // budgets every read of it outside the files that log it.
         float utility = 0.0f;
         ScoreBreakdown breakdown;               // the old utility's parts (legacy rows only)
         bool isWildcard = false;                // True if this is a wildcard exploration pick
@@ -81,6 +86,9 @@ namespace Huginn::Scoring
         // legacy feature (ln learn mult) applies to it. False with
         // [Scoring] bLegacyLearnFeature off.
         bool legacyScored = false;
+        // R8.4: ranked by the FALLBACK (Legacy::Run::FallbackRanking: no
+        // bootstrap): `score` is s = ln utility, not mu, and `choice` is unset.
+        bool fallbackRanked = false;
 
         // R8.3: what the slot code ranks on (SlotScore()): the choice score mu
         // (core/ChoiceScore.h, core/ChoiceLive.h), any sign; or, when the
@@ -141,17 +149,13 @@ namespace Huginn::Scoring
             return isRememberedOnly ? Core::kUnrankedScore : score;
         }
 
-        /// The fallback ranking (and the harness tests): rank on the old
-        /// utility through the bridge, ln(u).
+        /// Rank on a utility through the R7 bridge, ln(u). R8.4: called only
+        /// by the fallback ranking (Legacy::Run::FallbackRanking) and by the
+        /// slot harness and tests, which state slot scores as utilities;
+        /// tools/prune/r8_check.py keeps it out of every other file.
         void RankOnUtility(float u) noexcept {
             utility = u;
             score = Core::BridgeScore(u);
-        }
-
-        [[nodiscard]] float GetContextWeight() const noexcept {
-            // Return the context weight computed during scoring (from ContextRuleEngine)
-            // NOTE: baseRelevance field removed in v0.12.x - use breakdown.contextWeight instead
-            return breakdown.contextWeight;
         }
 
         // Check if this is a specific candidate type
@@ -188,7 +192,7 @@ namespace Huginn::Scoring
         // break strict weak ordering: two tied weapons would order against each
         // other while each compared equal to a tied spell, and std::sort on an
         // intransitive comparator is undefined. Ordering on the pair
-        // (utility, dps) with dps 0 off-weapon is a proper lexicographic
+        // (score, dps) with dps 0 off-weapon is a proper lexicographic
         // ordering. The cost is that a spell tying a weapon exactly loses the
         // tie -- arbitrary, but it was arbitrary before too.
         [[nodiscard]] float TieBreakDps() const noexcept {

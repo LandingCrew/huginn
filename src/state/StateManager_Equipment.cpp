@@ -219,7 +219,7 @@ namespace Huginn::State
       // beside the bow, OverrideManager clamped the negative to 0 and could
       // announce an empty quiver to a player holding thirteen arrows, and
       // PlayerActorState::IsOutOfArrows -- which is `== 0` -- made
-      // ContextRuleEngine weight ammo up for a full one that had no changes entry
+      // the old context rules weight ammo up for a full one that had no changes entry
       // at all. Same bug the WeaponRegistry fast path had, fixed in #131; that
       // fix could not cover these, because it lives on InventoryAmmo::baseCount
       // and StateManager has no registry.

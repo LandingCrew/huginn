@@ -146,7 +146,8 @@ namespace Huginn::Candidate
 
         // Gather candidates from all registries into the persistent buffer.
         // No relevance metadata is stamped here: the per-tick display reason is
-        // derived by the pipeline from the scorer's context weights (#10).
+        // derived by the pipeline from the explanations of what the page shows
+        // (R8.3, PipelineCoordinator::UpdateContextReason).
         // One Tracy zone per source: Pipeline::ScoreCandidates went from ~180 us
         // to ~4.8 ms per call (Debug, 2026-09-19 -> 2026-10-03) and the gather,
         // filter and scoring halves were all inside one zone.
@@ -280,7 +281,7 @@ namespace Huginn::Candidate
 
             ItemCandidate candidate = ItemCandidate::FromInventoryItem(invItem);
 
-            // Stage 1g: baseRelevance removed - now computed by ContextRuleEngine
+            // Stage 1g: baseRelevance removed (R8.3: ranked on the choice score)
             // Stage 1g: preference multipliers removed - can be added to ContextWeightSettings if needed
 
             out.push_back(std::move(candidate));
@@ -320,7 +321,7 @@ namespace Huginn::Candidate
             if (invWeapon.isFavorited) ++favoritedCount;
             WeaponCandidate candidate = WeaponCandidate::FromInventoryWeapon(invWeapon);
 
-            // Stage 1g: baseRelevance removed - now computed by ContextRuleEngine
+            // Stage 1g: baseRelevance removed (R8.3: ranked on the choice score)
 
             out.push_back(std::move(candidate));
         });
@@ -370,7 +371,7 @@ namespace Huginn::Candidate
                 candidate.count = player.arrowCount + player.boltCount;
             }
 
-            // Stage 1g: baseRelevance removed - now computed by ContextRuleEngine
+            // Stage 1g: baseRelevance removed (R8.3: ranked on the choice score)
 
             out.push_back(std::move(candidate));
         });
@@ -395,7 +396,7 @@ namespace Huginn::Candidate
             ++count;
             ScrollCandidate candidate = ScrollCandidate::FromInventoryScroll(invScroll);
 
-            // Stage 1g: baseRelevance removed - now computed by ContextRuleEngine
+            // Stage 1g: baseRelevance removed (R8.3: ranked on the choice score)
             // Stage 1g: scroll preference multiplier removed - can be added to ContextWeightSettings if needed
 
             out.push_back(std::move(candidate));
@@ -430,7 +431,7 @@ namespace Huginn::Candidate
         // picked by capacity. That is a hard-coded preference sitting in front
         // of the one component whose job is preferences: a Petty gem was never
         // a candidate, so it could never be scored, equipped from a slot, or
-        // rewarded, and FeatureBanditLearner could not discover that a player tops up
+        // rewarded, and the old learner could not discover that a player tops up
         // with small gems and saves the Grands. Every other candidate type is
         // gathered wholesale and ranked; gems were the exception.
         //
@@ -454,7 +455,7 @@ namespace Huginn::Candidate
             // Filled instances, not stack size. FromInventoryItem takes the
             // whole count, which for gems includes the empty ones — a stack of
             // ten petty gems holding one soul looked abundant and dodged the
-            // scarcity penalty in PriorCalculator, while a lone filled gem took
+            // scarcity penalty in the old prior, while a lone filled gem took
             // it. Only the filled ones can be spent, so only they count.
             // Guarded: filledCount is 0 for the AlchemyItem-form mod gems that
             // never reach the ExtraSoul scan, and those reach here only when
@@ -485,8 +486,8 @@ namespace Huginn::Candidate
 
         // No context gate here, deliberately. Every other source is gathered
         // unconditionally and filtered downstream, and apparel follows the same
-        // path: the no_workstation filter (R8.1; before, WeightForCandidate's
-        // 0.0 and minimumContextWeight) drops these away from a workstation. Gating the GATHER
+        // path: the no_workstation filter (R8.1; before, a 0 context weight
+        // under the old context floor) drops these away from a workstation. Gating the GATHER
         // on world.isLookingAtWorkstation would be a second, redundant policy in
         // a second place — and the pool is tiny by construction, because
         // ApparelRegistry only ever holds craft-relevant pieces.
@@ -568,7 +569,7 @@ namespace Huginn::Candidate
         }
 
         // No context gate, as with apparel: the not_dark filter (R8.1; before,
-        // WeightForCandidate's 0) drops torches unless it is dark.
+        // a 0 context weight) drops torches unless it is dark.
         size_t gathered = 0;
         for (const auto& torch : m_itemRegistry->GetTorches()) {
             if (torch.count <= 0 || torch.name.empty()) continue;
@@ -588,10 +589,10 @@ namespace Huginn::Candidate
     // =========================================================================
     // RELEVANCE SCORING - REMOVED (Stage 1g)
     // =========================================================================
-    // All relevance scoring has been moved to ContextRuleEngine.
+    // No relevance scoring here: candidates are ranked on the choice score (R8.3).
     // The old Compute*Relevance() methods have been removed.
-    // baseRelevance is no longer set in Gather methods - it's now computed
-    // by Context::WeightForCandidate() using ContextRuleEngine weights.
+    // baseRelevance is no longer set in Gather methods (the legacy context
+    // weight, the D2 feature's floor input, lives in context/).
 
     // =========================================================================
     // DEBUG LOGGING
@@ -600,7 +601,7 @@ namespace Huginn::Candidate
     void CandidateGenerator::LogCandidates(const std::vector<CandidateVariant>& candidates) const
     {
         logger::info("=== CandidateGenerator: {} candidates ===", candidates.size());
-        logger::info("NOTE: baseRelevance is deprecated (Stage 1g) - relevance now computed by ContextRuleEngine");
+        logger::info("NOTE: baseRelevance is deprecated (Stage 1g) - candidates rank on the choice score (R8.3)");
 
         for (size_t i = 0; i < candidates.size() && i < 20; ++i) {
             const auto& base = GetBase(candidates[i]);
