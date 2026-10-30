@@ -155,4 +155,56 @@ namespace Huginn::Core::ChoiceCosave
     };
     [[nodiscard]] std::vector<ThetaEntry> MergeTheta(std::span<const std::uint64_t> buildKeys,
                                                      std::span<const ThetaEntry> saved, MergeReport& rep);
+
+    /// A reset (Reset Learned Weights, `hg reset weights`, `hg reset all`)
+    /// while the model is off (no or an invalid bootstrap; 0.24.18): the
+    /// records carried over from the load become what a reset model saves.
+    /// THTA keeps its bootstrap identity and loses every entry (nothing moved
+    /// from that file); an absent THTA stays absent (the load starts theta
+    /// from the file either way). BIAS becomes present and empty: b cleared,
+    /// as the reset clears it -- an absent BIAS would let the next load seed b
+    /// under sBootstrapBias, which a reset does not. Sets `resetSinceLoad`
+    /// (CarryLoaded reads it at the next load).
+    void ResetCarried(std::optional<ThetaRecord>& theta, std::optional<BiasRecord>& bias, bool& resetSinceLoad);
+
+    /// What kind of load ResolveLoadedLearner decided (persist/
+    /// BanditSerializer.h); both learners and the carried records follow it.
+    enum class LoadDecision : std::uint8_t
+    {
+        NewGame,   // a fresh character
+        Failed,    // the load restored nothing: keep everything
+        Reload,    // the character in memory, the save not ahead: keep memory
+        Replace,   // another character, the first load, or a later save
+    };
+
+    /// What CarryLoaded did, for the log.
+    struct CarryReport
+    {
+        bool keptCarried = false;          // a reload after a reset: the carried records kept
+        std::size_t dynamicDropped = 0;    // then: carried b entries of dynamic forms dropped
+        std::size_t dynamicTaken = 0;      //       and the save's taken in their place
+    };
+
+    /// A load while the model is off (no or an invalid bootstrap): what the
+    /// records carried for this session's saves become (ResolveLoadedChoice).
+    /// `resetSinceLoad`: a reset (ResetCarried) since the last load decision.
+    ///   new game   none
+    ///   failed     unchanged; `resetSinceLoad` too: nothing was restored, so
+    ///              a reset before it still holds at the next reload
+    ///   reload     after a reset: the carried records are kept, so the reset
+    ///              holds (the save predates it, and its learning is what the
+    ///              reset dropped). Only b's dynamic forms (0xFF......) come
+    ///              from the save's BIAS, as ChoiceLearner::ReplaceDynamicB
+    ///              (the engine reuses those IDs); no BIAS carried stays none,
+    ///              no BIAS in the save keeps the carried ones.
+    ///              With no reset: this save's records, as a load. The carried
+    ///              records never learn while the model is off, but the old
+    ///              learner's clock (which decides a reload) keeps running, so
+    ///              a save the clock calls "not ahead" can hold learning the
+    ///              carried records lack (0.24.18)
+    ///   replace    this save's records (an absent one absent)
+    /// Every decision but a failed load clears `resetSinceLoad`.
+    CarryReport CarryLoaded(LoadDecision decision, std::optional<ThetaRecord>& carriedTheta,
+        std::optional<BiasRecord>& carriedBias, bool& resetSinceLoad, std::optional<ThetaRecord> savedTheta,
+        std::optional<BiasRecord> savedBias);
 }

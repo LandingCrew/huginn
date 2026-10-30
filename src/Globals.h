@@ -95,7 +95,8 @@ extern std::atomic<bool> g_updateSystemFailed;
 /// @details Shared by InitializeGameSystems() and Cmd_ResetAll to prevent
 /// the reset and init sequences from silently diverging.
 /// Resets: UtilityScorer, UsageMemory, OverrideManager, CandidateGenerator,
-///         SlotAllocator, SlotLocker (with INI config), StateManager tracking.
+///         SlotAllocator, SlotLocker (the locks; its config is the caller's),
+///         StateManager tracking.
 void ResetPipelineSubsystems();
 
 /// @brief Canonical path to the main Huginn INI (Data/SKSE/Plugins/Huginn.ini).
@@ -132,10 +133,8 @@ void LoadCandidateConfigFromINI(const CSimpleIniA& ini);
 void LoadWildcardConfigFromINI(Huginn::Scoring::WildcardManager& wildcardMgr, const CSimpleIniA& ini);
 
 /// @brief Load [SlotLocker] section settings from an already-parsed INI.
+/// @note InitializeGameSystems (step 8) and SettingsReloader::ApplySideEffects.
 [[nodiscard]] Huginn::Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini);
-/// @brief Convenience overload: parse the main INI (Settings::LoadMainIni), then load [SlotLocker].
-/// @note Called by ResetPipelineSubsystems (game load, hg reset all).
-[[nodiscard]] Huginn::Slot::SlotLockConfig LoadSlotLockerConfigFromINI();
 
 // =============================================================================
 // GLOBAL ACCESSORS - Safe access to global systems from other translation units
