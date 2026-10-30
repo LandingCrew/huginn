@@ -24,9 +24,19 @@ learner's learning score on the rows the old floors pass. So two lists:
               them is how utility would rank or display again, whatever the symbols are called.
               The v3 row's copy of it (`.util`, DecisionLog::Row::util) too: that is how the
               live learner sees the old utility;
-            - the old floors' keep flag: `legacyScored` (ScoredCandidate) and `.Scored()` (the
-              legacy module's Row), C++ only for the call. Reading either is how the floors
-              would filter or rank again.
+            - the old floors' keep flag: `legacyScored` (ScoredCandidate), `.Scored()` (the
+              legacy module's Row) and `Flag::Scored` (the v3 row's util-is-finite bit, under any
+              qualifier: `F::Scored`), C++ only for the last two. Reading any is how the floors
+              would filter or rank again;
+            - a member read of the v3 row's OldScore columns or the decision's OldRun head
+              (`r.old.floor`, `r.old.wouldUtil`, `d.ctx->old.valid`, ...), C++ only: the old
+              engine's parts as the log carries them. On the live learner's path (ChoiceLearner.cpp,
+              ChoiceSubscriber.h, core/ChoiceUpdate.h's ChoiceSet) any `.old` read is LEGACY, so
+              an alias (`const auto& o = r.old;`) fails there too.
+          A PRUNED or LEGACY word is also matched in its house spellings: `m_` / `g_` / `s_` before
+          it (either case on its first letter: m_featureBanditLearner, s_UsageMemory) and a `Get`
+          accessor named for it (GetDominantReason, GetUsageMemoryReader). A bare name with its
+          first letter's case flipped (a local `dominantReason`) is not.
           The utility -> rank-score bridge (RankOnUtility, BridgeScore) is LEGACY too, so
           utility cannot rank outside the fallback in the legacy module and the slot harness
           that states scores as utilities. DisplayUtility, its inverse, was deleted in 0.24.5;
@@ -35,13 +45,14 @@ learner's learning score on the rows the old floors pass. So two lists:
           `Suppress` in PipelineCoordinator.cpp. A file that ranks or does slot math live
           (ScoredCandidate.h, SlotScoreMath.h, UtilityScorer, PipelineCoordinator) is never
           allowed whole: it is a patterned budget. Nor is a file on the live learner's path
-          (ChoiceSubscriber.h: no LEGACY line; ChoiceLearner.cpp, which reads the v3 row's `util`
-          only as the util_missing flag, and SelectionLogV3.cpp, which builds the v3 rows the
-          learner trains on: patterned).
+          (ChoiceSubscriber.h and ChoiceLearner.cpp: no LEGACY line, the learner reading none of
+          the v3 row's old-engine columns since 0.24.17, util missing and ln learn mult coming off
+          um / lm; SelectionLogV3.cpp, which builds the v3 rows the learner trains on: patterned).
           The old utility's row feature (`ln_util`) is LEGACY too: the bootstrap refuses a weight
           on it, and nothing but that refusal, its enum line and its host test may name it.
           0.24.17, the D2 engine in shadow (engine A beside the live engine B): every name with
-          `legacyShadow` / `LegacyShadow` in it is LEGACY, C++ only. A's values are computed in
+          `legacyShadow` / `LegacyShadow` (or `legacy_shadow`, any case) anywhere in it is LEGACY,
+          C++ only. A's values are computed in
           pure core (core/LegacyShadowPass.h, allowlisted: no game access, const inputs) and
           travel outside it only under such names -- the run (ctx.legacyShadow), the feature
           vector A reads, the eligible rows' and the v3 rows' fields, the [Soak] tally's locals --
@@ -335,11 +346,19 @@ LEGACY_CPP_PATTERNS = {
     '.util': r'(?:\.|->)\s*util\b',
     # the old floors' keep test on a legacy module Row (Legacy::Row::Scored)
     '.Scored()': r'(?:\.|->)\s*Scored\s*\(',
+    # the same keep as the v3 row's flag: Flag::Scored is the util-is-finite bit EligibleToRow sets,
+    # on engine B's rows too while the D2 shadow runs. Any qualifier: ChoiceSet names the flags
+    # through `namespace F = DecisionLog::Flag;`
+    '::Scored': r'::\s*Scored\b',
+    # the v3 row's OldScore columns (floor, wouldUtil, est, ...) and the decision's OldRun head,
+    # read through a member: the old engine's parts as the log carries them
+    '.old.<member>': r'(?:\.|->)\s*old\s*(?:\.|->)',
     # 0.24.17: the D2 engine in shadow -- engine A's mu, ranks and page keys (the pipeline's
     # LegacyShadowRun, ctx.legacyShadow, the eligible rows' and the v3 rows' legacyShadow*
     # fields). A line that names one is the shadow's writer or its log copy; anywhere else it
-    # is A's ranking read live (a score, an allocation, the learner).
-    'legacy shadow': r'\b[Ll]egacyShadow\w*',
+    # is A's ranking read live (a score, an allocation, the learner). No left boundary: a
+    # prefixed name (m_legacyShadowKeyA, haveLegacyShadow) carries A's values too.
+    'legacy shadow': r'(?i:legacy_?shadow)\w*',
     'breakdown part': r'(?:\.|->|::)\s*(?:contextWeight|rewardEstimate|learningScore|recencyBoost|correlationBonus'
                       r'|potionMultiplier|favoritesMultiplier|ToCompactString|ToDetailString)\b',
 }
@@ -364,6 +383,11 @@ FILE_PATTERNS = {
         'lg.<member>': r'\blg\.(?:lnLearnMult|floor)\b',
     },
 }
+# The live learner's path (the v3 rows it trains on: RowFeatures, OnPick, ChoiceSet): any read of
+# a row's OldScore or the decision's OldRun, an alias included (`const auto& o = r.old;`). Not
+# repo-wide: `.old` is a common member name (MiniRegex's backtrack entries).
+for _p in ('src/learning/ChoiceLearner.cpp', 'src/learning/ChoiceSubscriber.h', 'src/core/ChoiceUpdate.h'):
+    FILE_PATTERNS.setdefault(_p, {})['.old'] = r'(?:\.|->)\s*old\b'
 
 ALLOW = [
     ('src/learning/legacy/*', 'the legacy module: the D2 feature, the pass handle, the v3 OldScore capture, '
@@ -384,8 +408,10 @@ ALLOW = [
     ('src/persist/BanditSerializer.*', 'the BNDW cosave record (D2 reads the old learner\'s per-item state)'),
     ('src/learning/SelectionLog.cpp', 'the v2 selection log (the audit trail for refits)'),
     ('src/core/OldScore.h', 'the v3 OldScore columns\' record'),
-    ('src/core/DecisionLog.cpp', 'the v3 format: the OldRun head writes the floors\' lambdaMin / lambdaMax'),
-    ('tests/core/DecisionLogTests.cpp', 'the v3 format\'s host test (the OldRun head)'),
+    ('src/core/DecisionLog.cpp', 'the v3 format: the OldScore columns, and the OldRun head writes the floors\' '
+                                 'lambdaMin / lambdaMax'),
+    ('tests/core/DecisionLogTests.cpp', 'the v3 format\'s host test (the OldRun head, the OldScore columns, '
+                                        'the Scored flag)'),
     ('src/learning/ScorerSettings.*', 'settings loader: [Scoring] / [Favorites]'),
     ('src/learning/ScorerConfig.h', 'settings loader: the config it builds'),
     ('src/learning/LearningSettings.h', 'settings loader: [Learning] (the memory life: ChoiceLearner\'s b battery and the old learner)'),
@@ -415,7 +441,9 @@ ALLOW = [
 COMMENT = r'^\s*//'
 BUDGET = {
     # The live pipeline (PipelineCoordinator): the legacy pass and everything it reads off it.
-    'src/pipeline/PipelineCoordinator.cpp': (61, [
+    # 0.24.20: 60: the favourites flag written onto OldScore is a LEGACY line (`.old.<member>`).
+    # 0.24.21: 62: the [Recs] lm note's floors flag, and the weights latch read split in two.
+    'src/pipeline/PipelineCoordinator.cpp': (62, [
         COMMENT,
         # CaptureEligible's floor cross-check (the one read of lg.floor)
         r'^\s*if \(static_cast<uint8_t>\(lg\.floor\) != row\.old\.floor\) \+\+floorMismatch;$',
@@ -496,6 +524,9 @@ BUDGET = {
         r'^\s*if \(sc\.legacyScored\) scoredByKey\.try_emplace\(key, &sc\);$',
         r'^\s*\[\]\(const Scoring::ScoredCandidate& sc\) \{ return sc\.legacyScored && !sc\.isRememberedOnly; \}\)\)\);$',
         r'^\s*row\.lnLearnMult = lg\.Scored\(\) \? lg\.lnLearnMult : 0\.0f;$',
+        # 0.24.20: CaptureEligible's favourites flag for a row with no OldScore capture (the v3
+        # Favorite flag reads it; IsFavorited, not an old-engine judgement)
+        r'^\s*row\.old\.favorite = Candidate::IsFavorited\(c\);\s+// the v3 Favorite flag reads it$',
     ], 'the legacy pass, the switch, the fallback, the weights latch, the D2 feature per candidate, '
        'the v2 / v3 log copies, the Suppress filter input, the Debug widget cold-start count; 0.24.17: the '
        'D2 shadow (its switch, engine A\'s feature and mu, the allocation input hand-back, the ranks and '
@@ -559,16 +590,20 @@ BUDGET = {
         r'^\s*scored\.isColdStartBoosted \? " \[COLD\]" : ""\);$',
     ], 'the live scorer: only [Recs] lines log the old parts (lm\'s inputs; the fallback line)'),
     # The v2 selection log's cached rows (PipelineStateCache feeds SelectionLog.cpp).
-    'src/learning/PipelineStateCache.h': (9, [
+    'src/learning/PipelineStateCache.h': (11, [
         r'^\s*\.utility = sc\.utility,$',
         r'^\s*\.breakdown = sc\.breakdown,$',
         r'^\s*bool isColdStartBoosted = false;$',
         r'^\s*\.isColdStartBoosted = sc\.isColdStartBoosted,$',
+        # 0.24.19: the floors' keep, copied for the v2 log's writer (it writes only the kept rows)
+        r'^\s*bool legacyScored = false;$',
+        r'^\s*\.legacyScored = sc\.legacyScored,$',
         # 0.24.17: the eligible row's copy of the D2 shadow, for the v3 log
         r'^\s*float legacyShadowMu = std::numeric_limits<float>::quiet_NaN\(\);$',
         r'^\s*int16_t legacyShadowRank[AB] = 0;$',
         r'^\s*int8_t legacyShadowKey(?:A|B0) = -2;$',
-    ], 'the v2 selection log\'s cached rows; the eligible rows\' D2 shadow fields (0.24.17)'),
+    ], 'the v2 selection log\'s cached rows and their keep flag (0.24.19); the eligible rows\' D2 shadow '
+       'fields (0.24.17)'),
     # 0.24.17: the v3 Row's D2 shadow fields (logged only; ChoiceLearner, which reads the Row,
     # names none: its budget is 0).
     'src/core/DecisionLog.h': (5, [
@@ -611,7 +646,8 @@ BUDGET = {
     'src/learning/ChoiceLearner.cpp': (0, None, 'the live learner: no old engine, no D2 shadow'),
     # SelectionLogV3 builds the v3 Decision rows the live learner trains on (util, lm): only the
     # row's old-utility copy and the OldScore columns' learner fill, each in its exact form.
-    'src/learning/SelectionLogV3.cpp': (21, [
+    # 0.24.20: 31: the OldScore member reads (`.old.<member>`) are LEGACY lines now.
+    'src/learning/SelectionLogV3.cpp': (31, [
         r'^#include "FeatureBanditLearner\.h"$',
         r'^#include "UsageMemory\.h"$',
         # EligibleToRow: the row's utility and Scored flag, copied as the run left them
@@ -624,6 +660,17 @@ BUDGET = {
         r'^\s*const auto learner = g_featureBanditLearner->AcquireReader\(\);$',
         r'^\s*const auto usage = g_usageMemory->AcquireReader\(old\.stateHash\);$',
         r'^\s*r\.old\.est = m\.rewardEstimate;$',
+        r'^\s*r\.old\.(?:alpha = m\.confidence|trains = m\.trains|ucb = m\.ucb|rec = usage\.GetRecencyBoost\(r\.form\));$',
+        r'^\s*return \(r\.flags & \(Flag::Held \| Flag::Eligible\)\) && !r\.old\.HasLearner\(\);$',
+        r'^\s*if \(!\(r\.flags & \(Flag::Held \| Flag::Eligible\)\) \|\| r\.old\.HasLearner\(\)\) continue;$',
+        # the added row's FillLearner reads the decision's OldRun head (the state features)
+        r'^\s*if \(d\.ctx->old\.valid\) \{$',
+        # Annotate: a filter drop's OldScore columns, with no floor (it never reached the floors)
+        r'^\s*r\.old\.floor = Core::DecisionLog::kNoFloor;\s+// not eligible: no floor$',
+        # EligibleToRow and Annotate: the favourites flag rides on OldScore (IsFavorited, not an
+        # old-engine judgement) into the v3 Favorite flag
+        r'^\s*if \(e\.old\.favorite\) r\.flags \|= Flag::Favorite;$',
+        r'^\s*// eligible row\'s bit is set from e\.old\.favorite\.$',
         # 0.24.17: EligibleToRow copies the D2 shadow's columns; the [Soak] tally reads A's page key
         r'^\s*r\.legacyShadow(Mu|RankA|RankB|KeyA|KeyB0) = e\.legacyShadow\1;$',
         r'^\s*if \(r\.legacyShadowKeyA != Core::DecisionLog::kNoShadowKey\) \{$',
@@ -633,7 +680,8 @@ BUDGET = {
         r'^\s*const auto legacyShadowPick = Core::ShadowCompare::ClassifyPick\(d\.outcome == Outcome::Nothing, d\.repeat,$',
         r'^\s*Telemetry::SoakMetrics::GetSingleton\(\)\.RecordShadowPick\(legacyShadowPick\);$',
     ], 'the v3 rows the live learner trains on: the utility copy and the OldScore learner fill; the D2 '
-       'shadow\'s columns and the [Soak] tally\'s read of them (0.24.17)'),
+       'shadow\'s columns and the [Soak] tally\'s read of them (0.24.17); the OldScore columns of a filter '
+       'drop and the favourites flag they carry (0.24.20)'),
     # `ln_util`: its enum line, the bootstrap's refusal (REQUIRED below keeps it whole) and the
     # refusal's host test.
     'src/core/ChoiceScore.h': (1, [r'^\s*ln_util,$'], 'the format v1 feature enum: `ln util`\'s slot'),
@@ -789,8 +837,20 @@ def check_classifier(tree, out, verbose=False):
 # ---------------------------------------------------------------------------------------------
 # The scan: over a {path: text} map, so the probes (test_r8_check.py) can mutate it in memory.
 # ---------------------------------------------------------------------------------------------
-def word_rx(words):
-    return re.compile(r'(?<![A-Za-z0-9_])(?:' + '|'.join(re.escape(w) for w in words) + r')(?![A-Za-z0-9_])')
+def word_rx(words, prefixed=False):
+    """Whole-word match. prefixed: a PRUNED / LEGACY word in its house spellings too -- `m_` / `g_` /
+    `s_` before it (either case on its first letter) and a `Get` accessor named for it, with or
+    without a camel suffix (GetUsageMemoryReader). A word that already carries a prefix
+    (g_usageMemory) matches as itself only. One alternation per prefix, so a line without one
+    costs one character test more than the plain match."""
+    alt = '|'.join(re.escape(w) for w in words)
+    free = [w for w in words if w[:1].isalpha() and not re.match(r'[mgs]_', w)] if prefixed else []
+    if free:
+        cased = sorted({c + w[1:] for w in free for c in (w[0].lower(), w[0].upper())})
+        caps = sorted({w[0].upper() + w[1:] for w in free})
+        alt = (f'(?:{alt})|[mgs]_(?:{"|".join(re.escape(w) for w in cased)})'
+               f'|Get(?:{"|".join(re.escape(w) for w in caps)})(?:[A-Z0-9]\\w*)?')
+    return re.compile(r'(?<![A-Za-z0-9_])(?:' + alt + r')(?![A-Za-z0-9_])')
 
 
 def matches(path, roots, globs):
@@ -841,11 +901,11 @@ def check(tree, ini, verbose=False, out=print):
     bad_paths = []
 
     # --- PRUNED ---
-    rx = word_rx(list(PRUNED))
+    rx = word_rx(list(PRUNED), prefixed=True)
     hits = []
     for path, text in tree.items():
         scoped = [w for w, g, _ in PRUNED_SCOPED if fnmatch.fnmatch(path, g)]
-        rx_s = word_rx(scoped) if scoped else None
+        rx_s = word_rx(scoped, prefixed=True) if scoped else None
         for i, line in enumerate(text.splitlines(), 1):
             words = [m.group(0) for m in rx.finditer(line)]
             if rx_s:
@@ -920,8 +980,8 @@ def check(tree, ini, verbose=False, out=print):
         out(f'REQUIRED: all {len(REQUIRED)} present')
 
     # --- LEGACY ---
-    rx_words = word_rx(LEGACY)
-    rx_cpp_words = word_rx(LEGACY_CPP)
+    rx_words = word_rx(LEGACY, prefixed=True)
+    rx_cpp_words = word_rx(LEGACY_CPP, prefixed=True)
     rx_pats = [(name, re.compile(p)) for name, p in LEGACY_CPP_PATTERNS.items()]
     per_file = defaultdict(list)
     for path, text in tree.items():

@@ -50,15 +50,26 @@ carries none of them (every row before 0.23.53); the `favorite` flag bit; the
 context's `old` object (the run's scorer parameters, kept as written; None
 before); and the decision's `rid` (the id its v2 record carries; None when it
 has none, and before 0.23.53). main() also checks each row's floor `fl`
-against the context's `old` floors (floor_check) and prints the violations: the
-floors are derived by hand from UtilityScorer::ScoreCandidates' tests, and a
-real log is where the two would be seen to drift apart.
+against the context's `old` floors (floor_check) and prints the violations: a
+reading of the floor tests in Python, against the logged values, beside the
+plugin's own two (see floor_check).
+
+0.23.56 (R8.2) appended the choice model's columns mu, sd, lm, um, ex, kept as
+the row tuple's SHADOW element (common.S_MU..S_EX). The model ran in shadow at
+0.23.56; from R8.3 (0.24.0) it is the live ranking, and lm / um are the D2
+feature as the live score read it (fitlib.row_features 'learn_live').
 
 0.24.17 appended the D2 engine in shadow beside the live one: row columns amu,
 ar, br, ak, bk (engine A's mu, the row's rank under A and under the live
 ranking, its key on A's and on the live ranking's stateless page), kept as the
 row tuple's SHADOW_A element (common.A_MU..A_BK), None on a row with none of
-them. The fit reads none of it; tools/shadow/shadow_compare.py does."""
+them. The fit reads none of it; tools/shadow/shadow_compare.py reads ar, br,
+ak and bk.
+
+Logged and read by no script here (kept or dropped as said, for a later look):
+the row column amu; the head's `bootstrap` object (0.23.56: the seed's
+created_utc and sha256; kept in the heads) and `refreshPriorSec` (0.23.55:
+covered(i)'s left(r) centre, [Scoring] fRefreshPriorSec; dropped)."""
 import argparse
 import json
 import pickle
@@ -74,9 +85,10 @@ DEC_DEFAULTS = {'char': None, 'list': '', 'gen': 1, 'name': None, 'form': None, 
                 'learned': 1, 'preEquipped': 0, 'ep': None, 'rid': None}
 # The row columns 0.23.53 appended, in the order of the row tuple's OLD element.
 OLD_COLS = ('est', 'a', 'n', 'ucb', 'rec', 'prior', 'cw', 'fl', 'wu', 'hk')
-# 0.23.56 (R8.2): the new model in shadow, by name (common.SHADOW, S_MU..S_EX):
-# mu, sd, lm (ln learn mult), um (util missing), ex ((need id, column id) by
-# the loader's global indices, or "learned"). None on older rows.
+# 0.23.56 (R8.2): the choice model (in shadow at 0.23.56, the live ranking from
+# R8.3), by name (common.SHADOW, S_MU..S_EX): mu, sd, lm (ln learn mult), um
+# (util missing) -- both as the live score read them -- and ex ((need id, column
+# id) by the loader's global indices, or "learned"). None on older rows.
 SHADOW_COLS = ('mu', 'sd', 'lm', 'um', 'ex')
 # 0.24.17: the D2 engine in shadow (common.SHADOW_A, A_MU..A_BK).
 SHADOW_A_COLS = ('amu', 'ar', 'br', 'ak', 'bk')
@@ -269,11 +281,15 @@ FLOOR_TOL = 1e-3
 
 
 def floor_check(D):
-    """Check each row's old-engine floor (`fl`, 0.23.53) against the tests
-    UtilityScorer::ScoreCandidates applies, with the context's `old` floors.
-    PipelineCoordinator::CaptureEligible derives `fl` by copying those tests by hand;
-    this catches the two drifting apart, on a real log. Returns (Counter of violations
-    by kind, the rows checked, up to 5 examples per kind as (ctx key, row index, form)).
+    """Check each row's old-engine floor (`fl`, 0.23.53) against the floor tests, read
+    off the logged values and the context's `old` floors. The plugin writes `fl` from
+    the legacy module's score capture (src/learning/legacy/LegacyRun.cpp), which reads
+    the tests of the floor pass (src/learning/legacy/LegacyLearnFeature.h); since 0.23.56
+    the pipeline also compares the two per row and logs a [Legacy] warning when they
+    disagree. This is a third reading, in Python, of the logged
+    numbers: it catches a floor the INI's values (the context's `old`) would not give.
+    Returns (Counter of violations by kind, the rows checked, up to 5 examples per kind
+    as (ctx key, row index, form)).
     Kinds:
       not_eligible    fl set on a row that is not eligible
       scored_mismatch fl pass/cold on an unscored row, or ctx/util/suppressed on a scored one

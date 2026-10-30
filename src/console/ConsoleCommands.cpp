@@ -28,6 +28,7 @@
 #include <map>
 #include <unordered_map>
 #include "settings/SettingsReloader.h"
+#include "persist/ChoiceSerializer.h"
 #include "pipeline/PipelineCoordinator.h"
 #include "needs/NeedSnapshotBuilder.h"
 
@@ -90,14 +91,13 @@ namespace Huginn::Console
    {
       // Shared with the dMenu "reset learning data" button; serializes itself
       // via RunExclusive and resets SlotLocker alongside the weight table.
-      const auto learnerItems = Settings::SettingsReloader::ResetLearningData();
-      if (!learnerItems) {
+      const auto reset = Settings::SettingsReloader::ResetLearningData();
+      if (!reset) {
          Print("FeatureBanditLearner not initialized (load a game first)");
          return;
       }
 
-      auto msg = std::format("Learning data cleared ({} learner items; theta back to the bootstrap, b cleared)",
-         *learnerItems);
+      auto msg = std::format("Learning data cleared ({} learner items; {})", reset->learnerItems, reset->choice);
       Print(msg.c_str());
       logger::info("[Console] {}"sv, msg);
    }
@@ -165,10 +165,9 @@ namespace Huginn::Console
             learnerItems = g_featureBanditLearner->GetItemCount();
             g_featureBanditLearner->Clear();
          }
-         // R8.3: theta back to the bootstrap, b cleared (as `hg reset weights`).
-         if (g_choiceLearner) {
-            g_choiceLearner->ResetToBootstrap(g_activeCharacterID.load(std::memory_order_relaxed), /*seedB=*/false);
-         }
+         // R8.3: theta back to the bootstrap, b cleared (as `hg reset weights`);
+         // with the model off, the THTA / BIAS carried from the load emptied.
+         const char* choice = Persist::ResetChoiceLearning(g_activeCharacterID.load(std::memory_order_relaxed));
 
          // 2. Rebuild all registries (console does full rebuild; init path reconciles)
          RebuildRegistries();
@@ -176,8 +175,8 @@ namespace Huginn::Console
          // 3. Reset all stateful pipeline subsystems (shared with InitializeGameSystems)
          ResetPipelineSubsystems();
 
-         auto msg = std::format("Full reset complete (old learner: {} items, all subsystems reset)",
-            learnerItems);
+         auto msg = std::format("Full reset complete (old learner: {} items; {}; all subsystems reset)",
+            learnerItems, choice);
          Print(msg.c_str());
          logger::info("[Console] {}"sv, msg);
       });

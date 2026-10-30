@@ -63,6 +63,17 @@ def data_key(S, obv=None):
 # ---------------------------------------------------------------------------
 # v2 join (context weights for the baselines)
 # ---------------------------------------------------------------------------
+def v2_unscored(c):
+    """A v2 candidate row (a dict by `cols`) the old engine did not score. From R8.3 (0.24.0)
+    until 0.24.19 the v2 record held every ranked candidate, and the ones the old floors dropped
+    carried the default breakdown: util, ctx and corr 0 (src/learning/SelectionLog.cpp; from
+    0.24.19 it writes only the kept rows again). A v2 record names no build, so the row is told
+    by what the writer put in it: corr is the correlation multiplier, which the old scorer starts
+    at 1 and only multiplies up, so no row it scored reads 0, and a record of any other build
+    has no such row."""
+    return c.get('util') == 0 and c.get('ctx') == 0 and c.get('corr') == 0
+
+
 class V2Index(defaultdict):
     """load_v2's result: {picked form: [(utc, {candidate form: V2 tuple})]} (join_v2 joins a v3
     pick to its record), plus `appear`: {candidate form: [(utc, launch, gen, char, V2 tuple)]}
@@ -83,8 +94,10 @@ def load_v2(path=None, since='2026-10-09 14'):
     read NaN and the learner features 0. A candidate is a V2 tuple (V2_COLS): the context weight,
     the correlation / potion / favourite multipliers, the slot class, the utility, and the old
     learner's part: lambda(confidence), the learning score, the bandit estimate, its confidence
-    alpha, the recency boost and the prior. UtilityScorer: util = ctx (1 + lambda learn) corr
-    potion fav, learn = alpha est + (1 - alpha) prior + beta ucb + rec."""
+    alpha, the recency boost and the prior. The old scorer (src/learning/legacy/): util =
+    ctx (1 + lambda learn) corr potion fav, learn = alpha est + (1 - alpha) prior + beta ucb + rec.
+    Only the rows it scored are kept: a 0.24.0..0.24.18 record's zero rows are skipped
+    (v2_unscored)."""
     idx = V2Index()
     path = path or v2_path()
     if path is None or not Path(path).exists():
@@ -101,6 +114,8 @@ def load_v2(path=None, since='2026-10-09 14'):
         cands = {}
         for c in r['cands']:
             c = dict(zip(cols, c))
+            if v2_unscored(c):
+                continue
             cl = 'FoodAny' if c['type'] == 'Food' else c['need']
             if c['form'] not in cands:
                 cands[c['form']] = (c['ctx'], c['corr'], c['potion'], c['fav'], cl, c['util'],
@@ -307,6 +322,7 @@ def build(D, include_nothing=True, latest_caps=False, v2=None, since=None, until
     UTILA = np.full((Dn, R), np.nan)
     V2 = np.full((Dn, R, 4), np.nan)          # ctx corr potion fav
     LRN = np.zeros((Dn, R, 2))                # the learner features (row_features 'learn', 'learner')
+    LMUM = np.full((Dn, R, 2), np.nan)        # the row's logged lm / um (row_features 'learn_live'), NaN when absent
     ELIG = np.zeros((Dn, R))                  # the row's eligible flag (passed the candidate filters)
     CLS = np.full((Dn, R), -1, dtype=np.int32)
     Y = np.full(Dn, -1, dtype=np.int32)
@@ -348,6 +364,9 @@ def build(D, include_nothing=True, latest_caps=False, v2=None, since=None, until
                 UTILA[di, ri] = r[UTIL]
             if r[FLAGS] & F['eligible']:
                 ELIG[di, ri] = 1.0
+            sh = r[SHADOW] if len(r) > SHADOW else None
+            if sh is not None and sh[S_LM] is not None and sh[S_UM] is not None:
+                LMUM[di, ri] = (sh[S_LM], sh[S_UM])
             c = cands.get(r[FORM]) if cands else None
             if c is not None:
                 V2[di, ri] = c[:4]
@@ -368,7 +387,7 @@ def build(D, include_nothing=True, latest_caps=False, v2=None, since=None, until
                      'ep_why': ep_why(d)})
     REC, rec_names = recent_families(D, [d for d, _ in recs], cols, caps, recency)
     return dict(CapMat=CapMat, xcol=xcol, CAPID=CAPID, X=XA, COV=COV, MASK=MASK, INHA=INHA, ITEM=ITEM, SLOT=SLOTA, UTIL=UTILA,
-                V2=V2, LRN=LRN, ELIG=ELIG, CLS=CLS, Y=Y, N=N, IN=IN, OUT=OUT, LA=LA, SEG=SEG, REC=REC, v2ok=v2ok, launches=launches, items=items,
+                V2=V2, LRN=LRN, LMUM=LMUM, ELIG=ELIG, CLS=CLS, Y=Y, N=N, IN=IN, OUT=OUT, LA=LA, SEG=SEG, REC=REC, v2ok=v2ok, launches=launches, items=items,
                 classes=classes, meta=meta, K=K, J=J, needs=needs, cols=cols, R=R,
                 segments=segment_names(list(split_at)), recency_names=rec_names)
 
@@ -444,8 +463,8 @@ def recent_families(D, decs, cols, caps, taus):
 
 def subset(S, idx):
     out = dict(S)
-    for k in ('CAPID', 'X', 'COV', 'MASK', 'INHA', 'ITEM', 'SLOT', 'UTIL', 'V2', 'LRN', 'ELIG', 'CLS', 'Y', 'N', 'IN',
-              'OUT', 'LA', 'SEG', 'REC', 'v2ok'):
+    for k in ('CAPID', 'X', 'COV', 'MASK', 'INHA', 'ITEM', 'SLOT', 'UTIL', 'V2', 'LRN', 'LMUM', 'ELIG', 'CLS', 'Y', 'N',
+              'IN', 'OUT', 'LA', 'SEG', 'REC', 'v2ok'):
         if k in S:                  # a hand-made dataset (the tests) may lack the v2-derived arrays
             out[k] = S[k][idx]
     out['meta'] = [S['meta'][i] for i in idx]
@@ -847,12 +866,21 @@ def astar_online(S, every=5, min_train=150):
 # row features for baselines
 # ---------------------------------------------------------------------------
 def row_features(S, spec):
-    """spec: list of names among 'astar', 'learn', 'mults', 'learner', 'ctx', 'cheap', 'pos'.
+    """spec: list of names among 'astar', 'learn', 'learn_live', 'mults', 'learner', 'ctx',
+    'cheap', 'pos'.
 
     The old score's components (the R8 component test, 2026-10-29; read from the v2 log):
       learn    (D2) 'ln learn mult': ln(1 + lambda(alpha) learningScore), the old learner's
                multiplier in the utility, on the rows the old engine scored (passed its floors)
                of a pick whose v2 record joins, else 0; and 'util missing', the not-scored flag.
+               Engine A's reading, from `util`: the old floors set it whichever engine was
+               live (from 0.24.17 the D2 shadow runs them under engine B too).
+      learn_live (0.24.19) the same two columns as the live score read them: the v3 row's
+               `lm` / `um` (logged from 0.23.56). Under engine B (bLegacyLearnFeature = 0, the
+               default from 0.24.17) they are 0 / 1 on every row, whatever the floors kept;
+               under A, learn's values. A row logged before 0.23.56 has none and reads as
+               'learn'. A fit of B reads this, not 'learn' (README, 'Logs from 0.24.17 on').
+               No row needs telling apart by engine: lm / um are what the live score read.
       mults    (D5, with learn) 'ln fav', 'ln corr', 'ln potion': the other multipliers, same rows.
       learner  (L1, no old scorer) 'ln learner': ln(1 + lambda(alpha) (alpha est + rec)), the
                learner's own per-item state (the old learner's estimate and confidence and
@@ -868,6 +896,10 @@ def row_features(S, spec):
         names += ['ln util', 'util missing']
     if 'learn' in spec:
         feats += [S['LRN'][..., 0], np.isnan(U).astype(float)]
+        names += ['ln learn mult', 'util missing']
+    if 'learn_live' in spec:
+        LM, UM = S['LMUM'][..., 0], S['LMUM'][..., 1]
+        feats += [np.where(np.isnan(LM), S['LRN'][..., 0], LM), np.where(np.isnan(UM), np.isnan(U), UM).astype(float)]
         names += ['ln learn mult', 'util missing']
     if 'mults' in spec:
         ok = ~np.isnan(V[..., 0]) & ~np.isnan(U)

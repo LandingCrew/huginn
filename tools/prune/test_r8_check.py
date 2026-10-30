@@ -26,8 +26,50 @@ SC = 'src/learning/ScoredCandidate.h'
 SC_LESS = 'return Core::RanksBefore(score, TieBreakDps(), other.score, other.TieBreakDps());'
 SC_SLOT = 'return isRememberedOnly ? Core::kUnrankedScore : score;'
 D2 = 'C::SetLegacy(x.feat,'
+SL = 'src/slot/SlotLocker.cpp'
+CL = 'src/learning/ChoiceLearner.cpp'
+# after RowFeatures' last line: an insertion after the um read would break its REQUIRED regex and
+# be caught for that, not for the line it plants
+CL_END = 'if (r.flags & DL::Flag::Eligible) f[static_cast<std::size_t>(C::Feature::eligible)] = 1.0;'
+CU = 'src/core/ChoiceUpdate.h'
+CU_EQ = 'if (r.flags & F::Equipped) continue;'
 
 PROBES = [
+    # --- 0.24.20: the house spellings of a PRUNED / LEGACY name (m_ / g_ / s_, Get...) ---
+    ('0.24.20: A\'s page key as a member in the slot locker', SL, '#include', 'static int m_legacyShadowKeyA = -2;', 'after'),
+    ('0.24.20: a shadow name with a word before it', SL, '#include', 'static bool haveLegacyShadow = false;', 'after'),
+    ('0.24.20: a snake_case shadow name', SL, '#include', 'static int legacy_shadow_rank_a = 0;', 'after'),
+    ('0.24.20: the switch as a global', SL, '#include', 'static bool g_legacyLive = false;', 'after'),
+    ('0.24.20: the floors\' keep flag as a member', SL, '#include', 'static bool m_legacyScored = false;', 'after'),
+    ('0.24.20: the old learner as a member (first letter lowered)', SL, '#include',
+     'static void* m_featureBanditLearner = nullptr;', 'after'),
+    ('0.24.20: recency as a static', SL, '#include', 'static int s_UsageMemory = 0;', 'after'),
+    ('0.24.20: a Get accessor for recency with a suffix', SL, '#include', 'int GetUsageMemoryReader();', 'after'),
+    ('0.24.20: the dominant reason back as a Get accessor (PRUNED)', SL, '#include', 'int GetDominantReason();', 'after'),
+    ('0.24.20: the skip gate ambient signature back as a member (PRUNED)', SL, '#include',
+     'static int m_ambientSignature = 0;', 'after'),
+    ('0.24.20: an old floor as a static in the live scorer', US, 'namespace Huginn::Scoring',
+     '    static float s_minimumUtility = 0.0f;', 'after'),
+    # --- 0.24.20: the floors' keep as the v3 Scored flag, and the OldScore columns ---
+    ('0.24.20: the learner reads the v3 Scored flag', CL, CL_END,
+     '            if (r.flags & DL::Flag::Scored) f[static_cast<std::size_t>(C::Feature::eligible)] += 1.0;', 'after'),
+    ('0.24.20: the learner reads the old floor', CL, CL_END, '            if (r.old.floor == 0) f[0] += 1.0;', 'after'),
+    ('0.24.20: lm from the old would-be utility in the learner', CL, CL_END,
+     '            if (std::isfinite(r.old.wouldUtil)) '
+     'f[static_cast<std::size_t>(C::Feature::ln_learn_mult)] = std::log(r.old.wouldUtil);', 'after'),
+    ('0.24.20: an alias of the OldScore columns in the learner', CL, CL_END,
+     '            const auto& probeOld = r.old;', 'after'),
+    ('0.24.20: the training set drops rows the floors cut (aliased flag)', CU, CU_EQ,
+     '                if (!(r.flags & F::Scored)) continue;', 'after'),
+    ('0.24.20: the training set reads the old floor', CU, CU_EQ, '                if (r.old.floor != 0) continue;', 'after'),
+    ('0.24.20: the subscriber skips picks the old floors kept nothing for', 'src/learning/ChoiceSubscriber.h',
+     'if (event.v3Decision) Feed(m_learner, *event.v3Decision);',
+     '            if (event.v3Decision && event.v3Decision->ctx && event.v3Decision->ctx->old.scored == 0) return;',
+     'after'),
+    ('0.24.20: the slot locker reads an eligible row\'s old floor', SL, '#include',
+     'static int Probe(const Huginn::Learning::PipelineStateCache::EligibleRow& e) { return e.old.floor; }', 'after'),
+    ('0.24.20: a second Scored flag read in the v3 log', 'src/learning/SelectionLogV3.cpp', 'r.um = e.utilMissing;',
+     '            if (r.flags & Flag::Scored) r.lm = 0.0f;', 'after'),
     # --- 0.24.17: the D2 engine in shadow is never read live (round 1: the verifier's aliases) ---
     ('0.24.17: A\'s mu ranks the live list in RankOnChoice', PC, 'legacyShadowFeat, ctx.legacyShadow);',
      '        for (size_t i = 0; i < rows; ++i) out[i].score = ctx.legacyShadow.mu[i];', 'after'),

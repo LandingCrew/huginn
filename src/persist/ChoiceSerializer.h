@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/ChoiceCosave.h"   // LoadDecision
 #include "learning/ChoiceLearner.h"
 
 #include <cstdint>
@@ -54,20 +55,23 @@ namespace Huginn::Persist
    //                      records this save holds are kept and every save
    //                      this session makes writes them back unchanged, so
    //                      a session without the bootstrap loses no learning.
+   //                      A reset empties them (ResetChoiceLearning). The
+   //                      next reload of the same character keeps the
+   //                      emptied ones, b's dynamic forms from the save, so
+   //                      the reset holds; a reload with no reset since the
+   //                      last load takes the save's records, as a load (the
+   //                      carried ones never learn, while the clock that
+   //                      calls it a reload runs on). core/ChoiceCosave.h
+   //                      CarryLoaded.
    // =========================================================================
 
    inline constexpr uint32_t kRecordType_Theta = 'ATHT';  // 'THTA' on disk
    inline constexpr uint32_t kRecordType_Bias  = 'SAIB';  // 'BIAS' on disk
    inline constexpr uint32_t kRecordType_Discovery = 'CSID';  // 'DISC' on disk
 
-   /// What kind of load ResolveLoadedLearner decided (BanditSerializer.h).
-   enum class LoadDecision : uint8_t
-   {
-      NewGame,   // a fresh character
-      Failed,    // the load restored nothing: keep everything
-      Reload,    // the character in memory, the save not ahead: keep memory
-      Replace,   // another character, the first load, or a later save
-   };
+   /// What kind of load ResolveLoadedLearner decided (BanditSerializer.h);
+   /// defined in core so the model-off carry (CarryLoaded) is host-tested.
+   using LoadDecision = Core::ChoiceCosave::LoadDecision;
 
    [[nodiscard]] const char* LoadDecisionName(LoadDecision d) noexcept;
 
@@ -80,6 +84,16 @@ namespace Huginn::Persist
    void LoadDiscoveryRecord(SKSE::SerializationInterface* a_intfc, uint32_t version, uint32_t length);
    /// LoadCallback start and RevertCallback: drop the buffered records.
    void ResetPendingChoice();
+
+   /// Reset Learned Weights, `hg reset weights` and `hg reset all` (inside
+   /// RunExclusive): theta back to the bootstrap and b cleared, no
+   /// sBootstrapBias seed. With the model off (no bootstrap) there is no theta
+   /// to reset, so the records carried from the load are emptied instead
+   /// (core/ChoiceCosave.h ResetCarried, 0.24.18): the saves stop writing the
+   /// learning from before the reset, and the next reload of the same
+   /// character keeps them emptied (the reset bit, CarryLoaded). Returns what
+   /// was done, for the player's message.
+   [[nodiscard]] const char* ResetChoiceLearning(uint64_t characterID);
 
    /// kPostLoadGame / kNewGame, once the learner exists and its bootstrap
    /// was read (Main.cpp step 6c). `characterID`: the character the load

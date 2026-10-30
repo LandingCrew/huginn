@@ -10,7 +10,12 @@ Input: Huginn_Selections.jsonl (SKSE log folder). Each record carries the
 press-time state vector `phi`, the page that was `shown`, and every scored
 candidate with its full breakdown (`cols`): ctx, prior, the learner's estimate
 `est`, ucb, alpha (confidence), lambda, the recency term `rec`, and the corr /
-potion / fav multipliers.
+potion / fav multipliers. Since R8.3 (0.24.0) the choice score ranks; the old
+engine runs for the D2 feature (from 0.24.17 also for the D2 shadow) and, with
+no bootstrap, for the fallback ranking, so `util` is mostly not what the page
+was built from. Builds 0.24.0 to 0.24.18 also wrote the candidates its floors
+dropped, with an all-zero breakdown; load() skips them (v2_unscored), so a
+record holds only the rows that engine scored, as every other build writes it.
 
 What is replayed, and what is not:
 - The CONTEXT side is taken from the log as it was: ctx, prior, corr, potion,
@@ -68,7 +73,8 @@ class Policy:
 
 
 class Logged(Policy):
-    """The utility the game computed (A*: live utility, ranked plainly)."""
+    """The old engine's logged utility, ranked plainly (A*). It was the live ranking until R8.3
+    (0.24.0); since then the choice score ranks, and util is the legacy pass's."""
     name = "logged (A*)"
 
     def utility(self, c):
@@ -87,6 +93,15 @@ class ContextOnly(Policy):
 # Replay
 # --------------------------------------------------------------------------
 
+def v2_unscored(c):
+    """A v2 candidate row the old engine did not score: from R8.3 (0.24.0) until 0.24.19 the
+    record held every ranked candidate, the ones the old floors dropped with the default
+    breakdown (util, ctx and corr 0). The record names no build, so the row is told by its
+    values: corr is a multiplier the old scorer starts at 1, so no row it scored reads 0.
+    (tools/fit/fitlib.v2_unscored is the same rule.)"""
+    return c.get("util") == 0 and c.get("ctx") == 0 and c.get("corr") == 0
+
+
 def load(path, char, from_launch, to_launch=None):
     recs = []
     with open(path, encoding="utf-8", errors="replace") as f:
@@ -104,7 +119,7 @@ def load(path, char, from_launch, to_launch=None):
             if "phi" not in r or "cands" not in r:
                 continue
             cols = r["cols"]
-            r["_cands"] = [dict(zip(cols, c)) for c in r["cands"]]
+            r["_cands"] = [c for c in (dict(zip(cols, c)) for c in r["cands"]) if not v2_unscored(c)]
             recs.append(r)
     recs.sort(key=lambda r: r["utc"])
     return recs
@@ -194,8 +209,9 @@ V3_FLAGS = {"eligible": 1, "scored": 2, "held": 4, "equipped": 8, "shown": 16, "
 # Row columns appended within v3 after the first ten, by name (the head's `row`
 # list says which a segment has, and where): 0.23.46 fb, cr; 0.23.53 the old
 # engine's score parts est..wu and fl, and the favourites hotkey hk; 0.23.56
-# (R8.2) the new model in shadow: mu, sd, lm (the D2 legacy feature ln learn
-# mult), um (util missing) and ex (the explanation: [need index, column index]
+# (R8.2) the choice model (in shadow at 0.23.56, the live ranking from R8.3):
+# mu, sd, lm (the D2 legacy feature ln learn mult, as the live score read it),
+# um (util missing, likewise) and ex (the explanation: [need index, column index]
 # or "learned"); 0.24.17 the D2 engine in shadow beside the live one: amu (engine
 # A's mu), ar and br (the row's rank under A and under the live ranking, 1 =
 # first), ak and bk (its key on A's and on the live ranking's stateless page,
@@ -313,8 +329,8 @@ def _v3_row(raw, head, caps, extras=None):
         "fl": None if fl is None else head["floors"][fl],
         "wu": col.get("wu"),
         "hk": col.get("hk"),
-        # 0.23.56 (R8.2): the new model in shadow; ex as (need, column) names,
-        # "learned", or None
+        # 0.23.56 (R8.2): the choice model (the live ranking from R8.3); ex as
+        # (need, column) names, "learned", or None
         "mu": col.get("mu"),
         "sd": col.get("sd"),
         "lm": col.get("lm"),

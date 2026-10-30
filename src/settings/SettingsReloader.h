@@ -73,9 +73,19 @@ namespace Huginn::Settings
         /// locked slots keep pinning recommendations scored by the just-cleared
         /// table. Do not call from inside RunExclusive (not re-entrant).
         ///
-        /// @return Number of learner items cleared, or nullopt if the FeatureBanditLearner
-        ///         is not initialized (nothing was reset).
-        static std::optional<size_t> ResetLearningData();
+        /// The choice learner too (Persist::ResetChoiceLearning): theta back
+        /// to the bootstrap and b cleared, or, with the model off, the
+        /// records carried from the load emptied.
+        ///
+        /// @return The old learner's items cleared and what the choice reset
+        ///         did (for the player's message), or nullopt if the
+        ///         FeatureBanditLearner is not initialized (nothing was reset).
+        struct LearningReset
+        {
+            size_t learnerItems = 0;
+            const char* choice = "";
+        };
+        static std::optional<LearningReset> ResetLearningData();
 
     protected:
         /// Process ModCallbackEvent - handles dmenu_updateSettings and dmenu_buttonCallback
