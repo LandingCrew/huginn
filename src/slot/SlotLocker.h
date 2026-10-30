@@ -213,6 +213,11 @@ namespace Huginn::Slot
             bool wheelOpen = false;          ///< the Wheeler wheel is open: no upsert
             float pressGraceMs = 0.0f;       ///< fPressGraceMs
             float challengerMargin = 0.5f;   ///< fChallengerMargin: the barrier is a multiple of ln(1 + this)
+            /// R9, the challenger rule's line for the churn telemetry (which
+            /// changes were at or under ln m + z sigma_Delta): z = Phi^-1(tau)
+            /// and ln m, as the allocation read them.
+            double challengerZ = 0.0;
+            double challengerMinGap = 0.0;
             /// Key i has an active Remembrance hold of its own, or shows one.
             std::array<bool, MAX_SLOTS_PER_PAGE> remembranceHoldOnKey{};
             /// This run's clock for the upsert and the churn record. Epoch (the

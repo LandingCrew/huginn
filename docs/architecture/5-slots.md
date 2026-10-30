@@ -380,7 +380,8 @@ else about a call is still a pure function of its inputs.
            (classification ignored; skipped if an override has it)
            |
            v
-  PASS 1c  hold seated items unless a challenger wins by the margin
+  PASS 1c  hold seated items unless a challenger clears the line
+           (the challenger rule; the fixed margin without beliefs)
            |
            v
   PASS 2   remaining slots <- best matching candidate, deduped
@@ -637,7 +638,9 @@ minutes landed on a different key, nearly all of them within a minute. So:
   as an item an override displaced already does. It is held there (a guest in
   the slot hold) until the hold ends, not moved by the fill when another slot
   empties. When the slot frees, the slot
-  hold seats it there unless a challenger beats it by `fChallengerMargin`; if
+  hold seats it there unless a challenger clears the challenger rule's line
+  (`fChallengerConfidence`, `fChallengerMinGap`; `fChallengerMargin` when the
+  ranking carries no beliefs); if
   it leaves the page meanwhile, the claim lapses with it. On LoreRim's first
   run this was 17 of the 22 returns that missed their key (2026-10-06).
 - **One run, not three.** The gap-filler has usually been on the returner's
@@ -1227,8 +1230,10 @@ per-slot defaults described under
 ```ini
 [SlotLocker]
 bKeepSlotPositions = true       ; Keep an item in the slot it was already in (seating)
-bHoldSeatedItems = true         ; Hold a seated item until a challenger beats it by the margin
-fChallengerMargin = 0.5         ; How much better a challenger must score (0.5 = 50%; 0.25 before 0.23.6)
+bHoldSeatedItems = true         ; Hold a seated item until a challenger clears the line
+fChallengerConfidence = 0.8     ; P(challenger better) it needs: lead > fChallengerMinGap + z x sigma_Delta (0.24.2)
+fChallengerMinGap = 0           ; A minimum lead on top, in score units (0 = confidence alone)
+fChallengerMargin = 0.5         ; The fixed margin, only when the ranking carries no beliefs (0.5 = 50%)
 bReturnToHomeKey = true         ; A returning item takes back the key it left (home keys)
 fHomeKeyMemorySec = 60          ; ...if it left within this long; 0-600, 0 = off
 iClassFreeSlots = 3             ; Class cap: items of one slot class on Regular keys at full utility (1-10)

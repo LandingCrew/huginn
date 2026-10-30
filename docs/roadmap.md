@@ -1382,12 +1382,116 @@ Map Phase 7: swap when μc − μi > ln m + z·σ_Δ, σ_Δ with shared weights
 cancelling. Lock, home keys and seating stay. Done when: host tests prove no
 swap-back on fixed beliefs; churn buckets on Δ/σ_Δ. **In game:** churn per
 press in the heartbeat against the R8 session.
+- [x] **The rule** (0.24.2): `core/ChallengerRule.h` -- swap when
+      μc − μi > ln m + z·σ_Δ + the hold's tie band, z = Φ⁻¹(τ). `[SlotLocker]
+      fChallengerConfidence` = τ (0.8, doc 9's starting value: z 0.842,
+      clamped to 0.5-0.999, so z ≥ 0) and `fChallengerMinGap` = ln m (0:
+      confidence alone; clamped to 0-5). The slot hold (PASS 1c,
+      `SlotAllocCore.h`, `TakesKey`) asks it of the best challenger for each
+      held key whenever the allocation's input carries the scorer's beliefs
+      for both rows; the class cap's terms shift both scores and add nothing
+      to σ_Δ. `fChallengerMargin` now rules only the rows with no belief: the
+      FALLBACK ranking (no bootstrap) and the R7 golden snapshots, which is
+      why every golden and adversarial test still passes unchanged. The combat
+      upsert's barrier is still `fCombatUpsertMarginMult × ln(1 +
+      fChallengerMargin)` (open question below).
+- [x] **σ_Δ** (`core/ChoiceBeliefs.h`): σ_Δ² = Σⱼ (aⱼ(c) − aⱼ(i))² Wⱼ (+ the
+      strength block) + (covered(c) − covered(i))² var(θ_covered) + var(b_c) +
+      var(b_i), Wⱼ = Σₖ nₖ² var(θₖⱼ) (+ recent) from the ranking's own tick.
+      b is keyed by form, so two stacks of one form (another uniqueID or
+      temper) share one b and it cancels: their b part is (sd(b_c) −
+      sd(b_i))², 0 unless one stack reads b as a favorite.
+      `RankOnChoice` builds one `BeliefTable` per run after the ranking pass
+      (covered after the upgrade gate) and every ranked row carries it and
+      its index (`ScoredCandidate::ChoiceParts::beliefs`, `beliefRow`), so
+      Wheeler's other pages read the same beliefs. Host-tested: the healing
+      potion pair (θ enters through (0.8 − 0.3)², not 0.8² + 0.3²), the
+      disjoint pair reaching the √(σc² + σi²) bound exactly, a dense brute
+      force with presence+strength, recent and covered, and each row's own
+      σ² equal to `RowScore::var`.
+- [x] **No swap-back on fixed beliefs** (`tests/core/ChallengerRuleTests.cpp`):
+      the argument is in `ChallengerRule.h` (the line is ≥ 0 and symmetric in
+      the pair, so a reversed swap, or any cycle, would need 0 > 0). That
+      argument is the proof; the property test is evidence for it: 600
+      random pages (random layouts, settings, τ, ln m, sparse attributes,
+      scores about one σ_Δ apart, random holders seated, every candidate's
+      dedup key and name unique), 12 passes each with the seating memory
+      carried, no direct (holder, challenger) reversal, and no give-way in
+      the last 3 passes on that seed. It counts direct reversals only, not
+      longer cycles or visible A→B→A bounces (the verifier's adversarial run,
+      3,000 worlds x 30 passes with the class cap forced, found neither with
+      unique keys).
+      The same worlds under per-pass sampling (Thompson, ruled out in doc 9)
+      give 3,523 swap-backs (735 give-ways under the rule), so the test sees
+      one when there is one.
+- [x] **Churn buckets on Δ/σ_Δ:** `[SlotChurn]` prints the pair's σ_Δ and
+      Δ/σ_Δ (and "under the line"); the heartbeat's slotChurn gains
+      `dsd(gone <0 <0.5 <1 <2 <4 >=4 nosd)` beside `ratio(...)` (kept, so a
+      session compares against R8's) and `under=` (changes at or under the
+      rule's line, on raw scores: mostly seating, home-key moves and the
+      fill; the hold decides on Regular keys after the class cap, so a
+      holder past its class's free count can give way to a challenger whose
+      raw lead is under the line, and those capped give-ways count here
+      too). `[Hold]` prints the gap against ln m + z·sd and P(better).
+- [x] **Churn per press in the heartbeat:** a last section, `| perPress
+      churn=N presses=M churn/press=X bounce10s=B (hold=H)`. churn = every
+      visible change but a page switch, a Used backfill, a Remembrance hold
+      and an override (trace-04's "without player or safety causes"). R8's
+      heartbeat has the same causes and presses, so
+      `python -I tools/soak/churn_per_press.py <R8 log> <R9 log>` gives both
+      sessions' figures the same way (the sum over the sum, per launch too).
+      For scale, trace-04 (0.23.26, the old engine): **12.37 churn per press**
+      (928 over 75 presses; hold causes 10.11 per press).
 - [ ] **Slot juggling is a tracked problem** (the user, 2026-10-10: "need
       watch the slot juggling"): the allocator moves items between slots too
-      often. An analysis of that night's session is being written, in local
-      trace notes (`traces/2026-10-10/trace-04-analysis.md`, not checked in). Its
-      numbers join the churn baseline under R8, and this stage is judged
-      against both.
+      often. The analysis is in local trace notes
+      (`traces/2026-10-10/trace-04-analysis.md`, not checked in), on 0.23.26:
+      - **Baseline (page 0, 77.2 unpaused minutes):** 1,092 changes; in combat
+        39.9 a minute (24.4 without player or safety causes), out of combat
+        9.6 (8.3). A→B→A on one slot within 5 s / 10 s: 37 / 63 in combat,
+        23 / 47 out. Of the 795 expired/unheld changes, 361 (45%) were not a
+        challenger clearing the margin (143 incumbent gone, 127 scored lower,
+        91 at 1-1.5×).
+      - **What R9 answers:** the hold's share -- near ties and score swings on
+        band flips (pattern 4: 434 changes passed the old 1.5×). Under the
+        rule a give-way needs P(better) > 0.8, never reverses on fixed
+        beliefs, and `under=` counts every change that got past without
+        clearing the line. The heartbeat's new `bounce10s` is the analysis's
+        A→B→A at 10 s, live (`hold=` the ones the hold's causes made).
+      - **What R9 does not answer** (each still counted, so the session shows
+        what is left): the magicka affordability filter dropping and
+        returning spells (pattern 1, the largest out-of-combat driver; a
+        candidate filter, R8.1's territory); home-key returns moving the
+        gap-filler (pattern 2: kept, "lock, home keys and seating stay");
+        wildcards (pattern 3: R10); the Remembrance hold's end (pattern 5:
+        the player's own press).
+      - **Judged against both baselines** in the R9 session: R8's session
+        (its heartbeat through `churn_per_press.py`) and trace-04's numbers
+        above. Not a rollback by itself if worse, as for R8.
+- [ ] **In game (you):** a session on 0.24.2 like the R8 one -- the
+      `[Soak]` `perPress` section against R8's (the tool), `dsd(...)` and
+      `under=`, `bounce10s`; whether a clearly better item is slow to take a
+      key (`[Hold]` lines with P near 0.8 are the rule at work; raise or
+      lower `fChallengerConfidence`). Recheck "workstation gear holds its key
+      at the bench" (Kept outside the rewrite) here.
+- Open: the combat upsert still uses the fixed margin's multiple (a
+  Bayesian upsert would read z_upsert·σ_Δ); the lock's length is still
+  3 s (map Phase 7: shorten it after measuring the `Expired` buckets, now
+  on Δ/σ_Δ); only the best challenger is asked (a lower one with a narrower
+  σ_Δ that would clear the line waits; the no-swap-back argument holds
+  either way); slot captures (Debug `--capture-slots`) do not record the
+  beliefs, so a capture from a choice-ranked session replays with the
+  fixed margin.
+- Open (allocator, predates R9): two candidates with ONE dedup key on a
+  page. Seating and the hold find a key's owner by the first match
+  (`SlotAllocCore.h`, the `seats[j]` lookups), so a key already taken can
+  read as free again and the page can churn with nothing moving -- the R9
+  verifier's synthetic worlds (shared keys from a 40-form pool) left a few
+  pages unsettled and one logged the same `HoldGaveWay` every pass, on both
+  the rule and the fixed margin (worse on the margin); with unique keys all
+  of it vanished. Not checked: whether the pipeline can hand the allocator
+  two rows with one `GetDeduplicationKey()` in game. Check that first; fix
+  only if it can.
 
 ### R10. Wildcards by uncertainty
 

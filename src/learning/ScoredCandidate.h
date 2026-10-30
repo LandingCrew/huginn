@@ -4,8 +4,15 @@
 #include "core/SlotScoreMath.h"
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <format>
+#include <memory>
 #include <vector>
+
+namespace Huginn::Core::Choice
+{
+    class BeliefTable;   // core/ChoiceBeliefs.h (R9)
+}
 
 namespace Huginn::Scoring
 {
@@ -110,6 +117,13 @@ namespace Huginn::Scoring
             struct Term { int16_t need = -1; int16_t col = -1; double value = 0.0; };
             std::array<Term, 3> top{};  // the three largest theta n a terms; top[0] is the explanation
             double explainedNeed = 0.0; // n_k of the explanation's need (the label's threshold)
+            // R9: the ranking run's beliefs (one table per run, shared by
+            // every row it ranked) and this row's index in it, for the slot
+            // hold's challenger rule (sigma_Delta between two rows,
+            // core/ChallengerRule.h) and the churn telemetry. Null in the
+            // fallback ranking: the hold then uses the fixed margin.
+            std::shared_ptr<const Core::Choice::BeliefTable> beliefs;
+            uint32_t beliefRow = UINT32_MAX;
         };
         ChoiceParts choice;
         // The explanation's need as a context reason (display/NeedReason.h),

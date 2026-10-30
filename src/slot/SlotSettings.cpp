@@ -7,6 +7,7 @@
 #include <numeric>
 #include <set>
 #include "SlotClassifier.h"
+#include "core/ChallengerRule.h"
 #include "candidate/CandidateTypes.h"
 
 namespace Huginn::Slot
@@ -202,8 +203,19 @@ namespace Huginn::Slot
             static_cast<float>(finiteOr(ini.GetDoubleValue("SlotLocker", "fChallengerMargin", 0.5), 0.5)), 0.0f, 10.0f);
         m_holdSeatedItems.store(hold, std::memory_order_release);
         m_challengerMargin.store(margin, std::memory_order_release);
-        SKSE::log::info("[SlotSettings] Hold seated items: {} (challenger margin {:.0f}%)"sv,
-            hold ? "on" : "off", margin * 100.0f);
+        // R9: the Bayesian challenger rule. Out-of-range values clamp to the
+        // rule's own range (core/ChallengerRule.h): tau below 0.5 would let a
+        // probably-worse item in and break the no-swap-back argument.
+        const float confidence = static_cast<float>(std::clamp(
+            finiteOr(ini.GetDoubleValue("SlotLocker", "fChallengerConfidence", 0.8), 0.8),
+            Core::Challenger::kMinConfidence, Core::Challenger::kMaxConfidence));
+        const float minGap = static_cast<float>(Core::Challenger::ClampMinGap(
+            ini.GetDoubleValue("SlotLocker", "fChallengerMinGap", 0.0)));
+        m_challengerConfidence.store(confidence, std::memory_order_release);
+        m_challengerMinGap.store(minGap, std::memory_order_release);
+        SKSE::log::info("[SlotSettings] Hold seated items: {} (challenger rule: P(better) > {:.3f}, z {:.3f}, ln m {:.3f}; "
+                        "fallback ranking: margin {:.0f}%)"sv,
+            hold ? "on" : "off", confidence, Core::Challenger::ZForConfidence(confidence), minGap, margin * 100.0f);
 
         const bool returnHome = ini.GetBoolValue("SlotLocker", "bReturnToHomeKey", true);
         const float homeMemorySec = std::clamp(
@@ -293,6 +305,8 @@ namespace Huginn::Slot
         m_keepSlotPositions.store(true, std::memory_order_release);
         m_holdSeatedItems.store(true, std::memory_order_release);
         m_challengerMargin.store(0.5f, std::memory_order_release);
+        m_challengerConfidence.store(0.8f, std::memory_order_release);
+        m_challengerMinGap.store(0.0f, std::memory_order_release);
         m_returnToHomeKey.store(true, std::memory_order_release);
         m_homeKeyMemorySec.store(60.0f, std::memory_order_release);
         m_classRepeatDiscount.store(0.5f, std::memory_order_release);

@@ -3,6 +3,7 @@
 #include "SlotClassCap.h"
 #include "SlotClassifier.h"
 #include "SlotSettings.h"
+#include "core/ChoiceBeliefs.h"
 #include "override/OverrideConfig.h"
 #include <atomic>
 #include <fstream>
@@ -31,6 +32,8 @@ namespace Huginn::Slot
         out.keepSlotPositions = s.KeepSlotPositions();
         out.holdSeatedItems = s.HoldSeatedItems();
         out.challengerMargin = s.ChallengerMargin();
+        out.challengerConfidence = s.ChallengerConfidence();
+        out.challengerMinGap = s.ChallengerMinGap();
         out.fillJobKeysFromRegular = s.FillJobKeysFromRegular();
         out.classDiscount = s.ClassRepeatDiscount();
         out.classFree = s.ClassFreeSlots();
@@ -93,6 +96,21 @@ namespace Huginn::Slot
             return mask;
         };
 
+        // R9: the ranking run's beliefs for the challenger rule. Every row of
+        // one list comes from one run (RankOnChoice; the wildcard pass only
+        // reorders it), so the first table found is the list's; a row of any
+        // other table, and every row in the fallback ranking (no table), gets
+        // no belief row, and the hold uses the fixed margin for it. The list
+        // holds the table alive for the allocation.
+        const Core::Choice::BeliefTable* beliefs = nullptr;
+        for (const auto& sc : candidates) {
+            if (sc.choice.beliefs) {
+                beliefs = sc.choice.beliefs.get();
+                break;
+            }
+        }
+        in.beliefs = beliefs;
+
         in.candidates.reserve(candidates.size());
         for (const auto& sc : candidates) {
             const auto& base = Candidate::GetBase(sc.candidate);
@@ -110,6 +128,10 @@ namespace Huginn::Slot
             c.playerEquipped = player && player->IsItemEquipped(base.formID);
             c.matchMask = maskOf(sc);
             c.capClass = needCapClass ? static_cast<uint8_t>(SlotClassCap::ClassOf(sc)) : 0;
+            if (beliefs && !sc.isRememberedOnly && sc.choice.beliefs.get() == beliefs &&
+                sc.choice.beliefRow < beliefs->Size()) {
+                c.beliefRow = sc.choice.beliefRow;
+            }
             in.candidates.push_back(std::move(c));
         }
 
