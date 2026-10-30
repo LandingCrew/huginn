@@ -43,7 +43,7 @@ Every candidate that passes the filters is ranked on μ (`ScoredCandidate::score
 **The live engine reads items through the effect catalog** (R11): `EffectCatalog` maps every form in the load order to cap(i) (`core/EffectColumns.h`, the columns of `docs/architecture/9-data/effects.csv`); `core/CapFacets.h` answers the yes/no questions the slot classes, the candidate filters, the override finders, the explanation label and the widget's styling ask ("restores health?", "for someone else?", "a poison?"), through `effect/Facets.h`. The classifiers' tags are not read outside D2.
 
 **Key architectural separation:**
-- `ChoiceLearner`: θ, b, recent, the bootstrap, the online update, the cosave records THTA / BIAS (`core/ChoiceScore.h`, `core/ChoiceLive.h`, `core/ChoiceUpdate.h`)
+- `ChoiceLearner`: θ, b, recent, the bootstrap, the online update, the discovery boost (what the character has held, and what it newly gained: b's variance × m(age) in the wildcard draw only, `core/DiscoveryBoost.h`), the cosave records THTA / BIAS / DISC (`core/ChoiceScore.h`, `core/ChoiceLive.h`, `core/ChoiceUpdate.h`)
 - `PipelineCoordinator`: one tick: generate, filter, rank (`RankOnChoice`), allocate, lock, display, log (v3 rows)
 - `EffectCatalog` + `core/CapFacets.h`: what an item is and does (cap(i), facets); `NeedMonitor` + `core/NeedEvaluator.h`: what the situation needs (n)
 - `UtilityScorer`: the sort, the magicka / stamina envelopes, `[Recs]`; no old-engine code
@@ -69,10 +69,10 @@ See [docs/README.md](docs/README.md) for the full system design.
 | `src/wheeler/` | Wheeler mod integration (v1/v2 API) |
 | `src/console/` | In-game console commands (`hg`) |
 | `src/override/` | Override system (urgent restores, cures, ammo, waterbreathing, soul gems); its finders read the catalog's facets since R11 |
-| `src/persist/` | Cosave: HCID (character, clock), THTA / BIAS (the choice learner's θ by stable key and b per item; `ChoiceSerializer`, codec in `core/ChoiceCosave`), BNDW (the old learner; stays while D2 reads it) |
+| `src/persist/` | Cosave: HCID (character, clock), THTA / BIAS / DISC (the choice learner's θ by stable key, b per item, the discovery boost's seen and boosted forms; `ChoiceSerializer`, codec in `core/ChoiceCosave`), BNDW (the old learner; stays while D2 reads it) |
 | `src/telemetry/` | The `[Soak]` heartbeat (goals, churn, rates, θ drift since R11) and the slot-change causes |
 | `src/settings/` | SettingsReloader (dMenu hot-reload) |
-| `src/core/` | Pure, host-tested code (`huginn_core_tests`, `src/core/README.md`): the effect mapper (EffectColumns, EffectRecords, EffectRules, EffectConditions, EffectMapper, CrossFeatures), the override files (OverrideFiles, R11) and the facets (CapFacets, with the slot classes' rules; SlotClassification moved here, R11); the need vector and its sensors (NeedEvaluator, NeedIds, NeedSnapshot, NeedSnapshotIO, NeedSensorMath, ResponseCurve, DropAhead, EdgeApproach, WaterSelfCheck, FallTracker, BenchKind, WeaponLoadout); the model (MiniJson, Bootstrap, ObviousPairs, Sha256, ChoiceScore, ChoiceUpdate, ChoiceLive, ChoiceBeliefs, ChoiceCosave, Battery; ThetaDrift, R11); the slot math (SlotAllocCore, SlotClassCapMath, SlotScoreMath, SlotSnapshotIO, ChallengerRule, WildcardPick, WildcardGate); the logs (DecisionLog v3, NeedEpisodes and the lap clock's stick-deadzone and menu-flag holds (LapHoldInputs, 0.23.55 on engine-rewrite), OldScore, ReachLog); Coverage, FilterReason, HardGates, RefreshPass, CombatOnset; ActorTypeClassifier, TargetType, TargetFamilies; MiniRegex, SlicedWalk, RingBuffer, SignatureDedup |
+| `src/core/` | Pure, host-tested code (`huginn_core_tests`, `src/core/README.md`): the effect mapper (EffectColumns, EffectRecords, EffectRules, EffectConditions, EffectMapper, CrossFeatures), the override files (OverrideFiles, R11) and the facets (CapFacets, with the slot classes' rules; SlotClassification moved here, R11); the need vector and its sensors (NeedEvaluator, NeedIds, NeedSnapshot, NeedSnapshotIO, NeedSensorMath, ResponseCurve, DropAhead, EdgeApproach, WaterSelfCheck, FallTracker, BenchKind, WeaponLoadout); the model (MiniJson, Bootstrap, ObviousPairs, Sha256, ChoiceScore, ChoiceUpdate, ChoiceLive, ChoiceBeliefs, ChoiceCosave, Battery; ThetaDrift, R11; DiscoveryBoost, 0.24.12); the slot math (SlotAllocCore, SlotClassCapMath, SlotScoreMath, SlotSnapshotIO, ChallengerRule, WildcardPick, WildcardGate); the logs (DecisionLog v3, NeedEpisodes and the lap clock's stick-deadzone and menu-flag holds (LapHoldInputs, 0.23.55 on engine-rewrite), OldScore, ReachLog); Coverage, FilterReason, HardGates, RefreshPass, CombatOnset; ActorTypeClassifier, TargetType, TargetFamilies; MiniRegex, SlicedWalk, RingBuffer, SignatureDedup |
 
 ## Configuration
 
@@ -80,7 +80,7 @@ See [docs/README.md](docs/README.md) for the full system design.
 
 **INI settings**: `Data/SKSE/Plugins/Huginn.ini`:
 - `[Scoring]`: `bLegacyLearnFeature` (D2's feature, hot-reloadable; off is a fallback), `fCoveredPrior`, `fRefreshPriorSec` (the active-buff filters' refresh window); the old scoring params (`ScorerSettings`) are D2's inputs only
-- `[Learning]`: `sBootstrapBias` (b's seed from the bootstrap), `fThetaProcessNoise`, and the memory life, which both learners use (ChoiceLearner's b battery; the old learner's for D2)
+- `[Learning]`: `sBootstrapBias` (b's seed from the bootstrap), `fThetaProcessNoise`, the memory life, which both learners use (ChoiceLearner's b battery; the old learner's for D2), and the discovery boost (`bDiscoveryBoost`, `fDiscoveryBoostVarMult`, `fDiscoveryBoostHalfLifeSec`; hot-reloadable)
 - `[Favorites]`: the favourites mode (Boost / Suppress) and `fFavoriteLifeMult`
 - `[ContextWeights]`: the old context weights (`ContextWeightSettings`), D2's floors' input only
 - `[Needs]`: one response curve per need (`<need> = <kind> <p1> <p2>`; defaults from `docs/architecture/9-data/needs.csv`, `tools/needs/make_need_ids.py`); a curve the bootstrap carries (encumbrance) overrides its line
@@ -106,10 +106,10 @@ Registered as `Huginn` with short alias `hg` (in-game `~` console):
 | `hg refresh` | Force immediate recommendation update |
 | `hg recs [N]` | Dump top-N to the log (default 10): μ, sd, the top three θ·n·cap terms, b, the D2 feature and its inputs; the header carries the run's outside option u0 (R11) |
 | `hg needs` | Print the live need vector: non-zero needs, value, curve input, where each curve came from (default / [Needs] / bootstrap) |
-| `hg theta [FormID]` | R11. No argument: what ranks, θ / b counts and drift from the bootstrap (means moved, mean and largest change and where, mean ln variance ratio), b's spread, the outside option now. With a hex FormID: that item's b, cap(i), facets, every θ·n·a term the live need vector gives it, and its largest weights under any need |
+| `hg theta [FormID]` | R11. No argument: what ranks, θ / b counts and drift from the bootstrap (means moved, mean and largest change and where, mean ln variance ratio), b's spread, the outside option now. With a hex FormID: that item's b (and its discovery boost, if newly gained), cap(i), facets, every θ·n·a term the live need vector gives it, and its largest weights under any need |
 | `hg dump theta` | R11. Write every moved θ weight (beside the bootstrap's) and every b to `Huginn_Theta.csv` |
 | `hg reload` | Hot-reload all settings from INI |
-| `hg status` | System status: what ranks (the choice score, or the FALLBACK), θ entries and moved, b count, picks learned, the D2 switch, the old learner's counts, the registries, the page |
+| `hg status` | System status: what ranks (the choice score, or the FALLBACK), θ entries and moved, b count, picks learned, the discovery boost (on/off, forms known, boosted now), the D2 switch, the old learner's counts, the registries, the page |
 | `hg unlock` | Clear all slot locks |
 | `hg rebuild` | Force rebuild all registries |
 | `hg weights <FormID>` | The OLD learner's weight vector for an item (hex FormID): D2's input, not the ranking |
@@ -120,7 +120,7 @@ Registered as `Huginn` with short alias `hg` (in-game `~` console):
 | `hg actors` | List the actors the target poll tracks right now: name, race, type, hostile, dead, summon and its commander, distance band; the scoring target marked (to the console and the log) |
 | `hg hands` | Where each hand's weapon model hangs in both bipeds (culled, detached, missing) and the swap that put it there; for an equipped weapon that does not show (to the console and the log) |
 | `hg page <N>` | Switch to page N |
-| `hg reset weights` | θ back to the bootstrap, b cleared; the old learner (D2's input) cleared too. The dMenu "Reset Learned Weights" button does the same |
+| `hg reset weights` | θ back to the bootstrap, b cleared; the old learner (D2's input) cleared too; the discovery boost's sets are kept (what the character has held is not a learned weight). The dMenu "Reset Learned Weights" button does the same |
 | `hg reset all` | Full system reset (the above, registries rebuilt, every pipeline subsystem reset) |
 
 R11 removed `hg dump spells`, `food`, `potions`, `scrolls`, `weapons`, `apparel` and `diseases` with the classifiers they printed; `hg dump all` replaces them.

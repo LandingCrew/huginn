@@ -257,6 +257,8 @@ Huginn can only learn that you like something if it offers it to you occasionall
 
 Each page has one wildcard key: key 8 on the shipped pages (the last key in fill order with `bWildcardsEnabled = true`), so the other keys stay as they are. A wildcard never pushes a better pick off the page: if key 8's own item outranks the weakest item showing, it moves to that item's key while the wildcard is up and the weakest drops off instead, then goes back to key 8. Once per `fRefractorySeconds` Huginn rolls for one; the chance runs from `fBaseProbability` (nothing it is unsure of near the top of the list) up to `fMaxProbability` (something it knows nothing about, just off the page). A wildcard stays `fCooldownSeconds`, never in combat. To move the wildcard key, turn `bWildcardsEnabled` off on the keys after the one you want; off on every key, the page has none.
 
+A spell you just learned or an item you get for the first time comes up as a wildcard sooner for a while: Huginn starts out less sure of it than of everything you already carry (`[Learning] bDiscoveryBoost`, on by default). With it off, a new item starts no more uncertain than anything you have never picked: a limitation of starting from the shipped bootstrap, which knows nothing of what you gain later.
+
 `[Learning]` covers the other half: Huginn also watches what you equip *outside* of it, through the vanilla inventory, the favourites menu, or a vanilla hotkey. Reaching past Huginn for something is a strong signal, and the reward settings say how strong. `bLearnFromExternalEquips = false` turns this off if you would rather it only learn from your use of its own keys.
 
 ##### Steadiness — `[SlotLocker]`

@@ -65,7 +65,13 @@ namespace Huginn::Spell
 
       // Drop every learned time: after a save load's reconcile, whose inserts
       // are the save's own spells (the first load fills an empty registry).
+      // Clears the newly-learned queue too.
       void ForgetLearnedTimes();
+
+      // 0.24.12: the spells added since the last call, with LearnedAt's
+      // meaning (learned in play, not brought by a load or a rebuild): the
+      // discovery boost's spell source (UpdateLoop -> ChoiceLearner::OnGained).
+      [[nodiscard]] std::vector<RE::FormID> TakeNewlyLearned();
 
       // Get count of spells of a specific type (efficient - no allocation)
       [[nodiscard]] size_t GetSpellCountByType(SpellType type) const;
@@ -134,5 +140,8 @@ namespace Huginn::Spell
       // LearnedAt's store, guarded by m_mutex; cleared by RebuildRegistry and
       // ForgetLearnedTimes.
       std::unordered_map<RE::FormID, std::chrono::steady_clock::time_point> m_learnedAt;
+      // TakeNewlyLearned's queue, guarded by m_mutex; filled where m_learnedAt
+      // is, cleared with it.
+      std::vector<RE::FormID> m_newlyLearned;
    };
 }

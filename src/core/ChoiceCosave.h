@@ -1,7 +1,7 @@
 #pragma once
 
 // =============================================================================
-// CHOICE COSAVE (R8.3) -- the THTA and BIAS records as byte blobs
+// CHOICE COSAVE (R8.3) -- the THTA, BIAS and DISC records as byte blobs
 // =============================================================================
 // The new learner's state rides in the save beside the old learner's BNDW
 // (persist/ChoiceSerializer.cpp writes these blobs with one WriteRecordData
@@ -33,6 +33,16 @@
 // favourite bit (without it a favourite's battery would run at 1x until its
 // next pick).
 //
+// DISC, version 1 (the discovery boost, core/DiscoveryBoost.h; 0.24.12):
+//   u32 version
+//   u32 seenCount
+//   seenCount x u32 formID                    the forms this character has held or known
+//   u32 boostCount
+//   boostCount x { u32 formID, u32 seconds }  8 bytes each: PLAY seconds since gained
+// A boost ends at the item's first pick or after about 8 half-lives, so the
+// second list stays short; the first grows with every new form the character
+// ever holds (4 bytes each; a long LoreRim character is some thousands).
+//
 // Little-endian, fixed widths, no padding (written field by field). A decode
 // rejects a wrong version, a length that does not match the count exactly, a
 // count above the cap, or a string longer than its cap; it drops (and counts)
@@ -47,19 +57,25 @@
 #include <span>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace Huginn::Core::ChoiceCosave
 {
     inline constexpr std::uint32_t kThetaVersion = 1;
     inline constexpr std::uint32_t kBiasVersion = 1;
+    inline constexpr std::uint32_t kDiscoveryVersion = 1;
 
     inline constexpr std::uint32_t kMaxThetaEntries = 1'000'000;   // K*J is ~15k today
     inline constexpr std::uint32_t kMaxBiasEntries = 100'000;
     inline constexpr std::size_t kMaxText = 256;
+    inline constexpr std::uint32_t kMaxSeenEntries = 1'000'000;
+    inline constexpr std::uint32_t kMaxBoostEntries = 100'000;
 
     inline constexpr std::size_t kThetaStride = 8 + 8 + 8;
     inline constexpr std::size_t kBiasStride = 4 + 8 + 8 + 4 + 4 + 1;
+    inline constexpr std::size_t kSeenStride = 4;
+    inline constexpr std::size_t kBoostStride = 4 + 4;
 
     inline constexpr std::uint8_t kBiasFavorite = 1;
 
@@ -69,6 +85,8 @@ namespace Huginn::Core::ChoiceCosave
     /// corrupt length cannot throw bad_alloc on the game thread.
     inline constexpr std::size_t kMaxThetaBlobBytes = 4 + 2 * (2 + kMaxText) + 4 + kMaxThetaEntries * kThetaStride;
     inline constexpr std::size_t kMaxBiasBlobBytes = 4 + 4 + kMaxBiasEntries * kBiasStride;
+    inline constexpr std::size_t kMaxDiscoveryBlobBytes =
+        4 + 4 + kMaxSeenEntries * kSeenStride + 4 + kMaxBoostEntries * kBoostStride;
 
     struct ThetaEntry
     {
@@ -103,6 +121,13 @@ namespace Huginn::Core::ChoiceCosave
         std::size_t dropped = 0;   // decode only
     };
 
+    struct DiscoveryRecord
+    {
+        std::vector<std::uint32_t> seen;
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> boosted;   // form, play seconds since gained
+        std::size_t dropped = 0;   // decode only: form 0
+    };
+
     [[nodiscard]] std::vector<std::byte> EncodeTheta(const ThetaRecord& r);
     [[nodiscard]] std::vector<std::byte> EncodeBias(const BiasRecord& r);
 
@@ -113,6 +138,9 @@ namespace Huginn::Core::ChoiceCosave
                                                          std::string* why = nullptr);
     [[nodiscard]] std::optional<BiasRecord> DecodeBias(std::span<const std::byte> blob, std::uint32_t headerVersion,
                                                        std::string* why = nullptr);
+    [[nodiscard]] std::vector<std::byte> EncodeDiscovery(const DiscoveryRecord& r);
+    [[nodiscard]] std::optional<DiscoveryRecord> DecodeDiscovery(std::span<const std::byte> blob,
+                                                                 std::uint32_t headerVersion, std::string* why = nullptr);
 
     /// The load's merge of a saved THTA onto the bootstrap: every saved entry
     /// whose key the build knows overrides the bootstrap's value; a key the

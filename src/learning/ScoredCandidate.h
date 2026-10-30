@@ -2,6 +2,7 @@
 
 #include "candidate/CandidateTypes.h"
 #include "core/CapFacets.h"
+#include "core/DiscoveryBoost.h"
 #include "core/SlotScoreMath.h"
 #include <array>
 #include <cmath>
@@ -111,6 +112,12 @@ namespace Huginn::Scoring
             double var = 0.0;          // sigma^2 under the diagonal approximation
             double needMu = 0.0;       // the need terms' part of mu
             double b = 0.0;            // b as read now (the battery applied)
+            double bVar = 0.0;         // b's variance as read now (part of var)
+            // 0.24.12: the discovery boost's multiplier on b's variance, for
+            // the wildcard draw ONLY (core/DiscoveryBoost.h: a newly gained
+            // item; 1 otherwise). var, the challenger rule and the log read
+            // the unboosted posterior.
+            double discovery = 1.0;
             double lnLearnMult = 0.0;  // the D2 feature as the score read it
             double utilMissing = 1.0;
             double covered = 0.0;      // covered(i) after the upgrade gate
@@ -124,6 +131,12 @@ namespace Huginn::Scoring
             // fallback ranking: the hold then uses the fixed margin.
             std::shared_ptr<const Core::Choice::BeliefTable> beliefs;
             uint32_t beliefRow = UINT32_MAX;
+
+            /// The wildcard draw's variance: var with b's part x discovery.
+            [[nodiscard]] double WildcardVar() const noexcept
+            {
+                return Core::Discovery::ExploreVar(var, bVar, discovery);
+            }
         };
         ChoiceParts choice;
         // The explanation's need as a context reason (display/NeedReason.h),

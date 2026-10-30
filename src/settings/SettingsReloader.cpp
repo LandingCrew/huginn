@@ -398,7 +398,9 @@ namespace Huginn::Settings
         }
         // R8.2: the new learner's keys ([Learning] sBootstrapBias and
         // fThetaProcessNoise, [Scoring] fCoveredPrior and bLegacyLearnFeature,
-        // [Favorites] fFavoriteLifeMult) and its battery. sBootstrapBias and
+        // [Favorites] fFavoriteLifeMult; 0.24.12: bDiscoveryBoost,
+        // fDiscoveryBoostVarMult, fDiscoveryBoostHalfLifeSec, live at the next
+        // pipeline run) and its battery. sBootstrapBias and
         // fCoveredPrior take effect at the next load or `hg reset all`.
         if (g_choiceLearner) {
             const auto cs = mainIni ? Learning::ChoiceSettings::FromIni(*mainIni) : Learning::ChoiceSettings{};

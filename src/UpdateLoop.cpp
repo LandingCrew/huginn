@@ -15,6 +15,7 @@
 #include "learning/InventoryExitTracker.h"
 #include "learning/SelectionTracker.h"
 #include "learning/SelectionLogV3.h"
+#include "learning/DiscoveryListener.h"
 #include "learning/legacy/LegacyRun.h"   // the old learner's clock and sweep (D2, R8.4)
 #include "util/ScopedTimer.h"
 #include "util/InventoryUtil.h"
@@ -708,6 +709,9 @@ void OnUpdate(float deltaSeconds)
 
     UpdateSubsystems(deltaSeconds, deltaMs);
     MaintainRegistries(player, now);
+    // 0.24.12: spells the reconcile just added in play -> the discovery boost
+    // (before this tick's pipeline, which then reads the boost).
+    Learning::Discovery::ForwardLearnedSpells();
 
     // The need vector, every tick, for the choice score (R8.3). Reads the
     // state the polls just wrote; its signature is a skip-gate term
