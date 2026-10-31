@@ -145,8 +145,11 @@ namespace Huginn::Slot::Capture
             const size_t count = allocator.GetSlotCount();
             if (count == 0) return;
             const size_t slot = r % count;
-            const bool ok = Input::EquipManager::GetSingleton().EquipSlot(slot, Input::EquipHand::Right);
-            SKSE::log::info("[SlotCapture] pressed slot {} ({})", slot, ok ? "equipped" : "nothing to equip");
+            bool parked = false;
+            const bool ok = Input::EquipManager::GetSingleton().EquipSlot(
+                slot, Input::EquipHand::Right, std::nullopt, &parked);
+            SKSE::log::info("[SlotCapture] pressed slot {} ({})", slot,
+                !ok ? "nothing to equip" : parked ? "parked at the hand equip gate" : "equipped");
         }
 
         // --- [SlotLocker] settings variants --------------------------------

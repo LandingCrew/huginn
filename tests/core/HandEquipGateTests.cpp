@@ -1,6 +1,7 @@
 // Host tests for src/core/HandEquipGate.h: a slot key's equip waits for a
-// busy hand, interrupts the cast after the timeout, and is dropped outside
-// gameplay (0.24.26).
+// casting hand, goes through a transient state after a moment, is dropped
+// when the cast outlasts the wait or gameplay ends, and is never interrupted
+// (0.24.26).
 
 #include "core/HandEquipGate.h"
 
@@ -15,112 +16,179 @@ namespace
     // The engine's caster states by value.
     constexpr std::uint32_t kIdle = 0;
     constexpr std::uint32_t kReady = 3;     // charged, held (the 00:38 Fireball)
+    constexpr std::uint32_t kReleased = 4;
     constexpr std::uint32_t kCharging = 5;
-    constexpr std::uint32_t kCasting = 6;
+    constexpr std::uint32_t kCasting = 6;   // a concentration spell or ward held
+    constexpr std::uint32_t kInterrupt = 8;
     constexpr std::uint32_t kInterruptDeselect = 9;
 
-    HandEquipGateInput Ready(std::uint8_t hands, std::uint32_t right, std::uint32_t left, double waitedMs = 0.0)
+    HandEquipGateInput At(double nowMs, std::uint8_t hands, std::uint32_t right, std::uint32_t left)
     {
         HandEquipGateInput in;
         in.worldReady = true;
         in.hands = hands;
         in.rightState = right;
         in.leftState = left;
-        in.waitedMs = waitedMs;
+        in.nowMs = nowMs;
         return in;
     }
 
     using A = HandEquipAction;
+    using W = HandEquipWhy;
 }
 
-TEST_CASE("hand equip gate: the hands a key's equip waits for")
+TEST_CASE("hand equip gate: a right-hand equip reads the left hand only when it can move it")
 {
-    CHECK(HandsToCheck(EquipTarget::Right, false) == kHandRight);
-    CHECK(HandsToCheck(EquipTarget::Left, false) == kHandLeft);
-    CHECK(HandsToCheck(EquipTarget::Both, false) == kHandsBoth);  // the hold gesture
-    // A two-hander, bow, crossbow or both-hands spell takes both whatever the gesture.
-    CHECK(HandsToCheck(EquipTarget::Right, true) == kHandsBoth);
-    CHECK(HandsToCheck(EquipTarget::Left, true) == kHandsBoth);
+    // Right tap, the left hand holding something of its own: the right hand alone.
+    CHECK(HandsToCheck(EquipTarget::Right, false, false) == kHandRight);
+    // The left hand would change: it holds this same weapon (taken off it
+    // first), or a two-hander / bow / two-handed spell is in either hand.
+    CHECK(HandsToCheck(EquipTarget::Right, false, true) == kHandsBoth);
+    // The item itself takes both hands.
+    CHECK(HandsToCheck(EquipTarget::Right, true, false) == kHandsBoth);
+    // A left-hand equip (or a torch) and the hold check both, always.
+    CHECK(HandsToCheck(EquipTarget::Left, false, false) == kHandsBoth);
+    CHECK(HandsToCheck(EquipTarget::Both, false, false) == kHandsBoth);
 }
 
 TEST_CASE("hand equip gate: idle hands equip at once")
 {
-    const auto d = DecideHandEquip(Ready(kHandRight, kIdle, kIdle));
+    HandEquipWait w(0.0);
+    const auto d = w.Update(At(16.0, kHandRight, kIdle, kIdle));
     CHECK(d.action == A::EquipNow);
+    CHECK(d.why == W::HandsIdle);
     CHECK(d.busyHands == 0);
 }
 
-TEST_CASE("hand equip gate: every state but idle is busy")
+TEST_CASE("hand equip gate: states 1-6 are active, 7-9 transient")
 {
-    CHECK_FALSE(CasterBusy(kIdle));
-    for (std::uint32_t s = 1; s <= 9; ++s) {
+    CHECK_FALSE(CasterActive(kIdle));
+    CHECK_FALSE(CasterTransient(kIdle));
+    for (std::uint32_t s = 1; s <= 6; ++s) {
         CAPTURE(s);
-        CHECK(CasterBusy(s));
-        CHECK(DecideHandEquip(Ready(kHandRight, s, kIdle)).action == A::Wait);
+        CHECK(CasterActive(s));
+        CHECK_FALSE(CasterTransient(s));
     }
+    for (std::uint32_t s = 7; s <= 9; ++s) {
+        CAPTURE(s);
+        CHECK_FALSE(CasterActive(s));
+        CHECK(CasterTransient(s));
+    }
+    CHECK(CasterTransient(42));  // a state this does not know: waited on briefly, never for long
 }
 
-TEST_CASE("hand equip gate: only the hands the equip needs are read")
+TEST_CASE("hand equip gate: the 00:38 case -- a charged spell held: wait, never interrupt, equip on release")
 {
-    // Charging in the left hand does not hold a right-hand equip...
-    CHECK(DecideHandEquip(Ready(kHandRight, kIdle, kCharging)).action == A::EquipNow);
-    // ...but holds a left-hand one, and a both-hands one.
-    auto d = DecideHandEquip(Ready(kHandLeft, kIdle, kCharging));
+    HandEquipWait w(0.0);
+    auto d = w.Update(At(0.0, kHandRight, kReady, kIdle));
     CHECK(d.action == A::Wait);
-    CHECK(d.busyHands == kHandLeft);
-    d = DecideHandEquip(Ready(kHandsBoth, kIdle, kCharging));
-    CHECK(d.action == A::Wait);
-    CHECK(d.busyHands == kHandLeft);
-    d = DecideHandEquip(Ready(kHandsBoth, kCasting, kCharging));
-    CHECK(d.busyHands == kHandsBoth);
+    CHECK(d.why == W::Casting);
+    CHECK(d.activeHands == kHandRight);
+    // Past the first cut's 1 s interrupt: still waiting.
+    CHECK(w.Update(At(1500.0, kHandRight, kReady, kIdle)).action == A::Wait);
+    // The player lets go: released, then idle.
+    CHECK(w.Update(At(1700.0, kHandRight, kReleased, kIdle)).action == A::Wait);
+    d = w.Update(At(1800.0, kHandRight, kIdle, kIdle));
+    CHECK(d.action == A::EquipNow);
+    CHECK(d.why == W::HandsIdle);
 }
 
-TEST_CASE("hand equip gate: the 00:38 case -- a charged spell held: wait, then interrupt, then equip")
+TEST_CASE("hand equip gate: a cast held past 3 s drops the equip")
 {
-    // Key down 0.6 s into the charge; the tap fires 300 ms after key-up.
-    CHECK(DecideHandEquip(Ready(kHandRight, kReady, kIdle, 0.0)).action == A::Wait);
-    CHECK(DecideHandEquip(Ready(kHandRight, kReady, kIdle, 999.0)).action == A::Wait);
-    // Still held at the timeout: interrupt now...
-    const auto d = DecideHandEquip(Ready(kHandRight, kReady, kIdle, kHandBusyTimeoutMs));
-    CHECK(d.action == A::InterruptThenEquip);
+    HandEquipWait w(100.0);
+    CHECK(w.Update(At(3099.0, kHandRight, kCasting, kIdle)).action == A::Wait);
+    const auto d = w.Update(At(100.0 + kActiveWaitMaxMs, kHandRight, kCasting, kIdle));
+    CHECK(d.action == A::Drop);
+    CHECK(d.why == W::StillCasting);
+    CHECK(d.activeHands == kHandRight);
+    CHECK(w.WaitedMs(100.0 + kActiveWaitMaxMs) == doctest::Approx(kActiveWaitMaxMs));
+}
+
+TEST_CASE("hand equip gate: a transient state is waited on 250 ms, then gone through")
+{
+    HandEquipWait w(0.0);
+    auto d = w.Update(At(10.0, kHandRight, kInterruptDeselect, kIdle));
+    CHECK(d.action == A::Wait);
+    CHECK(d.why == W::Transient);
     CHECK(d.busyHands == kHandRight);
-    // ...and the next frame equips, whatever state the interrupt left behind.
-    auto next = Ready(kHandRight, kInterruptDeselect, kIdle, kHandBusyTimeoutMs + 16.0);
-    next.interrupted = true;
-    CHECK(DecideHandEquip(next).action == A::EquipNow);
+    CHECK(d.activeHands == 0);
+    CHECK(w.Update(At(259.0, kHandRight, kInterruptDeselect, kIdle)).action == A::Wait);
+    d = w.Update(At(10.0 + kTransientWaitMs, kHandRight, kInterruptDeselect, kIdle));
+    CHECK(d.action == A::EquipNow);
+    CHECK(d.why == W::ThroughTransient);
 }
 
-TEST_CASE("hand equip gate: a release before the timeout equips without an interrupt")
+TEST_CASE("hand equip gate: a transient state that clears equips at once")
 {
-    CHECK(DecideHandEquip(Ready(kHandRight, kReady, kIdle, 200.0)).action == A::Wait);
-    CHECK(DecideHandEquip(Ready(kHandRight, 4, kIdle, 400.0)).action == A::Wait);  // just released
-    CHECK(DecideHandEquip(Ready(kHandRight, kIdle, kIdle, 450.0)).action == A::EquipNow);
+    HandEquipWait w(0.0);
+    CHECK(w.Update(At(0.0, kHandRight, kInterrupt, kIdle)).action == A::Wait);
+    CHECK(w.Update(At(50.0, kHandRight, kIdle, kIdle)).action == A::EquipNow);
+}
+
+TEST_CASE("hand equip gate: the transient clock starts when the cast ends, not at the park")
+{
+    // A charge held 2 s, then a transient state: the 250 ms runs from the
+    // first transient frame, so the equip does not go on that frame.
+    HandEquipWait w(0.0);
+    CHECK(w.Update(At(0.0, kHandRight, kCharging, kIdle)).action == A::Wait);
+    CHECK(w.Update(At(2000.0, kHandRight, kInterrupt, kIdle)).action == A::Wait);
+    CHECK(w.Update(At(2200.0, kHandRight, kInterrupt, kIdle)).action == A::Wait);
+    // Back to active resets it.
+    CHECK(w.Update(At(2210.0, kHandRight, kCharging, kIdle)).action == A::Wait);
+    CHECK(w.Update(At(2300.0, kHandRight, kInterrupt, kIdle)).action == A::Wait);
+    CHECK(w.Update(At(2549.0, kHandRight, kInterrupt, kIdle)).action == A::Wait);
+    CHECK(w.Update(At(2550.0, kHandRight, kInterrupt, kIdle)).action == A::EquipNow);
+}
+
+TEST_CASE("hand equip gate: an active hand outranks a transient one")
+{
+    HandEquipWait w(0.0);
+    CHECK(w.Update(At(0.0, kHandsBoth, kInterrupt, kCharging)).action == A::Wait);
+    const auto d = w.Update(At(1000.0, kHandsBoth, kInterrupt, kCharging));
+    CHECK(d.action == A::Wait);
+    CHECK(d.why == W::Casting);
+    CHECK(d.busyHands == kHandsBoth);
+    CHECK(d.activeHands == kHandLeft);
+}
+
+TEST_CASE("hand equip gate: only the checked hands are read")
+{
+    HandEquipWait w(0.0);
+    // Charging in the left hand does not hold a right-hand equip that leaves the left alone...
+    CHECK(w.Update(At(0.0, kHandRight, kIdle, kCharging)).action == A::EquipNow);
+    // ...but holds one that checks both.
+    HandEquipWait both(0.0);
+    const auto d = both.Update(At(0.0, kHandsBoth, kIdle, kCharging));
+    CHECK(d.action == A::Wait);
+    CHECK(d.activeHands == kHandLeft);
 }
 
 TEST_CASE("hand equip gate: outside gameplay the pending equip is dropped")
 {
-    auto in = Ready(kHandRight, kIdle, kIdle);
+    HandEquipWait w(0.0);
+    auto in = At(0.0, kHandRight, kIdle, kIdle);
     in.worldReady = false;
-    CHECK(DecideHandEquip(in).action == A::Drop);
-    // Dropped even after an interrupt: a load or a pause wins.
-    in.interrupted = true;
-    in.rightState = kCasting;
-    CHECK(DecideHandEquip(in).action == A::Drop);
+    const auto d = w.Update(in);
+    CHECK(d.action == A::Drop);
+    CHECK(d.why == W::NotInGameplay);
 }
 
-TEST_CASE("hand equip gate: the timeout is the caller's")
+TEST_CASE("hand equip gate: a same-item re-press takes the selection over")
 {
-    auto in = Ready(kHandRight, kCasting, kIdle, 300.0);
-    in.timeoutMs = 250.0;
-    CHECK(DecideHandEquip(in).action == A::InterruptThenEquip);
+    constexpr std::uint32_t kFireball = 0x0001C789;
+    constexpr std::uint32_t kFirebolt = 0x0012FD19;
+    CHECK(OnReplaced(kFireball, true, kFireball) == ReplacedSelection::HandOver);
+    CHECK(OnReplaced(kFireball, true, kFirebolt) == ReplacedSelection::Withdraw);
+    CHECK(OnReplaced(kFireball, false, kFirebolt) == ReplacedSelection::None);
+    CHECK(OnReplaced(kFireball, false, kFireball) == ReplacedSelection::None);
 }
 
-TEST_CASE("hand equip gate: the caster states are named, and 7-9 are not idle")
+TEST_CASE("hand equip gate: the caster states are named")
 {
     CHECK(CastPhaseName(kIdle).empty());
     CHECK(CasterStateName(kIdle) == "idle");
     CHECK(CastPhaseName(kReady) == "charged, held");
-    CHECK(CastPhaseName(4) == "just released");
+    CHECK(CastPhaseName(kReleased) == "just released");
     CHECK(CastPhaseName(7) == "unnamed state 7");
     CHECK(CastPhaseName(8) == "interrupt");
     CHECK(CastPhaseName(9) == "interrupt/deselect");

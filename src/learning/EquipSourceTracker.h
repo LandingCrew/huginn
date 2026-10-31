@@ -46,8 +46,9 @@ namespace Huginn::Learning
         void MarkHuginnEquip(RE::FormID formID)
         {
             const auto now = std::chrono::steady_clock::now();
+            const bool hand = IsHandForm(formID);
             std::lock_guard lock(m_mutex);
-            m_entries[m_nextSlot] = Entry{formID, now};
+            m_entries[m_nextSlot] = Entry{formID, now, hand};
             m_nextSlot = (m_nextSlot + 1) % m_entries.size();
         }
 
@@ -73,16 +74,17 @@ namespace Huginn::Learning
             return false;
         }
 
-        // Any Huginn equip marked within the window, whatever its form: an
-        // UNequip event names what was taken off, not what Huginn put on, so
-        // the displacement a Huginn equip causes is matched this way
-        // (EquipCallerTrace, 0.24.26).
-        [[nodiscard]] bool HadRecentHuginnEquip(float windowMs) const
+        // Any Huginn HAND equip (a spell, scroll, weapon, light or shield)
+        // marked within the window, whatever its form: an UNequip event
+        // names what was taken off, not what Huginn put on, so the
+        // displacement a Huginn hand equip causes is matched this way
+        // (EquipCallerTrace, 0.24.26). A potion press displaces nothing.
+        [[nodiscard]] bool HadRecentHuginnHandEquip(float windowMs) const
         {
             const auto now = std::chrono::steady_clock::now();
             std::lock_guard lock(m_mutex);
             for (const auto& entry : m_entries) {
-                if (entry.formID == 0) {
+                if (entry.formID == 0 || !entry.hand) {
                     continue;
                 }
                 if (std::chrono::duration<float, std::milli>(now - entry.timestamp).count() <= windowMs) {
@@ -102,7 +104,27 @@ namespace Huginn::Learning
         {
             RE::FormID formID = 0;
             std::chrono::steady_clock::time_point timestamp{};
+            bool hand = false;   // goes into a hand (HadRecentHuginnHandEquip)
         };
+
+        static bool IsHandForm(RE::FormID formID)
+        {
+            const auto* form = formID ? RE::TESForm::LookupByID(formID) : nullptr;
+            if (!form) return false;
+            switch (form->GetFormType()) {
+            case RE::FormType::Spell:
+            case RE::FormType::Scroll:
+            case RE::FormType::Weapon:
+            case RE::FormType::Light:
+                return true;
+            case RE::FormType::Armor: {
+                const auto* armor = form->As<RE::TESObjectARMO>();
+                return armor && armor->IsShield();
+            }
+            default:
+                return false;
+            }
+        }
 
         mutable std::mutex m_mutex;
         std::array<Entry, 8> m_entries{};

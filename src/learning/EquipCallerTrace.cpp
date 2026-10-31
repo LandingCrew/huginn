@@ -47,14 +47,12 @@ namespace Huginn::Learning::EquipCallerTrace
 
       // "Module.dll+0x1A2B3C" for a code address; "?+0x..." outside any
       // module (generated code). UNCHANGED_REFCOUNT: no module is pinned.
-      std::string Frame(void* address, std::uint64_t& hash)
+      std::string Frame(void* address)
       {
          HMODULE module = nullptr;
          const auto flags = GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT;
          if (!GetModuleHandleExW(flags, static_cast<LPCWSTR>(address), &module) || !module) {
-            const auto raw = reinterpret_cast<std::uintptr_t>(address);
-            hash = (hash ^ raw) * 1099511628211ull;
-            return std::format("?+0x{:X}", raw);
+            return std::format("?+0x{:X}", reinterpret_cast<std::uintptr_t>(address));
          }
          std::array<wchar_t, MAX_PATH> path{};
          const DWORD len = GetModuleFileNameW(module, path.data(), static_cast<DWORD>(path.size()));
@@ -69,10 +67,6 @@ namespace Huginn::Learning::EquipCallerTrace
             for (DWORD j = 0; j < len; ++j) name += static_cast<char>(path[j] < 0x80 ? path[j] : L'?');
          }
          const auto offset = reinterpret_cast<std::uintptr_t>(address) - reinterpret_cast<std::uintptr_t>(module);
-         // The signature: the module by its base and the offset in it, so the
-         // same call path hashes the same in one session.
-         hash = (hash ^ reinterpret_cast<std::uintptr_t>(module)) * 1099511628211ull;
-         hash = (hash ^ offset) * 1099511628211ull;
          return std::format("{}+0x{:X}", name.empty() ? std::string("?") : name, offset);
       }
 
@@ -94,42 +88,52 @@ namespace Huginn::Learning::EquipCallerTrace
 
    void NoteIfExternal(const RE::TESEquipEvent& event, const RE::TESForm& form)
    {
+      // Unequips only: an equip not by Huginn is already attributed (the
+      // TESEquipEvent sinks' external-equip learning, the probe's swap line).
+      if (event.equipped) return;
       if (!spdlog::default_logger()->should_log(spdlog::level::debug)) return;
       if (!IsHandItem(form)) return;
 
       const auto& tracker = EquipSourceTracker::GetSingleton();
       const RE::FormID formID = form.GetFormID();
       if (tracker.IsRecentHuginnEquip(formID, kHuginnWindowMs)) return;
-      if (!event.equipped && tracker.HadRecentHuginnEquip(kHuginnWindowMs)) return;
+      if (tracker.HadRecentHuginnHandEquip(kHuginnWindowMs)) return;
 
-      // Skip this function's own frame; the sink that called it is the
-      // first one shown.
-      std::array<void*, kMaxFrames> frames{};
-      const USHORT count = RtlCaptureStackBackTrace(1, kMaxFrames, frames.data(), nullptr);
-      std::uint64_t hash = 14695981039346656037ull;
-      std::string stack;
-      for (USHORT i = 0; i < count; ++i) {
-         if (!stack.empty()) stack += " < ";
-         stack += Frame(frames[i], hash);
-      }
-
-      // The rate limit first, and a line it holds back is not recorded in the
-      // dedup: the same stack can still be logged later.
+      // The rate limit before anything is captured; a line it holds back is
+      // counted, and not recorded in the dedup (the same stack can still be
+      // logged later).
       const auto now = NowMs();
       if (now - g_lastLogMs.load(std::memory_order_relaxed) < kMinIntervalMs) {
          g_skipped.fetch_add(1, std::memory_order_relaxed);
          return;
       }
-      const std::uint32_t key = formID ^ (event.equipped ? 0u : 0x80000000u);
-      if (!Dedup().ShouldWarn(key, hash)) return;
+
+      // The raw return addresses (a frame walk, microseconds) are the
+      // dedup's signature: the same call path gives the same addresses in a
+      // session. Module names are resolved only for a stack that will be
+      // logged. Skip this function's own frame; the sink that called it is
+      // the first one shown.
+      std::array<void*, kMaxFrames> frames{};
+      const USHORT count = RtlCaptureStackBackTrace(1, kMaxFrames, frames.data(), nullptr);
+      std::uint64_t hash = 14695981039346656037ull;
+      for (USHORT i = 0; i < count; ++i) {
+         hash = (hash ^ reinterpret_cast<std::uintptr_t>(frames[i])) * 1099511628211ull;
+      }
+      if (!Dedup().ShouldWarn(formID, hash)) return;
       g_lastLogMs.store(now, std::memory_order_relaxed);
       const std::uint32_t skipped = g_skipped.exchange(0, std::memory_order_relaxed);
+
+      std::string stack;
+      for (USHORT i = 0; i < count; ++i) {
+         if (!stack.empty()) stack += " < ";
+         stack += Frame(frames[i]);
+      }
 
       const auto* main = RE::Main::GetSingleton();
       const DWORD thread = GetCurrentThreadId();
       const char* name = form.GetName();
-      logger::debug("[EquipCaller] {} '{}' ({:08X}) not by Huginn | thread {}{} | stack: {}{}"sv,
-         event.equipped ? "equipped" : "unequipped", name && *name ? name : "?", formID, thread,
+      logger::debug("[EquipCaller] unequipped '{}' ({:08X}) not by Huginn | thread {}{} | stack: {}{}"sv,
+         name && *name ? name : "?", formID, thread,
          main && main->threadID == thread ? " (the game's main thread)" : "",
          stack.empty() ? std::string("(none captured)") : stack,
          skipped > 0 ? std::format(" | {} line(s) held back by the rate limit since the last", skipped) : std::string());

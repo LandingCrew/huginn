@@ -1203,12 +1203,16 @@ A press whose item goes into a hand (spell, scroll, weapon, staff, torch) does
 its bookkeeping in `EquipSlot` at the press -- the press grace above, the
 Remembrance note on the page pressed, the selection, the own-press note -- and
 then parks the equip (form and stack captured at the press, one pending: a new
-press replaces it and withdraws its selection). The PlayerCharacter::Update
-hook, on the main thread, equips it as soon as the hand's magic caster is idle
-(both hands for a two-hander, bow, crossbow, both-hands spell or the hold), or
-interrupts the cast after 1 s and equips the frame after; outside gameplay the
-pending equip is dropped and its selection withdrawn. After the equip, while
-drawn, the hands are redrawn as Wheeler-Refined does (`[Equip]
+press replaces it and withdraws its selection, or hands it over when it is
+the same item). The PlayerCharacter::Update hook, on the main thread, equips
+it as soon as the checked hands' magic casters are idle -- both hands unless a
+right-hand equip leaves the left alone -- and never interrupts a cast: one
+still going 3 s after the park drops the press; caster states 7-9 hold it at
+most 250 ms. Outside gameplay the pending equip is dropped and its selection
+withdrawn (a weapon swap half done is finished instead, unless a save loads).
+A held equip re-times the press's Remembrance capture from the equip
+(`Remembrance::RearmCapture`). After the equip, while drawn (kDrawn), the
+hands are redrawn as Wheeler-Refined does (`[Equip]
 bRedrawAfterHandEquip`). Potions, food, poisons, ammo, apparel and soul gems act
 at once, as before. The slot keys themselves do nothing, and are not consumed,
 in a loading screen, the main menu or a pausing menu (`SlotKeysBlockedBy`).

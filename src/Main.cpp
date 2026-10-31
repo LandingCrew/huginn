@@ -915,7 +915,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
         Effect::EffectCatalog::GetSingleton().FinishPendingRead("kPreLoadGame"sv);
         State::DropAheadProbe::SetGameLoaded(false);  // R3: off through the load
         State::HandModelProbe::SetGameLoaded(false);
-        Input::HandEquipGate::GetSingleton().Drop("a save is loading");  // 0.24.26
+        Input::HandEquipGate::GetSingleton().Drop("a save is loading", /*force=*/true);  // 0.24.26
         Learning::SelectionLogV3::OnLoadStarting();   // R4: no extra-list reads through the load
         break;
     case SKSE::MessagingInterface::kNewGame:

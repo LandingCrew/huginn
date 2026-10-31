@@ -59,7 +59,15 @@ namespace Huginn::State::HandModelProbe
          double sinceCast = -1.0;    // seconds before the swap; -1 = none in kRecentSec
          std::string castWhat;       // the hand and caster state of that last cast
          double sinceAttack = -1.0;
+         // The hand went empty because what it held was used up or removed:
+         // the last scroll of a stack cast, a spell no longer known. The
+         // graph may read magic for a moment after (JudgeGraph).
+         bool emptiedByUse = false;
       };
+
+      // How long after a hand is emptied by use an empty hand under the
+      // magic hand type is not judged (JudgeGraph).
+      constexpr double kEmptiedByUseGraceSec = 3.0;
 
       struct Hand
       {
@@ -405,6 +413,12 @@ namespace Huginn::State::HandModelProbe
                swap.sinceCast = SinceOrNone(g_lastCastAt, nowSec);
                if (swap.sinceCast >= 0.0) swap.castWhat = std::format("{} hand {}", kSideName[g_lastCastSide], g_lastCastWhat);
                swap.sinceAttack = SinceOrNone(g_lastAttackAt, nowSec);
+               if (id == 0 && hand.object != 0) {
+                  auto* before = RE::TESForm::LookupByID(hand.object);
+                  auto* spell = before ? before->As<RE::SpellItem>() : nullptr;
+                  swap.emptiedByUse = before && (before->Is(RE::FormType::Scroll) ||
+                                                 (before->Is(RE::FormType::Spell) && spell && !player->HasSpell(spell)));
+               }
             }
             hand.object = id;
             hand.objectName = obj ? FormLabel(obj) : std::string();
@@ -481,7 +495,13 @@ namespace Huginn::State::HandModelProbe
             const std::uint32_t key = (held == Core::HandHeld::Other || !read) ? 0
                                     : held == Core::HandHeld::Empty            ? Core::kEmptyHandKey
                                                                                : objects[side]->GetFormID();
-            const auto state = read ? Core::JudgeGraphHand(held, type) : Core::GraphHand::Agrees;
+            auto state = read ? Core::JudgeGraphHand(held, type) : Core::GraphHand::Agrees;
+            // A scroll stack cast to nothing, or a spell removed: the graph
+            // gets a moment to follow before an empty hand under magic counts.
+            if (state == Core::GraphHand::EmptyAsMagic && hand.swap.emptiedByUse && hand.swap.at >= 0.0 &&
+                nowSec - hand.swap.at < kEmptiedByUseGraceSec) {
+               state = Core::GraphHand::Agrees;
+            }
             const auto ev = hand.graph.Update(key, pose, 0, state, nowSec);
             if (ev.kind == K::Onset) {
                logger::warn("[HandModel] {} hand: the behaviour graph disagrees with the hand for {:.1f} s while drawn "

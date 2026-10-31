@@ -13,18 +13,29 @@
 // a number key is pressed mid-fight with the cast button down.
 //
 // So an equip into a hand (spell, scroll, weapon, staff, torch) first reads
-// that hand's magic caster on the main thread -- both hands for a two-hander,
-// bow, crossbow, a both-hands spell or the hold gesture. Anything but idle
-// and the equip waits: one pending equip (a new press replaces it), checked
-// every frame, done as soon as the hand is idle. Still busy after
-// kHandBusyTimeoutMs and the cast is interrupted, then the equip goes on the
-// next frame whatever the caster says. Outside gameplay (a load, the main
-// menu, a pausing menu, no player 3D) the pending equip is dropped.
+// the hands' magic casters on the main thread: both hands unless it is a
+// right-hand equip that cannot move the left (HandsToCheck). One pending
+// equip (a new press replaces it), checked every frame:
+//   - a checked hand in an active state (1-6: starting, charging, charged
+//     and held, releasing, casting) holds the equip until it is idle -- the
+//     player letting go of the cast is what lets the swap through. Still
+//     active kActiveWaitMaxMs after it was parked and the equip is DROPPED
+//     (never interrupted: 0.24.26's first cut called InterruptCast at 1 s,
+//     which is the 00:38 sequence again -- charge cancelled and refunded,
+//     caster idle without a release -- split over two frames);
+//   - a hand in a transient state (7-9, CommonLib's "Interrupt" and
+//     "Interrupt/Deselect", or any state this does not know) is waited on
+//     for at most kTransientWaitMs, then the equip goes through it: whether
+//     one of them can rest there is not known, and a resting state treated
+//     as busy would make every press wait;
+//   - idle (0): equip now.
+// Outside gameplay (a load, the main menu, a pausing menu, no player 3D) the
+// pending equip is dropped.
 //
-// This header is the decision only: the caster states in, one action out.
-// The game layer (input/HandEquipGate.cpp) reads the casters, calls
-// InterruptCast and equips. Milliseconds on one monotonic clock (the
-// caller's; nothing here reads a clock).
+// This header is the decision only: the caster states in, one action out
+// (HandEquipWait). The game layer (input/HandEquipGate.cpp) reads the
+// casters and equips. Milliseconds on one monotonic clock (the caller's;
+// nothing here reads a clock).
 //
 // The caster states are the engine's MagicCaster::State values, passed as
 // integers; the names below are CommonLib's guesses where it has them,
@@ -81,16 +92,24 @@ namespace Huginn::Core
         return state == 0 ? std::string_view("idle") : CastPhaseName(state);
     }
 
-    /// Busy is anything but idle: every state 1-9 is part of a cast starting,
-    /// charging, held, releasing or being interrupted.
-    [[nodiscard]] constexpr bool CasterBusy(std::uint32_t state) noexcept { return state != 0; }
+    /// Active: part of a cast the player is making (starting, charging,
+    /// charged and held, just released, casting). The equip waits for these.
+    [[nodiscard]] constexpr bool CasterActive(std::uint32_t state) noexcept { return state >= 1 && state <= 6; }
+
+    /// Transient: not idle and not active -- 7-9 (interrupt, interrupt and
+    /// deselect, unnamed) or a value this does not know. Waited on briefly.
+    [[nodiscard]] constexpr bool CasterTransient(std::uint32_t state) noexcept
+    {
+        return state != 0 && !CasterActive(state);
+    }
 
     /// The hands an equip needs, as a mask.
     inline constexpr std::uint8_t kHandRight = 1;
     inline constexpr std::uint8_t kHandLeft = 2;
     inline constexpr std::uint8_t kHandsBoth = kHandRight | kHandLeft;
 
-    /// Which hand the key asked for: tap, double tap, hold.
+    /// Which hand the key asked for: tap, double tap, hold. A torch is Left:
+    /// it always goes to the left hand.
     enum class EquipTarget : std::uint8_t
     {
         Right,
@@ -98,76 +117,135 @@ namespace Huginn::Core
         Both,
     };
 
-    /// The hands whose casters an equip must wait for. `occupiesBoth`: the
-    /// item takes both hands whatever the gesture (a two-handed weapon, a bow
-    /// or crossbow, a both-hands spell). A torch is the caller's Left: it
-    /// always goes to the left hand.
-    [[nodiscard]] constexpr std::uint8_t HandsToCheck(EquipTarget target, bool occupiesBoth) noexcept
+    /// The hands whose casters an equip must wait for: both whenever the
+    /// equip can change the other hand's contents.
+    ///   - `itemOccupiesBoth`: a two-handed weapon, a bow or crossbow, a
+    ///     both-hands spell;
+    ///   - a left-hand equip (or a torch) can take a right-hand two-hander
+    ///     off both hands, so it checks both;
+    ///   - `otherHandMoves`: for a right-hand equip, the caller saw the left
+    ///     hand would change too -- it holds this same form (EquipWeapon
+    ///     takes it off first), or either hand holds an item taking both.
+    /// Only a right-hand equip that leaves the left hand alone reads the
+    /// right hand alone.
+    [[nodiscard]] constexpr std::uint8_t HandsToCheck(EquipTarget target, bool itemOccupiesBoth,
+        bool otherHandMoves) noexcept
     {
-        if (occupiesBoth || target == EquipTarget::Both) return kHandsBoth;
-        return target == EquipTarget::Left ? kHandLeft : kHandRight;
+        if (itemOccupiesBoth || otherHandMoves || target != EquipTarget::Right) return kHandsBoth;
+        return kHandRight;
     }
 
-    /// How long a pending equip waits for a busy hand before the cast is
-    /// interrupted. Kept well under Remembrance's capture window (1500 ms,
-    /// slot/Remembrance.h kMatchWindowMs), which starts at the press: the
-    /// equip must land inside it for the press to hold what it displaced.
-    inline constexpr double kHandBusyTimeoutMs = 1000.0;
+    /// How long after it was parked an active cast may hold the equip before it
+    /// is dropped. Remembrance's capture window starts at the equip when it
+    /// was held (Remembrance::RearmCapture), so it does not bound this.
+    inline constexpr double kActiveWaitMaxMs = 3000.0;
+    /// How long a transient state (7-9) may hold the equip before it goes
+    /// through it anyway.
+    inline constexpr double kTransientWaitMs = 250.0;
 
     struct HandEquipGateInput
     {
         bool worldReady = false;           ///< no load or main menu, not paused, the player has 3D
-        std::uint8_t hands = 0;            ///< HandsToCheck
+        std::uint8_t hands = 0;            ///< HandsToCheck, this frame
         std::uint32_t rightState = 0;      ///< the right hand's caster state (0 = idle)
         std::uint32_t leftState = 0;       ///< the left hand's
-        double waitedMs = 0.0;             ///< since the equip was parked
-        bool interrupted = false;          ///< the cast was interrupted on an earlier frame
-        double timeoutMs = kHandBusyTimeoutMs;
+        double nowMs = 0.0;
     };
 
     enum class HandEquipAction : std::uint8_t
     {
-        EquipNow,            ///< the hands are idle (or the cast was interrupted last frame)
-        Wait,                ///< a hand is busy: check again next frame
-        InterruptThenEquip,  ///< busy past the timeout: interrupt now, equip next frame
-        Drop,                ///< not in gameplay: forget the equip
+        EquipNow,  ///< the checked hands are idle, or only transient past kTransientWaitMs
+        Wait,      ///< check again next frame
+        Drop,      ///< not in gameplay, or still casting at kActiveWaitMaxMs
+    };
+
+    enum class HandEquipWhy : std::uint8_t
+    {
+        HandsIdle,         ///< EquipNow: every checked hand idle
+        ThroughTransient,  ///< EquipNow: a checked hand still in 7-9 after kTransientWaitMs
+        Casting,           ///< Wait: a checked hand active
+        Transient,         ///< Wait: a checked hand transient, under kTransientWaitMs
+        NotInGameplay,     ///< Drop
+        StillCasting,      ///< Drop: active at kActiveWaitMaxMs
     };
 
     struct HandEquipDecision
     {
         HandEquipAction action = HandEquipAction::Wait;
-        std::uint8_t busyHands = 0;   ///< the needed hands whose caster is busy now
+        HandEquipWhy why = HandEquipWhy::Casting;
+        std::uint8_t busyHands = 0;     ///< checked hands not idle this frame
+        std::uint8_t activeHands = 0;   ///< of those, the active ones (1-6)
     };
 
-    [[nodiscard]] constexpr HandEquipDecision DecideHandEquip(const HandEquipGateInput& in) noexcept
+    /// One pending equip's wait: parked at `parkedMs`, then Update every
+    /// frame. Holds the one thing a frame cannot see: since when the checked
+    /// hands have been transient (and nothing active).
+    class HandEquipWait
     {
-        HandEquipDecision out;
-        if (!in.worldReady) {
-            out.action = HandEquipAction::Drop;
-            return out;
-        }
-        if ((in.hands & kHandRight) && CasterBusy(in.rightState)) out.busyHands |= kHandRight;
-        if ((in.hands & kHandLeft) && CasterBusy(in.leftState)) out.busyHands |= kHandLeft;
-        // The frame after the interrupt the equip goes whatever the caster
-        // reads: an interrupt that leaves a state behind (7-9) must not hold
-        // the key forever.
-        if (in.interrupted || out.busyHands == 0) {
-            out.action = HandEquipAction::EquipNow;
-            return out;
-        }
-        out.action = in.waitedMs >= in.timeoutMs ? HandEquipAction::InterruptThenEquip : HandEquipAction::Wait;
-        return out;
-    }
+    public:
+        explicit HandEquipWait(double parkedMs = 0.0) noexcept : m_parkedMs(parkedMs) {}
 
-    [[nodiscard]] constexpr std::string_view HandEquipActionName(HandEquipAction a) noexcept
-    {
-        switch (a) {
-        case HandEquipAction::EquipNow: return "equip now";
-        case HandEquipAction::Wait: return "wait";
-        case HandEquipAction::InterruptThenEquip: return "interrupt, then equip";
-        case HandEquipAction::Drop: return "drop";
+        [[nodiscard]] HandEquipDecision Update(const HandEquipGateInput& in) noexcept
+        {
+            HandEquipDecision out;
+            if (!in.worldReady) {
+                out.action = HandEquipAction::Drop;
+                out.why = HandEquipWhy::NotInGameplay;
+                return out;
+            }
+            auto note = [&](std::uint8_t hand, std::uint32_t state) {
+                if (!(in.hands & hand) || state == 0) return;
+                out.busyHands |= hand;
+                if (CasterActive(state)) out.activeHands |= hand;
+            };
+            note(kHandRight, in.rightState);
+            note(kHandLeft, in.leftState);
+
+            if (out.activeHands != 0) {
+                m_transientSinceMs = -1.0;
+                const bool timedOut = in.nowMs - m_parkedMs >= kActiveWaitMaxMs;
+                out.action = timedOut ? HandEquipAction::Drop : HandEquipAction::Wait;
+                out.why = timedOut ? HandEquipWhy::StillCasting : HandEquipWhy::Casting;
+                return out;
+            }
+            if (out.busyHands != 0) {
+                if (m_transientSinceMs < 0.0) m_transientSinceMs = in.nowMs;
+                const bool through = in.nowMs - m_transientSinceMs >= kTransientWaitMs;
+                out.action = through ? HandEquipAction::EquipNow : HandEquipAction::Wait;
+                out.why = through ? HandEquipWhy::ThroughTransient : HandEquipWhy::Transient;
+                return out;
+            }
+            m_transientSinceMs = -1.0;
+            out.action = HandEquipAction::EquipNow;
+            out.why = HandEquipWhy::HandsIdle;
+            return out;
         }
-        return "?";
+
+        [[nodiscard]] double WaitedMs(double nowMs) const noexcept { return nowMs - m_parkedMs; }
+
+    private:
+        double m_parkedMs = 0.0;
+        double m_transientSinceMs = -1.0;
+    };
+
+    /// A pending equip replaced by a newer press: what happens to the
+    /// selection the first press opened (SelectionTracker keeps one record
+    /// per form). The same form: the second press found the record already
+    /// pending and opened none of its own, so it takes the record over --
+    /// withdrawing it would leave the equip that lands with no selection at
+    /// all. Another form: the first item was never equipped, so withdrawn.
+    enum class ReplacedSelection : std::uint8_t
+    {
+        None,      ///< the first press opened no selection
+        HandOver,  ///< the newer press takes it
+        Withdraw,
+    };
+
+    [[nodiscard]] constexpr ReplacedSelection OnReplaced(std::uint32_t oldFormID, bool oldSelected,
+        std::uint32_t newFormID) noexcept
+    {
+        if (!oldSelected) return ReplacedSelection::None;
+        return oldFormID == newFormID ? ReplacedSelection::HandOver : ReplacedSelection::Withdraw;
     }
 
     /// "right", "left", "both" or "none", for a hand mask.

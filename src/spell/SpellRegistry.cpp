@@ -33,7 +33,7 @@ namespace Huginn::Spell
       return RE::BSEventNotifyControl::kContinue;  // Not a spell
       }
 
-      // 0.24.26 (debug): a spell or scroll in or out of a hand by something
+      // 0.24.26 (debug): a spell or scroll taken out of a hand by something
       // other than Huginn -- which thread, which call path.
       Learning::EquipCallerTrace::NoteIfExternal(*event, *form);
 

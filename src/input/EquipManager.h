@@ -53,7 +53,10 @@ namespace Huginn::Input
        *   which equips on the main thread once the hand is not casting
        *   (HandEquipGate.h). The press's bookkeeping (Remembrance, the
        *   selection, the press grace's own-press note) is done here, at the
-       *   press, either way.
+       *   press, either way; a parked equip that then fails or is dropped
+       *   withdraws its selection.
+       * @param parked Set true when the equip was parked rather than done
+       *   (the debug harnesses log which).
        *
        * Thread: the slot callback's, i.e. UpdateHandler's InputEvent sink (a
        * game job thread in gameplay, the main thread in paused menus, a
@@ -61,7 +64,8 @@ namespace Huginn::Input
        * OnUpdate); the debug harnesses call it from their own.
        */
       bool EquipSlot(size_t slotIndex, EquipHand hand,
-         std::optional<std::chrono::steady_clock::time_point> pressedAt = std::nullopt);
+         std::optional<std::chrono::steady_clock::time_point> pressedAt = std::nullopt,
+         bool* parked = nullptr);
 
       /**
        * @brief The hand equip gate's act: equip a parked request (0.24.26)
@@ -152,7 +156,7 @@ namespace Huginn::Input
       /// The request EquipSlot parks at the gate for a hand equip, from what
       /// the press resolved (the form, its stack, the page, the moment).
       [[nodiscard]] static HandEquipRequest MakeHandEquipRequest(size_t slotIndex, size_t page, EquipHand hand,
-         const UI::SlotContent& content, RE::FormID formID, bool occupiesBoth, bool selects,
+         const UI::SlotContent& content, RE::FormID formID, bool occupiesBoth, bool selects, bool remembers,
          std::chrono::steady_clock::time_point pressedAt);
 
       /// Equip ammo (arrow/bolt) by FormID
