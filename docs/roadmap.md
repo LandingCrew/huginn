@@ -911,6 +911,23 @@ changed in the same PR, and the shipped INI loses the dead keys.
         nothing changes. **In game (you):** with Twin Souls (or any limit of 2)
         and one summon up, a second summon spell stays on offer; at two it
         drops out with `filtered_by` `summon_limit` in the v3 log.
+        **0.24.24:** the limit's entry point takes the spell being cast
+        (condition tab 1); the call left it out, so a perk with a tab-1
+        condition (`EPMagic_SpellHasKeyword`: Vigilant, Kitty's spell packs,
+        Ancient Blood, the Necromancy CC) read the result float as a spell
+        and crashed the game (2026-10-30, LoreRim, under
+        PerkEntryPointExtender). The limit is now evaluated with each distinct
+        spell of a live summon or reanimated thrall and the highest kept (order
+        independent; actors commanded by other effects, such as Bend Will, left out); with none
+        the last value stands, reset to 1 on every load.
+- [ ] **Summon limit per candidate spell** (follow-up to 0.24.24): a tab-1 perk
+      can raise one summon spell's limit and not another's (Undeath's Mass
+      Reanimate +100, Vigilant's +4/6/8 for its conjuration-keyword summons), so one value for
+      every summon spell is approximate. Evaluate the entry point per
+      candidate summon spell, cached per form and cleared on a load or a perk
+      change, where the summon filter (CandidateFilters), covered(i)
+      (core/Coverage.h), the upgrade gate (PipelineCoordinator) and the legacy
+      context weight test it; the v3 log's `summon.limit` keeps one value.
 - [x] **Steps 1-2 of the order above, built in 0.23.55 (R8.1, the first PR on
       `rewrite-r8`)**, with doc 11 decision 4 (the filter half of step 5):
       - Hard zeros into `CandidateFilters`: four reasons appended to

@@ -120,6 +120,9 @@ namespace Huginn::State
       m_actorTypeCache.clear();
       m_processedAllies.clear();
 
+      // --- The commanded-actor limit: another character's perks (0.24.24) ---
+      m_summonLimit = 1.0f;
+
       // --- Ore-vein caches (FormIDs, esp. FF-runtime ones, can be recycled
       //     between save files — same reason as the actor type cache) ---
       m_oreVeinCache.clear();
