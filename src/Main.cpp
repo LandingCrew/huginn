@@ -892,8 +892,10 @@ static void OnDataLoaded()
         // once it confirms (SelectionTracker). MarkHuginnEquip is already
         // called in EquipManager.cpp before this callback, so the
         // TESEquipEvent the press causes is not counted a second time.
+        // Returns whether the press opened a new pending selection (the hand
+        // equip gate withdraws only such a record).
         equipManager.SetEquipCallback([](RE::FormID formID, size_t slotIndex) {
-            Learning::SelectionTracker::GetSingleton().Select(
+            return Learning::SelectionTracker::GetSingleton().Select(
                 formID, Learning::EquipSource::Hotkey,
                 std::format("key {} (s{})", slotIndex + 1, slotIndex));
         });

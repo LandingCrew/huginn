@@ -84,6 +84,20 @@ namespace Huginn::Input
       if (!player || !wasDrawn || !EquipSettings::GetSingleton().RedrawAfterHandEquip()) {
       return;
       }
+      // Both casters idle, or no redraw: a right-hand equip waits only for the
+      // right hand, and a draw over a charge still held in the left would
+      // cancel it the way the 00:38 swap did.
+      const auto stateOf = [&](RE::MagicSystem::CastingSource source) -> std::uint32_t {
+      const auto* caster = player->GetMagicCaster(source);
+      return caster ? static_cast<std::uint32_t>(caster->state.get()) : 0;
+      };
+      const std::uint32_t right = stateOf(RE::MagicSystem::CastingSource::kRightHand);
+      const std::uint32_t left = stateOf(RE::MagicSystem::CastingSource::kLeftHand);
+      if (right != 0 || left != 0) {
+      logger::debug("[EquipManager] No redraw after equipping '{}': a caster is not idle (right {}, left {})"sv,
+         what ? what : "?", Core::CasterStateName(right), Core::CasterStateName(left));
+      return;
+      }
       player->DrawWeaponMagicHands(true);
       logger::debug("[EquipManager] Redrew the hands after equipping '{}' (drawn before the equip; bRedrawAfterHandEquip)"sv,
       what ? what : "?");
@@ -1060,6 +1074,7 @@ namespace Huginn::Input
       // ends the hold, and it earns the learner nothing: Huginn did not
       // recommend it, the player put it back.
       bool pressedRemembered = false;
+      bool remembers = false;   // a capture registered (not the undo): the gate re-times it if the equip waits
       {
          std::optional<Slot::Remembrance::Kind> kind;
          switch (content.type) {
@@ -1079,6 +1094,7 @@ namespace Huginn::Input
          if (kind) {
             pressedRemembered = Slot::Remembrance::GetSingleton().OnSlotActivated(
                pressPage, slotIndex, content.formID, *kind);
+            remembers = !pressedRemembered;
          }
       }
 
@@ -1087,14 +1103,12 @@ namespace Huginn::Input
       // (HandEquipGate.h). "Success" for it below means parked: the press's
       // bookkeeping after the switch (the own-press note, the combat upsert's
       // press gate, the selection or the swap-back withdrawal) is the PRESS's,
-      // so it runs now, against the page and the moment of the press; if the
-      // equip then never lands (dropped, replaced, refused) the gate withdraws
-      // the selection. Without the gate's hook, the old inline path.
+      // so it runs now, against the page and the moment of the press. The
+      // gate holds the selection undecided while the equip waits, re-times it
+      // and the own-press note when the equip goes, and withdraws a selection
+      // this press opened if the equip never lands (dropped, replaced,
+      // refused). Without the gate's hook, the old inline path.
       const bool viaGate = HandEquipGate::GetSingleton().IsDriven();
-      const bool selects = !pressedRemembered && static_cast<bool>(m_equipCallback);
-      // A capture registered by OnSlotActivated (every hand type is Kind::Hand),
-      // re-timed by the gate if the equip waits (Remembrance::RearmCapture).
-      const bool remembers = !pressedRemembered;
       const auto pressMoment = pressedAt.value_or(std::chrono::steady_clock::now());
       std::optional<HandEquipRequest> toPark;   // parked after the bookkeeping below
 
@@ -1144,7 +1158,7 @@ namespace Huginn::Input
         auto* scroll = spell->Is(RE::FormType::Scroll) ? static_cast<RE::ScrollItem*>(spell) : nullptr;
         if (viaGate) {
            toPark = MakeHandEquipRequest(slotIndex, pressPage, hand, content, spell->GetFormID(),
-              spell->IsTwoHanded(), selects, remembers, pressMoment);
+              spell->IsTwoHanded(), remembers, pressMoment);
            success = true;
            break;
         }
@@ -1189,7 +1203,7 @@ namespace Huginn::Input
            const bool both = weapon && (weapon->IsTwoHandedSword() || weapon->IsTwoHandedAxe() ||
                                         weapon->IsBow() || weapon->IsCrossbow());
            toPark = MakeHandEquipRequest(slotIndex, pressPage, hand, content, content.formID, both,
-              selects, remembers, pressMoment);
+              remembers, pressMoment);
            success = true;
            break;
         }
@@ -1222,13 +1236,24 @@ namespace Huginn::Input
       break;
 
       case UI::SlotContentType::Apparel:
+      // A shield goes into the left hand (0.24.26): through the gate, as a
+      // left-hand equip, like a torch. Other apparel stays inline.
+      if (viaGate) {
+         const auto* armor = RE::TESForm::LookupByID<RE::TESObjectARMO>(content.formID);
+         if (armor && armor->IsShield()) {
+            toPark = MakeHandEquipRequest(slotIndex, pressPage, EquipHand::Left, content, content.formID, false,
+               remembers, pressMoment);
+            success = true;
+            break;
+         }
+      }
       success = EquipApparel(content.formID, content.uniqueID);
       break;
 
       case UI::SlotContentType::Torch:
       if (viaGate) {
          toPark = MakeHandEquipRequest(slotIndex, pressPage, hand, content, content.formID, false,
-            selects, remembers, pressMoment);
+            remembers, pressMoment);
          success = true;
          break;
       }
@@ -1242,8 +1267,9 @@ namespace Huginn::Input
 
       // The press grace's own-press exception reads this: a change that
       // follows the player's press on this key is the press's doing. (A
-      // parked hand equip counts as acted on: the player pressed, and the
-      // change that follows comes when it lands, within kOwnPressWindowMs.)
+      // parked hand equip counts as acted on: the player pressed. It may land
+      // up to 3 s later, past kOwnPressWindowMs, so the gate notes the key
+      // again when it goes: ActOnHandEquip.)
       if (success) {
          NoteSlotAction(slotIndex, std::chrono::steady_clock::now());
          // And the combat upsert's press gate: the press acting is a press
@@ -1256,7 +1282,13 @@ namespace Huginn::Input
       if (success && pressedRemembered) {
          Learning::SelectionTracker::GetSingleton().Withdraw(content.formID, "Remembrance swap-back");
       } else if (success && m_equipCallback) {
-         m_equipCallback(content.formID, slotIndex);
+         const bool opened = m_equipCallback(content.formID, slotIndex);
+         // Only a record this press opened is the gate's to withdraw: a press
+         // of an item already pending (a second press, an outside pick) opened
+         // none, and must not take another press's selection with it.
+         if (toPark) {
+            toPark->selected = opened;
+         }
       }
 
       // Last, so the selection exists before the gate can act on (or
@@ -1272,7 +1304,7 @@ namespace Huginn::Input
    }
 
    HandEquipRequest EquipManager::MakeHandEquipRequest(size_t slotIndex, size_t page, EquipHand hand,
-      const UI::SlotContent& content, RE::FormID formID, bool occupiesBoth, bool selects, bool remembers,
+      const UI::SlotContent& content, RE::FormID formID, bool occupiesBoth, bool remembers,
       std::chrono::steady_clock::time_point pressedAt)
    {
       HandEquipRequest r;
@@ -1284,7 +1316,6 @@ namespace Huginn::Input
       r.uniqueID = content.uniqueID;
       r.name = content.name;
       r.occupiesBoth = occupiesBoth;
-      r.selected = selects;
       r.remembers = remembers;
       r.pressedAt = pressedAt;
       r.parkedAt = std::chrono::steady_clock::now();
@@ -1377,9 +1408,23 @@ namespace Huginn::Input
          result.success = EquipTorch(r.formID);
          break;
 
+      case UI::SlotContentType::Apparel:   // a shield
+         result.success = EquipApparel(r.formID, r.uniqueID);
+         break;
+
       default:
          logger::warn("[EquipManager] Not a hand equip at the gate (type {})"sv, static_cast<int>(r.type));
          break;
+      }
+
+      // The press's own-press note again, now that the equip lands: the
+      // press grace's own-press window (kOwnPressWindowMs, 2 s) and the
+      // combat upsert's press gate run from here, as they did from the
+      // equip before the gate. Only on the page the key was pressed on: the
+      // note is per key of the page shown.
+      if (result.success && !result.retry && Slot::SlotAllocator::GetSingleton().GetCurrentPage() == r.page) {
+         NoteSlotAction(r.slotIndex, std::chrono::steady_clock::now());
+         Slot::SlotLocker::GetSingleton().NoteKeyPress(r.slotIndex);
       }
       return result;
    }

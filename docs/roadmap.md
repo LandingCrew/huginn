@@ -1953,13 +1953,17 @@ is now parked and done on the main thread once the player lets go of the
 cast -- both hands checked unless a right-hand equip leaves the left alone
 -- and never interrupts it: a cast still going after 3 s drops the press
 (a first cut interrupted at 1 s, which only split the 00:38 sequence over
-two frames). Caster states 7-9 are waited on 250 ms at most
-(`core/HandEquipGate.h`, `input/HandEquipGate`). Potions, food,
-poisons, ammo and apparel do not wait. After a hand equip while drawn
-(kDrawn, not sheathing) the hands are redrawn, as Wheeler-Refined does
-(`[Equip] bRedrawAfterHandEquip`).
+two frames). Caster states 7-9 are waited on 250 ms at most; both waits run
+on the game clock (`core/HandEquipGate.h`, `input/HandEquipGate`). A shield
+waits as a left-hand item. While an equip waits, its selection is held
+undecided and its confirm window, Remembrance capture and own-press note
+restart from the equip (`core/SelectionGate.h`). Potions, food,
+poisons, ammo and other apparel do not wait. After a hand equip while drawn
+(kDrawn, not sheathing) and with both casters idle, the hands are redrawn, as
+Wheeler-Refined does (`[Equip] bRedrawAfterHandEquip`).
 The slot keys, and a tap still waiting out the double-tap window, now do
-nothing in a loading screen, the main menu, a pausing menu or without the
+nothing in a loading screen, the main menu, a pausing menu, a menu that takes
+the controls (favourites, dialogue, crafting) or without the
 player's 3D, and the key goes to the menu (the inventory's favourites). New
 diagnostics: a debug line of both casters and the graph before each hand
 equip; caster states 7-9 named (they read as idle before); a

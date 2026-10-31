@@ -16,14 +16,17 @@ namespace Huginn::Input
    // =============================================================================
    // HAND EQUIP GATE -- the game half of core/HandEquipGate.h (0.24.26)
    // =============================================================================
-   // A slot key that equips into a hand (spell, scroll, weapon, staff, torch)
-   // no longer calls the engine where the key was decoded. EquipSlot does the
-   // press's bookkeeping there (the press grace, Remembrance, the selection) and
-   // parks the equip here; Tick, on the main thread every frame, reads the
-   // hands' magic casters and equips once the checked hands are idle (or only
-   // in a transient state for Core::kTransientWaitMs). A cast still going
-   // Core::kActiveWaitMaxMs after the park drops the equip. The cast is never
-   // interrupted: the player letting go of it is what lets the swap through.
+   // A slot key that equips into a hand (spell, scroll, weapon, staff, torch,
+   // shield) no longer calls the engine where the key was decoded. EquipSlot
+   // does the press's bookkeeping there (the press grace, Remembrance, the
+   // selection) and parks the equip here; Tick, on the main thread every
+   // frame, reads the hands' magic casters and equips once the checked hands
+   // are idle (or only in a transient state for Core::kTransientWaitMs). A
+   // cast still going Core::kActiveWaitMaxMs after the park drops the equip.
+   // The cast is never interrupted: the player letting go of it is what lets
+   // the swap through. Both waits run on the game clock the hook advances
+   // (DropAheadProbe::GameSeconds), which slows with slow time and stops
+   // while the game is paused.
    //
    // THREADS (established for this change, not assumed):
    //   - Park: from EquipSlot, i.e. from the slot callback InputHandler calls,
@@ -33,8 +36,9 @@ namespace Huginn::Input
    //     OnUpdate, from the Tracy traces). InputHandler::Update -- where a tap
    //     fires, 300 ms after key-up -- runs on the same sink, so a deferred
    //     tap's EquipSlot runs there too. Since 0.24.26 the slot keys do
-   //     nothing in a loading screen, the main menu or a pausing menu
-   //     (SlotKeysBlockedBy), so in practice Park runs on a job thread.
+   //     nothing in a loading screen, the main menu, a pausing menu or a menu
+   //     that takes the controls (SlotKeysBlockedBy), so in practice Park runs
+   //     on a job thread.
    //   - Tick: the PlayerCharacter::Update hook (DropAheadProbe.cpp,
    //     HookUpdate), after the game's own update: the main thread, every
    //     frame the player updates (not while the game is paused). The equip
@@ -44,19 +48,28 @@ namespace Huginn::Input
    //     the tick.
    //   - Drop: any thread (the sink, a load message, `hg reset all`).
    //
+   // The selection: while an equip is parked or acting, its form's pending
+   // selection is held undecided (SelectionTracker::GateHold); the hold is
+   // released when the request leaves -- re-timing the confirm window from
+   // the equip when it went through. A selection the press opened (and only
+   // then: SelectionTracker::Select's result) is withdrawn if the equip never
+   // lands, unless a newer press of the same item took it over.
+   //
    // One pending equip: a new press replaces it (its selection withdrawn, or
    // handed over when it is the same item: Core::OnReplaced). Dropped as
-   // gameplay ends -- a loading screen, the main menu, a pausing menu, no
-   // player 3D (InputHandler on the transition, Tick on its own check) -- and
-   // on kPreLoadGame and ResetPipelineSubsystems. Not on a mere gap in the
-   // hook's frames (an autosave or a cell crossing stalls it for a moment
-   // while gameplay goes on); a pause it never saw is caught by the
-   // InputHandler transition, which every menu's input reaches.
+   // gameplay ends -- a loading screen, the main menu, a menu, no player 3D
+   // (InputHandler on the transition, Tick on its own check) -- and on
+   // kPreLoadGame and ResetPipelineSubsystems. Not on a mere gap in the
+   // hook's frames (an autosave or a cell crossing stalls it while gameplay
+   // goes on).
    //
    // A weapon swap half done (the other hand's unequip queued, the equip
    // waiting a frame for it: EquipWeapon's retry) is finished, not dropped,
-   // when gameplay pauses: dropping it would leave the weapon in neither
-   // hand. Only a load or a reset (Drop's `force`) abandons it.
+   // when gameplay pauses -- dropping it would leave the weapon in neither
+   // hand -- and a newer press waits behind it (one deep) instead of
+   // replacing it. Its second half waits for a casting hand like any equip;
+   // past kActiveWaitMaxMs it is dropped, the weapon left unequipped. Only a
+   // load or a reset (Drop's `force`) abandons it at once.
    //
    // Without the hook (its install failed) nothing would run Tick, so
    // IsDriven is false and EquipSlot equips inline as before 0.24.26.
@@ -72,10 +85,11 @@ namespace Huginn::Input
       EquipHand hand = EquipHand::Right;
       UI::SlotContentType type = UI::SlotContentType::Empty;
       RE::FormID formID = 0;             ///< resolved at the press (a spell found by name included)
-      uint16_t uniqueID = 0;             ///< the weapon stack (ExtraUniqueID); 0 = the engine picks
+      uint16_t uniqueID = 0;             ///< the weapon or shield stack (ExtraUniqueID); 0 = the engine picks
       std::string name;
       bool occupiesBoth = false;         ///< a two-hander, bow, crossbow or both-hands spell
-      bool selected = false;             ///< the press opened a selection (SelectionTracker): withdrawn if the equip never lands
+      bool selected = false;             ///< this press opened its selection (SelectionTracker::Select): withdrawn if the equip never lands
+      bool selectionHeld = false;        ///< SelectionTracker::GateHold held a record for the form (released when it leaves)
       bool remembers = false;            ///< the press registered a Remembrance capture (not the undo)
       std::chrono::steady_clock::time_point pressedAt{};  ///< the gesture's first key-down (the call, without one)
       std::chrono::steady_clock::time_point parkedAt{};
@@ -92,8 +106,10 @@ namespace Huginn::Input
    };
 
    /// Why the slot keys may not act now, or "" when they may: a loading
-   /// screen, the main menu, a pausing menu, no player 3D (or no UI yet).
-   /// Read on the input sink and in Tick.
+   /// screen, the main menu, a pausing menu, a menu that takes the controls
+   /// (the favourites menu, dialogue, crafting: Core::Needs::MenuBlocksGameplay
+   /// on each open menu's flags), no player 3D (or no UI yet). Read on the
+   /// input sink and in Tick.
    [[nodiscard]] std::string_view SlotKeysBlockedBy(RE::PlayerCharacter* player);
 
    class HandEquipGate
@@ -105,7 +121,8 @@ namespace Huginn::Input
       void SetDriven(bool driven) noexcept { m_driven.store(driven, std::memory_order_release); }
       [[nodiscard]] bool IsDriven() const noexcept { return m_driven.load(std::memory_order_acquire); }
 
-      /// Park one hand equip. A pending one is replaced. Logged at debug.
+      /// Park one hand equip. A pending one is replaced (a weapon swap half
+      /// done is not: the new press waits behind it). Logged at debug.
       void Park(HandEquipRequest request);
 
       /// Forget the pending equip. Logged at info when there was one.
@@ -125,27 +142,46 @@ namespace Huginn::Input
       {
          HandEquipRequest req;
          std::uint64_t seq = 0;            ///< which press; a newer Park changes it
-         Core::HandEquipWait wait;
-         bool busySeen = false;            ///< a checked hand was busy at least once
+         Core::HandEquipWait wait;         ///< on the game clock
+         bool busySeen = false;            ///< a checked hand was busy at least once (this half)
          std::uint8_t firstBusyHands = 0;  ///< the first busy reading, for the line when it goes
          std::uint32_t firstRightState = 0;
          std::uint32_t firstLeftState = 0;
          bool lockMissLogged = false;      ///< the "update tick holds the mutex" line, once per press
       };
 
+      /// The request acting right now (taken out of m_pending), for a press
+      /// of the same item landing meanwhile: it takes the selection over.
+      struct Acting
+      {
+         RE::FormID formID = 0;
+         bool selected = false;
+         bool handedOver = false;
+      };
+
       /// Take the pending equip out if it is still press `seq`; false when a
-      /// newer press replaced it or it was dropped.
-      bool TakeIfCurrent(std::uint64_t seq, Pending& out);
-      /// Put a weapon swap's retry back, unless a newer press arrived or a
-      /// forced Drop ran since `forceGen` was read.
+      /// newer press replaced it or it was dropped. `acting`: mark it the
+      /// acting request.
+      bool TakeIfCurrent(std::uint64_t seq, Pending& out, bool acting);
+      /// Put a weapon swap's retry back (ahead of a newer press, which waits
+      /// behind it), unless a forced Drop ran since `forceGen` was read.
       void Repark(Pending pending, EquipHand hand, std::uint64_t forceGen);
-      /// Act on `p` (taken out already) and handle what the act returns.
+      /// Act on `taken` (taken out already) and handle what the act returns.
       void Act(Pending taken, double waitedMs, const char* how, std::uint64_t forceGen);
-      static void WithdrawSelection(const HandEquipRequest& req, std::string_view why);
+      /// A press queued behind a finished (or dropped) swap becomes the
+      /// pending one, its wait starting now. Under m_mutex.
+      void PromoteQueuedLocked();
+      /// A request leaving without its equip: withdraw the selection it
+      /// opened (`withdraw`, and not handed over), or else release its hold.
+      static void LeaveGate(const HandEquipRequest& req, bool withdraw, std::string_view why);
       static std::string Describe(const HandEquipRequest& req);
+      /// The game clock in ms (DropAheadProbe::GameSeconds).
+      static double GameMs();
 
       std::mutex m_mutex;
       std::optional<Pending> m_pending;   // under m_mutex
+      std::optional<Pending> m_queued;    // under m_mutex: a press behind a swap's second half
+      std::optional<Acting> m_acting;     // under m_mutex
       std::uint64_t m_nextSeq = 1;        // under m_mutex
       std::uint64_t m_forceGen = 0;       // under m_mutex: bumped by every forced Drop
       std::atomic<bool> m_hasPending{ false };   // Tick's fast path; written under m_mutex

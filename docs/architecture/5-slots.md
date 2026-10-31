@@ -1199,7 +1199,7 @@ entry before it calls back), and shouts (not an inventory form; the usability
 check refuses them, so a shout is never the previous item acted on).
 
 **Hand equip gate** (0.24.26; `src/core/HandEquipGate.h`, `src/input/HandEquipGate`).
-A press whose item goes into a hand (spell, scroll, weapon, staff, torch) does
+A press whose item goes into a hand (spell, scroll, weapon, staff, torch, shield) does
 its bookkeeping in `EquipSlot` at the press -- the press grace above, the
 Remembrance note on the page pressed, the selection, the own-press note -- and
 then parks the equip (form and stack captured at the press, one pending: a new
@@ -1208,14 +1208,20 @@ the same item). The PlayerCharacter::Update hook, on the main thread, equips
 it as soon as the checked hands' magic casters are idle -- both hands unless a
 right-hand equip leaves the left alone -- and never interrupts a cast: one
 still going 3 s after the park drops the press; caster states 7-9 hold it at
-most 250 ms. Outside gameplay the pending equip is dropped and its selection
-withdrawn (a weapon swap half done is finished instead, unless a save loads).
-A held equip re-times the press's Remembrance capture from the equip
-(`Remembrance::RearmCapture`). After the equip, while drawn (kDrawn), the
-hands are redrawn as Wheeler-Refined does (`[Equip]
+most 250 ms (both on the game clock, so slow time and pauses stretch them).
+Outside gameplay the pending equip is dropped and a selection the press
+opened is withdrawn (a weapon swap half done is finished instead, with a newer
+press waiting behind it, unless a save loads). While it waits, its form's
+selection is held undecided (`core/SelectionGate.h`); when it goes, the
+confirm window, the press's Remembrance capture (`Remembrance::RearmCapture`)
+and the own-press note restart from the equip. After the equip, while drawn
+(kDrawn) and with both casters idle, the hands are redrawn as Wheeler-Refined
+does (`[Equip]
 bRedrawAfterHandEquip`). Potions, food, poisons, ammo, apparel and soul gems act
 at once, as before. The slot keys themselves do nothing, and are not consumed,
-in a loading screen, the main menu or a pausing menu (`SlotKeysBlockedBy`).
+in a loading screen, the main menu, a pausing menu or a menu that takes the
+controls -- the favourites menu (which does not pause), dialogue, crafting, by
+each open menu's flags (`SlotKeysBlockedBy`).
 
 **Bucket hysteresis** (`fVitalBucketHysteresis` default 0.03,
 `fDistanceBucketHysteresis` default 0.1; `src/core/BucketHysteresis.h`, wired in

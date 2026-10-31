@@ -216,7 +216,8 @@ namespace Huginn::Input
       }
 
       // 0.24.26: no slot key in a loading screen, at the main menu, in a
-      // pausing menu or without the player's 3D -- and NOT consumed there:
+      // pausing menu, in a menu that takes the controls (the favourites menu
+      // does not pause) or without the player's 3D -- and NOT consumed there:
       // the menu has the key (the inventory and favourites menus use the
       // number row for favourites hotkeys). Before, ProcessButton gated only
       // the console and text entry, and a key pressed in a menu equipped

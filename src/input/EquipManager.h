@@ -17,8 +17,9 @@ namespace Huginn::Input
     *        selection (SelectionTracker)
     * @param formID The item the slot held
     * @param slotIndex The slot pressed (0-based)
+    * @return true when it opened a new pending selection (SelectionTracker::Select)
     */
-   using EquipCallback = std::function<void(RE::FormID formID, size_t slotIndex)>;
+   using EquipCallback = std::function<bool(RE::FormID formID, size_t slotIndex)>;
 
    /**
     * @brief Callback when fortify-crafting apparel is equipped (#65)
@@ -156,7 +157,7 @@ namespace Huginn::Input
       /// The request EquipSlot parks at the gate for a hand equip, from what
       /// the press resolved (the form, its stack, the page, the moment).
       [[nodiscard]] static HandEquipRequest MakeHandEquipRequest(size_t slotIndex, size_t page, EquipHand hand,
-         const UI::SlotContent& content, RE::FormID formID, bool occupiesBoth, bool selects, bool remembers,
+         const UI::SlotContent& content, RE::FormID formID, bool occupiesBoth, bool remembers,
          std::chrono::steady_clock::time_point pressedAt);
 
       /// Equip ammo (arrow/bolt) by FormID

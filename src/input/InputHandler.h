@@ -140,7 +140,8 @@ namespace Huginn::Input
       void HandleCycleKey(int index, RE::ButtonEvent* button);
 
       /// Whether the slot keys may act now (0.24.26): not in a loading
-      /// screen, the main menu or a pausing menu, and the player has 3D
+      /// screen, the main menu, a pausing menu or a menu that takes the
+      /// controls, and the player has 3D
       /// (HandEquipGate.h, SlotKeysBlockedBy). As such a state begins, the
       /// pending taps and the hand equip gate's pending equip are dropped.
       /// Transitions logged at debug (a drop at info). Input sink only.
