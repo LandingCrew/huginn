@@ -1,4 +1,5 @@
 #include "InputHandler.h"
+#include "HandEquipGate.h"
 #include "slot/SlotLocker.h"
 
 namespace Huginn::Input
@@ -90,6 +91,42 @@ namespace Huginn::Input
       }
    }
 
+   bool InputHandler::SlotKeysLive()
+   {
+      const std::string_view blocked = SlotKeysBlockedBy(RE::PlayerCharacter::GetSingleton());
+      if (blocked == m_slotKeysBlockedBy) {
+      return blocked.empty();
+      }
+      const bool begins = m_slotKeysBlockedBy.empty();
+      m_slotKeysBlockedBy = blocked;
+      if (blocked.empty()) {
+      logger::debug("[InputHandler] Slot keys on again"sv);
+      return true;
+      }
+      if (!begins) {
+      logger::debug("[InputHandler] Slot keys still off -- now {}"sv, blocked);
+      return false;
+      }
+      // Gameplay ended: nothing pressed before it may act after it. A tap
+      // waiting out the double-tap window, or a key held toward the hold
+      // gesture, is dropped with its press state; so is an equip parked at
+      // the gate for a busy hand.
+      size_t dropped = 0;
+      for (auto& s : m_equipState) {
+      if (s.pendingTapAction || (s.isPressed && !s.holdTriggered)) {
+        ++dropped;
+      }
+      s = {};
+      }
+      HandEquipGate::GetSingleton().Drop(blocked);
+      if (dropped > 0) {
+      logger::info("[InputHandler] Slot keys off -- {}: {} pending tap(s) or hold(s) dropped"sv, blocked, dropped);
+      } else {
+      logger::debug("[InputHandler] Slot keys off -- {} (left to the game until it ends)"sv, blocked);
+      }
+      return false;
+   }
+
    bool InputHandler::ProcessButton(RE::ButtonEvent* button)
    {
       if (!m_enabled || !button) {
@@ -176,6 +213,20 @@ namespace Huginn::Input
 
       if (matchedIndex < 0) {
       return false;  // Not our key
+      }
+
+      // 0.24.26: no slot key in a loading screen, at the main menu, in a
+      // pausing menu or without the player's 3D -- and NOT consumed there:
+      // the menu has the key (the inventory and favourites menus use the
+      // number row for favourites hotkeys). Before, ProcessButton gated only
+      // the console and text entry, and a key pressed in a menu equipped
+      // from it (an Elven Spear with the game paused at 23:03:02,
+      // in the logs read for 0.24.26).
+      if (matchedIndex < 10 && !SlotKeysLive()) {
+      if (button->IsDown()) {
+         logger::debug("[InputHandler] Slot key {} left to the game -- {}"sv, matchedIndex + 1, m_slotKeysBlockedBy);
+      }
+      return false;
       }
 
       if (button->IsDown()) {
@@ -335,6 +386,14 @@ namespace Huginn::Input
 
       // Update frame time
       m_frameTime = std::chrono::steady_clock::now();
+
+      // 0.24.26: no tap fires outside gameplay. UpdateHandler::ProcessEvent
+      // calls this before its update tick's world-loaded gate, so without
+      // this a tap pressed just before a door fired on the loading-screen
+      // thread. Off: the taps were dropped as it began (SlotKeysLive).
+      if (!SlotKeysLive()) {
+      return;
+      }
 
       // Check for pending tap actions that need to fire
       for (size_t i = 0; i < m_equipState.size(); ++i) {

@@ -1,6 +1,7 @@
 #include "DropAheadProbe.h"
 
 #include "HandModelProbe.h"
+#include "input/HandEquipGate.h"  // the hand equip gate rides the hook (0.24.26)
 
 #include "NeedSensorState.h"  // NeedClock
 #include "Profiling.h"
@@ -675,6 +676,17 @@ namespace Huginn::State::DropAheadProbe
             static std::atomic<bool> s_logged{ false };
             if (!s_logged.exchange(true)) {
                logger::error("[HandModel] an exception in the probe was caught (logged once)"sv);
+            }
+         }
+         // So does the hand equip gate (0.24.26): a slot key's equip into a
+         // hand waits here, on the main thread, for the hand's caster to go
+         // idle. After the probe, so a swap it makes is seen next frame.
+         try {
+            Input::HandEquipGate::GetSingleton().Tick(a_this);
+         } catch (...) {
+            static std::atomic<bool> s_logged{ false };
+            if (!s_logged.exchange(true)) {
+               logger::error("[HandEquip] an exception in the gate was caught (logged once)"sv);
             }
          }
       }

@@ -73,6 +73,25 @@ namespace Huginn::Learning
             return false;
         }
 
+        // Any Huginn equip marked within the window, whatever its form: an
+        // UNequip event names what was taken off, not what Huginn put on, so
+        // the displacement a Huginn equip causes is matched this way
+        // (EquipCallerTrace, 0.24.26).
+        [[nodiscard]] bool HadRecentHuginnEquip(float windowMs) const
+        {
+            const auto now = std::chrono::steady_clock::now();
+            std::lock_guard lock(m_mutex);
+            for (const auto& entry : m_entries) {
+                if (entry.formID == 0) {
+                    continue;
+                }
+                if (std::chrono::duration<float, std::milli>(now - entry.timestamp).count() <= windowMs) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
     private:
         EquipSourceTracker() = default;
         ~EquipSourceTracker() = default;

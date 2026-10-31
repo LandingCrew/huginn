@@ -1,4 +1,5 @@
 #include "EquipManager.h"
+#include "EquipSettings.h"
 #include "Config.h"
 #include "Globals.h"
 #include "core/PressGrace.h"
@@ -8,6 +9,7 @@
 #include "slot/SlotAllocator.h"
 #include "slot/Remembrance.h"
 #include "slot/SlotLocker.h"
+#include "state/HandModelProbe.h"
 #include "util/InventoryUtil.h"
 #include "telemetry/SoakMetrics.h"
 
@@ -57,7 +59,33 @@ namespace Huginn::Input
       return nullptr;
    }
 
-   bool EquipManager::EquipSpellToHand(RE::SpellItem* spell, bool leftHand)
+   // Wheeler-Refined (c0kadam/Wheeler-Refined @ee3e51a, the fork whose API
+   // Huginn talks to), after every spell or weapon equip from its wheel --
+   // WheelItemSpell.cpp ActivateItemPrimary / ActivateItemSecondary,
+   // WheelItemWeapon.cpp the same pair -- reads IsWeaponDrawn() BEFORE the
+   // equip, equips, then calls DrawWeaponMagicHands(true) when it was drawn
+   // ("Force re-draw to maintain combat flow during spell swap"). Mirrored
+   // here, the same order, after the last equip of a press. Not mirrored:
+   //   - its DrawWeaponMagicHands(false) when the player was NOT drawn.
+   //     IsWeaponDrawn is false while drawing (kWantToDraw, kDrawing), so
+   //     that call would sheathe a player halfway through drawing; and a
+   //     sheathe while sheathed has nothing to fix. Sheathed, nothing is done.
+   //   - its AutoDrawOnUse option (draw after every equip): not asked for.
+   // Lights (WheelItemLight) are not redrawn there, nor here.
+   // CommonLib-NG 3.7.0 calls the same vtable slot Wheeler hard-codes (0xA6
+   // on SE/AE: Actor.cpp DrawWeaponMagicHands; Wheeler's ActorVirtualCompat.h
+   // exists for CommonLib 6.7's shifted table, not ours).
+   void EquipManager::RedrawIfWasDrawn(RE::PlayerCharacter* player, bool wasDrawn, const char* what)
+   {
+      if (!player || !wasDrawn || !EquipSettings::GetSingleton().RedrawAfterHandEquip()) {
+      return;
+      }
+      player->DrawWeaponMagicHands(true);
+      logger::debug("[EquipManager] Redrew the hands after equipping '{}' (drawn before the equip; bRedrawAfterHandEquip)"sv,
+      what ? what : "?");
+   }
+
+   bool EquipManager::EquipSpellToHand(RE::SpellItem* spell, bool leftHand, bool redraw)
    {
       if (!spell) {
       logger::warn("[EquipManager] Cannot equip null spell"sv);
@@ -84,8 +112,12 @@ namespace Huginn::Input
       return false;
       }
 
-      // Equip the spell
+      // Equip the spell (drawn read first: Wheeler's order, RedrawIfWasDrawn)
+      const bool wasDrawn = player->AsActorState()->IsWeaponDrawn();
       equipManager->EquipSpell(player, spell, equipSlot);
+      if (redraw) {
+      RedrawIfWasDrawn(player, wasDrawn, spell->GetName());
+      }
 
       // Log the equip attempt - verification is unreliable due to async nature
       // The EquipSpell call itself is the source of truth for now
@@ -108,7 +140,7 @@ namespace Huginn::Input
       return true;  // Trust the EquipSpell call succeeded
    }
 
-   bool EquipManager::EquipScrollToHand(RE::ScrollItem* scroll, bool leftHand)
+   bool EquipManager::EquipScrollToHand(RE::ScrollItem* scroll, bool leftHand, bool redraw)
    {
       auto* player = RE::PlayerCharacter::GetSingleton();
       auto* equipManager = RE::ActorEquipManager::GetSingleton();
@@ -125,7 +157,11 @@ namespace Huginn::Input
       // press, as did Powder of Burning (2026-09-27 22:24-22:28). Equipped
       // from the inventory the game re-arms the hand from the stack after
       // every cast, exactly as the inventory menu does.
+      const bool wasDrawn = player->AsActorState()->IsWeaponDrawn();
       equipManager->EquipObject(player, scroll, nullptr, 1, equipSlot);
+      if (redraw) {
+      RedrawIfWasDrawn(player, wasDrawn, scroll->GetName());
+      }
 
       logger::info("[EquipManager] Equipped scroll '{}' to {} hand (FormID: {:08X})"sv,
       scroll->GetName(), leftHand ? "left" : "right", scroll->GetFormID());
@@ -198,7 +234,7 @@ namespace Huginn::Input
    }
 
    bool EquipManager::EquipWeapon(RE::FormID formID, bool leftHand, uint16_t uniqueID,
-                                  uint8_t handSwapAttempt)
+                                  uint8_t handSwapAttempt, bool redraw, bool* retryOnGate)
    {
       if (formID == 0) {
       logger::warn("[EquipManager] Cannot equip weapon with FormID 0"sv);
@@ -297,6 +333,18 @@ namespace Huginn::Input
         // when the weapon is still in the other hand, so this costs nothing in
         // the normal case.
         if (handSwapAttempt + 1 < kMaxHandSwapAttempts) {
+           // From the hand equip gate (0.24.26): the gate re-parks this for
+           // the next frame, so the retry runs on the main thread like the
+           // first attempt, rather than in an SKSE task.
+           if (retryOnGate) {
+              *retryOnGate = true;
+              if (handSwapAttempt > 0) {
+                 logger::debug("[EquipManager] '{}' still in the {} hand after {} frame(s) — "
+                   "waiting one more"sv, weapon->GetName(), leftHand ? "right" : "left",
+                   handSwapAttempt + 1);
+              }
+              return true;
+           }
            if (auto* task = SKSE::GetTaskInterface()) {
               const uint8_t nextAttempt = static_cast<uint8_t>(handSwapAttempt + 1);
               task->AddTask([formID, leftHand, uniqueID, nextAttempt]() {
@@ -431,8 +479,12 @@ namespace Huginn::Input
       }
       }
 
-      // Equip the weapon
+      // Equip the weapon (drawn read first: Wheeler's order, RedrawIfWasDrawn)
+      const bool wasDrawn = player->AsActorState()->IsWeaponDrawn();
       equipManager->EquipObject(player, weapon, sourceInstance, 1, equipSlot);
+      if (redraw) {
+      RedrawIfWasDrawn(player, wasDrawn, weapon->GetName());
+      }
 
       logger::info("[EquipManager] Equipped weapon '{}' to {} hand (FormID: {:08X}/uid{}, slot {:08X})"sv,
       weapon->GetName(), leftHand ? "left" : "right", formID, uniqueID,
@@ -979,11 +1031,17 @@ namespace Huginn::Input
       // EquipSpell/EquipObject fire TESEquipEvent synchronously — ExternalEquipListener
       // checks IsRecentHuginnEquip(formID) within the suppression window, so the mark
       // must be set first. If the equip fails, the window expires harmlessly.
+      // A hand equip parked at the gate below may go up to a second later,
+      // past the window: the gate's act marks it again just before the engine
+      // call (ActOnHandEquip).
       Learning::EquipSourceTracker::GetSingleton().MarkHuginnEquip(content.formID);
 
+      // The page the key was pressed on: a parked equip keeps it, as the page
+      // can change while the equip waits.
+      const size_t pressPage = Slot::SlotAllocator::GetSingleton().GetCurrentPage();
       {
          auto& allocator = Slot::SlotAllocator::GetSingleton();
-         const size_t page = allocator.GetCurrentPage();
+         const size_t page = pressPage;
          const auto age = Slot::SlotLocker::GetSingleton().GetKeyAge(slotIndex);
          Telemetry::SoakMetrics::GetSingleton().RecordSlotPress(
             page, slotIndex, allocator.IsRegularSlot(page, slotIndex),
@@ -1013,9 +1071,22 @@ namespace Huginn::Input
          }
          if (kind) {
             pressedRemembered = Slot::Remembrance::GetSingleton().OnSlotActivated(
-               Slot::SlotAllocator::GetSingleton().GetCurrentPage(), slotIndex, content.formID, *kind);
+               pressPage, slotIndex, content.formID, *kind);
          }
       }
+
+      // A hand equip (0.24.26) goes through the hand equip gate: parked here,
+      // equipped on the main thread once the hand(s) are not casting
+      // (HandEquipGate.h). "Success" for it below means parked: the press's
+      // bookkeeping after the switch (the own-press note, the combat upsert's
+      // press gate, the selection or the swap-back withdrawal) is the PRESS's,
+      // so it runs now, against the page and the moment of the press; if the
+      // equip then never lands (dropped, replaced, refused) the gate withdraws
+      // the selection. Without the gate's hook, the old inline path.
+      const bool viaGate = HandEquipGate::GetSingleton().IsDriven();
+      const bool selects = !pressedRemembered && static_cast<bool>(m_equipCallback);
+      const auto pressMoment = pressedAt.value_or(std::chrono::steady_clock::now());
+      std::optional<HandEquipRequest> toPark;   // parked after the bookkeeping below
 
       bool success = false;
 
@@ -1061,6 +1132,12 @@ namespace Huginn::Input
         // (see EquipScrollToHand); ScrollItem derives from SpellItem, which
         // is how they reached EquipSpell in the first place.
         auto* scroll = spell->Is(RE::FormType::Scroll) ? static_cast<RE::ScrollItem*>(spell) : nullptr;
+        if (viaGate) {
+           toPark = MakeHandEquipRequest(slotIndex, pressPage, hand, content, spell->GetFormID(),
+              spell->IsTwoHanded(), selects, pressMoment);
+           success = true;
+           break;
+        }
         auto equipTo = [&](bool leftHand) {
            return scroll ? EquipScrollToHand(scroll, leftHand) : EquipSpellToHand(spell, leftHand);
         };
@@ -1095,6 +1172,17 @@ namespace Huginn::Input
       case UI::SlotContentType::MeleeWeapon:
       case UI::SlotContentType::RangedWeapon:
       {
+        if (viaGate) {
+           // Both hands' casters for a weapon held in both: a two-hander,
+           // bow or crossbow (a staff is one-handed).
+           const auto* weapon = RE::TESForm::LookupByID<RE::TESObjectWEAP>(content.formID);
+           const bool both = weapon && (weapon->IsTwoHandedSword() || weapon->IsTwoHandedAxe() ||
+                                        weapon->IsBow() || weapon->IsCrossbow());
+           toPark = MakeHandEquipRequest(slotIndex, pressPage, hand, content, content.formID, both,
+              selects, pressMoment);
+           success = true;
+           break;
+        }
         switch (hand) {
         case EquipHand::Right:
            success = EquipWeapon(content.formID, false, content.uniqueID);
@@ -1128,6 +1216,12 @@ namespace Huginn::Input
       break;
 
       case UI::SlotContentType::Torch:
+      if (viaGate) {
+         toPark = MakeHandEquipRequest(slotIndex, pressPage, hand, content, content.formID, false,
+            selects, pressMoment);
+         success = true;
+         break;
+      }
       success = EquipTorch(content.formID);
       break;
 
@@ -1137,7 +1231,9 @@ namespace Huginn::Input
       }
 
       // The press grace's own-press exception reads this: a change that
-      // follows the player's press on this key is the press's doing.
+      // follows the player's press on this key is the press's doing. (A
+      // parked hand equip counts as acted on: the player pressed, and the
+      // change that follows comes when it lands, within kOwnPressWindowMs.)
       if (success) {
          NoteSlotAction(slotIndex, std::chrono::steady_clock::now());
          // And the combat upsert's press gate: the press acting is a press
@@ -1153,6 +1249,124 @@ namespace Huginn::Input
          m_equipCallback(content.formID, slotIndex);
       }
 
+      // Last, so the selection exists before the gate can act on (or
+      // withdraw) the equip from the main thread.
+      if (toPark) {
+         HandEquipGate::GetSingleton().Park(std::move(*toPark));
+      }
+
       return success;
+   }
+
+   HandEquipRequest EquipManager::MakeHandEquipRequest(size_t slotIndex, size_t page, EquipHand hand,
+      const UI::SlotContent& content, RE::FormID formID, bool occupiesBoth, bool selects,
+      std::chrono::steady_clock::time_point pressedAt)
+   {
+      HandEquipRequest r;
+      r.slotIndex = slotIndex;
+      r.page = page;
+      r.hand = hand;
+      r.type = content.type;
+      r.formID = formID;
+      r.uniqueID = content.uniqueID;
+      r.name = content.name;
+      r.occupiesBoth = occupiesBoth;
+      r.selected = selects;
+      r.pressedAt = pressedAt;
+      r.parkedAt = std::chrono::steady_clock::now();
+      return r;
+   }
+
+   HandEquipResult EquipManager::ActOnHandEquip(const HandEquipRequest& r)
+   {
+      HandEquipResult result;
+      auto* player = RE::PlayerCharacter::GetSingleton();
+      if (!player) {
+         return result;
+      }
+
+      // Marked again, just before the engine call: the press's mark
+      // (EquipSlot) is up to a second old, past the 400 ms window the
+      // TESEquipEvent sinks read it in.
+      Learning::EquipSourceTracker::GetSingleton().MarkHuginnEquip(r.formID);
+
+      // Both hands as the engine has them just before a Huginn hand equip:
+      // what to read a stuck graph after it against (2026-10-31 00:38).
+      logger::debug("[HandEquip] equipping key {} '{}' ({:08X}) -> {} hand, {:.0f} ms after the key went down | {}"sv,
+         r.slotIndex + 1, r.name, r.formID,
+         r.hand == EquipHand::Left ? "left" : r.hand == EquipHand::Both ? "both" : "right",
+         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - r.pressedAt).count(),
+         State::HandModelProbe::DescribeForEquip(player));
+
+      switch (r.type) {
+      case UI::SlotContentType::Spell:
+      case UI::SlotContentType::Wildcard:
+      {
+         auto* spell = RE::TESForm::LookupByID<RE::SpellItem>(r.formID);
+         if (!spell) {
+            logger::warn("[EquipManager] Spell FormID {:08X} not found or not a spell"sv, r.formID);
+            return result;
+         }
+         // The same hand rules as EquipSlot's inline path; the last equip of
+         // the press redraws.
+         auto* scroll = spell->Is(RE::FormType::Scroll) ? static_cast<RE::ScrollItem*>(spell) : nullptr;
+         auto equipTo = [&](bool leftHand, bool last) {
+            return scroll ? EquipScrollToHand(scroll, leftHand, last) : EquipSpellToHand(spell, leftHand, last);
+         };
+         switch (r.hand) {
+         case EquipHand::Right:
+            result.success = equipTo(false, true);
+            break;
+         case EquipHand::Left:
+            result.success = equipTo(true, true);
+            break;
+         case EquipHand::Both:
+            if (scroll && Util::GetItemCountSafe(player, scroll) < 2) {
+               result.success = equipTo(false, true);
+            } else {
+               result.success = equipTo(false, false) && equipTo(true, true);
+            }
+            break;
+         }
+         break;
+      }
+
+      case UI::SlotContentType::MeleeWeapon:
+      case UI::SlotContentType::RangedWeapon:
+      {
+         bool retryRight = false;
+         bool retryLeft = false;
+         const uint8_t attempt = r.handSwapAttempt;
+         switch (r.hand) {
+         case EquipHand::Right:
+            result.success = EquipWeapon(r.formID, false, r.uniqueID, attempt, true, &retryRight);
+            break;
+         case EquipHand::Left:
+            result.success = EquipWeapon(r.formID, true, r.uniqueID, attempt, true, &retryLeft);
+            break;
+         case EquipHand::Both:
+            result.success = EquipWeapon(r.formID, false, r.uniqueID, attempt, false, &retryRight) &&
+                             EquipWeapon(r.formID, true, r.uniqueID, attempt, true, &retryLeft);
+            break;
+         }
+         if (retryRight && retryLeft) {
+            result.retry = EquipHand::Both;
+         } else if (retryRight) {
+            result.retry = EquipHand::Right;
+         } else if (retryLeft) {
+            result.retry = EquipHand::Left;
+         }
+         break;
+      }
+
+      case UI::SlotContentType::Torch:
+         result.success = EquipTorch(r.formID);
+         break;
+
+      default:
+         logger::warn("[EquipManager] Not a hand equip at the gate (type {})"sv, static_cast<int>(r.type));
+         break;
+      }
+      return result;
    }
 }

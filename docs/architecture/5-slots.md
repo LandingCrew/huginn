@@ -1198,6 +1198,21 @@ using previous Z`. Not covered: Huginn's own Wheeler wheels (Wheeler equips its
 entry before it calls back), and shouts (not an inventory form; the usability
 check refuses them, so a shout is never the previous item acted on).
 
+**Hand equip gate** (0.24.26; `src/core/HandEquipGate.h`, `src/input/HandEquipGate`).
+A press whose item goes into a hand (spell, scroll, weapon, staff, torch) does
+its bookkeeping in `EquipSlot` at the press -- the press grace above, the
+Remembrance note on the page pressed, the selection, the own-press note -- and
+then parks the equip (form and stack captured at the press, one pending: a new
+press replaces it and withdraws its selection). The PlayerCharacter::Update
+hook, on the main thread, equips it as soon as the hand's magic caster is idle
+(both hands for a two-hander, bow, crossbow, both-hands spell or the hold), or
+interrupts the cast after 1 s and equips the frame after; outside gameplay the
+pending equip is dropped and its selection withdrawn. After the equip, while
+drawn, the hands are redrawn as Wheeler-Refined does (`[Equip]
+bRedrawAfterHandEquip`). Potions, food, poisons, ammo, apparel and soul gems act
+at once, as before. The slot keys themselves do nothing, and are not consumed,
+in a loading screen, the main menu or a pausing menu (`SlotKeysBlockedBy`).
+
 **Bucket hysteresis** (`fVitalBucketHysteresis` default 0.03,
 `fDistanceBucketHysteresis` default 0.1; `src/core/BucketHysteresis.h`, wired in
 `StateEvaluator`). The HP/MP/SP level and the closest-enemy distance band feed

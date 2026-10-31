@@ -25,6 +25,8 @@
 #include "update/UpdateHandler.h"
 #include "input/InputHandler.h"
 #include "input/KeybindingSettings.h"
+#include "input/EquipSettings.h"
+#include "input/HandEquipGate.h"
 #include "input/EquipManager.h"
 #include "ui/ImGuiRenderer.h"
 #include "ui/WelcomeBanner.h"
@@ -839,6 +841,8 @@ static void OnDataLoaded()
         Input::KeybindingSettings keybindings;
         keybindings.LoadFromIni(keyIni);
         inputHandler.SetKeyCodes(keybindings);
+        // [Equip] (0.24.26), from the same parse; reloaded with the rest.
+        Input::EquipSettings::GetSingleton().LoadFromIni(keyIni);
 
         // NOTE: read-only is not pushed here. [Widget] IS now read at
         // kDataLoaded (see the earlyDMenuIni block above), so pushing here would
@@ -911,6 +915,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
         Effect::EffectCatalog::GetSingleton().FinishPendingRead("kPreLoadGame"sv);
         State::DropAheadProbe::SetGameLoaded(false);  // R3: off through the load
         State::HandModelProbe::SetGameLoaded(false);
+        Input::HandEquipGate::GetSingleton().Drop("a save is loading");  // 0.24.26
         Learning::SelectionLogV3::OnLoadStarting();   // R4: no extra-list reads through the load
         break;
     case SKSE::MessagingInterface::kNewGame:
@@ -1127,11 +1132,14 @@ static void InstallHooks()
     // R3: drop_ahead casts its rays from PlayerCharacter::Update, on the
     // main thread (a vtable hook, no trampoline). Inert until a game loads.
     // The hand model probe (0.23.44) rides the same hook.
+    // The hand equip gate (0.24.26) too: without the hook it is not driven
+    // and the slot keys equip inline, as before it.
     if (State::DropAheadProbe::InstallPlayerUpdateHook()) {
-        logger::info("PlayerCharacter::Update hook installed (drop ahead, hand model probe)"sv);
+        Input::HandEquipGate::GetSingleton().SetDriven(true);
+        logger::info("PlayerCharacter::Update hook installed (drop ahead, hand model probe, hand equip gate)"sv);
     } else {
         logger::error("Failed to install the PlayerCharacter::Update hook (drop ahead stays unmeasured, "
-                      "the hand model probe inactive)"sv);
+                      "the hand model probe inactive, slot keys equip into a casting hand)"sv);
     }
 
 #ifdef _DEBUG
