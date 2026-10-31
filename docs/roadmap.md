@@ -918,11 +918,11 @@ changed in the same PR, and the shipped INI loses the dead keys.
         and crashed the game (2026-10-30, LoreRim, under
         PerkEntryPointExtender). The limit is now evaluated with each distinct
         spell of a live summon or reanimated thrall and the highest kept (order
-        independent; Bend Will and script-commanded actors left out); with none
+        independent; actors commanded by other effects, such as Bend Will, left out); with none
         the last value stands, reset to 1 on every load.
 - [ ] **Summon limit per candidate spell** (follow-up to 0.24.24): a tab-1 perk
       can raise one summon spell's limit and not another's (Undeath's Mass
-      Reanimate +100, Vigilant's spirit summons +4/6/8), so one value for
+      Reanimate +100, Vigilant's +4/6/8 for its conjuration-keyword summons), so one value for
       every summon spell is approximate. Evaluate the entry point per
       candidate summon spell, cached per form and cleared on a load or a perk
       change, where the summon filter (CandidateFilters), covered(i)

@@ -824,8 +824,8 @@ namespace Huginn::State
     // its "vtable" -- the 2026-10-30 crash (rax 0xCCCCCCCC3F800000 = 1.0f
     // plus debug stack fill, under PerkEntryPointExtender's condition hook).
     // The limit is evaluated with each distinct spell of a live summon or
-    // reanimated thrall (the casts the limit governs; a Bend Will or
-    // script-commanded actor's spell is not one) and the highest kept, so it
+    // reanimated thrall (the casts the limit governs; an actor commanded by
+    // any other effect, such as Bend Will, is left out) and the highest kept, so it
     // does not depend on the list's order. With no such spell the last value
     // stands (reset to 1 on every load, ResetTrackingState); a null spell is
     // never passed, since a tab-1 condition would read it the same way.
