@@ -1108,7 +1108,7 @@ namespace Huginn::Input
       // and the own-press note when the equip goes, and withdraws a selection
       // this press opened if the equip never lands (dropped, replaced,
       // refused). Without the gate's hook, the old inline path.
-      const bool viaGate = HandEquipGate::GetSingleton().IsDriven();
+      const bool viaGate = HandEquipGate::GetSingleton().UseGate();
       const auto pressMoment = pressedAt.value_or(std::chrono::steady_clock::now());
       std::optional<HandEquipRequest> toPark;   // parked after the bookkeeping below
 
@@ -1337,11 +1337,14 @@ namespace Huginn::Input
 
       // Both hands as the engine has them just before a Huginn hand equip:
       // what to read a stuck graph after it against (2026-10-31 00:38).
-      logger::debug("[HandEquip] equipping key {} '{}' ({:08X}) -> {} hand, {:.0f} ms after the key went down | {}"sv,
-         r.slotIndex + 1, r.name, r.formID,
-         r.hand == EquipHand::Left ? "left" : r.hand == EquipHand::Both ? "both" : "right",
-         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - r.pressedAt).count(),
-         State::HandModelProbe::DescribeForEquip(player));
+      // Formatted only when it will be written (graph variable reads).
+      if (spdlog::default_logger()->should_log(spdlog::level::debug)) {
+         logger::debug("[HandEquip] equipping key {} '{}' ({:08X}) -> {} hand, {:.0f} ms after the key went down | {}"sv,
+            r.slotIndex + 1, r.name, r.formID,
+            r.hand == EquipHand::Left ? "left" : r.hand == EquipHand::Both ? "both" : "right",
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - r.pressedAt).count(),
+            State::HandModelProbe::DescribeForEquip(player));
+      }
 
       switch (r.type) {
       case UI::SlotContentType::Spell:

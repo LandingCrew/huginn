@@ -1,6 +1,7 @@
 #include "InputHandler.h"
 #include "HandEquipGate.h"
 #include "slot/SlotLocker.h"
+#include <format>
 
 namespace Huginn::Input
 {
@@ -119,10 +120,13 @@ namespace Huginn::Input
       s = {};
       }
       HandEquipGate::GetSingleton().Drop(blocked);
+      // Which menu, when it is one (read on the main thread by the gate).
+      const char* menu = blocked == kMenuHasTheControls ? HandEquipGate::GetSingleton().BlockingMenuName() : nullptr;
+      const std::string which = menu ? std::format(" ({})", menu) : std::string();
       if (dropped > 0) {
-      logger::info("[InputHandler] Slot keys off -- {}: {} pending tap(s) or hold(s) dropped"sv, blocked, dropped);
+      logger::info("[InputHandler] Slot keys off -- {}{}: {} pending tap(s) or hold(s) dropped"sv, blocked, which, dropped);
       } else {
-      logger::debug("[InputHandler] Slot keys off -- {} (left to the game until it ends)"sv, blocked);
+      logger::debug("[InputHandler] Slot keys off -- {}{} (left to the game until it ends)"sv, blocked, which);
       }
       return false;
    }

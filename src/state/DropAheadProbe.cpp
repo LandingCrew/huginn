@@ -680,9 +680,13 @@ namespace Huginn::State::DropAheadProbe
          }
          // So does the hand equip gate (0.24.26): a slot key's equip into a
          // hand waits here, on the main thread, for the hand's caster to go
-         // idle. After the probe, so a swap it makes is seen next frame.
+         // idle; and the open menus that take the controls are read here, on
+         // the thread that owns them, for the slot keys' gate on the input
+         // thread. After the probe, so a swap it makes is seen next frame.
          try {
-            Input::HandEquipGate::GetSingleton().Tick(a_this);
+            auto& gate = Input::HandEquipGate::GetSingleton();
+            gate.ObserveMenus();
+            gate.Tick(a_this);
          } catch (...) {
             static std::atomic<bool> s_logged{ false };
             if (!s_logged.exchange(true)) {

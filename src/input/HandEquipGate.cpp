@@ -8,7 +8,6 @@
 
 #include <format>
 #include <utility>
-#include <vector>
 
 namespace Huginn::Input
 {
@@ -85,22 +84,9 @@ namespace Huginn::Input
          return Core::HandsToCheck(target, req.occupiesBoth, otherHandMoves);
       }
 
-      // An open menu that takes the controls: by its own flags and input
-      // context (Core::Needs::MenuBlocksGameplay, the rule the v3 log's lap
-      // clock uses -- the overlays in the LoreRim logs, HUD widgets, TrueHUD,
-      // QuickLoot, read as overlays; Dialogue and Crafting as blocking). Read
-      // as SelectionLogV3::BlockingMenus does, off the main thread in
-      // gameplay (no job tick overlapped a main-thread zone in the traces).
-      bool AMenuHasTheControls(RE::UI* ui)
+      std::int64_t SteadyTicks(std::chrono::steady_clock::time_point t)
       {
-         for (const auto& [name, entry] : ui->menuMap) {
-            const RE::IMenu* menu = entry.menu.get();
-            if (!menu || !menu->OnStack()) continue;
-            if (Core::Needs::MenuBlocksGameplay(menu->menuFlags.underlying(), menu->inputContext.underlying())) {
-               return true;
-            }
-         }
-         return false;
+         return t.time_since_epoch().count();
       }
    }
 
@@ -110,15 +96,15 @@ namespace Huginn::Input
       // inventory, magic and favourites menus use the number row for the
       // favourites hotkeys, and the favourites menu does not pause the game
       // (HudVisibilityManager), so the pause alone would leave the keys live
-      // there. Named first; any other menu that takes the controls by its
-      // flags is caught by AMenuHasTheControls.
+      // there. A menu that takes the controls is read on the main thread
+      // (ObserveMenus) and only its published result is read here: walking
+      // the UI's menus from this thread would race their destruction.
       auto* ui = RE::UI::GetSingleton();  // IsMenuOpen is non-const
       if (!ui) return "no UI yet";
       if (ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME)) return "loading screen";
       if (ui->IsMenuOpen(RE::MainMenu::MENU_NAME)) return "main menu";
       if (ui->GameIsPaused()) return "game paused (a menu is open)";
-      if (ui->IsMenuOpen(RE::FavoritesMenu::MENU_NAME)) return "favorites menu open";
-      if (AMenuHasTheControls(ui)) return "a menu has the controls";
+      if (HandEquipGate::GetSingleton().BlockingMenuName()) return kMenuHasTheControls;
       if (!player || !player->Get3D()) return "no player 3D";
       return {};
    }
@@ -149,15 +135,54 @@ namespace Huginn::Input
       }
    }
 
-   void HandEquipGate::PromoteQueuedLocked()
+   void HandEquipGate::ObserveMenus()
    {
-      if (m_pending || !m_queued) return;
-      m_pending = std::move(m_queued);
-      m_queued.reset();
-      m_pending->seq = m_nextSeq++;
-      m_pending->wait = Core::HandEquipWait(GameMs());
-      m_hasPending.store(true, std::memory_order_release);
-      logger::debug("[HandEquip] {}: the weapon swap ahead of it is done; its wait starts now"sv, Describe(m_pending->req));
+      // Main thread: the UI creates and destroys its menus here. The
+      // favourites menu by name (it does not pause), then any open menu
+      // whose own flags and input context take the controls
+      // (Core::Needs::MenuBlocksGameplay, the rule the v3 log's lap clock
+      // uses: in the LoreRim logs HUD widgets, TrueHUD, QuickLoot read as
+      // overlays, Dialogue and Crafting as blocking). These menus do not
+      // pause, so the hook runs while they are open.
+      const char* found = nullptr;
+      if (auto* ui = RE::UI::GetSingleton()) {
+         if (ui->IsMenuOpen(RE::FavoritesMenu::MENU_NAME)) {
+            found = RE::FavoritesMenu::MENU_NAME.data();
+         } else {
+            for (const auto& [name, entry] : ui->menuMap) {
+               const RE::IMenu* menu = entry.menu.get();
+               if (!menu || !menu->OnStack()) continue;
+               if (Core::Needs::MenuBlocksGameplay(menu->menuFlags.underlying(), menu->inputContext.underlying())) {
+                  found = name.c_str();   // the menu map's key: lives as long as the registration
+                  break;
+               }
+            }
+         }
+      }
+      m_blockingMenu.store(found, std::memory_order_release);
+   }
+
+   bool HandEquipGate::UseGate()
+   {
+      if (!IsDriven()) return false;
+      const auto now = std::chrono::steady_clock::now();
+      const auto lastTick = std::chrono::steady_clock::time_point(
+         std::chrono::steady_clock::duration(m_lastTickTicks.load(std::memory_order_acquire)));
+      bool stalledNow = false;
+      {
+         std::lock_guard lock(m_mutex);
+         // A press parked kStallAfter ago and no Tick since: the hook is not
+         // running though the game is (this is asked from a live key press).
+         stalledNow = m_pending && now - m_pending->req.parkedAt >= kStallAfter && lastTick < m_pending->req.parkedAt;
+      }
+      if (stalledNow && !m_stalled.exchange(true, std::memory_order_acq_rel)) {
+         logger::error("[HandEquip] the PlayerCharacter::Update hook has not run for {} s with an equip parked "
+                       "(another plugin may have replaced it): slot keys equip inline, without waiting for a "
+                       "casting hand, until it runs again"sv,
+            kStallAfter.count());
+         Drop("the hand equip gate's hook stopped", /*force=*/true);
+      }
+      return !m_stalled.load(std::memory_order_acquire);
    }
 
    void HandEquipGate::Park(HandEquipRequest request)
@@ -167,41 +192,34 @@ namespace Huginn::Input
 
       std::optional<HandEquipRequest> replaced;
       Core::ReplacedSelection selection = Core::ReplacedSelection::None;
-      bool queued = false;
+      bool refused = false;
       {
          std::lock_guard lock(m_mutex);
-         // Behind a weapon swap half done, the newer press waits its turn
-         // (one deep) rather than leave the weapon in neither hand.
-         queued = m_pending && m_pending->req.swapInFlight;
-         auto& slot = queued ? m_queued : m_pending;
-         if (slot) {
-            replaced = std::move(slot->req);
-            selection = Core::OnReplaced(replaced->formID, replaced->selected, request.formID);
-            // The same item pressed again: SelectionTracker::Select found the
-            // first press's record pending and opened none, so this press
-            // takes that record over (Core::OnReplaced).
-            if (selection == Core::ReplacedSelection::HandOver) request.selected = true;
-         }
-         if (!request.selected) {
-            // The same hand-over from a request no longer in the slot: the
-            // swap ahead of this one, or the one acting right now.
-            if (queued && m_pending->req.formID == request.formID && m_pending->req.selected) {
-               m_pending->req.selected = false;
-               request.selected = true;
-            } else if (!queued && m_acting && m_acting->formID == request.formID && m_acting->selected &&
-                       !m_acting->handedOver) {
-               m_acting->handedOver = true;
-               request.selected = true;
+         if (m_pending && m_pending->req.swapInFlight) {
+            refused = true;   // a weapon swap's second half is never replaced
+         } else {
+            if (m_pending) {
+               replaced = std::move(m_pending->req);
+               selection = Core::OnReplaced(replaced->formID, replaced->selected, request.formID);
+               // The same item pressed again: SelectionTracker::Select found the
+               // first press's record pending and opened none, so this press
+               // takes that record over (Core::OnReplaced).
+               if (selection == Core::ReplacedSelection::HandOver) request.selected = true;
             }
+            Pending p;
+            p.req = std::move(request);
+            p.seq = m_nextSeq++;
+            p.wait = Core::HandEquipWait(GameMs());
+            logger::debug("[HandEquip] parked {}; {:.0f} ms after the key went down"sv, Describe(p.req),
+               MsBetween(p.req.pressedAt, p.req.parkedAt));
+            m_pending = std::move(p);
+            m_hasPending.store(true, std::memory_order_release);
          }
-         Pending p;
-         p.req = std::move(request);
-         p.seq = m_nextSeq++;
-         p.wait = Core::HandEquipWait(GameMs());
-         logger::debug("[HandEquip] parked {}{}; {:.0f} ms after the key went down"sv, Describe(p.req),
-            queued ? " behind a weapon swap half done" : "", MsBetween(p.req.pressedAt, p.req.parkedAt));
-         slot = std::move(p);
-         if (!queued) m_hasPending.store(true, std::memory_order_release);
+      }
+      if (refused) {
+         logger::info("[HandEquip] {} dropped: a weapon swap is half done and goes first"sv, Describe(request));
+         LeaveGate(request, true, "dropped: a weapon swap was half done");
+         return;
       }
       if (replaced) {
          logger::info("[HandEquip] {} replaced by a newer press before it went ({:.0f} ms pending){}"sv,
@@ -214,42 +232,34 @@ namespace Huginn::Input
 
    void HandEquipGate::Drop(std::string_view why, bool force)
    {
-      std::vector<HandEquipRequest> dropped;
+      std::optional<HandEquipRequest> dropped;
       {
          std::lock_guard lock(m_mutex);
          if (force) ++m_forceGen;
-         if (m_queued) {
-            dropped.push_back(std::move(m_queued->req));
-            m_queued.reset();
+         if (!m_pending) return;
+         if (m_pending->req.swapInFlight && !force) {
+            logger::debug("[HandEquip] {} kept through '{}': its weapon swap is half done"sv,
+               Describe(m_pending->req), why);
+            return;
          }
-         if (m_pending) {
-            if (m_pending->req.swapInFlight && !force) {
-               logger::debug("[HandEquip] {} kept through '{}': its weapon swap is half done"sv,
-                  Describe(m_pending->req), why);
-            } else {
-               dropped.push_back(std::move(m_pending->req));
-               m_pending.reset();
-               m_hasPending.store(false, std::memory_order_release);
-            }
-         }
+         dropped = std::move(m_pending->req);
+         m_pending.reset();
+         m_hasPending.store(false, std::memory_order_release);
       }
-      for (const auto& req : dropped) {
-         logger::info("[HandEquip] {} dropped after {:.0f} ms pending: {}{}"sv, Describe(req),
-            MsBetween(req.parkedAt, std::chrono::steady_clock::now()), why,
-            req.swapInFlight ? "; the weapon was left unequipped (the swap's first half had taken it off the other hand)"
-                             : "");
-         LeaveGate(req, true, std::format("its equip was dropped ({})", why));
-      }
+      logger::info("[HandEquip] {} dropped after {:.0f} ms pending: {}{}"sv, Describe(*dropped),
+         MsBetween(dropped->parkedAt, std::chrono::steady_clock::now()), why,
+         dropped->swapInFlight ? "; the weapon was left unequipped (the swap's first half had taken it off the other hand)"
+                               : "");
+      LeaveGate(*dropped, true, std::format("its equip was dropped ({})", why));
    }
 
-   bool HandEquipGate::TakeIfCurrent(std::uint64_t seq, Pending& out, bool acting)
+   bool HandEquipGate::TakeIfCurrent(std::uint64_t seq, Pending& out)
    {
       std::lock_guard lock(m_mutex);
       if (!m_pending || m_pending->seq != seq) return false;
       out = std::move(*m_pending);
       m_pending.reset();
       m_hasPending.store(false, std::memory_order_release);
-      if (acting) m_acting = Acting{ out.req.formID, out.req.selected, false };
       return true;
    }
 
@@ -268,37 +278,46 @@ namespace Huginn::Input
          std::lock_guard lock(m_mutex);
          lost = m_forceGen != forceGen;
          if (!lost) {
-            if (m_pending) {
-               // A newer press parked while the first half acted: it waits
-               // behind the swap now.
-               if (m_queued) displaced = std::move(m_queued->req);
-               m_queued = std::move(m_pending);
-               m_pending.reset();
-               if (m_queued->req.formID == pending.req.formID && !m_queued->req.selected && pending.req.selected) {
-                  pending.req.selected = false;     // the same item: the newer press owns the selection
-                  m_queued->req.selected = true;
-               }
-            }
+            // A press parked while the first half acted: the swap goes first.
+            if (m_pending) displaced = std::move(m_pending->req);
             pending.seq = m_nextSeq++;
             logger::debug("[HandEquip] {}: the other hand's unequip not applied yet, retrying next frame (attempt {})"sv,
                Describe(pending.req), pending.req.handSwapAttempt + 1);
             m_pending = std::move(pending);
             m_hasPending.store(true, std::memory_order_release);
-         } else {
-            logger::info("[HandEquip] {}: a load or reset came during its weapon swap; the weapon was left unequipped"sv,
-               Describe(pending.req));
          }
       }
       if (displaced) {
-         LeaveGate(*displaced, true, "replaced while a weapon swap was half done");
+         logger::info("[HandEquip] {} dropped: a weapon swap is half done and goes first"sv, Describe(*displaced));
+         LeaveGate(*displaced, true, "dropped: a weapon swap was half done");
       }
       if (lost) {
+         logger::info("[HandEquip] {}: a load or reset came during its weapon swap; the weapon was left unequipped"sv,
+            Describe(pending.req));
          LeaveGate(pending.req, true, "a load or reset came during its weapon swap");
       }
    }
 
    void HandEquipGate::Act(Pending taken, double waitedMs, const char* how, std::uint64_t forceGen)
    {
+      // Whatever way this returns -- an exception from the engine calls
+      // included (the hook catches it) -- the request does not keep its
+      // selection held: on any exit that is not handled below, it leaves
+      // the gate as a failed equip.
+      struct LeaveOnUnwind
+      {
+         const HandEquipRequest* req = nullptr;
+         bool armed = true;
+         ~LeaveOnUnwind()
+         {
+            if (!armed || !req) return;
+            try {
+               LeaveGate(*req, true, "its equip raised an exception");
+            } catch (...) {
+            }
+         }
+      } guard{ &taken.req };
+
       const auto now = std::chrono::steady_clock::now();
       // Once per wait: the second half of a weapon swap reports only a hold of
       // its own (Repark clears busySeen).
@@ -315,17 +334,20 @@ namespace Huginn::Input
          }
       }
       const HandEquipResult result = EquipManager::GetSingleton().ActOnHandEquip(taken.req);
-      bool handedOver = false;
-      {
-         std::lock_guard lock(m_mutex);
-         handedOver = m_acting && m_acting->handedOver;
-         m_acting.reset();
-      }
-      // A newer press of the same item took the selection while this acted:
-      // it is that press's now, whatever happens to this one.
-      if (handedOver) taken.req.selected = false;
+      guard.armed = false;
       if (!result.success) {
-         LeaveGate(taken.req, true, "its equip failed");
+         // A press of the same item parked while this acted opened no record
+         // of its own (Select found this one pending): it inherits this one
+         // rather than lose it with the failure.
+         bool handedOver = false;
+         if (taken.req.selected) {
+            std::lock_guard lock(m_mutex);
+            if (m_pending && m_pending->req.formID == taken.req.formID && !m_pending->req.selected) {
+               m_pending->req.selected = true;
+               handedOver = true;
+            }
+         }
+         LeaveGate(taken.req, !handedOver, "its equip failed");
       } else if (result.retry) {
          Repark(std::move(taken), *result.retry, forceGen);
       } else if (taken.req.selectionHeld) {
@@ -333,12 +355,14 @@ namespace Huginn::Input
          // from now (core/SelectionGate.h).
          Learning::SelectionTracker::GetSingleton().GateRelease(taken.req.formID, /*retime=*/true);
       }
-      std::lock_guard lock(m_mutex);
-      PromoteQueuedLocked();
    }
 
    void HandEquipGate::Tick(RE::PlayerCharacter* player)
    {
+      m_lastTickTicks.store(SteadyTicks(std::chrono::steady_clock::now()), std::memory_order_release);
+      if (m_stalled.load(std::memory_order_acquire) && m_stalled.exchange(false, std::memory_order_acq_rel)) {
+         logger::info("[HandEquip] the PlayerCharacter::Update hook runs again: slot keys wait for a casting hand again"sv);
+      }
       if (!m_hasPending.load(std::memory_order_acquire) || !player) return;
 
       Pending p;
@@ -354,25 +378,6 @@ namespace Huginn::Input
       // or a reset removes it through a forced Drop): it waits for gameplay.
       if (p.req.swapInFlight && !blocked.empty()) return;
 
-      // The act, under the update loop's mutex: never blocking the main
-      // thread on a tick running elsewhere (a busy mutex: next frame).
-      auto actNow = [&](const char* how, double waitedMs) {
-         const bool ran = Update::UpdateHandler::GetSingleton()->TryRunExclusive([&] {
-            Pending taken;
-            if (TakeIfCurrent(p.seq, taken, /*acting=*/true)) {
-               Act(std::move(taken), waitedMs, how, forceGen);
-            }
-         });
-         if (!ran) {
-            std::lock_guard lock(m_mutex);
-            if (m_pending && m_pending->seq == p.seq && !m_pending->lockMissLogged) {
-               m_pending->lockMissLogged = true;
-               logger::debug("[HandEquip] {}: an update tick holds the update mutex; equipping on a later frame"sv,
-                  Describe(p.req));
-            }
-         }
-      };
-
       Core::HandEquipGateInput in;
       in.worldReady = blocked.empty();
       in.nowMs = GameMs();
@@ -384,10 +389,32 @@ namespace Huginn::Input
       const auto decision = p.wait.Update(in);
       const double waitedMs = p.wait.WaitedMs(in.nowMs);
 
+      // The act, under the update loop's mutex: never blocking the main
+      // thread on a tick running elsewhere (a busy mutex: next frame).
+      auto actNow = [&](const char* how) {
+         const bool ran = Update::UpdateHandler::GetSingleton()->TryRunExclusive([&] {
+            Pending taken;
+            if (TakeIfCurrent(p.seq, taken)) {
+               Act(std::move(taken), waitedMs, how, forceGen);
+            }
+         });
+         if (!ran) {
+            std::lock_guard lock(m_mutex);
+            if (m_pending && m_pending->seq == p.seq) {
+               m_pending->wait = p.wait;  // the transient clock, kept for the next frame
+               if (!m_pending->lockMissLogged) {
+                  m_pending->lockMissLogged = true;
+                  logger::debug("[HandEquip] {}: an update tick holds the update mutex; equipping on a later frame"sv,
+                     Describe(p.req));
+               }
+            }
+         }
+      };
+
       switch (decision.action) {
       case Core::HandEquipAction::Drop: {
          Pending gone;
-         if (!TakeIfCurrent(p.seq, gone, /*acting=*/false)) return;
+         if (!TakeIfCurrent(p.seq, gone)) return;
          const std::string why = decision.why == Core::HandEquipWhy::StillCasting
             ? std::format("{} after {:.1f} s", HandsText(decision.activeHands, in.rightState, in.leftState, "still "),
                  waitedMs / 1000.0)
@@ -397,8 +424,6 @@ namespace Huginn::Input
             gone.req.swapInFlight ? "; the weapon was left unequipped (the swap's first half had taken it off the other hand)"
                                   : "");
          LeaveGate(gone.req, true, std::format("its equip was dropped ({})", why));
-         std::lock_guard lock(m_mutex);
-         PromoteQueuedLocked();
          return;
       }
       case Core::HandEquipAction::Wait: {
@@ -423,9 +448,9 @@ namespace Huginn::Input
       if (decision.why == Core::HandEquipWhy::ThroughTransient) {
          logger::debug("[HandEquip] {}: went ahead through {} after {:.0f} ms"sv, Describe(p.req),
             HandsText(decision.busyHands, in.rightState, in.leftState), Core::kTransientWaitMs);
-         actNow("went ahead through a transient caster state", waitedMs);
+         actNow("went ahead through a transient caster state");
       } else {
-         actNow(p.req.swapInFlight ? "the weapon swap's second half" : "the hand came free", waitedMs);
+         actNow(p.req.swapInFlight ? "the weapon swap's second half" : "the hand came free");
       }
    }
 }

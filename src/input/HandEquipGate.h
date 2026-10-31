@@ -39,10 +39,12 @@ namespace Huginn::Input
    //     nothing in a loading screen, the main menu, a pausing menu or a menu
    //     that takes the controls (SlotKeysBlockedBy), so in practice Park runs
    //     on a job thread.
-   //   - Tick: the PlayerCharacter::Update hook (DropAheadProbe.cpp,
-   //     HookUpdate), after the game's own update: the main thread, every
-   //     frame the player updates (not while the game is paused). The equip
-   //     and the redraw run there. The act also takes UpdateHandler's mutex
+   //   - Tick and ObserveMenus: the PlayerCharacter::Update hook
+   //     (DropAheadProbe.cpp, HookUpdate), after the game's own update: the
+   //     main thread, every frame the player updates (not while the game is
+   //     paused). The equip and the redraw run there, and the open menus are
+   //     read there (the UI's menus are the main thread's: they are created
+   //     and destroyed on it). The act also takes UpdateHandler's mutex
    //     (try-lock: a tick holding it means next frame), so it never overlaps
    //     an update tick, as EquipSlot did not when it ran on the sink before
    //     the tick.
@@ -53,26 +55,27 @@ namespace Huginn::Input
    // released when the request leaves -- re-timing the confirm window from
    // the equip when it went through. A selection the press opened (and only
    // then: SelectionTracker::Select's result) is withdrawn if the equip never
-   // lands, unless a newer press of the same item took it over.
+   // lands.
    //
    // One pending equip: a new press replaces it (its selection withdrawn, or
-   // handed over when it is the same item: Core::OnReplaced). Dropped as
+   // handed over when it is the same item: Core::OnReplaced) -- except a
+   // weapon swap's second half (the other hand's unequip queued, the equip
+   // waiting a frame for it: EquipWeapon's retry), which is never replaced:
+   // a press that arrives then is dropped, so the weapon is not left in
+   // neither hand. That half is also kept through a pause or a menu, waits
+   // for a casting hand like any equip, and past kActiveWaitMaxMs is dropped
+   // with the weapon left unequipped. Everything else pending is dropped as
    // gameplay ends -- a loading screen, the main menu, a menu, no player 3D
    // (InputHandler on the transition, Tick on its own check) -- and on
-   // kPreLoadGame and ResetPipelineSubsystems. Not on a mere gap in the
-   // hook's frames (an autosave or a cell crossing stalls it while gameplay
-   // goes on).
+   // kPreLoadGame and ResetPipelineSubsystems (Drop's `force`, which also
+   // abandons the swap). Not on a mere gap in the hook's frames (an autosave
+   // or a cell crossing stalls it while gameplay goes on).
    //
-   // A weapon swap half done (the other hand's unequip queued, the equip
-   // waiting a frame for it: EquipWeapon's retry) is finished, not dropped,
-   // when gameplay pauses -- dropping it would leave the weapon in neither
-   // hand -- and a newer press waits behind it (one deep) instead of
-   // replacing it. Its second half waits for a casting hand like any equip;
-   // past kActiveWaitMaxMs it is dropped, the weapon left unequipped. Only a
-   // load or a reset (Drop's `force`) abandons it at once.
-   //
-   // Without the hook (its install failed) nothing would run Tick, so
-   // IsDriven is false and EquipSlot equips inline as before 0.24.26.
+   // Without the hook nothing would run Tick, so EquipSlot equips inline as
+   // before 0.24.26 (UseGate false): when its install failed (IsDriven
+   // false), and -- the watchdog -- when a parked equip saw no Tick for
+   // kStallAfter of wall time (another plugin took the vtable slot, say), until
+   // a Tick runs again.
    // =============================================================================
 
    /// What a parked equip needs to act, captured at the press: the item and
@@ -105,10 +108,14 @@ namespace Huginn::Input
       std::optional<EquipHand> retry;
    };
 
+   /// SlotKeysBlockedBy's reason for an open menu that takes the controls;
+   /// HandEquipGate::BlockingMenuName says which.
+   inline constexpr std::string_view kMenuHasTheControls = "a menu has the controls";
+
    /// Why the slot keys may not act now, or "" when they may: a loading
    /// screen, the main menu, a pausing menu, a menu that takes the controls
-   /// (the favourites menu, dialogue, crafting: Core::Needs::MenuBlocksGameplay
-   /// on each open menu's flags), no player 3D (or no UI yet). Read on the
+   /// (the favourites menu, dialogue, crafting: read on the main thread by
+   /// HandEquipGate::ObserveMenus), no player 3D (or no UI yet). Read on the
    /// input sink and in Tick.
    [[nodiscard]] std::string_view SlotKeysBlockedBy(RE::PlayerCharacter* player);
 
@@ -121,8 +128,13 @@ namespace Huginn::Input
       void SetDriven(bool driven) noexcept { m_driven.store(driven, std::memory_order_release); }
       [[nodiscard]] bool IsDriven() const noexcept { return m_driven.load(std::memory_order_acquire); }
 
-      /// Park one hand equip. A pending one is replaced (a weapon swap half
-      /// done is not: the new press waits behind it). Logged at debug.
+      /// Whether EquipSlot should park a hand equip here: driven, and not
+      /// stalled (the watchdog: a parked equip with no Tick for kStallAfter --
+      /// logs one error line, drops it, and answers false until a Tick runs).
+      [[nodiscard]] bool UseGate();
+
+      /// Park one hand equip. A pending one is replaced; a weapon swap's
+      /// second half is not (this press is dropped instead). Logged at debug.
       void Park(HandEquipRequest request);
 
       /// Forget the pending equip. Logged at info when there was one.
@@ -132,6 +144,15 @@ namespace Huginn::Input
 
       /// Main thread, every frame: decide and act (core/HandEquipGate.h).
       void Tick(RE::PlayerCharacter* player);
+
+      /// Main thread, every frame (the same hook): which open menu takes the
+      /// controls, published for SlotKeysBlockedBy on the input thread.
+      void ObserveMenus();
+      /// Forget it (a load starting): the hook does not run through a load.
+      void ClearMenus() noexcept { m_blockingMenu.store(nullptr, std::memory_order_release); }
+      /// The open menu that takes the controls, as of the hook's last frame;
+      /// null when none.
+      [[nodiscard]] const char* BlockingMenuName() const noexcept { return m_blockingMenu.load(std::memory_order_acquire); }
 
    private:
       HandEquipGate() = default;
@@ -150,41 +171,36 @@ namespace Huginn::Input
          bool lockMissLogged = false;      ///< the "update tick holds the mutex" line, once per press
       };
 
-      /// The request acting right now (taken out of m_pending), for a press
-      /// of the same item landing meanwhile: it takes the selection over.
-      struct Acting
-      {
-         RE::FormID formID = 0;
-         bool selected = false;
-         bool handedOver = false;
-      };
-
       /// Take the pending equip out if it is still press `seq`; false when a
-      /// newer press replaced it or it was dropped. `acting`: mark it the
-      /// acting request.
-      bool TakeIfCurrent(std::uint64_t seq, Pending& out, bool acting);
-      /// Put a weapon swap's retry back (ahead of a newer press, which waits
-      /// behind it), unless a forced Drop ran since `forceGen` was read.
+      /// newer press replaced it or it was dropped.
+      bool TakeIfCurrent(std::uint64_t seq, Pending& out);
+      /// Put a weapon swap's retry back (a press parked while the first half
+      /// acted is dropped for it), unless a forced Drop ran since `forceGen`.
       void Repark(Pending pending, EquipHand hand, std::uint64_t forceGen);
       /// Act on `taken` (taken out already) and handle what the act returns.
       void Act(Pending taken, double waitedMs, const char* how, std::uint64_t forceGen);
-      /// A press queued behind a finished (or dropped) swap becomes the
-      /// pending one, its wait starting now. Under m_mutex.
-      void PromoteQueuedLocked();
       /// A request leaving without its equip: withdraw the selection it
-      /// opened (`withdraw`, and not handed over), or else release its hold.
+      /// opened (`withdraw`), or else release its hold.
       static void LeaveGate(const HandEquipRequest& req, bool withdraw, std::string_view why);
       static std::string Describe(const HandEquipRequest& req);
       /// The game clock in ms (DropAheadProbe::GameSeconds).
       static double GameMs();
 
+      // The watchdog's limit: wall time a parked equip may go without a Tick.
+      static constexpr std::chrono::seconds kStallAfter{ 5 };
+
       std::mutex m_mutex;
       std::optional<Pending> m_pending;   // under m_mutex
-      std::optional<Pending> m_queued;    // under m_mutex: a press behind a swap's second half
-      std::optional<Acting> m_acting;     // under m_mutex
       std::uint64_t m_nextSeq = 1;        // under m_mutex
       std::uint64_t m_forceGen = 0;       // under m_mutex: bumped by every forced Drop
       std::atomic<bool> m_hasPending{ false };   // Tick's fast path; written under m_mutex
       std::atomic<bool> m_driven{ false };
+      // The watchdog: Tick's last wall time (steady ticks), and whether the
+      // gate is bypassed for a stalled hook.
+      std::atomic<std::int64_t> m_lastTickTicks{ 0 };
+      std::atomic<bool> m_stalled{ false };
+      // ObserveMenus' reading: the name of an open menu that takes the
+      // controls (a BSFixedString's text, or a MENU_NAME literal), or null.
+      std::atomic<const char*> m_blockingMenu{ nullptr };
    };
 }

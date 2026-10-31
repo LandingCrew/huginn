@@ -918,6 +918,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
         State::DropAheadProbe::SetGameLoaded(false);  // R3: off through the load
         State::HandModelProbe::SetGameLoaded(false);
         Input::HandEquipGate::GetSingleton().Drop("a save is loading", /*force=*/true);  // 0.24.26
+        Input::HandEquipGate::GetSingleton().ClearMenus();  // the hook does not run through the load
         Learning::SelectionLogV3::OnLoadStarting();   // R4: no extra-list reads through the load
         break;
     case SKSE::MessagingInterface::kNewGame:

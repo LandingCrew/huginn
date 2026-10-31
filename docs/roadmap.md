@@ -1957,7 +1957,9 @@ two frames). Caster states 7-9 are waited on 250 ms at most; both waits run
 on the game clock (`core/HandEquipGate.h`, `input/HandEquipGate`). A shield
 waits as a left-hand item. While an equip waits, its selection is held
 undecided and its confirm window, Remembrance capture and own-press note
-restart from the equip (`core/SelectionGate.h`). Potions, food,
+restart from the equip (`core/SelectionGate.h`). If the hook stops ticking
+with an equip parked for 5 s, an error line says so and the keys equip inline
+until it runs again. Potions, food,
 poisons, ammo and other apparel do not wait. After a hand equip while drawn
 (kDrawn, not sheathing) and with both casters idle, the hands are redrawn, as
 Wheeler-Refined does (`[Equip] bRedrawAfterHandEquip`).

@@ -1210,18 +1210,21 @@ right-hand equip leaves the left alone -- and never interrupts a cast: one
 still going 3 s after the park drops the press; caster states 7-9 hold it at
 most 250 ms (both on the game clock, so slow time and pauses stretch them).
 Outside gameplay the pending equip is dropped and a selection the press
-opened is withdrawn (a weapon swap half done is finished instead, with a newer
-press waiting behind it, unless a save loads). While it waits, its form's
+opened is withdrawn (a weapon swap half done is finished instead, unless a
+save loads, and a press that arrives meanwhile is dropped rather than replace
+it). While it waits, its form's
 selection is held undecided (`core/SelectionGate.h`); when it goes, the
 confirm window, the press's Remembrance capture (`Remembrance::RearmCapture`)
 and the own-press note restart from the equip. After the equip, while drawn
 (kDrawn) and with both casters idle, the hands are redrawn as Wheeler-Refined
 does (`[Equip]
-bRedrawAfterHandEquip`). Potions, food, poisons, ammo, apparel and soul gems act
-at once, as before. The slot keys themselves do nothing, and are not consumed,
-in a loading screen, the main menu, a pausing menu or a menu that takes the
-controls -- the favourites menu (which does not pause), dialogue, crafting, by
-each open menu's flags (`SlotKeysBlockedBy`).
+bRedrawAfterHandEquip`). Potions, food, poisons, ammo, other apparel and soul
+gems act at once, as before. If the hook stops ticking with an equip parked
+for 5 s, an error line says so and the keys equip inline until it runs again.
+The slot keys themselves do nothing, and are not consumed, in a loading
+screen, the main menu, a pausing menu or a menu that takes the controls -- the
+favourites menu (which does not pause), dialogue, crafting, by each open
+menu's flags, read on the main thread (`SlotKeysBlockedBy`, `ObserveMenus`).
 
 **Bucket hysteresis** (`fVitalBucketHysteresis` default 0.03,
 `fDistanceBucketHysteresis` default 0.1; `src/core/BucketHysteresis.h`, wired in
