@@ -911,6 +911,13 @@ changed in the same PR, and the shipped INI loses the dead keys.
         nothing changes. **In game (you):** with Twin Souls (or any limit of 2)
         and one summon up, a second summon spell stays on offer; at two it
         drops out with `filtered_by` `summon_limit` in the v3 log.
+        **0.24.24:** the limit's entry point takes the spell being cast
+        (condition tab 1); the call left it out, so a perk with a tab-1
+        condition (`EPMagic_SpellHasKeyword`: Vigilant, Kitty's spell packs,
+        Ancient Blood, the Necromancy CC) read the result float as a spell
+        and crashed the game (2026-10-30, LoreRim, under
+        PerkEntryPointExtender). The call now passes a live summon's spell,
+        and is skipped while none is known.
 - [x] **Steps 1-2 of the order above, built in 0.23.55 (R8.1, the first PR on
       `rewrite-r8`)**, with doc 11 decision 4 (the filter half of step 5):
       - Hard zeros into `CandidateFilters`: four reasons appended to

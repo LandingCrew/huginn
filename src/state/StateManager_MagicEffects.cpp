@@ -781,11 +781,37 @@ namespace Huginn::State
     // Evaluated only while a summon is up -- the limit cannot matter with
     // none, and the perk machinery runs off this thread as little as it can;
     // with none the last value stands (1 until the first summon).
+    //
+    // 0.24.24: the entry point has two condition tabs, Perk Owner and the
+    // spell being cast (PerkConditionTabCount 2; EPMagic_SpellHasKeyword on
+    // tab 1 is common: Vigilant, Kitty's spell packs, Ancient Blood, the
+    // Necromancy CC). The game passes that spell before the result, so the
+    // call is (ep, owner, spell, &value). Leaving the spell out made the
+    // engine read &limit as the spell and call through its "vtable" -- the
+    // 2026-10-30 crash (rax 0xCCCCCCCC3F800000 = 1.0f plus debug stack fill,
+    // under PerkEntryPointExtender's condition hook). The spell passed is a
+    // summon's own (the first live commanded actor's effect's spell): the
+    // limit a cast of that spell would meet, close enough for the filter's
+    // test. With no such spell known the last value stands; a null spell is
+    // never passed, since a tab-1 condition would read it the same way.
     {
       static float s_lastLimit = 1.0f;
+      RE::MagicItem* summonSpell = nullptr;
       if (summonCount > 0) {
+        if (auto* process = player->GetActorRuntimeData().currentProcess; process && process->middleHigh) {
+          for (auto& data : process->middleHigh->commandedActors) {
+            auto actorPtr = data.commandedActor.get();
+            auto* actor = actorPtr.get();
+            if (!actor || actor->IsDead() || !data.activeEffect || !data.activeEffect->spell) continue;
+            summonSpell = data.activeEffect->spell;
+            break;
+          }
+        }
+      }
+      if (summonSpell) {
         float limit = 1.0f;
-        RE::BGSEntryPoint::HandleEntryPoint(RE::BGSEntryPoint::ENTRY_POINT::kModCommandedActorLimit, player, &limit);
+        RE::BGSEntryPoint::HandleEntryPoint(RE::BGSEntryPoint::ENTRY_POINT::kModCommandedActorLimit, player, summonSpell,
+                                            &limit);
         s_lastLimit = limit;
       }
       newBuffs.summonLimit = s_lastLimit;
