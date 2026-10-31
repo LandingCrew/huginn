@@ -15,6 +15,8 @@
 #include "../effect/EffectCatalog.h"
 #include "core/RefreshPass.h"   // the refresh pass (R8.1)
 
+#include <cmath>
+
 namespace Huginn::State
 {
   // A disease the player may want to keep, so it is not one to cure:
@@ -775,54 +777,14 @@ namespace Huginn::State
     newBuffs.hasActiveSummon = summonCount > 0;
     newBuffs.summonCount = static_cast<std::uint8_t>(std::min(summonCount, 255));
 
-    // 0.23.46: the commanded-actor limit, as the engine computes it for a
-    // cast: 1, through the player's perk entry points (Twin Souls adds 1; an
-    // entry point may also set or multiply). The summon filter reads it.
-    // Evaluated only while a summon is up -- the limit cannot matter with
-    // none, and the perk machinery runs off this thread as little as it can;
-    // with none the last value stands (1 until the first summon).
-    //
-    // 0.24.24: the entry point has two condition tabs, Perk Owner and the
-    // spell being cast (PerkConditionTabCount 2; EPMagic_SpellHasKeyword on
-    // tab 1 is common: Vigilant, Kitty's spell packs, Ancient Blood, the
-    // Necromancy CC). The game passes that spell before the result, so the
-    // call is (ep, owner, spell, &value). Leaving the spell out made the
-    // engine read &limit as the spell and call through its "vtable" -- the
-    // 2026-10-30 crash (rax 0xCCCCCCCC3F800000 = 1.0f plus debug stack fill,
-    // under PerkEntryPointExtender's condition hook). The spell passed is a
-    // summon's own (the first live commanded actor's effect's spell): the
-    // limit a cast of that spell would meet, close enough for the filter's
-    // test. With no such spell known the last value stands; a null spell is
-    // never passed, since a tab-1 condition would read it the same way.
-    {
-      static float s_lastLimit = 1.0f;
-      RE::MagicItem* summonSpell = nullptr;
-      if (summonCount > 0) {
-        if (auto* process = player->GetActorRuntimeData().currentProcess; process && process->middleHigh) {
-          for (auto& data : process->middleHigh->commandedActors) {
-            auto actorPtr = data.commandedActor.get();
-            auto* actor = actorPtr.get();
-            if (!actor || actor->IsDead() || !data.activeEffect || !data.activeEffect->spell) continue;
-            summonSpell = data.activeEffect->spell;
-            break;
-          }
-        }
-      }
-      if (summonSpell) {
-        float limit = 1.0f;
-        RE::BGSEntryPoint::HandleEntryPoint(RE::BGSEntryPoint::ENTRY_POINT::kModCommandedActorLimit, player, summonSpell,
-                                            &limit);
-        s_lastLimit = limit;
-      }
-      newBuffs.summonLimit = s_lastLimit;
-    }
-
     // 0.23.46 (v3 log only): the actors the player commands, each with the
     // effect that made it -- its kind, its source (the spell or scroll, or the
     // staff for a staff's enchantment), its timer -- from the player's own
     // commanded-actor list. Thralls are logged apart from summons (doc 11
-    // decision 3: whether they count is the user's test).
+    // decision 3: whether they count is the user's test). The same walk
+    // collects the spells the summon limit is evaluated with (below).
     std::vector<Core::Coverage::CommandedActor> commanded;
+    std::vector<RE::MagicItem*> limitSpells;
     if (auto* process = player->GetActorRuntimeData().currentProcess; process && process->middleHigh) {
       for (auto& data : process->middleHigh->commandedActors) {
         auto actorPtr = data.commandedActor.get();
@@ -839,10 +801,48 @@ namespace Huginn::State
           entry.remaining = ae->duration > 0.0f ? std::max(0.0f, ae->duration - ae->elapsedSeconds)
                                                 : Core::Coverage::kNoTimer;
           entry.elapsed = ae->elapsedSeconds;
+          if (entry.kind != Core::Coverage::CommandedActor::Kind::Other && ae->spell &&
+              std::find(limitSpells.begin(), limitSpells.end(), ae->spell) == limitSpells.end())
+            limitSpells.push_back(ae->spell);
         }
         commanded.push_back(entry);
       }
     }
+
+    // 0.23.46: the commanded-actor limit, as the engine computes it for a
+    // cast: 1, through the player's perk entry points (Twin Souls adds 1; an
+    // entry point may also set or multiply). The summon filter reads it.
+    // Evaluated only while a summon is up -- the limit cannot matter with
+    // none, and the perk machinery runs off this thread as little as it can.
+    //
+    // 0.24.24: the entry point has two condition tabs, Perk Owner and the
+    // spell being cast (PerkConditionTabCount 2; EPMagic_SpellHasKeyword or
+    // GetIsID on tab 1 is common: Vigilant, Kitty's spell packs, Ancient
+    // Blood, the Necromancy CC, Undeath). The game passes that spell before
+    // the result, so the call is (ep, owner, spell, &value). Leaving the
+    // spell out made the engine read &limit as the spell and call through
+    // its "vtable" -- the 2026-10-30 crash (rax 0xCCCCCCCC3F800000 = 1.0f
+    // plus debug stack fill, under PerkEntryPointExtender's condition hook).
+    // The limit is evaluated with each distinct spell of a live summon or
+    // reanimated thrall (the casts the limit governs; a Bend Will or
+    // script-commanded actor's spell is not one) and the highest kept, so it
+    // does not depend on the list's order. With no such spell the last value
+    // stands (reset to 1 on every load, ResetTrackingState); a null spell is
+    // never passed, since a tab-1 condition would read it the same way.
+    // Per candidate spell would be exact (a tab-1 perk can raise one summon
+    // spell's limit and not another's); that is a follow-up, since the
+    // filter, covered(i), the upgrade gate and the v3 log all read one value.
+    if (summonCount > 0 && !limitSpells.empty()) {
+      float best = 0.0f;
+      for (auto* spell : limitSpells) {
+        float limit = 1.0f;
+        RE::BGSEntryPoint::HandleEntryPoint(RE::BGSEntryPoint::ENTRY_POINT::kModCommandedActorLimit, player, spell, &limit);
+        if (std::isfinite(limit)) best = std::max(best, limit);
+      }
+      if (best > 0.0f) m_summonLimit = best;
+    }
+    newBuffs.summonLimit = m_summonLimit;
+
     coverage.summons = summonCount;
     coverage.summonLimit = newBuffs.summonLimit;
     coverage.summonRemaining = Core::Coverage::OldestRemaining(commanded);
