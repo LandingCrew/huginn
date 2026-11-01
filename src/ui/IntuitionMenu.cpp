@@ -516,6 +516,18 @@ namespace Huginn::UI
             return;
         }
 
+        // Dialogue does not pause the game, so the paused-game rule in
+        // HudVisibilityManager lets the widget sit over the conversation. A
+        // show during dialogue becomes a hide, here for the same reason as the
+        // latch above: every re-show path passes through. The dialogue menu's
+        // close is a menu event, and HudVisibilityManager shows it again then.
+        if (a_visible) {
+            auto* ui = RE::UI::GetSingleton();
+            if (ui && ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME)) {
+                a_visible = false;
+            }
+        }
+
         // Every re-show re-sends the whole bar and forces one pipeline run.
         // After a death-reload the key and the widget disagreed: key 1 equipped
         // the Iron Mace the pipeline had put there, while the widget still read
