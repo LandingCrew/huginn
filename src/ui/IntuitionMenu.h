@@ -58,7 +58,8 @@ namespace Huginn::UI
         static void OnMenuOpenClose(bool a_opening) noexcept;
         /// Update tick: a kShow RE::UI has not answered within
         /// SHOW_PENDING_MAX_MS is warned about once, with a dump of what
-        /// RE::UI holds for this menu (diagnostic; changes nothing).
+        /// RE::UI holds for this menu. If the menu's menuMap entry is gone,
+        /// the dump re-registers it and shows the widget again (2026-11-01).
         static void CheckPendingShow();
 
         // -- Singleton access (valid after Show() creates the instance) --

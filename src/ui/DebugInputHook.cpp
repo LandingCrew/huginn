@@ -3,11 +3,120 @@
 #include "DebugInputHook.h"
 
 #include <dinput.h>   // DIK_* scan codes
+#include <algorithm>
+#include <mutex>
+#include <vector>
 #include "ImGuiCommon.h"
 #include "ImGuiRenderer.h"
 
 namespace Huginn::UI
 {
+    // =========================================================================
+    // The input thread's events, for the render thread
+    // =========================================================================
+    // BSInputDeviceManager::Poll (and so DispatchHook) runs on the game's
+    // input thread; ImGui's frame (PresentHook: NewFrame, which empties io's
+    // input queue) runs on the render thread. io.Add*Event is not
+    // thread-safe: AddKeyEvent scans the queue from its end while NewFrame
+    // erases it, and the scan indexes past the new end (ImVector's bounds
+    // assert, imgui.h:2101, 2026-10-31: the stack had DispatchHook ->
+    // AddKeyEvent on the input thread). So the hook only queues what it
+    // translated, under a mutex, and DrainToImGui hands it to io on the
+    // render thread. The window procedure's messages take the same route
+    // (ImGuiRenderer: the window thread is not the render thread either).
+    // =========================================================================
+
+    namespace
+    {
+        struct PendingEvent
+        {
+            enum class Kind : std::uint8_t { Key, Char, MouseButton, MouseWheel };
+            Kind kind;
+            int code;      // ImGuiKey, UTF-16 unit, or mouse button
+            bool down;
+            float value;   // mouse wheel delta
+        };
+
+        // A frame's worth is a handful; the cap only matters if no frame
+        // drains for a while (the oldest go first).
+        constexpr std::size_t kMaxPending = 256;
+
+        std::mutex g_pendingLock;
+        std::vector<PendingEvent> g_pending;
+
+        // A release: losing one leaves ImGui holding the key or button.
+        bool IsRelease(const PendingEvent& a_event)
+        {
+            return (a_event.kind == PendingEvent::Kind::Key || a_event.kind == PendingEvent::Kind::MouseButton) &&
+                   !a_event.down;
+        }
+
+        // Full: the oldest non-release goes; a release only if nothing else is left.
+        void Queue(const PendingEvent& a_event)
+        {
+            std::lock_guard lock(g_pendingLock);
+            if (g_pending.size() >= kMaxPending) {
+                auto victim = std::find_if(g_pending.begin(), g_pending.end(),
+                    [](const PendingEvent& e) { return !IsRelease(e); });
+                if (victim == g_pending.end()) {
+                    victim = g_pending.begin();
+                }
+                g_pending.erase(victim);
+            }
+            g_pending.push_back(a_event);
+        }
+
+        // The modifier state last queued (the input thread only): ImGui
+        // keeps a modifier down until told otherwise, so only a change is
+        // queued, not four events with every keypress.
+        struct Modifiers
+        {
+            bool ctrl = false, shift = false, alt = false, super = false;
+        };
+        Modifiers g_lastModifiers;
+
+        void QueueModifierChanges()
+        {
+            const auto down = [](int a_vk) { return (GetKeyState(a_vk) & 0x8000) != 0; };
+            const Modifiers now{ down(VK_CONTROL), down(VK_SHIFT), down(VK_MENU), down(VK_LWIN) || down(VK_RWIN) };
+            using Kind = PendingEvent::Kind;
+            if (now.ctrl != g_lastModifiers.ctrl)   Queue({ Kind::Key, static_cast<int>(ImGuiKey_ModCtrl),  now.ctrl,  0.0f });
+            if (now.shift != g_lastModifiers.shift) Queue({ Kind::Key, static_cast<int>(ImGuiKey_ModShift), now.shift, 0.0f });
+            if (now.alt != g_lastModifiers.alt)     Queue({ Kind::Key, static_cast<int>(ImGuiKey_ModAlt),   now.alt,   0.0f });
+            if (now.super != g_lastModifiers.super) Queue({ Kind::Key, static_cast<int>(ImGuiKey_ModSuper), now.super, 0.0f });
+            g_lastModifiers = now;
+        }
+    }
+
+    void DebugInputHook::DrainToImGui()
+    {
+        std::vector<PendingEvent> events;
+        {
+            std::lock_guard lock(g_pendingLock);
+            events.swap(g_pending);
+        }
+        if (events.empty()) {
+            return;
+        }
+        auto& io = ImGui::GetIO();
+        for (const auto& e : events) {
+            switch (e.kind) {
+            case PendingEvent::Kind::Key:
+                io.AddKeyEvent(static_cast<ImGuiKey>(e.code), e.down);
+                break;
+            case PendingEvent::Kind::Char:
+                io.AddInputCharacterUTF16(static_cast<ImWchar16>(e.code));
+                break;
+            case PendingEvent::Kind::MouseButton:
+                io.AddMouseButtonEvent(e.code, e.down);
+                break;
+            case PendingEvent::Kind::MouseWheel:
+                io.AddMouseWheelEvent(0.0f, e.value);
+                break;
+            }
+        }
+    }
+
     // =========================================================================
     // DirectInput scan code → Windows Virtual Key mapping
     // =========================================================================
@@ -153,9 +262,13 @@ namespace Huginn::UI
             return;
         }
 
-        auto& io = ImGui::GetIO();
+        using Kind = PendingEvent::Kind;
         const auto device = a_button->GetDevice();
-        const bool isPressed = a_button->IsDown() || a_button->IsHeld();
+        // Only the changes: ImGui holds a key or button down until its
+        // release arrives (and repeats keys itself), so the per-poll IsHeld
+        // events would only fill the queue.
+        const bool pressed = a_button->IsDown();
+        const bool released = a_button->IsUp();
         const uint32_t idCode = a_button->GetIDCode();
 
         switch (device) {
@@ -164,15 +277,12 @@ namespace Huginn::UI
             // Translate DirectInput scan code → VK → ImGuiKey
             uint32_t vk = DIKToVK(idCode);
             ImGuiKey key = VirtualKeyToImGuiKey(vk);
-            if (key != ImGuiKey_None) {
-                io.AddKeyEvent(key, isPressed);
+            if (key != ImGuiKey_None && (pressed || released)) {
+                Queue({ Kind::Key, static_cast<int>(key), pressed, 0.0f });
             }
 
             // Modifier state — ImGui tracks these separately for shortcuts
-            io.AddKeyEvent(ImGuiKey_ModCtrl,  (GetKeyState(VK_CONTROL) & 0x8000) != 0);
-            io.AddKeyEvent(ImGuiKey_ModShift, (GetKeyState(VK_SHIFT) & 0x8000) != 0);
-            io.AddKeyEvent(ImGuiKey_ModAlt,   (GetKeyState(VK_MENU) & 0x8000) != 0);
-            io.AddKeyEvent(ImGuiKey_ModSuper, (GetKeyState(VK_LWIN) & 0x8000) != 0);
+            QueueModifierChanges();
 
             // Character input — needed for ImGui text fields
             // Only on key-down to avoid duplicate characters
@@ -185,7 +295,7 @@ namespace Huginn::UI
                     int result = ToUnicode(vk, idCode, keyboardState, buffer, 4, 0);
                     if (result > 0) {
                         for (int i = 0; i < result; ++i) {
-                            io.AddInputCharacterUTF16(buffer[i]);
+                            Queue({ Kind::Char, static_cast<int>(buffer[i]), false, 0.0f });
                         }
                     }
                 }
@@ -196,14 +306,16 @@ namespace Huginn::UI
         {
             // Mouse button mapping: 0=Left, 1=Right, 2=Middle
             if (idCode < 3) {
-                io.AddMouseButtonEvent(static_cast<int>(idCode), isPressed);
+                if (pressed || released) {
+                    Queue({ Kind::MouseButton, static_cast<int>(idCode), pressed, 0.0f });
+                }
             }
             // Mouse wheel — encoded as button ID 8 (scroll up) / 9 (scroll down)
             // in Skyrim's input system. The value() gives the wheel delta.
             else if (idCode == 8) {
-                io.AddMouseWheelEvent(0.0f, a_button->Value());
+                Queue({ Kind::MouseWheel, 0, false, a_button->Value() });
             } else if (idCode == 9) {
-                io.AddMouseWheelEvent(0.0f, -a_button->Value());
+                Queue({ Kind::MouseWheel, 0, false, -a_button->Value() });
             }
             break;
         }
@@ -220,7 +332,8 @@ namespace Huginn::UI
     // RE::InputEvent and calls DispatchEvents on BSTEventSource<InputEvent*>.
     //
     // We intercept that call to:
-    //   1. Translate all events to ImGui (always, for hover/cursor tracking)
+    //   1. Translate all events for ImGui (always, for hover/cursor tracking),
+    //      queued for the render thread (DrainToImGui)
     //   2. Check for Home key toggle
     //   3. If interacting: pass an empty event list to the game
     //   4. If not interacting: pass the real events through
@@ -242,7 +355,7 @@ namespace Huginn::UI
 
         static std::atomic<bool> s_firstDispatchLogged{ false };
         if (!s_firstDispatchLogged.exchange(true, std::memory_order_relaxed)) {
-            logger::info("[DebugInputHook] First input dispatch with ImGui ready"sv);
+            logger::info("[DebugInputHook] First input dispatch with ImGui ready (thread {})"sv, GetCurrentThreadId());
         }
 
         if (a_events) {
@@ -254,9 +367,9 @@ namespace Huginn::UI
                         button->GetIDCode() == DIK_HOME &&
                         button->IsDown())
                     {
-                        s_interacting = !s_interacting;
-                        logger::info("[DebugInputHook] Interaction mode: {}"sv,
-                            s_interacting ? "ON" : "OFF");
+                        const bool now = !s_interacting.load(std::memory_order_relaxed);
+                        s_interacting.store(now, std::memory_order_relaxed);
+                        logger::info("[DebugInputHook] Interaction mode: {}"sv, now ? "ON" : "OFF");
                     }
 
                     TranslateButtonEvent(button);
@@ -270,7 +383,7 @@ namespace Huginn::UI
         // If interacting, block all game input by passing an empty event list.
         // This prevents both Skyrim's native input AND Huginn's own UpdateHandler
         // keybindings from firing — correct behavior while manipulating widgets.
-        if (s_interacting) {
+        if (s_interacting.load(std::memory_order_relaxed)) {
             _originalDispatch(a_dispatcher, const_cast<RE::InputEvent**>(dummy));
         } else {
             _originalDispatch(a_dispatcher, a_events);

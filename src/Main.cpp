@@ -29,6 +29,7 @@
 #include "input/HandEquipGate.h"
 #include "input/EquipManager.h"
 #include "ui/ImGuiRenderer.h"
+#include "util/AbortTrace.h"
 #include "ui/WelcomeBanner.h"
 #include "ui/D3D11Hook.h"
 #include "ui/IntuitionMenu.h"
@@ -1173,6 +1174,10 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
     // Tells this client apart from SwingSight's in the profiler's client list.
     Huginn_PROGRAM_NAME("Huginn");
 
+#ifdef _DEBUG
+    // A failed assert's Abort logs its stack (ImGui's IM_ASSERT included).
+    Util::AbortTrace::Install();
+#endif
     SKSE::Init(a_skse);
     InstallHooks();                // before the engine's threads exist; see above
     TestHarness::ReadTestMode();   // Debug only: the unattended-run flag

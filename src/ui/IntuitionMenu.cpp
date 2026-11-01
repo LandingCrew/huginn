@@ -72,7 +72,8 @@ namespace Huginn::UI
 
             const auto* self = IntuitionMenu::GetSingleton();
             const auto it = ui->menuMap.find(RE::BSFixedString(IntuitionMenu::MENU_NAME));
-            if (it == ui->menuMap.end()) {
+            const bool unregistered = it == ui->menuMap.end();
+            if (unregistered) {
                 logger::warn("[Intuition] UI dump (#{}): IntuitionMenu not in menuMap"sv, a_unanswered);
             } else {
                 const RE::IMenu* entryMenu = it->second.menu.get();
@@ -98,6 +99,44 @@ namespace Huginn::UI
             logger::warn("[Intuition] UI dump (#{}): menuSystemVisible={} closingAllMenus={} pauseCount={} modal={}"sv,
                 a_unanswered, ui->menuSystemVisible, ui->closingAllMenus,
                 ui->numPausesGame, ui->modal);
+
+            // 2026-11-01 11:06: after a load door the menu's entry was gone
+            // from menuMap (first dump of this fault; every later kShow,
+            // the dMenu reset's included, was dropped, since RE::UI ignores
+            // a kShow for a name it does not know). Who removed it is not
+            // known. Put the entry back and queue a fresh kShow; this runs
+            // on the main thread, where menuMap is mutated.
+            //
+            // Only with no instance left anywhere (none on the stack, the
+            // singleton cleared by the destructor): the new entry starts
+            // with no menu, so a kShow builds a fresh instance, and an old
+            // one still drawing would end up beside it with no entry to hide
+            // it through. At most kMaxReRegisters per session: if whatever
+            // removes the entry keeps doing it, the warnings stop instead of
+            // repeating every 2 s, and the dumps go on saying so.
+            static int s_reRegisters = 0;
+            constexpr int kMaxReRegisters = 3;
+            if (unregistered && selfIndex < 0 && self == nullptr) {
+                if (s_reRegisters >= kMaxReRegisters) {
+                    if (s_reRegisters++ == kMaxReRegisters) {
+                        logger::warn("[Intuition] Not re-registering IntuitionMenu again: the entry went missing {} times this session"sv,
+                            kMaxReRegisters + 1);
+                    }
+                    return;
+                }
+                ++s_reRegisters;
+                ui->Register(IntuitionMenu::MENU_NAME, &IntuitionMenu::CreateInstance);
+                const bool back = ui->menuMap.find(RE::BSFixedString(IntuitionMenu::MENU_NAME)) != ui->menuMap.end();
+                logger::warn("[Intuition] Re-registered IntuitionMenu with RE::UI ({}, {} of {} this session); showing again"sv,
+                    back ? "entry back" : "STILL MISSING", s_reRegisters, kMaxReRegisters);
+                if (back) {
+                    g_showQueuedMs.store(0, std::memory_order_release);
+                    IntuitionMenu::Show();
+                }
+            } else if (unregistered) {
+                logger::warn("[Intuition] Not re-registering IntuitionMenu: an instance still exists ({})"sv,
+                    selfIndex >= 0 ? "on the stack" : "the singleton is set");
+            }
         }
 
         // One warning per unanswered kShow (queued at a_queuedAt), plus the
