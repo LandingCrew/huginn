@@ -445,11 +445,14 @@ def row_quantity(col, kr, constant):
     d = kr['dur']
     rule = rule_of(col)
     raw, post, graded, full = 0.0, 1.0, False, False
+    timed = False
     if rule == 'Amount':
         raw, graded = mag * max(clip_dur(d), 1.0), True
         full = col in ('restore_health', 'restore_magicka', 'restore_stamina') and kr['mag'] >= 9999
     elif rule == 'Level':
         raw, graded = (mag if (constant or d == 0) else mag * clip_dur(d) / 3600.0), True
+        # 0.24.27: a timed Level row grades within its column's timed population
+        timed = not (constant or d == 0)
     elif rule == 'PD':
         post = dfac(d)
     elif rule == 'PG':
@@ -479,6 +482,7 @@ def row_quantity(col, kr, constant):
         raw, graded, post = 0.0, False, post * kr['factor']
         unknown = not kr.get('stated')
     kr.setdefault('_unknown', {})[col] = unknown
+    kr.setdefault('_timed', {})[col] = timed
     return raw, post, graded, full
 
 
@@ -499,6 +503,7 @@ def expected_values(items):
         known = {c for kr, c in cand if not kr['_unknown'][c]}
         return [(kr, c) for kr, c in cand if not kr['_unknown'][c] or c not in known]
 
+    # Populations by (column, timed): a timed Level row grades among timed rows only (0.24.27).
     pops = collections.defaultdict(list)
     for it in items:
         if not it['scope']:
@@ -507,16 +512,17 @@ def expected_values(items):
         for kr, c in eligible_cols(it):
             raw, post, graded, full = row_quantity(c, kr, it['constant'])
             if graded and not full and raw > 0:
-                best[c] = max(best.get(c, 0.0), raw)
-        for c, v in best.items():
-            pops[c].append(v)
+                key = (c, kr['_timed'][c])
+                best[key] = max(best.get(key, 0.0), raw)
+        for key, v in best.items():
+            pops[key].append(v)
     for v in pops.values():
         v.sort()
 
     import bisect
 
-    def pct(c, x):
-        v = pops.get(c, [])
+    def pct(key, x):
+        v = pops.get(key, [])
         if not v:
             return 1.0
         return max(bisect.bisect_right(v, x), 1) / len(v)
@@ -528,12 +534,13 @@ def expected_values(items):
             heals_others = False
             for kr, c in eligible_cols(it):
                 raw, post, graded, full = row_quantity(c, kr, it['constant'])
+                key = (c, kr['_timed'][c])
                 if full:
                     v = 1.0
                 elif graded and not raw > 0:
-                    v = 1.0 / (len(pops.get(c, [])) + 1)
+                    v = 1.0 / (len(pops.get(key, [])) + 1)
                 elif graded:
-                    v = pct(c, raw) * post
+                    v = pct(key, raw) * post
                 else:
                     v = post
                 vals[c] = max(vals.get(c, 0.0), v)

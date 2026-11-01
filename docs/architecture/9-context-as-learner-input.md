@@ -271,7 +271,7 @@ Measured 2026-10-07 from `hg dump all` and `hg dump races` on vanilla+, Simonrim
   5. Element from keywords, then resistAV.
   6. Timing: instant, over time, or constant. Total = magnitude × max(duration, 1).
   7. Clip sentinels (9999+ magnitudes; durations of a day or more).
-  8. Grade each column as a percentile within the load order.
+  8. Grade each column as a percentile within the load order. A timed effect on a Level column (fortify, resist, regen, defense, carry weight ...; magnitude × duration/3600) grades within that column's timed effects, apart from the constant ones (enchanted gear, constant abilities): pooled with gear, a 60 s Resist Fire potion read about 0.08 and never outranked anything (0.24.27, `core/EffectMapper.h`).
 - **Decided (the user agreed with the recommendations, 2026-10-07):**
   - graded values are percentiles within the load order, portable across lists whose magnitudes differ about 5×;
   - the dense block starts at zero everywhere, held there by shrinkage;

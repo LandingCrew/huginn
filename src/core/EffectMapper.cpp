@@ -209,9 +209,10 @@ namespace Huginn::Core::Effect
         float RowValue(const KeptRow& r, Col c, const Populations& pops)
         {
             if (r.fullRestore) return 1.0f;
+            const std::uint32_t group = Populations::RowGroup(r);
             // A zero magnitude through the engine's data: below every real value.
-            if (r.graded && !(r.raw > 0.0f)) return 1.0f / static_cast<float>(pops.Size(c, 0) + 1);
-            if (r.graded) return pops.Percentile(c, 0, r.raw) * r.post;
+            if (r.graded && !(r.raw > 0.0f)) return 1.0f / static_cast<float>(pops.Size(c, group) + 1);
+            if (r.graded) return pops.Percentile(c, group, r.raw) * r.post;
             return r.post;
         }
 
@@ -663,7 +664,10 @@ namespace Huginn::Core::Effect
                     if (VitalIndex(cls.col) >= 0 && row.magnitude >= kFullRestore) k.fullRestore = true;
                     break;
                 case Rule::Level:
-                    k.raw = (constantItem || row.duration == 0) ? mag : mag * d / kDurationCap;
+                    // Timed: graded within the column's timed population
+                    // (Populations::RowGroup), never against constant gear.
+                    k.timed = !(constantItem || row.duration == 0);
+                    k.raw = k.timed ? mag * d / kDurationCap : mag;
                     k.graded = true;
                     break;
                 case Rule::P: k.post = 1.0f; break;
@@ -1059,20 +1063,28 @@ namespace Huginn::Core::Effect
     // =========================================================================
     // Populations
     // =========================================================================
-    std::vector<std::pair<Col, float>> Populations::ColumnRaws(const ItemMapping& m)
+    std::uint32_t Populations::RowGroup(const KeptRow& r) noexcept
     {
-        std::array<float, kColumnCount> best{};
+        return r.timed ? kGroupTimed : 0u;
+    }
+
+    std::vector<Populations::ColumnRaw> Populations::ColumnRaws(const ItemMapping& m)
+    {
+        // [0]: group 0; [1]: the timed population.
+        std::array<std::array<float, kColumnCount>, 2> best{};
         const Eligibility eligible(m);
         for (const auto& r : m.rows) {
             if (!r.graded || r.fullRestore || !(r.raw > 0.0f)) continue;
+            auto& slot = best[r.timed ? 1 : 0];
             for (const Col c : { r.col, r.col2 }) {
                 if (!eligible(r, c)) continue;
-                best[Index(c)] = std::max(best[Index(c)], r.raw);
+                slot[Index(c)] = std::max(slot[Index(c)], r.raw);
             }
         }
-        std::vector<std::pair<Col, float>> out;
+        std::vector<ColumnRaw> out;
         for (std::size_t i = 0; i < kColumnCount; ++i) {
-            if (best[i] > 0.0f) out.emplace_back(static_cast<Col>(i), best[i]);
+            if (best[0][i] > 0.0f) out.push_back(ColumnRaw{ static_cast<Col>(i), 0u, best[0][i] });
+            if (best[1][i] > 0.0f) out.push_back(ColumnRaw{ static_cast<Col>(i), kGroupTimed, best[1][i] });
         }
         return out;
     }
@@ -1080,7 +1092,7 @@ namespace Huginn::Core::Effect
     void Populations::Add(const ItemMapping& m)
     {
         if (!m.inScope) return;
-        for (const auto& [c, v] : ColumnRaws(m)) pops_[Key(c, 0)].push_back(v);
+        for (const auto& v : ColumnRaws(m)) pops_[Key(v.col, v.group)].push_back(v.raw);
         for (const auto& g : m.grouped) {
             pops_[Key(g.col, g.group)].push_back(g.raw);
             if (g.fallback != 0) pops_[Key(g.col, g.fallback)].push_back(g.raw);

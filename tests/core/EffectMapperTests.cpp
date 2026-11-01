@@ -275,6 +275,30 @@ TEST_CASE("effect mapper: amount and level values, percentiles within the load o
     CHECK(CapOf(r, 0, Col::kind_potion) == 1.0f);
 }
 
+TEST_CASE("effect mapper: a timed level grades among timed effects, apart from constant gear (0.24.27)")
+{
+    World w;
+    const auto resist = w.Add(Mgef(kArchValueModifier, "FireResist", "Resist Fire"));
+    // Gear, constant: 30, 50, 70.
+    for (const float mag : { 30.0f, 50.0f, 70.0f }) {
+        auto& a = w.Item(Kind::Armour, "Ring");
+        World::Fx(a, resist, mag);
+    }
+    // Potions, timed: 50 x 60/3600 = 0.83 and 20 x 300/3600 = 1.67. Pooled
+    // with the gear, the first read 1/5 and the second 2/5.
+    auto& p1 = w.Item(Kind::Potion, "Resist Fire, 60 s");
+    World::Fx(p1, resist, 50, 60);
+    auto& p2 = w.Item(Kind::Potion, "Resist Fire, 300 s");
+    World::Fx(p2, resist, 20, 300);
+    const auto r = w.Build();
+    CHECK(CapOf(r, 0, Col::resist_fire) == doctest::Approx(1.0 / 3.0));
+    CHECK(CapOf(r, 1, Col::resist_fire) == doctest::Approx(2.0 / 3.0));
+    CHECK(CapOf(r, 2, Col::resist_fire) == doctest::Approx(1.0));
+    CHECK(CapOf(r, 3, Col::resist_fire) == doctest::Approx(0.5));
+    CHECK(CapOf(r, 4, Col::resist_fire) == doctest::Approx(1.0));
+    CHECK(CapOf(r, 3, Col::resist) == CapOf(r, 3, Col::resist_fire));   // the family follows its specific
+}
+
 TEST_CASE("effect mapper: sentinels -- full restore and permanent durations")
 {
     World w;

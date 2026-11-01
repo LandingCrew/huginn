@@ -31,8 +31,13 @@
 //     defense ...) grade magnitude x min(duration, 3600)/3600 for timed effects
 //     and the magnitude for constant ones; presence columns are 1, times
 //     D(duration) = log1p(min(d,3600))/log1p(3600) where effects.csv says
-//     "P x D", times a graded magnitude where it says "P x G". A graded column
-//     with no magnitude has an unknown strength: through a script route
+//     "P x D", times a graded magnitude where it says "P x G". A timed Level
+//     row grades within its column's timed population, apart from the
+//     constant ones (enchanted gear, constant abilities; 0.24.27): weighed by
+//     duration/3600 against a ring's constant magnitude, a 60 s Resist Fire
+//     potion read about 0.08 and never outranked anything, so a timed effect
+//     is ranked among timed effects (potions, spells, scrolls, food). A graded
+//     column with no magnitude has an unknown strength: through a script route
 //     (keyword, name, description, override) it is kNeutralStrength = 0.5
 //     (times D where the rule has one), never the top; through the engine's
 //     own data it is resolved per ResolveZeroMagnitudes below (a stated
@@ -195,6 +200,7 @@ namespace Huginn::Core::Effect
         bool visible = true;
         bool cureByArchetype = false;
         bool unknown = false;   // strength unknown (kNeutralStrength): yields to a known row on the column
+        bool timed = false;     // a Level row graded on magnitude x duration share: its own population (0.24.27)
         bool hostile = false;
         int delivery = 0;
         std::uint32_t duration = 0;  // as recorded (sentinels included)
@@ -331,9 +337,21 @@ namespace Huginn::Core::Effect
         [[nodiscard]] float Median(Col col, std::uint32_t group) const;
         [[nodiscard]] std::size_t Size(Col col, std::uint32_t group) const;
 
-        /// The values one item contributes to a column's population (its max
-        /// graded raw over the rows it keeps for that column).
-        [[nodiscard]] static std::vector<std::pair<Col, float>> ColumnRaws(const ItemMapping& m);
+        /// One value an item contributes to a column's population: its max
+        /// graded raw over the rows it keeps for that column, per population
+        /// (group 0, or the column's timed population for timed Level rows).
+        struct ColumnRaw
+        {
+            Col col = Col::_Count;
+            std::uint32_t group = 0;
+            float raw = 0.0f;
+        };
+        [[nodiscard]] static std::vector<ColumnRaw> ColumnRaws(const ItemMapping& m);
+
+        /// The population a kept row grades in: the timed one for a timed
+        /// Level row (KeptRow::timed, 0.24.27), group 0 otherwise.
+        [[nodiscard]] static std::uint32_t RowGroup(const KeptRow& r) noexcept;
+        static constexpr std::uint32_t kGroupTimed = 0x20000000u;
 
     private:
         static std::uint64_t Key(Col c, std::uint32_t g) noexcept
