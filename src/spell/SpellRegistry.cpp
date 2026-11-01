@@ -1,5 +1,6 @@
 #include "SpellRegistry.h"
 #include "Config.h"
+#include "learning/EquipCallerTrace.h"
 #include "learning/EquipSourceTracker.h"
 #include "learning/ExternalEquipLearner.h"
 #include "util/AtomicGuard.h"
@@ -31,6 +32,10 @@ namespace Huginn::Spell
       if (!spell) {
       return RE::BSEventNotifyControl::kContinue;  // Not a spell
       }
+
+      // 0.24.26 (debug): a spell or scroll taken out of a hand by something
+      // other than Huginn -- which thread, which call path.
+      Learning::EquipCallerTrace::NoteIfExternal(*event, *form);
 
       // Immediately refresh favorites status when spell equipment changes
       logger::debug("Spell equip event detected: {} ({:08X}) (equipped={})"sv,

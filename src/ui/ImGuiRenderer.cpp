@@ -4,11 +4,144 @@
 #include <imgui_impl_dx11.h>
 #include <imgui_impl_win32.h>
 
+#include <algorithm>
+#include <mutex>
+#include <vector>
+
 // Forward declare the ImGui Win32 message handler
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 namespace Huginn::UI
 {
+    // =========================================================================
+    // The window thread's messages, for the render thread
+    // =========================================================================
+    // The window procedure runs on the thread that owns the game's window,
+    // and that is not the thread that renders: 2026-10-31's log had the first
+    // window message on thread 42388 and the first overlay frame on 10836.
+    // ImGui's io is not thread-safe (NewFrame empties the input queue that
+    // ImGui_ImplWin32_WndProcHandler appends to; the race DebugInputHook's
+    // queue fixed, imgui.h:2101), and in a release build the same race has no
+    // assert to stop it. So WndProcHook only copies the messages the Win32
+    // backend handles, and BeginFrame replays them through the backend on the
+    // render thread, before NewFrame.
+    //
+    // Replayed off the window's thread, the backend's thread-bound calls
+    // (SetCapture, TrackMouseEvent, GetMessageExtraInfo) answer for the
+    // render thread: no mouse capture, no leave tracking, the mouse always
+    // reported as a mouse. The overlay needs none of them; it reads the
+    // position from WM_MOUSEMOVE, and NewFrame polls the cursor too.
+    // WM_SETCURSOR is not replayed: its answer is due at once, and with
+    // NoMouseCursorChange the backend leaves the cursor alone anyway.
+    //
+    // Keyboard messages are not replayed at all. The backend reads the
+    // modifiers with GetKeyState, which on the render thread (it handles no
+    // keyboard messages) reads every modifier as up: Ctrl, Shift and Alt
+    // would be submitted released over DebugInputHook's correct state. The
+    // keys reach ImGui from DebugInputHook in a Debug build; a release
+    // build's overlay (the welcome banner) takes no keys.
+    //
+    // The queue merges a run of mouse moves into the latest, and when full
+    // it drops the oldest mouse move first, then the oldest press, and a
+    // release or focus change only if nothing else is left: a lost
+    // button-up would leave ImGui holding the button.
+    // =========================================================================
+
+    namespace
+    {
+        struct PendingMessage
+        {
+            HWND hwnd;
+            UINT msg;
+            WPARAM wParam;
+            LPARAM lParam;
+        };
+
+        // A frame's worth is a few messages; the cap only matters if no
+        // frame drains for a while (see QueueMessage for what goes first).
+        constexpr std::size_t kMaxPendingMessages = 512;
+
+        std::mutex g_messageLock;
+        std::vector<PendingMessage> g_messages;
+
+        bool IsBackendMessage(UINT a_msg)
+        {
+            switch (a_msg) {
+            case WM_MOUSEMOVE:
+            case WM_NCMOUSEMOVE:
+            case WM_MOUSELEAVE:
+            case WM_NCMOUSELEAVE:
+            case WM_DESTROY:
+            case WM_LBUTTONDOWN: case WM_LBUTTONDBLCLK: case WM_LBUTTONUP:
+            case WM_RBUTTONDOWN: case WM_RBUTTONDBLCLK: case WM_RBUTTONUP:
+            case WM_MBUTTONDOWN: case WM_MBUTTONDBLCLK: case WM_MBUTTONUP:
+            case WM_XBUTTONDOWN: case WM_XBUTTONDBLCLK: case WM_XBUTTONUP:
+            case WM_MOUSEWHEEL:
+            case WM_MOUSEHWHEEL:
+            case WM_SETFOCUS:
+            case WM_KILLFOCUS:
+            case WM_DEVICECHANGE:
+                return true;
+            default:
+                return false;
+            }
+        }
+
+        bool IsMouseMove(UINT a_msg) { return a_msg == WM_MOUSEMOVE || a_msg == WM_NCMOUSEMOVE; }
+
+        // A release, a leave or a focus change: losing one leaves ImGui's
+        // state stuck (a held button, a hovered window, a focused game).
+        bool MustKeep(UINT a_msg)
+        {
+            switch (a_msg) {
+            case WM_LBUTTONUP: case WM_RBUTTONUP: case WM_MBUTTONUP: case WM_XBUTTONUP:
+            case WM_MOUSELEAVE: case WM_NCMOUSELEAVE:
+            case WM_SETFOCUS: case WM_KILLFOCUS:
+            case WM_DESTROY:
+                return true;
+            default:
+                return false;
+            }
+        }
+
+        void QueueMessage(const PendingMessage& a_message)
+        {
+            std::lock_guard lock(g_messageLock);
+            if (IsMouseMove(a_message.msg) && !g_messages.empty()) {
+                auto& last = g_messages.back();
+                if (last.msg == a_message.msg && last.hwnd == a_message.hwnd) {
+                    last = a_message;
+                    return;
+                }
+            }
+            if (g_messages.size() >= kMaxPendingMessages) {
+                auto victim = std::find_if(g_messages.begin(), g_messages.end(),
+                    [](const PendingMessage& m) { return IsMouseMove(m.msg); });
+                if (victim == g_messages.end()) {
+                    victim = std::find_if(g_messages.begin(), g_messages.end(),
+                        [](const PendingMessage& m) { return !MustKeep(m.msg); });
+                }
+                if (victim == g_messages.end()) {
+                    victim = g_messages.begin();
+                }
+                g_messages.erase(victim);
+            }
+            g_messages.push_back(a_message);
+        }
+
+        void ReplayMessages()
+        {
+            std::vector<PendingMessage> messages;
+            {
+                std::lock_guard lock(g_messageLock);
+                messages.swap(g_messages);
+            }
+            for (const auto& m : messages) {
+                ImGui_ImplWin32_WndProcHandler(m.hwnd, m.msg, m.wParam, m.lParam);
+            }
+        }
+    }
+
     ImGuiRenderer& ImGuiRenderer::GetSingleton()
     {
         static ImGuiRenderer instance;
@@ -80,6 +213,12 @@ namespace Huginn::UI
         }
 
         UnhookWndProc();
+        {
+            std::lock_guard lock(g_messageLock);
+            g_messages.clear();
+        }
+        s_wantCaptureMouse.store(false, std::memory_order_relaxed);
+        s_wantCaptureKeyboard.store(false, std::memory_order_relaxed);
 
         ImGui_ImplDX11_Shutdown();
         ImGui_ImplWin32_Shutdown();
@@ -149,16 +288,20 @@ namespace Huginn::UI
     {
         // Only process input if enabled
         if (s_instance && s_instance->m_inputEnabled) {
-            // Let ImGui handle the message first
-            if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam)) {
-                return true;  // ImGui consumed the message
+            // The window thread: io belongs to the render thread (see the
+            // comment at the top), so the message is queued for BeginFrame,
+            // and the capture answers are the last frame's.
+            static std::atomic<bool> s_firstMessageLogged{ false };
+            if (!s_firstMessageLogged.exchange(true, std::memory_order_relaxed)) {
+                logger::info("[ImGuiRenderer] First window message with ImGui ready (thread {})"sv, GetCurrentThreadId());
             }
 
-            // Check if ImGui wants to capture input
-            ImGuiIO& io = ImGui::GetIO();
+            if (IsBackendMessage(msg)) {
+                QueueMessage({ hWnd, msg, wParam, lParam });
+            }
 
             // Block mouse input from reaching the game if ImGui wants it
-            if (io.WantCaptureMouse) {
+            if (s_wantCaptureMouse.load(std::memory_order_relaxed)) {
                 switch (msg) {
                     case WM_LBUTTONDOWN:
                     case WM_LBUTTONUP:
@@ -173,7 +316,7 @@ namespace Huginn::UI
             }
 
             // Block keyboard input from reaching the game if ImGui wants it
-            if (io.WantCaptureKeyboard) {
+            if (s_wantCaptureKeyboard.load(std::memory_order_relaxed)) {
                 switch (msg) {
                     case WM_KEYDOWN:
                     case WM_KEYUP:
@@ -227,6 +370,9 @@ namespace Huginn::UI
         // is preserved between frames.
         m_context->OMGetRenderTargets(1, &m_savedRTV, &m_savedDSV);
 
+        // The window thread's messages, before the backend's NewFrame.
+        ReplayMessages();
+
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
@@ -240,6 +386,11 @@ namespace Huginn::UI
 
         ImGui::Render();
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+
+        // For WndProcHook's blocking, on the window thread.
+        const ImGuiIO& io = ImGui::GetIO();
+        s_wantCaptureMouse.store(io.WantCaptureMouse, std::memory_order_relaxed);
+        s_wantCaptureKeyboard.store(io.WantCaptureKeyboard, std::memory_order_relaxed);
 
         // Restore D3D11 render targets to what the game/other plugins expect
         if (m_savedRTV || m_savedDSV) {

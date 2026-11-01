@@ -119,7 +119,11 @@ namespace Huginn::Input
 
       /**
        * @brief Called each frame to handle deferred double-tap detection
-       * Must be called from the update loop
+       * Must be called from the update loop. Runs on UpdateHandler's
+       * InputEvent sink, as ProcessButton does: a game job thread in
+       * gameplay, the main thread in paused menus, a loading-screen thread
+       * in a load (UpdateLoop.cpp, THREADS above OnUpdate). A tap's slot
+       * callback (EquipManager::EquipSlot) fires from here.
        */
       void Update();
 
@@ -134,6 +138,14 @@ namespace Huginn::Input
 
       /// Process cycle key (4 or 5)
       void HandleCycleKey(int index, RE::ButtonEvent* button);
+
+      /// Whether the slot keys may act now (0.24.26): not in a loading
+      /// screen, the main menu, a pausing menu or a menu that takes the
+      /// controls, and the player has 3D
+      /// (HandEquipGate.h, SlotKeysBlockedBy). As such a state begins, the
+      /// pending taps and the hand equip gate's pending equip are dropped.
+      /// Transitions logged at debug (a drop at info). Input sink only.
+      bool SlotKeysLive();
 
       /// Perform a pending press-state reset (requested by SetKeyCodes).
       /// Must only run from ProcessButton/Update, i.e. from UpdateHandler's
@@ -208,5 +220,10 @@ namespace Huginn::Input
       // Last text-entry gate state seen by ProcessButton, for its transition
       // log. Input thread only.
       bool m_textEntryGated = false;
+
+      // Why the slot keys are off ("" = on): SlotKeysLive's last reading, for
+      // its transitions. Input thread only. Starts "on", so the first reading
+      // at the main menu logs (and drops nothing).
+      std::string_view m_slotKeysBlockedBy;
    };
 }

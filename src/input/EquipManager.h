@@ -1,6 +1,7 @@
 #pragma once
 
 #include "EquipHand.h"
+#include "HandEquipGate.h"
 #include "../ui/SlotTypes.h"
 #include "../slot/SlotSettings.h"
 // Note: std headers (functional) come from PCH via RE/Skyrim.h
@@ -16,8 +17,9 @@ namespace Huginn::Input
     *        selection (SelectionTracker)
     * @param formID The item the slot held
     * @param slotIndex The slot pressed (0-based)
+    * @return true when it opened a new pending selection (SelectionTracker::Select)
     */
-   using EquipCallback = std::function<void(RE::FormID formID, size_t slotIndex)>;
+   using EquipCallback = std::function<bool(RE::FormID formID, size_t slotIndex)>;
 
    /**
     * @brief Callback when fortify-crafting apparel is equipped (#65)
@@ -47,10 +49,36 @@ namespace Huginn::Input
        *   (core/PressGrace.h, fPressGraceMs): if the key's item changed just
        *   before or during the press, the press acts on the item shown before
        *   the change. Omitted (test harnesses, the slot capture) = no grace.
-       * @return true if equip succeeded
+       * @return true if equip succeeded -- for a hand equip (spell, scroll,
+       *   weapon, staff, torch) since 0.24.26: parked at the hand equip gate,
+       *   which equips on the main thread once the hand is not casting
+       *   (HandEquipGate.h). The press's bookkeeping (Remembrance, the
+       *   selection, the press grace's own-press note) is done here, at the
+       *   press, either way; a parked equip that then fails or is dropped
+       *   withdraws its selection.
+       * @param parked Set true when the equip was parked rather than done
+       *   (the debug harnesses log which).
+       *
+       * Thread: the slot callback's, i.e. UpdateHandler's InputEvent sink (a
+       * game job thread in gameplay, the main thread in paused menus, a
+       * loading-screen thread in a load: UpdateLoop.cpp, THREADS above
+       * OnUpdate); the debug harnesses call it from their own.
        */
       bool EquipSlot(size_t slotIndex, EquipHand hand,
-         std::optional<std::chrono::steady_clock::time_point> pressedAt = std::nullopt);
+         std::optional<std::chrono::steady_clock::time_point> pressedAt = std::nullopt,
+         bool* parked = nullptr);
+
+      /**
+       * @brief The hand equip gate's act: equip a parked request (0.24.26)
+       *
+       * Main thread only (HandEquipGate::Tick, under UpdateHandler's mutex).
+       * Marks the equip as Huginn's, logs both hands' casters and the
+       * behaviour graph, equips, and redraws when the weapon was drawn
+       * ([Equip] bRedrawAfterHandEquip). A weapon swap whose other-hand
+       * unequip has not applied yet comes back as `retry`: the gate re-parks
+       * it for the next frame (EquipWeapon's SKSE-task retry, on the gate).
+       */
+      HandEquipResult ActOnHandEquip(const HandEquipRequest& request);
 
       /**
        * @brief Update cached slot content (called from update loop)
@@ -95,11 +123,13 @@ namespace Huginn::Input
       static constexpr uint8_t kMaxHandSwapAttempts = 2;
 
       /// Equip a spell to the specified hand
-      bool EquipSpellToHand(RE::SpellItem* spell, bool leftHand);
+      /// @param redraw The gate's act only (main thread): the last equip of
+      ///   the press, so redraw after it if the weapon was drawn before it.
+      bool EquipSpellToHand(RE::SpellItem* spell, bool leftHand, bool redraw = false);
 
       /// Equip a scroll (an inventory item) to the specified hand, so the
       /// game re-arms it from the stack after each cast
-      bool EquipScrollToHand(RE::ScrollItem* scroll, bool leftHand);
+      bool EquipScrollToHand(RE::ScrollItem* scroll, bool leftHand, bool redraw = false);
 
       /// Use a potion by FormID
       bool UsePotion(RE::FormID formID);
@@ -112,8 +142,23 @@ namespace Huginn::Input
       ///   waited for the engine to apply the unequip that must precede a swap
       ///   to the other hand. Set only by the deferred retry this method
       ///   schedules; bounds it to kMaxHandSwapAttempts.
+      /// @param redraw As EquipSpellToHand.
+      /// @param retryOnGate The gate's act only: instead of an SKSE task, the
+      ///   swap's retry is asked for here (set true) and the gate re-parks it
+      ///   for the next frame, on the main thread. Null: the SKSE task.
       bool EquipWeapon(RE::FormID formID, bool leftHand = false, uint16_t uniqueID = 0,
-                       uint8_t handSwapAttempt = 0);
+                       uint8_t handSwapAttempt = 0, bool redraw = false, bool* retryOnGate = nullptr);
+
+      /// Wheeler-Refined's redraw after an equip from its wheel: when the
+      /// weapon was drawn just before the equip, DrawWeaponMagicHands(true).
+      /// Gated by [Equip] bRedrawAfterHandEquip. Main thread (the gate's act).
+      static void RedrawIfWasDrawn(RE::PlayerCharacter* player, bool wasDrawn, const char* what);
+
+      /// The request EquipSlot parks at the gate for a hand equip, from what
+      /// the press resolved (the form, its stack, the page, the moment).
+      [[nodiscard]] static HandEquipRequest MakeHandEquipRequest(size_t slotIndex, size_t page, EquipHand hand,
+         const UI::SlotContent& content, RE::FormID formID, bool occupiesBoth, bool remembers,
+         std::chrono::steady_clock::time_point pressedAt);
 
       /// Equip ammo (arrow/bolt) by FormID
       bool EquipAmmo(RE::FormID formID);

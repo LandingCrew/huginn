@@ -2,6 +2,7 @@
 
 #include "DropAheadProbe.h"  // GameSeconds: the game clock
 #include "Profiling.h"
+#include "core/HandEquipGate.h"  // CastPhaseName, CasterStateName
 #include "core/HandModelCheck.h"
 #include "learning/EquipSourceTracker.h"
 
@@ -58,7 +59,15 @@ namespace Huginn::State::HandModelProbe
          double sinceCast = -1.0;    // seconds before the swap; -1 = none in kRecentSec
          std::string castWhat;       // the hand and caster state of that last cast
          double sinceAttack = -1.0;
+         // The hand went empty because what it held was used up or removed:
+         // the last scroll of a stack cast, a spell no longer known. The
+         // graph may read magic for a moment after (JudgeGraph).
+         bool emptiedByUse = false;
       };
+
+      // How long after a hand is emptied by use an empty hand under the
+      // magic hand type is not judged (JudgeGraph).
+      constexpr double kEmptiedByUseGraceSec = 3.0;
 
       struct Hand
       {
@@ -66,6 +75,7 @@ namespace Huginn::State::HandModelProbe
          std::string objectName;  // taken when it entered the hand
          Swap swap;
          Core::FaultWatch watch;
+         Core::GraphHandWatch graph{ Core::kGraphMismatchOnsetSec };  // the graph's hand type vs the hand (0.24.26)
       };
 
       // Hook thread (main) only.
@@ -124,33 +134,13 @@ namespace Huginn::State::HandModelProbe
          return "?";
       }
 
-      // A caster state that is part of a cast, or "" when idle. A charged
-      // fire-and-forget spell held in the hand sits in kReady, not kCharging:
-      // counting only kCharging and kCasting missed the swap made from the
-      // wheel with a charged spell still held (2026-10-18).
+      // A caster state that is part of a cast, or "" when idle. The names
+      // (and why 3 is "charged, held" and 4 "just released") live in
+      // core/HandEquipGate.h; since 0.24.26 states 7-9 (CommonLib: unnamed,
+      // "Interrupt", "Interrupt/Deselect") are named, not counted as idle.
       std::string_view CastPhaseName(RE::MagicCaster::State state)
       {
-         switch (state) {
-         case RE::MagicCaster::State::kUnk01: return "starting";
-         case RE::MagicCaster::State::kUnk02: return "starting a charge";
-         case RE::MagicCaster::State::kReady: return "charged, held";
-         // kUnk04: CommonLib v3.7.0 guesses "PreStart?" (MagicCaster.h:35),
-         // and this read "about to start" until 0.23.50. The LoreRim log of
-         // 2026-10-28 puts it after the release: the player charged Conjure
-         // Skeletal Hero from 13:27:50.5 (magicka 95 -> 19 by 13:27:51.4,
-         // the charge done), the last non-idle state the probe saw was
-         // kUnk04 at ~13:27:52.56 (a swap at 13:27:58.359 logged "last cast
-         // 5.8 s before"), the summon effect was up at 13:27:52.684 and the
-         // skeleton appeared at 13:27:52.803. All three swaps of that session
-         // logged kUnk04 as the last cast state (two after that cast, one
-         // 0.7 s after Circle of Strength). So it is the release, between
-         // letting go and the spell landing; the name is still a reading of
-         // the log, not of the engine.
-         case RE::MagicCaster::State::kUnk04: return "just released";
-         case RE::MagicCaster::State::kCharging: return "charging";
-         case RE::MagicCaster::State::kCasting: return "casting";
-         default: return {};
-         }
+         return Core::CastPhaseName(static_cast<std::uint32_t>(state));
       }
 
       // The behaviour graph's view of the equip and the hands -- what the
@@ -423,6 +413,12 @@ namespace Huginn::State::HandModelProbe
                swap.sinceCast = SinceOrNone(g_lastCastAt, nowSec);
                if (swap.sinceCast >= 0.0) swap.castWhat = std::format("{} hand {}", kSideName[g_lastCastSide], g_lastCastWhat);
                swap.sinceAttack = SinceOrNone(g_lastAttackAt, nowSec);
+               if (id == 0 && hand.object != 0) {
+                  auto* before = RE::TESForm::LookupByID(hand.object);
+                  auto* spell = before ? before->As<RE::SpellItem>() : nullptr;
+                  swap.emptiedByUse = before && (before->Is(RE::FormType::Scroll) ||
+                                                 (before->Is(RE::FormType::Spell) && spell && !player->HasSpell(spell)));
+               }
             }
             hand.object = id;
             hand.objectName = obj ? FormLabel(obj) : std::string();
@@ -446,6 +442,81 @@ namespace Huginn::State::HandModelProbe
       {
          logger::info("[HandModel] {} hand: the '{}' fault ended, {} after {:.1f} s ({} sheathes in between)"sv,
             kSideName[side], Core::ModelStateName(ev.state), how, ev.faultSec, ev.poseChanges);
+      }
+
+      // ---- the behaviour graph against the hand (0.24.26) ---------------
+
+      // What the hand holds, for Core::JudgeGraphHand. Not judged (Other): a
+      // scroll (its graph type is not checked here), a torch, a shield, the
+      // unarmed weapon form (graph type 0 by right), and the left hand of a
+      // two-hander, bow or crossbow (the engine reports it in both hands).
+      Core::HandHeld HeldKind(const RE::TESForm* obj, const RE::TESForm* other, int side)
+      {
+         if (!obj) return Core::HandHeld::Empty;
+         if (obj->Is(RE::FormType::Spell)) return Core::HandHeld::Spell;
+         if (const auto* weapon = obj->As<RE::TESObjectWEAP>()) {
+            if (weapon->IsHandToHandMelee()) return Core::HandHeld::Other;
+            if (side == kLeft && obj == other && BothHanded(weapon)) return Core::HandHeld::Other;
+            return Core::HandHeld::Weapon;
+         }
+         return Core::HandHeld::Other;
+      }
+
+      std::string LastCastText(double nowSec)
+      {
+         const double since = SinceOrNone(g_lastCastAt, nowSec);
+         return since < 0.0 || g_lastCastWhat.empty()
+            ? Ago(since)
+            : std::format("{} ({} hand {})", Ago(since), kSideName[g_lastCastSide], g_lastCastWhat);
+      }
+
+      // Drawn and settled: the weapon state drawn and the graph neither
+      // equipping nor unequipping. The watch sees anything else as not drawn,
+      // which restarts an unreported mismatch (Core::BasicFaultWatch).
+      void JudgeGraph(RE::PlayerCharacter* player, double nowSec)
+      {
+         using K = Core::GraphHandWatch::EventKind;
+         bool equipping = false;
+         bool unequipping = false;
+         player->GetGraphVariableBool("IsEquipping", equipping);
+         player->GetGraphVariableBool("IsUnequipping", unequipping);
+         const bool drawn = WeaponState(player) == RE::WEAPON_STATE::kDrawn;
+         const auto pose = !drawn                      ? Core::HandPose::Sheathed
+                         : (equipping || unequipping) ? Core::HandPose::Moving
+                                                      : Core::HandPose::Drawn;
+         std::array<const RE::TESForm*, 2> objects{ player->GetEquippedObject(false), player->GetEquippedObject(true) };
+         constexpr std::array<const char*, 2> kTypeVar{ "iRightHandType", "iLeftHandType" };
+         for (int side = 0; side < 2; ++side) {
+            auto& hand = g_hands[side];
+            const auto held = HeldKind(objects[side], objects[1 - side], side);
+            std::int32_t type = 0;
+            const bool read = player->GetGraphVariableInt(kTypeVar[side], type);
+            // Key 0 = not judged: it ends a reported mismatch ("swapped out").
+            const std::uint32_t key = (held == Core::HandHeld::Other || !read) ? 0
+                                    : held == Core::HandHeld::Empty            ? Core::kEmptyHandKey
+                                                                               : objects[side]->GetFormID();
+            auto state = read ? Core::JudgeGraphHand(held, type) : Core::GraphHand::Agrees;
+            // A scroll stack cast to nothing, or a spell removed: the graph
+            // gets a moment to follow before an empty hand under magic counts.
+            if (state == Core::GraphHand::EmptyAsMagic && hand.swap.emptiedByUse && hand.swap.at >= 0.0 &&
+                nowSec - hand.swap.at < kEmptiedByUseGraceSec) {
+               state = Core::GraphHand::Agrees;
+            }
+            const auto ev = hand.graph.Update(key, pose, 0, state, nowSec);
+            if (ev.kind == K::Onset) {
+               logger::warn("[HandModel] {} hand: the behaviour graph disagrees with the hand for {:.1f} s while drawn "
+                            "and settled -- {} | holds {} | graph: {} | {} | last cast now {} | {:.0f} s since the load"sv,
+                  kSideName[side], ev.faultSec, Core::GraphHandName(ev.state), FormLabel(objects[side]),
+                  GraphState(player), DescribeSwap(hand.swap, nowSec), LastCastText(nowSec),
+                  g_loadedAt >= 0.0 ? nowSec - g_loadedAt : -1.0);
+            } else if (ev.kind == K::Recovered || ev.kind == K::SwappedOut) {
+               logger::info("[HandModel] {} hand: the graph mismatch ({}) ended, {} after {:.1f} s ({} sheathes in between) | graph: {}"sv,
+                  kSideName[side], Core::GraphHandName(ev.state),
+                  ev.kind == K::Recovered ? "the graph back in step with the hand"
+                                          : "the hand's content changed (or is no longer judged)",
+                  ev.faultSec, ev.poseChanges, GraphState(player));
+            }
+         }
       }
 
       void JudgeHands(RE::PlayerCharacter* player, double nowSec, Core::HandPose pose)
@@ -564,7 +635,10 @@ namespace Huginn::State::HandModelProbe
          // (no load message): the game clock ran on through it, so pending
          // onsets start over here. Reported faults stand (Restart).
          g_worldGap = false;
-         for (auto& hand : g_hands) hand.watch.Restart();
+         for (auto& hand : g_hands) {
+            hand.watch.Restart();
+            hand.graph.Restart();
+         }
          g_stuck.Restart();
       }
 
@@ -576,12 +650,30 @@ namespace Huginn::State::HandModelProbe
       if (g_lastJudge >= 0.0 && nowSec - g_lastJudge < kJudgeIntervalSec) return;
       g_lastJudge = nowSec;
       JudgeHands(player, nowSec, pose);
+      JudgeGraph(player, nowSec);
    }
 
    void SetGameLoaded(bool loaded) noexcept
    {
       g_loadGeneration.fetch_add(1, std::memory_order_acq_rel);
       g_gameLoaded.store(loaded, std::memory_order_release);
+   }
+
+   std::string DescribeForEquip(RE::PlayerCharacter* player)
+   {
+      if (!player) return "no player";
+      auto caster = [&](RE::MagicSystem::CastingSource source) -> std::string {
+         const auto* c = player->GetMagicCaster(source);
+         if (!c) return "no caster";
+         const auto state = static_cast<std::uint32_t>(c->state.get());
+         const auto* spell = c->currentSpell;
+         return std::format("{} ({})", Core::CasterStateName(state), spell ? FormLabel(spell) : std::string("no spell"));
+      };
+      const auto* main = RE::Main::GetSingleton();
+      return std::format("casters: right {}, left {} | weapon state {} | graph: {} | thread {} (the game's main thread: {})",
+         caster(RE::MagicSystem::CastingSource::kRightHand), caster(RE::MagicSystem::CastingSource::kLeftHand),
+         WeaponStateName(WeaponState(player)), GraphState(player), SKSE::WinAPI::GetCurrentThreadID(),
+         main ? std::to_string(main->threadID) : std::string("?"));
    }
 
    std::vector<std::string> DescribeHands(RE::PlayerCharacter* player)

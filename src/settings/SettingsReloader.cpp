@@ -22,6 +22,7 @@
 #include "ui/IntuitionMenu.h"
 #include "ui/DebugSettings.h"
 #include "input/KeybindingSettings.h"
+#include "input/EquipSettings.h"
 #include "input/InputHandler.h"
 #include "candidate/CandidateGenerator.h"
 #include "settings/ShippedDefaults.h"
@@ -183,6 +184,10 @@ namespace Huginn::Settings
         keybindings.LoadFromIni(mainIni);
         Input::InputHandler::GetSingleton().SetKeyCodes(keybindings);
         logger::debug("[SettingsReloader]   [Keybindings] loaded"sv);
+
+        // [Equip] (0.24.26): read at the next hand equip.
+        Input::EquipSettings::GetSingleton().LoadFromIni(mainIni);
+        logger::debug("[SettingsReloader]   [Equip] loaded"sv);
 
         // Read-only comes from [Widget] (dMenu's file), not from the keybindings
         // it suppresses -- so it must be pushed AFTER the dMenu INI is loaded

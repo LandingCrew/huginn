@@ -1893,6 +1893,18 @@ start before R8 unless it blocks play.
 - **uid87 ExtraHealth read 0, then 1.00, then 1.30** (LoreRim Long Bow). Watch
   only; close if it stays quiet.
 - **A torch on a Huginn Wheeler wheel** is unverified (XS).
+- **0.24.26, the hand equip gate** (Known bugs, below). In game: press a spell
+  key while holding a charged spell in that hand -- the swap waits for the
+  release (an info `[HandEquip] ... went after N ms held` line), and a charge
+  held past 3 s drops the press (`[HandEquip] ... dropped ... still charged,
+  held after 3.0 s`); the cast is never cut short. Watch for a `went ahead
+  through` debug line (a caster state 7-9 that did not clear in 250 ms: is
+  one of them a resting state?). Then draw a weapon from
+  the inventory and watch for a `[HandModel] ... behaviour graph disagrees`
+  warning (there should be none). In the inventory the number keys must reach
+  the favourites, not Huginn. Debug log: `[EquipCaller]` names the thread and
+  call path of every hand change Huginn did not make (the load-time Fireball
+  drop below).
 
 The old engine's pending checks (cures reach the page, Cure Greater over plain
 Cure Disease, useful life, the Phase 3 comparison) test code that is frozen.
@@ -1930,6 +1942,40 @@ perks, level -- stay out (CLAUDE.md, Forbidden Information).
   R3 use `steady_clock`; fix the old ones when they become needs.
 
 The transform cache and the 37 misread races: done in R0.
+
+**Fixed in v0.24.26 -- a slot key swapped a spell over a charged one.**
+2026-10-31 00:38 (LoreRim): a tap fired 0.6 s into a Fireball charge and put
+Calm Touch in the right hand; the charge was cancelled, the caster went idle
+with no release, and from then on the behaviour graph ignored equips
+(iRightHandType stayed 9, weapons stayed on the sheath node) until the game
+froze. A slot key's equip into a hand (spell, scroll, weapon, staff, torch)
+is now parked and done on the main thread once the player lets go of the
+cast -- both hands checked unless a right-hand equip leaves the left alone
+-- and never interrupts it: a cast still going after 3 s drops the press
+(a first cut interrupted at 1 s, which only split the 00:38 sequence over
+two frames). Caster states 7-9 are waited on 250 ms at most; both waits run
+on the game clock (`core/HandEquipGate.h`, `input/HandEquipGate`). A shield
+waits as a left-hand item. While an equip waits, its selection is held
+undecided and its confirm window, Remembrance capture and own-press note
+restart from the equip (`core/SelectionGate.h`). If the hook stops ticking
+with an equip parked for 5 s, an error line says so and the keys equip inline
+until it runs again. Potions, food,
+poisons, ammo and other apparel do not wait. After a hand equip while drawn
+(kDrawn, not sheathing) and with both casters idle, the hands are redrawn, as
+Wheeler-Refined does (`[Equip] bRedrawAfterHandEquip`).
+The slot keys, and a tap still waiting out the double-tap window, now do
+nothing in a loading screen, the main menu, a pausing menu, a menu that takes
+the controls (favourites, dialogue, crafting) or without the
+player's 3D, and the key goes to the menu (the inventory's favourites). New
+diagnostics: a debug line of both casters and the graph before each hand
+equip; caster states 7-9 named (they read as idle before); a
+`[HandModel]` warning when the graph's hand type clearly disagrees with the
+hand for 1 s, drawn and settled; and `[EquipCaller]`, the thread and stack
+of every hand item taken off not by Huginn. Open: the Fireball that leaves the
+right hand 3-6 s after every load of one save (no Huginn path logs it; the
+`[EquipCaller]` line should name who), and the other-hand weapon swap and
+bows still equip as before (Wheeler unequips unqueued and cleans both hands
+first).
 
 **Old engine, frozen (R8 replaces it; left as they are because old-engine
 scoring is frozen).** Found in the LoreRim R3 session (2026-10-09); the

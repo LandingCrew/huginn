@@ -84,6 +84,22 @@ namespace Huginn::Update
       }
 
       /**
+       * @brief RunExclusive without waiting: run `fn` under the update mutex
+       * if it is free right now, and return whether it ran.
+       * For the main thread (the hand equip gate, 0.24.26), which must not
+       * block on a tick running elsewhere: a busy mutex means try again next
+       * frame. Never call it from inside a tick (the mutex is not recursive).
+       */
+      template <typename Fn>
+      bool TryRunExclusive(Fn&& fn)
+      {
+         std::unique_lock<std::mutex> lock(m_mutex, std::try_to_lock);
+         if (!lock.owns_lock()) return false;
+         std::forward<Fn>(fn)();
+         return true;
+      }
+
+      /**
        * @brief Enable or disable updates
        * @param enabled true to enable updates, false to disable
        */

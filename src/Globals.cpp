@@ -6,6 +6,7 @@
 #include "override/OverrideManager.h"
 #include "slot/SlotAllocator.h"
 #include "slot/Remembrance.h"
+#include "input/HandEquipGate.h"
 #include "learning/SelectionTracker.h"
 #include "learning/SelectionLogV3.h"
 #include "pipeline/PipelineCoordinator.h"
@@ -125,6 +126,10 @@ void ResetPipelineSubsystems() {
     Slot::SlotLocker::GetSingleton().Reset();
     Slot::Remembrance::GetSingleton().Reset();
 
+    // An equip parked for a busy hand belongs to the abandoned session too
+    // (0.24.26); dropped first, so its selection is withdrawn before the
+    // tracker forgets everything anyway.
+    Input::HandEquipGate::GetSingleton().Drop("reset (a game load or hg reset all)", /*force=*/true);
     // A selection pending across a load belongs to the abandoned session.
     Learning::SelectionTracker::GetSingleton().Clear();
     // R4: the v3 log's episodes, pending picks and menu context likewise.
