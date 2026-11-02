@@ -36,7 +36,11 @@
 //     constant ones (enchanted gear, constant abilities; 0.24.27): weighed by
 //     duration/3600 against a ring's constant magnitude, a 60 s Resist Fire
 //     potion read about 0.08 and never outranked anything, so a timed effect
-//     is ranked among timed effects (potions, spells, scrolls, food). A graded
+//     is ranked among timed effects (potions, spells, scrolls, food). A row
+//     of an hour or more already reads its magnitude, gear's scale, so it
+//     stays with gear; a column with fewer than kMinTimedGroup timed items
+//     grades its timed rows against gear, as before (a crafted potion or a
+//     perk row is graded against a population it is not in). A graded
 //     column with no magnitude has an unknown strength: through a script route
 //     (keyword, name, description, override) it is kNeutralStrength = 0.5
 //     (times D where the rule has one), never the top; through the engine's
@@ -230,6 +234,14 @@ namespace Huginn::Core::Effect
     /// within its vanilla type instead (whose population holds it too).
     inline constexpr std::size_t kMinSubtypeGroup = 20;
 
+    /// The smallest timed population a timed Level row grades in. Under it
+    /// the row grades against the column's constant population (gear), as
+    /// it did before 0.24.27: an empty or one-item population would read 1.0
+    /// for any row graded against it but not in it (a crafted potion, a perk
+    /// row). LoreRim's resist columns hold about 20 timed items and the
+    /// skill fortifies 4, so the bar is low on purpose.
+    inline constexpr std::size_t kMinTimedGroup = 3;
+
     /// A kept row that fires only with a perk (core/EffectConditions.h):
     /// carried beside cap(i), not in it, so the catalog -- built at the main
     /// menu, before there is a player -- stays the same for every character.
@@ -348,9 +360,15 @@ namespace Huginn::Core::Effect
         };
         [[nodiscard]] static std::vector<ColumnRaw> ColumnRaws(const ItemMapping& m);
 
-        /// The population a kept row grades in: the timed one for a timed
+        /// The population a kept row belongs to: the timed one for a timed
         /// Level row (KeptRow::timed, 0.24.27), group 0 otherwise.
         [[nodiscard]] static std::uint32_t RowGroup(const KeptRow& r) noexcept;
+        /// The population a kept row grades in on column `c`: its RowGroup,
+        /// except a timed row on a column whose timed population is under
+        /// kMinTimedGroup, which grades in group 0.
+        [[nodiscard]] std::uint32_t GradeGroup(Col c, const KeptRow& r) const;
+        /// Must not collide with the grouped populations' ids in
+        /// EffectMapper.cpp (static_assert there).
         static constexpr std::uint32_t kGroupTimed = 0x20000000u;
 
     private:

@@ -284,19 +284,102 @@ TEST_CASE("effect mapper: a timed level grades among timed effects, apart from c
         auto& a = w.Item(Kind::Armour, "Ring");
         World::Fx(a, resist, mag);
     }
-    // Potions, timed: 50 x 60/3600 = 0.83 and 20 x 300/3600 = 1.67. Pooled
-    // with the gear, the first read 1/5 and the second 2/5.
+    // Potions, timed: 50 x 60/3600 = 0.83, 20 x 300/3600 = 1.67 and
+    // 30 x 600/3600 = 5. Pooled with the gear, the first read 1/6.
     auto& p1 = w.Item(Kind::Potion, "Resist Fire, 60 s");
     World::Fx(p1, resist, 50, 60);
     auto& p2 = w.Item(Kind::Potion, "Resist Fire, 300 s");
     World::Fx(p2, resist, 20, 300);
+    auto& p3 = w.Item(Kind::Potion, "Resist Fire, 600 s");
+    World::Fx(p3, resist, 30, 600);
     const auto r = w.Build();
     CHECK(CapOf(r, 0, Col::resist_fire) == doctest::Approx(1.0 / 3.0));
     CHECK(CapOf(r, 1, Col::resist_fire) == doctest::Approx(2.0 / 3.0));
     CHECK(CapOf(r, 2, Col::resist_fire) == doctest::Approx(1.0));
-    CHECK(CapOf(r, 3, Col::resist_fire) == doctest::Approx(0.5));
-    CHECK(CapOf(r, 4, Col::resist_fire) == doctest::Approx(1.0));
+    CHECK(CapOf(r, 3, Col::resist_fire) == doctest::Approx(1.0 / 3.0));
+    CHECK(CapOf(r, 4, Col::resist_fire) == doctest::Approx(2.0 / 3.0));
+    CHECK(CapOf(r, 5, Col::resist_fire) == doctest::Approx(1.0));
     CHECK(CapOf(r, 3, Col::resist) == CapOf(r, 3, Col::resist_fire));   // the family follows its specific
+    CHECK(r.pops.Size(Col::resist_fire, 0) == 3);
+    CHECK(r.pops.Size(Col::resist_fire, Populations::kGroupTimed) == 3);
+}
+
+TEST_CASE("effect mapper: a level of an hour or more grades with gear, its own scale")
+{
+    World w;
+    const auto resist = w.Add(Mgef(kArchValueModifier, "FireResist", "Resist Fire"));
+    for (const float mag : { 30.0f, 50.0f, 70.0f }) {
+        auto& a = w.Item(Kind::Armour, "Ring");
+        World::Fx(a, resist, mag);
+    }
+    auto& hour = w.Item(Kind::Food, "Resist Fire, an hour");
+    World::Fx(hour, resist, 40, 3600);           // 40 x 3600/3600 = 40
+    auto& forever = w.Item(Kind::Potion, "Resist Fire, sentinel");
+    World::Fx(forever, resist, 60, 99999999);    // clipped to 3600: 60
+    const auto r = w.Build();
+    // One population, 30 40 50 60 70: neither row tops a timed population.
+    CHECK(r.pops.Size(Col::resist_fire, 0) == 5);
+    CHECK(r.pops.Size(Col::resist_fire, Populations::kGroupTimed) == 0);
+    CHECK(CapOf(r, 3, Col::resist_fire) == doctest::Approx(2.0 / 5.0));
+    CHECK(CapOf(r, 4, Col::resist_fire) == doctest::Approx(4.0 / 5.0));
+    CHECK(CapOf(r, 1, Col::resist_fire) == doctest::Approx(3.0 / 5.0));
+}
+
+TEST_CASE("effect mapper: too few timed items grade against gear; so does a perk row graded outside its population")
+{
+    World w;
+    const auto fire = w.Add(Mgef(kArchValueModifier, "FireResist", "Resist Fire"));
+    const auto frost = w.Add(Mgef(kArchValueModifier, "FrostResist", "Resist Frost"));
+    for (const float mag : { 30.0f, 50.0f, 70.0f }) {
+        auto& a = w.Item(Kind::Armour, "Ring");
+        World::Fx(a, fire, mag);
+    }
+    for (const float mag : { 40.0f, 60.0f }) {
+        auto& a = w.Item(Kind::Armour, "Frost Ring");
+        World::Fx(a, frost, mag);
+    }
+    // The column's only timed item: alone in its population it would read 1.0.
+    auto& p = w.Item(Kind::Potion, "Resist Fire, 60 s");
+    World::Fx(p, fire, 50, 60);
+    const auto r = w.Build();
+    REQUIRE(r.pops.Size(Col::resist_fire, Populations::kGroupTimed) < kMinTimedGroup);
+    CHECK(CapOf(r, 5, Col::resist_fire) == doctest::Approx(1.0 / 3.0));  // below every ring, present
+
+    // A timed perk row on a column no timed item has (empty timed population):
+    // graded against the frost rings, not at the top.
+    KeptRow row;
+    row.col = Col::resist_frost;
+    row.raw = 0.5f;
+    row.graded = true;
+    row.timed = true;
+    ItemMapping m;
+    m.perkRows.push_back(PerkRow{ row, { { 0x1234u } } });
+    const auto perks = GradePerkRows(m, r.pops);
+    REQUIRE(perks.size() == 1);
+    CHECK(perks[0].v == doctest::Approx(1.0 / 2.0));
+}
+
+TEST_CASE("effect mapper: one item in both populations of a column takes the better grade")
+{
+    World w;
+    const auto resist = w.Add(Mgef(kArchValueModifier, "FireResist", "Resist Fire"));
+    for (const float mag : { 30.0f, 50.0f, 70.0f }) {
+        auto& a = w.Item(Kind::Armour, "Ring");
+        World::Fx(a, resist, mag);
+    }
+    for (auto [mag, dur] : { std::pair{ 50.0f, 60u }, std::pair{ 20.0f, 300u }, std::pair{ 30.0f, 600u } }) {
+        auto& p = w.Item(Kind::Potion, "Resist Fire");
+        World::Fx(p, resist, mag, dur);
+    }
+    // An instant 40 (group 0) and 20 x 600/3600 = 3.33 (timed).
+    auto& s = w.Item(Kind::Spell, "Fire Ward");
+    World::Fx(s, resist, 40);
+    World::Fx(s, resist, 20, 600);
+    const auto r = w.Build();
+    CHECK(r.pops.Size(Col::resist_fire, 0) == 4);                           // 30 40 50 70
+    CHECK(r.pops.Size(Col::resist_fire, Populations::kGroupTimed) == 4);    // 0.83 1.67 3.33 5
+    CHECK(CapOf(r, 6, Col::resist_fire) == doctest::Approx(3.0 / 4.0));     // max(2/4, 3/4)
+    CHECK(CapOf(r, 1, Col::resist_fire) == doctest::Approx(3.0 / 4.0));     // ring 50 among 30 40 50 70
 }
 
 TEST_CASE("effect mapper: sentinels -- full restore and permanent durations")

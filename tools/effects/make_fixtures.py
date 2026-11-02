@@ -418,6 +418,9 @@ def rule_of(c):
     return 'P'
 
 
+MIN_TIMED_GROUP = 3  # EffectMapper.h kMinTimedGroup
+
+
 def clip_dur(d):
     return 3600.0 if d >= 86400 else min(float(d), 3600.0)
 
@@ -451,8 +454,9 @@ def row_quantity(col, kr, constant):
         full = col in ('restore_health', 'restore_magicka', 'restore_stamina') and kr['mag'] >= 9999
     elif rule == 'Level':
         raw, graded = (mag if (constant or d == 0) else mag * clip_dur(d) / 3600.0), True
-        # 0.24.27: a timed Level row grades within its column's timed population
-        timed = not (constant or d == 0)
+        # 0.24.27: a timed Level row grades within its column's timed population;
+        # a row of an hour or more reads its magnitude (gear's scale) and stays with gear
+        timed = not (constant or d == 0 or clip_dur(d) >= 3600.0)
     elif rule == 'PD':
         post = dfac(d)
     elif rule == 'PG':
@@ -535,6 +539,8 @@ def expected_values(items):
             for kr, c in eligible_cols(it):
                 raw, post, graded, full = row_quantity(c, kr, it['constant'])
                 key = (c, kr['_timed'][c])
+                if key[1] and len(pops.get(key, [])) < MIN_TIMED_GROUP:
+                    key = (c, False)  # too few timed items: graded against gear, as before
                 if full:
                     v = 1.0
                 elif graded and not raw > 0:
