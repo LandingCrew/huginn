@@ -14,10 +14,10 @@ namespace Huginn::Input
    InputHandler::InputHandler()
    {
       // Default key codes (DirectInput scancodes)
-      // Layout: [slot1-10, cyclePrev, cycleNext, toggle]
+      // Layout: [slot1-10, cyclePrev, cycleNext, reset]
       // Named constants, not literals: the array has 13 entries and listing only
-      // 12 left the toggle value-initialised to 0, which reads as UNBOUND rather
-      // than as TOGGLE_KEY until SetKeyCodes runs.
+      // 12 left the reset key value-initialised to 0, which reads as UNBOUND rather
+      // than as RESET_KEY until SetKeyCodes runs.
       m_keyCodes = {
          KeybindingDefaults::SLOT1_KEY, KeybindingDefaults::SLOT2_KEY,
          KeybindingDefaults::SLOT3_KEY, KeybindingDefaults::SLOT4_KEY,
@@ -25,7 +25,7 @@ namespace Huginn::Input
          KeybindingDefaults::SLOT7_KEY, KeybindingDefaults::SLOT8_KEY,
          KeybindingDefaults::SLOT9_KEY, KeybindingDefaults::SLOT10_KEY,
          KeybindingDefaults::PREV_PAGE_KEY, KeybindingDefaults::NEXT_PAGE_KEY,
-         KeybindingDefaults::TOGGLE_KEY };
+         KeybindingDefaults::RESET_KEY };
 
       // Initialize state
       m_frameTime = std::chrono::steady_clock::now();
@@ -47,7 +47,7 @@ namespace Huginn::Input
       m_keyCodes[9] = settings.slot10Key;
       m_keyCodes[10] = settings.prevPageKey;
       m_keyCodes[11] = settings.nextPageKey;
-      m_keyCodes[12] = settings.toggleKey;
+      m_keyCodes[12] = settings.resetKey;
 
       // Request an input-state reset to prevent stale press/hold from misfiring
       // after rebind (e.g. old key held → rebind → new key sees ghost state).
@@ -61,7 +61,7 @@ namespace Huginn::Input
       // Warn about duplicate key codes (higher-index slot is silently unreachable)
       for (size_t i = 0; i < m_keyCodes.size(); ++i) {
       // 0 means "unbound", not a scancode — two unbound actions are not a clash.
-      if (m_keyCodes[i] == KeybindingDefaults::TOGGLE_DISABLED) {
+      if (m_keyCodes[i] == KeybindingDefaults::RESET_DISABLED) {
         continue;
       }
       for (size_t j = i + 1; j < m_keyCodes.size(); ++j) {
@@ -72,11 +72,11 @@ namespace Huginn::Input
       }
       }
 
-      logger::debug("[InputHandler] Key codes set: slots={},{},{},{},{},{},{},{},{},{} cycle={},{} toggle={}"sv,
+      logger::debug("[InputHandler] Key codes set: slots={},{},{},{},{},{},{},{},{},{} cycle={},{} reset={}"sv,
       settings.slot1Key, settings.slot2Key, settings.slot3Key, settings.slot4Key,
       settings.slot5Key, settings.slot6Key, settings.slot7Key, settings.slot8Key,
       settings.slot9Key, settings.slot10Key, settings.prevPageKey, settings.nextPageKey,
-      settings.toggleKey);
+      settings.resetKey);
    }
 
    void InputHandler::ConsumePendingStateReset()
@@ -146,8 +146,8 @@ namespace Huginn::Input
       // naming, renaming an enchanted item) delivers characters as CharEvents,
       // so clearing userEvent below does NOT stop the character being typed —
       // but the bound action would still fire. That was survivable when every
-      // binding was a digit or punctuation; the default toggle is now a letter,
-      // so typing "player.additem" would flicker the widget on every 'x'. The
+      // binding was a digit or punctuation; the default reset key is a letter,
+      // so typing "player.additem" would reset the widget on every 'x'. The
       // digits have the same problem: typing a FormID would equip slots.
       //
       // Logged on the transition only, both ways: otherwise the gate is
@@ -184,8 +184,8 @@ namespace Huginn::Input
         m_keyCodes[0], m_keyCodes[1], m_keyCodes[2], m_keyCodes[3], m_keyCodes[4],
         m_keyCodes[5], m_keyCodes[6], m_keyCodes[7], m_keyCodes[8], m_keyCodes[9],
         m_keyCodes[10], m_keyCodes[11]);
-      logger::info("[InputHandler] Visibility toggle: {}"sv,
-        m_keyCodes[12] == KeybindingDefaults::TOGGLE_DISABLED ? 0 : m_keyCodes[12]);
+      logger::info("[InputHandler] Widget reset key: {}"sv,
+        m_keyCodes[12] == KeybindingDefaults::RESET_DISABLED ? 0 : m_keyCodes[12]);
       logger::info("[InputHandler] Thresholds: hold={:.2f}s doubleTap={:.2f}s cycleHold={:.2f}s"sv,
         m_holdThreshold, m_doubleTapWindow, m_cycleHoldThreshold);
       m_loggedConfig = true;
@@ -198,9 +198,9 @@ namespace Huginn::Input
       {
       std::shared_lock lock(m_keyCodeMutex);
       for (size_t i = 0; i < m_keyCodes.size(); ++i) {
-        // Guard the unbound sentinel: without this, iToggleWidgetKey=0 would
+        // Guard the unbound sentinel: without this, iResetWidgetKey=0 would
         // match any event whose scancode happened to be 0 rather than being off.
-        if (m_keyCodes[i] == KeybindingDefaults::TOGGLE_DISABLED) {
+        if (m_keyCodes[i] == KeybindingDefaults::RESET_DISABLED) {
            continue;
         }
         if (keyCode == m_keyCodes[i]) {
@@ -259,10 +259,10 @@ namespace Huginn::Input
       HandleCycleKey(matchedIndex - 10, button);
       } else {
       // Fire on key-DOWN only. IsHeld() repeats every frame while the key is
-      // down, so acting on anything else would flip the widget dozens of times
+      // down, so acting on anything else would reset the widget dozens of times
       // per press; IsUp() would work but adds latency for no benefit.
-      if (button->IsDown() && m_toggleCallback) {
-        m_toggleCallback();
+      if (button->IsDown() && m_resetCallback) {
+        m_resetCallback();
       }
       }
       return true;  // Event consumed

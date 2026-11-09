@@ -84,28 +84,23 @@ namespace Huginn::UI
         void SetPosition(float x, float y);
         void SetVisible(bool a_visible);
 
-        /// Player-facing hide toggle (default `x`), independent of the INI master
-        /// enable and of the automatic pause/menu hiding.
+        /// The reset key (`iResetWidgetKey`, default `x`) and dMenu's Reset
+        /// Widget: reopen the menu if RE::UI closed it, recompute visibility,
+        /// re-apply the HUD's alpha and re-send the whole bar. It never hides.
         ///
-        /// It has to be a LATCH rather than a one-shot SetVisible(false), because
-        /// HudVisibilityManager recomputes visibility from scratch on every
-        /// MenuOpenCloseEvent — a bare hide would be undone by the next menu the
-        /// player opens. Everything that decides visibility consults this.
-        ///
-        /// Session-scoped on purpose: it is a "get out of my way for a moment"
-        /// control, not a preference. bEnabled in the INI is the preference,
-        /// and a latch that survived a restart would be indistinguishable from the
-        /// widget being broken. Reset on load for the same reason.
-        /// Flip the widget between shown and hidden. @return true if now hidden.
-        static bool ToggleUserHidden();
-        [[nodiscard]] static bool IsUserHidden() noexcept;
+        /// 0.24.28: this was a hide toggle with its own latch. The player's
+        /// HUD-hiding mod (Ultimate Immersion Toggle, on the same key) keeps its
+        /// own flag, and any press one counted and the other did not left them
+        /// inverted for the rest of the session (2026-11-02 19:33:43: the HUD up
+        /// with the widget hidden, then the reverse). Hiding now follows the HUD
+        /// instead (FollowHudAlpha), so there is one state and nothing to drift.
+        static void ResetWidget();
 
         /// Ask the next push to re-send every slot, bypassing the backend's
         /// identical-frame cache. Set whenever the widget is (re)shown.
         static void RequestResync() noexcept;
         /// True once per request; IntuitionBackend::Push consumes it.
         [[nodiscard]] static bool ConsumeResync() noexcept;
-        static void ResetUserHidden() noexcept;
 
         /// Apply a pre-built config snapshot (avoids re-reading INI).
         /// Called by SettingsReloader::ApplySideEffects() after INI is already loaded.
@@ -128,6 +123,14 @@ namespace Huginn::UI
 
     private:
         RE::GFxValue m_widget;  // Reference to _root.widget in SWF
+
+        /// UI thread only (AdvanceMovie). Copies the HUD Menu's `_root._alpha`
+        /// onto ours, so whatever hides or fades the HUD (a HUD-toggle mod sets
+        /// that alpha to 0) hides the widget too. Polled, not per frame: the
+        /// menu lookup builds a BSFixedString.
+        void FollowHudAlpha(float a_interval);
+        float m_hudPollAccumSec{ 0.0f };
+        double m_hudAlphaApplied{ -1.0 };  // -1: nothing applied yet
 
         // Stage 3a: Thread-safe singleton instance
         // Atomic pointer prevents torn reads/writes during menu creation/destruction

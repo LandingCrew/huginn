@@ -173,7 +173,7 @@ Huginn uses DirectInput scancodes for key activation. Only single keypresses are
 iSlot1Key = 2           ; the "1" key
 iPreviousPageKey = 12
 iNextPageKey = 13
-iToggleWidgetKey = 45   ; 0 to unbind
+iResetWidgetKey = 45    ; resets the widget; 0 to unbind
 ```
 
 Tap equips to the right hand, double-tap to the left hand, hold to both hands.
@@ -325,8 +325,9 @@ Two controls turn the widget off:
 
 * **Enable Widget** — the checkbox. A saved setting; off means the widget is never
   built. Leave it on unless you want it gone for good.
-* **Show/Hide Widget** — the button. An ephemeral runtime toggle: same as the hotkey,
-  not saved, back to shown on the next load.
+* **Reset Widget** — the button. Same as the reset key: brings the widget back if the
+  game lost it and re-sends every slot. The widget hides and shows with your HUD (a
+  UI-toggle mod hides both).
 
 ### Console commands
 

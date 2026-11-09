@@ -154,7 +154,7 @@ namespace Huginn::Settings
         ///   Wheeler rebuild is skipped when the post-reload layout matches it
         ///   (never on a reset).
         void ApplySideEffects(const CSimpleIniA& mainIni, const WheelLayout& beforeLayout,
-                              bool wasEnabled, bool resetToDefaults);
+                              bool resetToDefaults);
 
         /// Registration state (atomic for thread safety)
         std::atomic<bool> m_registered{false};

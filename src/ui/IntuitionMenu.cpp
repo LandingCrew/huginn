@@ -183,19 +183,6 @@ namespace Huginn::UI
             return;
         }
 
-        // The hide latch has to be honoured HERE, not only in SetVisible.
-        // Skyrim destroys the menu across a cell transition, so on LoadingMenu
-        // close HudVisibilityManager reopens it through this path. The
-        // UpdateVisibility() that follows cannot correct it: GetSingleton() is
-        // still null because kShow is only queued, so it early-returns and no
-        // SetVisible(false) ever lands. The widget would come back through a
-        // doorway while the latch still read "hidden", leaving the next
-        // keypress dead — the same desync fixed for markPageDirty in 591b58d.
-        if (IsUserHidden()) {
-            logger::info("IntuitionMenu::Show() - hidden by hotkey, skipping"sv);
-            return;
-        }
-
         auto* ui = RE::UI::GetSingleton();
         if (!ui) {
             logger::warn("IntuitionMenu::Show() - RE::UI is null"sv);
@@ -353,6 +340,7 @@ namespace Huginn::UI
             RE::GFxValue arg{ static_cast<double>(a_interval) };
             m_widget.Invoke("tick", nullptr, &arg, 1);
         }
+        FollowHudAlpha(a_interval);
     }
 
     // ─── Public API ──────────────────────────────────────────
@@ -478,50 +466,85 @@ namespace Huginn::UI
 
     namespace
     {
-        /// Written from the input thread (ProcessButton), read from the UI and
-        /// pipeline threads, so atomic rather than a plain bool.
-        std::atomic<bool> g_userHidden{false};
+        /// Set by ResetWidget (input thread), consumed by FollowHudAlpha (UI
+        /// thread): re-apply the HUD's alpha on the next poll even if it has
+        /// not changed, in case something else wrote ours.
+        std::atomic<bool> g_hudAlphaReapply{ false };
+
+        constexpr float HUD_ALPHA_POLL_SEC = 0.05f;
     }
 
-    bool IntuitionMenu::IsUserHidden() noexcept
+    void IntuitionMenu::ResetWidget()
     {
-        return g_userHidden.load(std::memory_order_acquire);
-    }
-
-    void IntuitionMenu::ResetUserHidden() noexcept
-    {
-        g_userHidden.store(false, std::memory_order_release);
-    }
-
-    bool IntuitionMenu::ToggleUserHidden()
-    {
-        const bool nowHidden = !g_userHidden.load(std::memory_order_acquire);
-        g_userHidden.store(nowHidden, std::memory_order_release);
         auto* ui = RE::UI::GetSingleton();
         const bool menuOpen = ui && ui->IsMenuOpen(MENU_NAME);
-        logger::info("[Intuition] Widget {} (menu open={})"sv, nowHidden ? "hidden" : "shown", menuOpen);
+        logger::info("[Intuition] Widget reset (menu open={})"sv, menuOpen);
 
-        // Un-hiding a menu RE::UI has closed would only flip _root on a movie
-        // nobody draws. Reopen it: the hotkey is the player's way back from
-        // a widget that went missing, so it has to work from any state.
-        if (!nowHidden && !menuOpen) {
-            logger::warn("[Intuition] Widget un-hidden while the menu is closed -- reopening"sv);
+        // A menu RE::UI has closed draws nothing whatever we set on it: reopen
+        // it. Show() keeps its one-kShow-at-a-time guard.
+        if (!menuOpen) {
             Show();
         }
 
-        // Apply immediately rather than waiting for the next menu event or
-        // pipeline push — the player pressed a key and expects a response now.
-        // Re-show goes through UpdateVisibility rather than SetVisible(true) so a
-        // paused game or a disabled widget still wins: un-hiding must not force
-        // the widget up in a state that legitimately hides it.
-        if (nowHidden) {
-            if (auto* self = GetSingleton()) {
-                self->SetVisible(false);
-            }
-        } else {
-            HudVisibilityManager::GetSingleton().UpdateVisibility();
+        // The whole bar again, and one pipeline run, whether or not the widget
+        // was already up: SetVisible(true) asks for these only on a hidden ->
+        // shown transition, and a reset is for when what is drawn is in doubt.
+        RequestResync();
+        Slot::SlotAllocator::GetSingleton().MarkPageDirty();
+        g_hudAlphaReapply.store(true, std::memory_order_release);
+
+        // Through UpdateVisibility, not SetVisible(true): a paused game, an
+        // open dialogue or a disabled widget still hides it.
+        HudVisibilityManager::GetSingleton().UpdateVisibility();
+    }
+
+    void IntuitionMenu::FollowHudAlpha(float a_interval)
+    {
+        const bool reapply = g_hudAlphaReapply.exchange(false, std::memory_order_acq_rel);
+        m_hudPollAccumSec += a_interval;
+        if (!reapply && m_hudPollAccumSec < HUD_ALPHA_POLL_SEC) {
+            return;
         }
-        return nowHidden;
+        m_hudPollAccumSec = 0.0f;
+        if (!uiMovie) {
+            return;
+        }
+
+        // No HUD Menu (a mod that replaces it, or not built yet): full alpha,
+        // the old behaviour, rather than a widget that can never show.
+        double hudAlpha = 100.0;
+        if (auto* ui = RE::UI::GetSingleton()) {
+            if (const auto hud = ui->GetMenu(RE::HUDMenu::MENU_NAME); hud && hud->uiMovie) {
+                RE::GFxValue alpha;
+                if (hud->uiMovie->GetVariable(&alpha, "_root._alpha") && alpha.IsNumber()) {
+                    hudAlpha = std::clamp(alpha.GetNumber(), 0.0, 100.0);
+                }
+            }
+        }
+
+        if (!reapply && hudAlpha == m_hudAlphaApplied) {
+            return;
+        }
+
+        RE::GFxValue root;
+        uiMovie->GetVariable(&root, "_root");
+        if (!root.IsObject()) {
+            return;
+        }
+        RE::GFxValue::DisplayInfo di;
+        root.GetDisplayInfo(&di);
+        di.SetAlpha(hudAlpha);
+        root.SetDisplayInfo(di);
+
+        // Transitions to and from fully hidden only: a fading HUD would
+        // otherwise log every step.
+        const bool wasHidden = m_hudAlphaApplied == 0.0;
+        const bool nowHidden = hudAlpha == 0.0;
+        if (m_hudAlphaApplied < 0.0 || wasHidden != nowHidden) {
+            logger::info("[Intuition] Following the HUD: {} (HUD alpha {:.0f})"sv,
+                nowHidden ? "hidden" : "shown", hudAlpha);
+        }
+        m_hudAlphaApplied = hudAlpha;
     }
 
 
@@ -546,19 +569,12 @@ namespace Huginn::UI
         auto* tasks = SKSE::GetTaskInterface();
         if (!tasks) return;
 
-        // The latch is enforced HERE, not only at the call sites, because several
-        // independent paths re-show the widget (HudVisibilityManager on every menu
-        // event, IntuitionBackend when a Wheeler wheel closes, ReapplySettings on
-        // hot-reload). Gating one of them would leave the others able to undo the
-        // player's hide. A hide is always allowed through.
-        if (a_visible && IsUserHidden()) {
-            return;
-        }
-
         // Dialogue does not pause the game, so the paused-game rule in
         // HudVisibilityManager lets the widget sit over the conversation. A
-        // show during dialogue becomes a hide, here for the same reason as the
-        // latch above: every re-show path passes through. The dialogue menu's
+        // show during dialogue becomes a hide, here rather than at the call
+        // sites because several independent paths re-show the widget
+        // (HudVisibilityManager on every menu event, IntuitionBackend when a
+        // Wheeler wheel closes, ReapplySettings on hot-reload). The dialogue menu's
         // close is a menu event, and HudVisibilityManager shows it again then.
         if (a_visible) {
             auto* ui = RE::UI::GetSingleton();

@@ -24,13 +24,13 @@ namespace Huginn::Input
         slot10Key = static_cast<uint32_t>(ini.GetLongValue(section, "iSlot10Key", KeybindingDefaults::SLOT10_KEY));
         prevPageKey = static_cast<uint32_t>(ini.GetLongValue(section, "iPreviousPageKey", KeybindingDefaults::PREV_PAGE_KEY));
         nextPageKey = static_cast<uint32_t>(ini.GetLongValue(section, "iNextPageKey", KeybindingDefaults::NEXT_PAGE_KEY));
-        toggleKey   = static_cast<uint32_t>(ini.GetLongValue(section, "iToggleWidgetKey", KeybindingDefaults::TOGGLE_KEY));
+        resetKey   = static_cast<uint32_t>(ini.GetLongValue(section, "iResetWidgetKey", KeybindingDefaults::RESET_KEY));
 
-        logger::info("[KeybindingSettings] Loaded: Slots=[{},{},{},{},{},{},{},{},{},{}] Pages=[{},{}] Toggle={}"sv,
+        logger::info("[KeybindingSettings] Loaded: Slots=[{},{},{},{},{},{},{},{},{},{}] Pages=[{},{}] Reset={}"sv,
             slot1Key, slot2Key, slot3Key, slot4Key, slot5Key,
             slot6Key, slot7Key, slot8Key, slot9Key, slot10Key,
             prevPageKey, nextPageKey,
-            toggleKey == KeybindingDefaults::TOGGLE_DISABLED ? 0 : toggleKey);
+            resetKey == KeybindingDefaults::RESET_DISABLED ? 0 : resetKey);
     }
 
 }  // namespace Huginn::Input

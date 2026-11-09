@@ -29,14 +29,14 @@ namespace Huginn::Input
    using CycleCallback = std::function<void(bool isPrevious, bool isHold)>;
 
    /**
-    * @brief Callback when the widget-visibility toggle key is pressed
+    * @brief Callback when the widget reset key is pressed
     *
     * Fires once per press (on key-down). No tap/hold/double-tap decoding: a
-    * show/hide toggle has exactly one gesture, and routing it through the
-    * tap-vs-hold machinery would add a hold-threshold delay to a key whose
-    * whole point is an instant response.
+    * reset has exactly one gesture, and routing it through the tap-vs-hold
+    * machinery would add a hold-threshold delay to a key whose whole point is
+    * an instant response. 0.24.28: was the show/hide toggle.
     */
-   using ToggleCallback = std::function<void()>;
+   using ResetCallback = std::function<void()>;
 
    /**
     * @brief Input handler for widget keybindings
@@ -80,9 +80,9 @@ namespace Huginn::Input
       void SetCycleCallback(CycleCallback callback) { m_cycleCallback = std::move(callback); }
 
       /**
-       * @brief Set callback for the widget-visibility toggle key
+       * @brief Set callback for the widget reset key
        */
-      void SetToggleCallback(ToggleCallback callback) { m_toggleCallback = std::move(callback); }
+      void SetResetCallback(ResetCallback callback) { m_resetCallback = std::move(callback); }
 
       /**
        * @brief Enable or disable input handling
@@ -103,10 +103,10 @@ namespace Huginn::Input
 
       /// Read-only mode: the equip keys stop acting, everything else stays.
       ///
-      /// Deliberately NOT the whole keyboard. Page cycling and the visibility
-      /// toggle are ways of looking at the widget, not ways of using it, and a
+      /// Deliberately NOT the whole keyboard. Page cycling and the widget
+      /// reset are ways of looking at the widget, not ways of using it, and a
       /// player who has handed selection to Wheeler still wants to page through
-      /// the recommendations and still wants to be able to hide the thing.
+      /// the recommendations and still wants to be able to reset the widget.
       /// Only slots 0-9 — the keys that actually equip — are suppressed.
       ///
       /// Atomic rather than mutex-guarded: it is one bool read once per matched
@@ -158,13 +158,13 @@ namespace Huginn::Input
       /// Callbacks
       SlotCallback m_slotCallback;
       CycleCallback m_cycleCallback;
-      ToggleCallback m_toggleCallback;
+      ResetCallback m_resetCallback;
 
       /// Enabled state
       bool m_enabled = true;
 
       /// Key codes for each action (derived from m_keybindings for fast scan)
-      std::array<uint32_t, 13> m_keyCodes;  // [0-9] slots, [10-11] cycle, [12] visibility toggle
+      std::array<uint32_t, 13> m_keyCodes;  // [0-9] slots, [10-11] cycle, [12] widget reset
 
       /// Authoritative keybinding settings
       KeybindingSettings m_keybindings;
