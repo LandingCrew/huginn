@@ -127,7 +127,7 @@ namespace Huginn::Settings
         /// ApplySideEffects (Phase 2). Shared by reload and reset, so the two
         /// cannot load different sets of settings. REQUIRES: update mutex held.
         /// @param resetToDefaults Reset to Defaults: also rebuild the Wheeler
-        ///   wheels at sWheelPosition and clear the widget's hide latch.
+        ///   wheels at sWheelPosition.
         void ApplyIni(const CSimpleIniA& mainIni, const CSimpleIniA& dMenuIni, bool resetToDefaults);
 
         /// The inputs Wheeler wheel *creation* actually depends on: the wheel
@@ -154,7 +154,7 @@ namespace Huginn::Settings
         ///   Wheeler rebuild is skipped when the post-reload layout matches it
         ///   (never on a reset).
         void ApplySideEffects(const CSimpleIniA& mainIni, const WheelLayout& beforeLayout,
-                              bool wasEnabled, bool resetToDefaults);
+                              bool resetToDefaults);
 
         /// Registration state (atomic for thread safety)
         std::atomic<bool> m_registered{false};

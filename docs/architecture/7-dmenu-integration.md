@@ -185,7 +185,7 @@ The descriptor defines:
 - **`"ini"` path** — `Data\SKSE\Plugins\dmenu\customSettings\ini\Huginn.ini`
 - **Groups** — *Intuition Widget*, *Debug & Logging*, *Actions*
 - **Setting types** — `checkbox`, `slider`, `dropdown`, `button`
-- **Action buttons** — Show/Hide Widget, Reset Learned Weights, Reset to Defaults, Reload INI
+- **Action buttons** — Reset Widget, Reset Learned Weights, Reset to Defaults, Reload INI
 
 The *Intuition Widget* group covers all ten `[Widget]` keys (`bEnabled`,
 `fPositionX`, `fPositionY`, `fAlpha`, `fScale`, `fAlphaChild`, `bReadOnly`,
@@ -231,7 +231,7 @@ sequenceDiagram
 
 | Button ID | dMenu label | Action |
 |---|---|---|
-| `Huginn_toggle_widget` | Show/Hide Widget | `IntuitionMenu::ToggleUserHidden()` — deliberately the *same* latch the hotkey flips, not a parallel flag. Resets to shown on load; use `bEnabled` to turn the widget off for good |
+| `Huginn_reset_widget` | Reset Widget | `IntuitionMenu::ResetWidget()`, the same as the reset key (`iResetWidgetKey`): reopens the menu if the game closed it and re-sends every slot. Never hides; the widget hides with the HUD (0.24.28). Use `bEnabled` to turn the widget off for good |
 | `Huginn_reset_weights` | Reset Learned Weights | `ResetLearningData()` — clears `FeatureBanditLearner`, returns the choice learner to the bootstrap (with no bootstrap: empties the THTA / BIAS carried from the load, 0.24.18) **and** resets `SlotLocker`, so locked slots stop pinning recommendations scored by the just-cleared table. Shared with `hg reset weights` |
 | `Huginn_reset_defaults` | Reset to Defaults | `ResetAllToDefaults()` — writes the shipped `Huginn.ini` over the player's and the descriptor's defaults over dMenu's INI (old files kept as timestamped `.bak` copies), then loads the shipped files alone through the same pass as a reload: every setting, the page layout included, as a fresh install. Learned data is untouched. See [Reset to Defaults](#reset-to-defaults) |
 | `Huginn_reload_ini` | Reload INI | `ReloadAllSettings(GetDMenuIniPath())`. dMenu-managed sections still come from the dMenu INI, so a manual reload does **not** reset the player's widget customizations |
@@ -277,10 +277,9 @@ would, now and after the next game start.
    `[Wheeler]`, `[Needs]`, `[Scoring]`, `[ContextWeights]`, `[Candidates]`,
    `[Overrides]`, `[Learning]`, `[Wildcards]`, `[SlotLocker]`, `[Subtexts]`,
    `[Favorites]`.
-3. **Side effects as a reload**, plus two for a fresh start: the Wheeler
+3. **Side effects as a reload**, plus one for a fresh start: the Wheeler
    wheels are always rebuilt at `sWheelPosition` and a position the player
-   dragged them to this session is forgotten, and the widget's hide latch (the
-   hotkey / Show-Hide button) is cleared.
+   dragged them to this session is forgotten.
 
 **Not touched:** learned data (the cosave's THTA / BIAS / BNDW, the old
 learner) — that is Reset Learned Weights; `Huginn_Overrides.ini` and the

@@ -232,8 +232,9 @@ to the UI thread.
   1280x720 stage, then the centring offset).
 - `SetVisible(bool)` — toggles `_root`'s `DisplayInfo` visibility.
 - `Show()` / `Hide()` — queue `kShow` / `kHide` on `RE::UIMessageQueue`.
-- `ToggleUserHidden()` / `IsUserHidden()` / `ResetUserHidden()` — the player's
-  hide latch.
+- `ResetWidget()` — the reset key and dMenu's Reset Widget (0.24.28).
+- `FollowHudAlpha()` — copies the HUD Menu's `_root._alpha` onto ours, from
+  `AdvanceMovie` every 50 ms (0.24.28).
 - `ReapplySettings(const IntuitionConfig&)` — hot-reload (the no-argument
   overload that re-read the INI itself went in 0.24.10: unused).
 - `MapSlotContentType()` and `BuildSlotDetail()` — static helpers the backend
@@ -280,7 +281,7 @@ Four independent things can hide the widget, and they compose:
 |---|---|---|
 | `bEnabled` (INI) | `IntuitionSettings::IsEnabled()` | Persistent preference |
 | Pausing menu open | `HudVisibilityManager` | Automatic |
-| Player hide latch | `IntuitionMenu::IsUserHidden()` | Session; resets on load |
+| HUD hidden or faded | `IntuitionMenu::FollowHudAlpha()` | Follows the HUD Menu's `_root._alpha` |
 | Wheeler wheel open | `IntuitionBackend` and the Wheeler callbacks | While a wheel is up |
 
 `HudVisibilityManager` is a `MenuOpenCloseEvent` sink. On every menu event it
@@ -288,8 +289,7 @@ recomputes:
 
 ```cpp
 visible = !ui->GameIsPaused()
-       && IntuitionSettings::GetSingleton().IsEnabled()
-       && !IntuitionMenu::IsUserHidden();
+       && IntuitionSettings::GetSingleton().IsEnabled();
 ```
 
 Console and Favorites do not set `kPausesGame`, so the widget correctly stays up
@@ -297,19 +297,32 @@ during those overlays. The manager also re-sends `kShow` when `LoadingMenu`
 closes: Skyrim *closes* custom `IMenu` instances across a cell transition
 without destroying them, and `SetVisible(true)` does nothing to a closed menu.
 
-**The hide latch** (default key `x` — `iToggleWidgetKey = 45` in the main INI's
-`[Input]`; `0` unbinds) has to be a latch rather than a one-shot
-`SetVisible(false)`, because `HudVisibilityManager` recomputes from scratch on
-every menu event and a bare hide would be undone by the next menu the player
-opens. It is therefore enforced in three places: inside `SetVisible` (so the
-several independent re-show paths cannot defeat it), inside `Show()` (so a cell
-transition's re-show does not resurrect a hidden widget and leave the next
-keypress dead), and in the `UpdateVisibility` predicate. It is session-scoped and
-reset on load on purpose: it is a "get out of my way for a moment" control, not a
-preference — `bEnabled` is the preference, and a latch that survived a restart
-would be indistinguishable from the widget being broken. The same latch is
-flipped by the dMenu **Show/Hide Widget** button
-(`src/settings/SettingsReloader.cpp:201`).
+**Following the HUD** (0.24.28). The widget has no hide key of its own. On
+the UI thread, every 50 ms, `IntuitionMenu::FollowHudAlpha` reads the HUD Menu's
+`_root._alpha` and sets ours to match (alpha, not `_visible`, so it composes with
+the visibility gates above). A HUD-toggle mod such as Ultimate Immersion Toggle
+sets that alpha to 0 and back, so the widget hides and shows with the rest of
+the HUD, and fades with it. With no HUD Menu the widget stays at full alpha.
+
+Before 0.24.28 the key (`x`) flipped a hide latch of Huginn's own. LoreRim binds
+the same key to Ultimate Immersion Toggle, a Papyrus script with its own flag that
+ignores a press while any of some 25 menus is open and runs late under Papyrus
+lag. Any press one counted and the other did not left them inverted for the rest
+of the session (2026-11-02 19:33:43: the HUD up with the widget hidden, then the
+reverse). Two flags on one key cannot be kept in step; one state can.
+
+**The reset key** (default `x`, `iResetWidgetKey = 45` in the main INI's
+`[Keybindings]`; `0` unbinds) puts the widget back in a known state: it reopens
+the menu if `RE::UI` closed it (through `Show()` and its one-`kShow` guard,
+which also forces one pipeline run), re-applies the HUD's alpha, asks for a full
+re-send of the bar on the next push, and recomputes visibility through
+`UpdateVisibility` (a paused game, an open dialogue or `bEnabled = false` still
+hide it; skipped while a Wheeler wheel the widget hides behind is up). It never
+hides the widget. With the menu open it forces no pipeline run: the HUD-toggle
+mod shares the key, so every HUD toggle is a reset, and a forced run can re-draw
+the wildcard key mid-fight. The key is gated like the slot keys (loading screen,
+main menu, a pausing menu, a menu that takes the controls) and still consumed
+there. The dMenu **Reset Widget** button does the same, without the gate.
 
 `IntuitionBackend::Push` re-asserts `SetVisible(false)` on *every* tick while a
 Wheeler wheel is open, not once on the transition: a game menu opening or closing
@@ -1136,7 +1149,7 @@ graph TB
 | Auto-sizing background | Implemented | Widens to the longest visible name |
 | Display modes | Implemented | minimal / normal / verbose |
 | Hot reload | Implemented | `hg reload` and the dMenu Reload INI button |
-| Player hide latch | Implemented | `iToggleWidgetKey` (default `x`), session-scoped |
+| Follows the HUD | Implemented | HUD Menu `_root._alpha`; reset key `iResetWidgetKey` (default `x`), 0.24.28 |
 | Auto-hide behind Wheeler | Implemented | Re-asserted per tick while a wheel is open |
 
 ### Wheeler integration

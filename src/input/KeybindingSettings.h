@@ -23,11 +23,11 @@ namespace Huginn::Input
         constexpr uint32_t SLOT10_KEY = 11;  // 0 key
         constexpr uint32_t PREV_PAGE_KEY = 12;  // - key
         constexpr uint32_t NEXT_PAGE_KEY = 13;  // = key
-        constexpr uint32_t TOGGLE_KEY    = 45;  // x key (DIK_X)
-        /// 0 disables the toggle entirely. Chosen over a separate bEnable flag
+        constexpr uint32_t RESET_KEY    = 45;  // x key (DIK_X)
+        /// 0 disables the reset key entirely. Chosen over a separate bEnable flag
         /// because 0 is not a valid DirectInput scancode, so it cannot collide
         /// with a real binding, and one knob is easier to explain than two.
-        constexpr uint32_t TOGGLE_DISABLED = 0;
+        constexpr uint32_t RESET_DISABLED = 0;
     }
 
     /**
@@ -47,7 +47,7 @@ namespace Huginn::Input
         uint32_t slot10Key = KeybindingDefaults::SLOT10_KEY;
         uint32_t prevPageKey = KeybindingDefaults::PREV_PAGE_KEY;
         uint32_t nextPageKey = KeybindingDefaults::NEXT_PAGE_KEY;
-        uint32_t toggleKey   = KeybindingDefaults::TOGGLE_KEY;
+        uint32_t resetKey   = KeybindingDefaults::RESET_KEY;
 
         /**
          * @brief Load [Keybindings] from the parsed main INI (Settings::LoadMainIni:

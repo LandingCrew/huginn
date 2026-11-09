@@ -124,9 +124,6 @@ namespace Huginn::Settings
         // whether a Wheeler rebuild is actually needed (vs. e.g. a scoring tweak).
         const WheelLayout wheelLayoutBefore = CaptureWheelLayout();
 
-        // Snapshot bEnabled too: the hide latch is cleared only on a false->true
-        // transition, never on an ordinary reload.
-        const bool wasEnabled = UI::IntuitionSettings::GetSingleton().IsEnabled();
 
         // =====================================================================
         // Phase 1: every settings class from the parsed INIs
@@ -198,7 +195,7 @@ namespace Huginn::Settings
         // =====================================================================
         // Phase 2: Apply side effects (reuse the already-parsed main INI)
         // =====================================================================
-        ApplySideEffects(mainIni, wheelLayoutBefore, wasEnabled, resetToDefaults);
+        ApplySideEffects(mainIni, wheelLayoutBefore, resetToDefaults);
     }
 
     void SettingsReloader::HandleButtonCallback(std::string_view buttonId)
@@ -206,15 +203,11 @@ namespace Huginn::Settings
         // NOTE: Button IDs use lowercase snake_case to match dMenu event naming convention
         // (dmenu_updateSettings, dmenu_buttonCallback, etc.)
 
-        if (buttonId == "Huginn_toggle_widget"sv) {
-            // Deliberately the SAME flag the hotkey flips, not a parallel one.
-            // bEnabled gates only visibility (IntuitionBackend::IsEnabled is
-            // unconditionally true), so a second "is the widget showing" flag
-            // would just be this one under another name. Players without dMenu
-            // reach it via the hotkey; this is the equivalent for players who
+        if (buttonId == "Huginn_reset_widget"sv) {
+            // The same reset as the key (iResetWidgetKey), for players who
             // would rather click than learn a key.
-            const bool nowHidden = UI::IntuitionMenu::ToggleUserHidden();
-            RE::DebugNotification(nowHidden ? "Huginn: Widget hidden" : "Huginn: Widget shown");
+            UI::IntuitionMenu::ResetWidget();
+            RE::DebugNotification("Huginn: Widget reset");
         }
         else if (buttonId == "Huginn_reset_weights"sv) {
             logger::info("[SettingsReloader] Resetting learning data"sv);
@@ -351,7 +344,7 @@ namespace Huginn::Settings
     }
 
     void SettingsReloader::ApplySideEffects(const CSimpleIniA& mainIni, const WheelLayout& beforeLayout,
-                                           bool wasEnabled, bool resetToDefaults)
+                                           bool resetToDefaults)
     {
         // REQUIRES: update mutex held (RunExclusive) — reached only via
         // ApplyIni (reload and reset). That lock is
@@ -462,24 +455,6 @@ namespace Huginn::Settings
 
         // 5. Reapply Intuition widget settings (position, alpha, scale)
         auto intuitionConfig = UI::IntuitionSettings::GetSingleton().BuildConfig();
-
-        // Turning the widget ON is an explicit request to see it, so it outranks the
-        // session hide latch — which Show() honours (IntuitionMenu.cpp:49) and which
-        // both the hotkey and dMenu's Show/Hide button can set even with no menu
-        // present. Without this, re-enabling after a hide leaves the widget invisible
-        // whether or not the menu still exists: the no-menu path never constructs it,
-        // and the menu path's ReapplySettings->Show() silently no-ops. Gated on the
-        // transition so an ordinary reload never overrides a deliberate hide.
-        if (intuitionConfig.enabled && !wasEnabled && UI::IntuitionMenu::IsUserHidden()) {
-            logger::info("[SettingsReloader]   [Widget] re-enabled — clearing hide latch"sv);
-            UI::IntuitionMenu::ResetUserHidden();
-        } else if (resetToDefaults && UI::IntuitionMenu::IsUserHidden()) {
-            // The hide latch is session state, not a setting, but a fresh
-            // start shows the widget, and "back to basics" with it still
-            // hidden would look like the reset broke it.
-            logger::info("[SettingsReloader]   [Widget] reset to defaults: clearing hide latch"sv);
-            UI::IntuitionMenu::ResetUserHidden();
-        }
 
         auto* menu = UI::IntuitionMenu::GetSingleton();
         if (menu) {
