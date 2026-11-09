@@ -692,7 +692,9 @@ BUDGET = {
     # Construction, settings and the legacy commands and tests (counted, not whole-file).
     # R11: 31, down from 34: the per-type dumps and their train-count columns went.
     # 0.24.17: 32: hg status names the D2 shadow's switch beside the feature's.
-    'src/console/ConsoleCommands.cpp': (32, None, 'hg weights, hg dump weights, hg status counts and the '
+    # 0.24.28: 31: 0.24.22 dropped hg reset's "not initialized" line and left the slack, so
+    # the probe's planted line fit the budget.
+    'src/console/ConsoleCommands.cpp': (31, None, 'hg weights, hg dump weights, hg status counts and the '
                                                    'switches, hg reset'),
     # 0.24.17: 25: the D2 shadow's switch set at load.
     'src/Main.cpp': (25, None, 'construction, the equip-bus registration and the switches'),
