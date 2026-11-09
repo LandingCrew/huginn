@@ -7,6 +7,7 @@
 #include "state/PlayerActorState.h"
 #include "weapon/WeaponData.h"
 #include "slot/SlotAllocator.h"
+#include "wheeler/WheelerClient.h"
 #include "core/EffectColumns.h"   // Verbose: the explanation's column name (R8.4)
 #include "core/NeedIds.h"         // ... and need name
 
@@ -486,16 +487,23 @@ namespace Huginn::UI
             Show();
         }
 
-        // The whole bar again, and one pipeline run, whether or not the widget
-        // was already up: SetVisible(true) asks for these only on a hidden ->
-        // shown transition, and a reset is for when what is drawn is in doubt.
+        // The whole bar again on the next push. No forced pipeline run here:
+        // the key is the HUD-toggle mod's too, so every HUD toggle comes
+        // through, and a forced run can re-draw the wildcard key mid-fight
+        // (/code-review #253). A closed menu gets its run from Show().
         RequestResync();
-        Slot::SlotAllocator::GetSingleton().MarkPageDirty();
         g_hudAlphaReapply.store(true, std::memory_order_release);
 
         // Through UpdateVisibility, not SetVisible(true): a paused game, an
-        // open dialogue or a disabled widget still hides it.
-        HudVisibilityManager::GetSingleton().UpdateVisibility();
+        // open dialogue or a disabled widget still hides it. Not while a
+        // Wheeler wheel the widget hides behind is up: UpdateVisibility would
+        // show it over the wheel until the backend's next push hid it again.
+        auto& wheeler = Wheeler::WheelerClient::GetSingleton();
+        const bool behindWheel = wheeler.HasRecommendationWheel() && wheeler.IsWheelOpen() &&
+                                 IntuitionSettings::GetSingleton().HideWhileWheelOpen();
+        if (!behindWheel) {
+            HudVisibilityManager::GetSingleton().UpdateVisibility();
+        }
     }
 
     void IntuitionMenu::FollowHudAlpha(float a_interval)

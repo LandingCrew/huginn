@@ -313,11 +313,16 @@ reverse). Two flags on one key cannot be kept in step; one state can.
 
 **The reset key** (default `x`, `iResetWidgetKey = 45` in the main INI's
 `[Keybindings]`; `0` unbinds) puts the widget back in a known state: it reopens
-the menu if `RE::UI` closed it (through `Show()` and its one-`kShow` guard),
-re-applies the HUD's alpha, asks for a full re-send of the bar and one pipeline
-run, and recomputes visibility through `UpdateVisibility` (a paused game, an
-open dialogue or `bEnabled = false` still hide it). It never hides the widget.
-The dMenu **Reset Widget** button does the same.
+the menu if `RE::UI` closed it (through `Show()` and its one-`kShow` guard,
+which also forces one pipeline run), re-applies the HUD's alpha, asks for a full
+re-send of the bar on the next push, and recomputes visibility through
+`UpdateVisibility` (a paused game, an open dialogue or `bEnabled = false` still
+hide it; skipped while a Wheeler wheel the widget hides behind is up). It never
+hides the widget. With the menu open it forces no pipeline run: the HUD-toggle
+mod shares the key, so every HUD toggle is a reset, and a forced run can re-draw
+the wildcard key mid-fight. The key is gated like the slot keys (loading screen,
+main menu, a pausing menu, a menu that takes the controls) and still consumed
+there. The dMenu **Reset Widget** button does the same, without the gate.
 
 `IntuitionBackend::Push` re-asserts `SetVisible(false)` on *every* tick while a
 Wheeler wheel is open, not once on the transition: a game menu opening or closing

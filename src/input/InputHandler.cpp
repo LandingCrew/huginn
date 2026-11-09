@@ -261,7 +261,10 @@ namespace Huginn::Input
       // Fire on key-DOWN only. IsHeld() repeats every frame while the key is
       // down, so acting on anything else would reset the widget dozens of times
       // per press; IsUp() would work but adds latency for no benefit.
-      if (button->IsDown() && m_resetCallback) {
+      // Gated like the slot keys (loading screen, main menu, a pausing menu,
+      // a menu that takes the controls): no world to reset into there, and
+      // the HUD-toggle mod on the same key ignores menus too. Still consumed.
+      if (button->IsDown() && m_resetCallback && SlotKeysLive()) {
         m_resetCallback();
       }
       }

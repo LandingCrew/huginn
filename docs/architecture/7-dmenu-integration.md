@@ -185,7 +185,7 @@ The descriptor defines:
 - **`"ini"` path** — `Data\SKSE\Plugins\dmenu\customSettings\ini\Huginn.ini`
 - **Groups** — *Intuition Widget*, *Debug & Logging*, *Actions*
 - **Setting types** — `checkbox`, `slider`, `dropdown`, `button`
-- **Action buttons** — Show/Hide Widget, Reset Learned Weights, Reset to Defaults, Reload INI
+- **Action buttons** — Reset Widget, Reset Learned Weights, Reset to Defaults, Reload INI
 
 The *Intuition Widget* group covers all ten `[Widget]` keys (`bEnabled`,
 `fPositionX`, `fPositionY`, `fAlpha`, `fScale`, `fAlphaChild`, `bReadOnly`,
@@ -277,10 +277,9 @@ would, now and after the next game start.
    `[Wheeler]`, `[Needs]`, `[Scoring]`, `[ContextWeights]`, `[Candidates]`,
    `[Overrides]`, `[Learning]`, `[Wildcards]`, `[SlotLocker]`, `[Subtexts]`,
    `[Favorites]`.
-3. **Side effects as a reload**, plus two for a fresh start: the Wheeler
+3. **Side effects as a reload**, plus one for a fresh start: the Wheeler
    wheels are always rebuilt at `sWheelPosition` and a position the player
-   dragged them to this session is forgotten, and the widget's hide latch (the
-   hotkey / Show-Hide button) is cleared.
+   dragged them to this session is forgotten.
 
 **Not touched:** learned data (the cosave's THTA / BIAS / BNDW, the old
 learner) — that is Reset Learned Weights; `Huginn_Overrides.ini` and the
