@@ -15,7 +15,8 @@
 #include "learning/InventoryExitTracker.h"
 #include "learning/SelectionTracker.h"
 #include "learning/SelectionLogV3.h"
-#include "learning/FeatureBanditLearner.h"
+#include "learning/DiscoveryListener.h"
+#include "learning/legacy/LegacyRun.h"   // the old learner's clock and sweep (D2, R8.4)
 #include "util/ScopedTimer.h"
 #include "util/InventoryUtil.h"
 #include "weapon/WeaponRegistry.h"
@@ -214,7 +215,7 @@ template <typename Registry>
 // STAGE 1: SUBSYSTEM UPDATES
 // =============================================================================
 // Tick time-dependent subsystems: state sensors, candidate cooldowns,
-// potion discriminator combat timer, override hysteresis.
+// override hysteresis.
 
 static void UpdateSubsystems(float deltaSeconds, float deltaMs)
 {
@@ -237,14 +238,10 @@ static void UpdateSubsystems(float deltaSeconds, float deltaMs)
     if (g_utilityScorer) {
         Huginn_ZONE_NAMED("UtilityScorer::Update");
         // Wildcard expiry: the exploration slot reverts to the ranked pick
-        forcePipelineRun |= g_utilityScorer->Update(deltaSeconds);
-
-        auto transition = State::StateManager::GetSingleton().ConsumeCombatTransition();
-        if (transition == State::StateManager::CombatTransition::Entered) {
-            g_utilityScorer->OnCombatStart();
-        } else if (transition == State::StateManager::CombatTransition::Exited) {
-            g_utilityScorer->OnCombatEnd();
-        }
+        forcePipelineRun |= g_utilityScorer->Update();
+        // R8.1 (0.23.55): no combat transition to hand on. The legacy potion
+        // multiplier's own timer is gone; it reads the combat_onset clock
+        // (NeedSensorState::combatStartAt) through the pipeline.
     }
 
     {
@@ -540,19 +537,18 @@ static void RunPipelineIfNeeded(float deltaMs, RE::PlayerCharacter* player,
 
     bool pageChanged = Slot::SlotAllocator::GetSingleton().PeekPageChanged();
 
-    // Two ways the pipeline must run with no sensor delta at all:
-    //
-    //   * The elemental window decays on wall-clock time. Live query, because on
-    //     the tick it OPENS the coordinator has no latch for it yet.
-    //   * NeedsForcedRun() — state left by the last completed run that the
-    //     GameState hash cannot see: the elemental falling edge, a fall, a
-    //     pending reason downgrade (#62). CheckHashSkip consults the same list,
-    //     but it never gets the chance if this gate returns first, and a static
-    //     scene is precisely where a held label needs ticks to expire on.
+    // The pipeline must also run with no sensor delta at all when
+    // NeedsForcedRun() says so: state the GameState hash cannot see -- the
+    // need signature moved a 0.05 step since the last run (R8.3: a damage sum
+    // decaying, a timer, a continuous need; it replaced the elemental window
+    // here), a fall, a pending reason downgrade (#62), a learner update.
+    // CheckHashSkip consults the same list, but it never gets the chance if
+    // this gate returns first, and a static scene is precisely where a held
+    // label needs ticks to expire on.
     //
     // Anything that must survive a quiet scene belongs in NeedsForcedRun(), not
-    // as a fourth term here.
-    if (!stateChanged && !pageChanged && !stateManager.IsElementalWindowActive() &&
+    // as another term here.
+    if (!stateChanged && !pageChanged &&
         !Pipeline::PipelineCoordinator::GetSingleton().NeedsForcedRun()) {
         Learning::PipelineStateCache::GetSingleton().RefreshTimestamp();
         return;
@@ -695,20 +691,32 @@ void OnUpdate(float deltaSeconds)
     // The learner's play clock (memory with a useful life): loaded, unpaused
     // play only -- an open inventory or journal does not age what was learned.
     // deltaSeconds is already clamped to 1 s after an alt-tab.
-    if (g_featureBanditLearner) {
+    if (Scoring::Legacy::HasLearner()) {
         auto* ui = RE::UI::GetSingleton();
         if (ui && !ui->GameIsPaused()) {
-            g_featureBanditLearner->AdvancePlayTime(deltaSeconds);
+            Scoring::Legacy::AdvancePlayTime(deltaSeconds);
+            // R8.2: the same play clock drives the new learner's b battery.
+            if (g_choiceLearner) g_choiceLearner->AdvancePlayTime(deltaSeconds);
         }
     }
+    // Both forget sweeps run here, at most once a minute of play each. The old
+    // learner's left UtilityScorer's legacy pass in R8.3, which does not run
+    // with bLegacyLearnFeature and bShadowLegacy both off (0.24.17), so BNDW
+    // would grow while they are.
+    Scoring::Legacy::MaybeForgetFaded();
+    if (g_choiceLearner) g_choiceLearner->MaybeForgetFaded();
 
     float deltaMs = deltaSeconds * 1000.0f;
 
     UpdateSubsystems(deltaSeconds, deltaMs);
     MaintainRegistries(player, now);
+    // 0.24.14: spells the reconcile just added in play -> the discovery boost
+    // (before this tick's pipeline, which then reads the boost).
+    Learning::Discovery::ForwardLearnedSpells();
 
-    // R3: the need vector, every tick, logged only. Reads the state the polls
-    // just wrote; touches neither skip gate (NeedMonitor.h).
+    // The need vector, every tick, for the choice score (R8.3). Reads the
+    // state the polls just wrote; its signature is a skip-gate term
+    // (PipelineCoordinator::GatherState reads NeedMonitor::LatestSignatureHash).
     Needs::NeedMonitor::GetSingleton().Tick(now);
 
     // R4: the selection log v3 -- this tick's cross-features for the eligible

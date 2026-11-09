@@ -39,10 +39,13 @@ namespace Huginn::Display
         size_t slotCount;          // slot count on the current page
         std::string_view pageName; // current page's display name
 
-        // Dominant reason the current context matters, derived once per tick from
-        // the scorer's own weight map (Display::DeriveExplanationLabel turns it
-        // into text). Override candidates carry their own reason on the
-        // assignment and take priority over this one.
+        // The tick's situational reason (R8.3): the most urgent explanation
+        // (the largest theta n cap term's need, display/NeedReason.h) among the
+        // items the allocated page shows, damped by the reason hold
+        // (PipelineCoordinator::UpdateContextReason).
+        // Display::DeriveExplanationLabel turns it into text. Override
+        // candidates carry their own reason on the assignment and take
+        // priority over this one.
         Context::ContextReason contextReason = Context::ContextReason::None;
 
         std::chrono::steady_clock::time_point now;

@@ -29,16 +29,8 @@ void RunHomeKeyTest();             // home keys: a returner takes its key back
 void RunBuffElementResistTest();
 void RunNeedVectorTests();          // R3 (0.23.14): the need vector on the live game
 
-// =============================================================================
-// CONSOLE COMMANDS - Manual testing via Skyrim console (debug mode only)
-// =============================================================================
-
-#ifndef NDEBUG
-void ConsoleCmd_ShowEquippedSpells();
-
-#ifdef _DEBUG
-void ConsoleCmd_ToggleStateManagerDebug();
-void ConsoleCmd_ForceUpdateStateManager();
-#endif
-
-#endif  // !NDEBUG
+// R11: the suites state made-up candidates in the old classifiers' vocabulary;
+// the slot classes, filters and labels read the effect catalog's facets now,
+// which has no entry for a made-up form. Install around the suite runs.
+void InstallSyntheticFacetResolver();
+void RemoveSyntheticFacetResolver();

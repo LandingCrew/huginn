@@ -326,14 +326,13 @@ namespace Huginn::State
 #endif
       }
 
-      // Combat transition tracking (single-writer, no lock needed for m_wasInCombat)
+      // Combat transition (single-writer, no lock needed for m_wasInCombat)
       if (newIsInCombat != m_wasInCombat) {
-        m_combatTransition.store(
-            newIsInCombat ? CombatTransition::Entered : CombatTransition::Exited,
-            std::memory_order_release);
         m_isInCombat.store(newIsInCombat, std::memory_order_release);
         m_wasInCombat = newIsInCombat;
-        // R3: the combat timers, on the same published transition.
+        // R3: the combat timers, on the same published transition. R8.1: the
+        // one combat clock -- combat_onset and the legacy potion multiplier read
+        // combatStartAt (core/CombatOnset.h).
         const double nowSec = NeedClock::Now();
         UpdateNeedSensors([&](NeedSensorState& n) {
           (newIsInCombat ? n.combatStartAt : n.combatEndAt) = nowSec;

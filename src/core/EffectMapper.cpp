@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <span>
 
 namespace Huginn::Core::Effect
 {
@@ -208,21 +209,28 @@ namespace Huginn::Core::Effect
         float RowValue(const KeptRow& r, Col c, const Populations& pops)
         {
             if (r.fullRestore) return 1.0f;
+            const std::uint32_t group = pops.GradeGroup(c, r);
             // A zero magnitude through the engine's data: below every real value.
-            if (r.graded && !(r.raw > 0.0f)) return 1.0f / static_cast<float>(pops.Size(c, 0) + 1);
-            if (r.graded) return pops.Percentile(c, 0, r.raw) * r.post;
+            if (r.graded && !(r.raw > 0.0f)) return 1.0f / static_cast<float>(pops.Size(c, group) + 1);
+            if (r.graded) return pops.Percentile(c, group, r.raw) * r.post;
             return r.post;
         }
 
         // Group ids for grouped populations.
         constexpr std::uint32_t kGroupArrow = 1;
         constexpr std::uint32_t kGroupBolt = 2;
-        // Weapon groups: a vanilla type is its column's index (< 243); a
+        // Weapon groups: a vanilla type is its column's index (< the column count, 244); a
         // sub-type is kGroupSubtype | a hash of its name; a type's fallback
         // population (every weapon of the type, sub-types included) is
         // kGroupTypeAll | the type's index.
         constexpr std::uint32_t kGroupSubtype = 0x80000000u;
         constexpr std::uint32_t kGroupTypeAll = 0x40000000u;
+        // The timed populations (Populations::kGroupTimed) share Key()'s
+        // group field with these: keep the ids apart. Arrow and bolt groups,
+        // vanilla weapon types (column indices) and the gold_value kinds are
+        // all small; sub-type and type-all ids carry their own high bits.
+        static_assert(Populations::kGroupTimed > kColumnCount && Populations::kGroupTimed > kGroupBolt);
+        static_assert((Populations::kGroupTimed & (kGroupSubtype | kGroupTypeAll)) == 0);
 
         /// A row's GetRandomPercent share (core/EffectConditions.h): its
         /// expected strength. A graded row scales what is graded (so the
@@ -322,6 +330,97 @@ namespace Huginn::Core::Effect
             case Kind::SoulGem: return Get(cap, Col::soulgem_capacity) > 0.0f;
             default: return false;
         }
+    }
+
+    // The narcotic column's marks (effects.csv `narcotic`: alcohol and drugs,
+    // one group; 0.24.9 named it alcohol, 0.24.16 renamed it). Evidence: the
+    // LoreRim dump of 2026-10-10 and the live load order (houseCARL).
+    namespace
+    {
+        // Item keywords. OCF_AlchDrinkAlcohol (OCF, distributed by KID) tags 35
+        // of LoreRim's 56 drinks; the Alcohol* family (LoreRim - Food
+        // Tweaks.esp) 55 of them, the mods' drinks OCF misses included.
+        // OCF_AlchDrug / OCF_AlchDrugSkooma: the Skoomas and Sleeping Tree Sap
+        // (not Sweet Skooma: the effect marks below catch it).
+        // MAG_FoodTypeDrugs: Simonrim's (Gourmet) Skoomas. VendorItemAlcohol,
+        // CACO_IsAlcohol, VendorItemSkooma: the old ItemClassifier's tier 1
+        // (CACO); none in LoreRim.
+        constexpr std::array<std::string_view, 12> kNarcoticItemKeywords{
+            "OCF_AlchDrinkAlcohol", "AlcoholWine", "AlcoholMead", "AlcoholSpirit", "AlcoholGrain",
+            "AlcoholRectifiedSpirit", "OCF_AlchDrug", "OCF_AlchDrugSkooma", "MAG_FoodTypeDrugs",
+            "VendorItemAlcohol", "CACO_IsAlcohol", "VendorItemSkooma",
+        };
+        // Effect (MGEF) keywords. Feat_KW_Alcohol (Requiem - Special Feats.esp):
+        // the "Alcohol" effect on all 56 LoreRim drinks; BOOB_AlcoholBadEffect
+        // (BOOB - Requiem.esp): their Inebriation, and Balmora Blue's. The
+        // MAG_ ones are the old classifier's tier 1b (Simonrim's Apothecary /
+        // Gourmet): MAG_FoodItemDrugs is on Simonrim's Skooma effects.
+        constexpr std::array<std::string_view, 5> kNarcoticEffectKeywords{
+            "Feat_KW_Alcohol", "BOOB_AlcoholBadEffect", "MAG_DrinkAlcoholFortify", "MAG_DrinkAlcoholDamage",
+            "MAG_FoodItemDrugs",
+        };
+        // Effects that only a drink or a drug carries, by defining plugin and
+        // local id (how OverrideTable keys an MGEF). Carriers: houseCARL's
+        // reverse carrier walk over the LoreRim-5 load order, 2026-10-30.
+        struct MgefMark
+        {
+            std::string_view plugin;   // lower case
+            std::uint32_t local;
+        };
+        constexpr std::array<MgefMark, 6> kNarcoticEffects{ {
+            // The drink drawback: vanilla FoodDamageStaminaRate ("Damage Stamina
+            // Regeneration"), LoreRim's REQ_Alcohol_DamageRegeneration
+            // ("Inebriation"). Vanilla tags no drink, so this marks its drinks;
+            // in LoreRim its 57 carriers are the 56 drinks and Balmora Blue.
+            { "skyrim.esm", 0x10C645 },
+            // dunSleepingTreeDruggedAlch ("Drugged"): its two carriers are
+            // Sleeping Tree Sap and Redwater Skooma, vanilla's only drug mark.
+            { "skyrim.esm", 0x0E3CBB },
+            // DLC1dunRedwaterSkoomaEffect: Redwater Skooma alone.
+            { "dawnguard.esm", 0x01391E },
+            // Requiem's Skooma: REQ_AlchDamageHealthSkoomaSide ("Damage Health")
+            // and REQ_Effect_Drug_Skooma01_FX ("Spiritedness"). Carriers, each:
+            // Skooma, Skooma Pipe and Sweet Skooma (Unmarked Locations Pack,
+            // which has no drug keyword).
+            { "requiem.esp", 0x0693C3 },
+            { "requiem.esp", 0x191518 },
+            // WindhelmSSE's 0WHMoonshine ("Drugged"): both Windhelm Homebrews,
+            // the food and the guard-scene potion (which has no keyword).
+            { "windhelmsse.esp", 0x367FBC },
+        } };
+
+        bool AnyOf(const std::vector<std::string>& kws, std::span<const std::string_view> marks) noexcept
+        {
+            return std::any_of(kws.begin(), kws.end(), [&](const std::string& k) {
+                return std::find(marks.begin(), marks.end(), std::string_view(k)) != marks.end();
+            });
+        }
+
+        bool IsNarcoticEffect(const MagicEffectRecord& m)
+        {
+            const std::uint32_t local = OverrideTable::LocalId(m.formId);
+            if (std::none_of(kNarcoticEffects.begin(), kNarcoticEffects.end(),
+                             [&](const MgefMark& k) { return k.local == local; })) {
+                return false;   // the common case, with no plugin name to lower
+            }
+            const std::string plugin = Lower(m.plugin);
+            return std::any_of(kNarcoticEffects.begin(), kNarcoticEffects.end(),
+                               [&](const MgefMark& k) { return k.local == local && k.plugin == plugin; });
+        }
+    }
+
+    bool IsNarcotic(const ItemRecord& it, const EffectTable& effects)
+    {
+        // Taken, not applied: a poison goes on a blade, so it is never one
+        // (the dump has a Poisoned Firebrand Wine poison; it carries no mark).
+        if (it.kind != Kind::Potion && it.kind != Kind::Food) return false;
+        if (AnyOf(it.keywords, kNarcoticItemKeywords)) return true;
+        for (const auto& row : it.effects) {
+            if (row.effect >= effects.size()) continue;
+            const auto& m = effects[row.effect];
+            if (AnyOf(m.keywords, kNarcoticEffectKeywords) || IsNarcoticEffect(m)) return true;
+        }
+        return false;
     }
 
     School SchoolFromName(std::string_view s) noexcept
@@ -571,7 +670,12 @@ namespace Huginn::Core::Effect
                     if (VitalIndex(cls.col) >= 0 && row.magnitude >= kFullRestore) k.fullRestore = true;
                     break;
                 case Rule::Level:
-                    k.raw = (constantItem || row.duration == 0) ? mag : mag * d / kDurationCap;
+                    // Timed: graded within the column's timed population
+                    // (Populations::RowGroup), not against constant gear. A row
+                    // of an hour or more (sentinels included) reads mag *
+                    // 3600/3600 = mag, gear's scale, so it stays with gear.
+                    k.timed = !(constantItem || row.duration == 0 || d >= kDurationCap);
+                    k.raw = k.timed ? mag * d / kDurationCap : mag;
                     k.graded = true;
                     break;
                 case Rule::P: k.post = 1.0f; break;
@@ -603,9 +707,9 @@ namespace Huginn::Core::Effect
             // `zeroFactor` -- kNeutralStrength, or a stated percentage p/100 --
             // never the top. Through the engine's own data (route Data) an
             // unknown strength was settled before this (ZeroCase / ZeroRow);
-            // what still grades 0 here (a timed Level row with duration 0)
-            // grades at the bottom of the population (1/(N+1); zeros are not
-            // in it).
+            // what still grades 0 here (a Level row of magnitude 0) grades at
+            // the bottom of the population it grades in (1/(N+1), N that
+            // population's size, Populations::GradeGroup; zeros are not in it).
             if (k.graded && !(k.raw > 0.0f) && !k.fullRestore) {
                 k.raw = 0.0f;
                 if (cls.route != Route::Data) {
@@ -877,6 +981,7 @@ namespace Huginn::Core::Effect
             case Kind::Light: fix(Col::kind_light, 1.0f); break;
             default: break;
         }
+        if (IsNarcotic(it, effects)) fix(Col::narcotic, 1.0f);
         m.consumable = it.kind == Kind::Potion || it.kind == Kind::Poison || it.kind == Kind::Food ||
                        it.kind == Kind::Scroll || it.kind == Kind::Ammo || it.kind == Kind::SoulGem;
         if (m.consumable) fix(Col::consumable, 1.0f);
@@ -966,20 +1071,35 @@ namespace Huginn::Core::Effect
     // =========================================================================
     // Populations
     // =========================================================================
-    std::vector<std::pair<Col, float>> Populations::ColumnRaws(const ItemMapping& m)
+    std::uint32_t Populations::RowGroup(const KeptRow& r) noexcept
     {
-        std::array<float, kColumnCount> best{};
+        return r.timed ? kGroupTimed : 0u;
+    }
+
+    std::uint32_t Populations::GradeGroup(Col c, const KeptRow& r) const
+    {
+        const std::uint32_t g = RowGroup(r);
+        return (g == kGroupTimed && Size(c, g) < kMinTimedGroup) ? 0u : g;
+    }
+
+    std::vector<Populations::ColumnRaw> Populations::ColumnRaws(const ItemMapping& m)
+    {
+        // The best raw per (column, RowGroup), in column order, group 0 first.
+        std::map<std::uint32_t, std::array<float, kColumnCount>> best;
         const Eligibility eligible(m);
         for (const auto& r : m.rows) {
             if (!r.graded || r.fullRestore || !(r.raw > 0.0f)) continue;
+            auto& slot = best[RowGroup(r)];  // value-initialised: zeros
             for (const Col c : { r.col, r.col2 }) {
                 if (!eligible(r, c)) continue;
-                best[Index(c)] = std::max(best[Index(c)], r.raw);
+                slot[Index(c)] = std::max(slot[Index(c)], r.raw);
             }
         }
-        std::vector<std::pair<Col, float>> out;
+        std::vector<ColumnRaw> out;
         for (std::size_t i = 0; i < kColumnCount; ++i) {
-            if (best[i] > 0.0f) out.emplace_back(static_cast<Col>(i), best[i]);
+            for (const auto& [group, slot] : best) {
+                if (slot[i] > 0.0f) out.push_back(ColumnRaw{ static_cast<Col>(i), group, slot[i] });
+            }
         }
         return out;
     }
@@ -987,7 +1107,7 @@ namespace Huginn::Core::Effect
     void Populations::Add(const ItemMapping& m)
     {
         if (!m.inScope) return;
-        for (const auto& [c, v] : ColumnRaws(m)) pops_[Key(c, 0)].push_back(v);
+        for (const auto& v : ColumnRaws(m)) pops_[Key(v.col, v.group)].push_back(v.raw);
         for (const auto& g : m.grouped) {
             pops_[Key(g.col, g.group)].push_back(g.raw);
             if (g.fallback != 0) pops_[Key(g.col, g.fallback)].push_back(g.raw);

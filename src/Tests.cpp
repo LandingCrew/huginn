@@ -23,12 +23,15 @@
 #include "learning/EquipSubscribers.h"
 #include "learning/EquipSourceTracker.h"
 #include "learning/UsageMemory.h"
+#include "learning/PriorCalculator.h"      // the legacy score parts (R8.4: no longer via UtilityScorer.h)
+#include "learning/CorrelationBooster.h"
 #include "util/ScopedTimer.h"
 #include "util/NameMatch.h"
 #include "context/ContextRuleEngine.h"
 #include "context/ReasonHold.h"
 #include "context/ContextWeightForCandidate.h"
 #include "display/ExplanationLabel.h"
+#include "effect/Facets.h"             // R11: the synthetic candidates' facets (InstallSyntheticFacetResolver)
 #include "IniLoad.h"                   // MatchOverrideSection (override namespacing tests)
 #include "slot/SlotLocker.h"          // THROWAWAY: RunSlotLockerResetTest (0.19.21)
 #include "slot/SlotAllocator.h"       // THROWAWAY: RunSlotSeatingTest (0.20.30)
@@ -47,11 +50,155 @@
 #include <set>
 #include <thread>
 
-#ifdef _DEBUG
-#include "ui/StateManagerDebugWidget.h"
-#endif
-
 using namespace Huginn;
+
+// =============================================================================
+// SYNTHETIC CANDIDATES' FACETS (R11)
+// =============================================================================
+// The suites below build candidates with made-up FormIDs (0x0BAD....) and
+// state what they are in the old classifiers' vocabulary (a spell typed
+// Healing, a potion tagged RestoreHealth). Since R11 the slot classes, the
+// filters, the override finders and the label read the effect catalog's
+// facets (core/CapFacets.h), which has no entry for a made-up form. This
+// resolver answers for such a candidate from its legacy fields, the way the
+// catalog would read the real item, so each suite keeps testing what it was
+// written for. Tests only: the plugin never reads the legacy fields for this
+// (tools/prune/r8_check.py). Installed around the suite runs (Main.cpp).
+namespace
+{
+#ifndef NDEBUG
+    std::optional<Effect::FormFacets> SyntheticFacets(const Candidate::CandidateVariant& v)
+    {
+        using F = Core::Facets::F;
+        using K = Core::Effect::Kind;
+        Effect::FormFacets ff;
+        ff.known = true;
+        auto& f = ff.facets;
+        const auto spellLike = [&f](Spell::SpellType type, Spell::SpellTag tags, Spell::SpellTagExt ext) {
+            using ST = Spell::SpellType;
+            using T = Spell::SpellTag;
+            using X = Spell::SpellTagExt;
+            const auto has = [tags](T t) { return Spell::HasTag(tags, t); };
+            const auto hasX = [ext](X t) { return Spell::HasTagExt(ext, t); };
+            if (type == ST::Damage) { f.Add(F::Damage); f.Add(F::Hostile); }
+            if (type == ST::Healing || has(T::RestoreHealth)) f.Add(F::RestoreHealth);
+            if (has(T::RestoreMagicka)) f.Add(F::RestoreMagicka);
+            if (has(T::RestoreStamina)) f.Add(F::RestoreStamina);
+            if (type == ST::Buff) f.Add(F::Fortify);
+            if (type == ST::Defensive) f.Add(F::Defense);
+            if (type == ST::Debuff) f.Add(F::Hostile);
+            if (type == ST::Summon || has(T::SummonDaedra) || has(T::SummonUndead) || has(T::SummonCreature) ||
+                has(T::BoundWeapon)) {
+                f.Add(F::Summon);
+            }
+            if (type == ST::Utility || has(T::Telekinesis) || hasX(X::Unlock)) f.Add(F::Utility);
+            if (has(T::Light) || has(T::DetectLife) || hasX(X::DarkVision)) f.Add(F::Vision);
+            if (has(T::Ward)) { f.Add(F::Ward); f.Add(F::Defense); }
+            if (has(T::Armor)) { f.Add(F::ArmorBuff); f.Add(F::Defense); }
+            if (has(T::Invisibility)) { f.Add(F::Invisibility); f.Add(F::Stealth); }
+            if (has(T::Muffle)) { f.Add(F::Muffle); f.Add(F::Stealth); }
+            if (hasX(X::Waterbreathing)) { f.Add(F::Waterbreathing); f.Add(F::Utility); }
+            if (hasX(X::SlowFall)) f.Add(F::Movement);
+            if (hasX(X::Warming)) f.Add(F::Warming);
+            if (hasX(X::TargetsOthers)) f.Add(F::TargetsOthers);
+            if (hasX(X::HealsOverTime)) f.Add(F::HealsOverTime);
+        };
+        bool handled = std::visit([&](const auto& c) -> bool {
+            using T = std::decay_t<decltype(c)>;
+            if constexpr (std::is_same_v<T, Candidate::SpellCandidate>) {
+                ff.kind = K::Spell;
+                spellLike(c.type, c.tags, c.tagsExt);
+                return true;
+            }
+            else if constexpr (std::is_same_v<T, Candidate::ScrollCandidate>) {
+                ff.kind = K::Scroll;
+                spellLike(c.type, c.tags, c.tagsExt);
+                return true;
+            }
+            else if constexpr (std::is_same_v<T, Candidate::ItemCandidate>) {
+                using IT = Item::ItemType;
+                using G = Item::ItemTag;
+                const auto has = [&c](G t) { return Item::HasTag(c.tags, t); };
+                switch (c.type) {
+                    case IT::Poison: ff.kind = K::Poison; f.Add(F::Damage); f.Add(F::Hostile); break;
+                    case IT::Food: ff.kind = K::Food; break;
+                    case IT::Alcohol: ff.kind = K::Food; f.Add(F::Intoxicating); f.Add(F::Narcotic); break;
+                    case IT::SoulGem: ff.kind = K::SoulGem; break;
+                    default: ff.kind = c.sourceType == Candidate::SourceType::Food ? K::Food : K::Potion; break;
+                }
+                if (c.type == IT::HealthPotion || has(G::RestoreHealth)) f.Add(F::RestoreHealth);
+                if (c.type == IT::MagickaPotion || has(G::RestoreMagicka)) f.Add(F::RestoreMagicka);
+                if (c.type == IT::StaminaPotion || has(G::RestoreStamina)) f.Add(F::RestoreStamina);
+                if (c.type == IT::ResistPotion) f.Add(F::Resist);
+                if (c.type == IT::BuffPotion || has(G::FortifyHealth) || has(G::FortifyMagicka) || has(G::FortifyStamina) ||
+                    has(G::FortifyMagicSchool) || has(G::FortifyCombatSkill) || has(G::FortifyUtilitySkill)) {
+                    f.Add(F::Fortify);
+                }
+                if (c.type == IT::CurePotion) f.Add(F::Cure);
+                const std::pair<G, F> resists[] = { { G::ResistFire, F::ResistFire }, { G::ResistFrost, F::ResistFrost },
+                    { G::ResistShock, F::ResistShock }, { G::ResistPoison, F::ResistPoison }, { G::ResistMagic, F::ResistMagic } };
+                for (const auto& [tag, facet] : resists) {
+                    if (has(tag)) { f.Add(F::Resist); f.Add(facet); }
+                }
+                if (has(G::ResistDisease)) f.Add(F::Resist);
+                if (has(G::RegenHealth)) { f.Add(F::Regen); f.Add(F::RegenHealth); }
+                if (has(G::RegenMagicka) || has(G::RegenStamina)) f.Add(F::Regen);
+                if (has(G::CureDisease)) { f.Add(F::Cure); f.Add(F::CureDisease); }
+                if (has(G::CurePoison)) { f.Add(F::Cure); f.Add(F::CurePoison); }
+                if (has(G::Invisibility)) { f.Add(F::Invisibility); f.Add(F::Stealth); }
+                if (has(G::Waterbreathing)) { f.Add(F::Waterbreathing); f.Add(F::Utility); }
+                if (has(G::FortifyCarryWeight)) f.Add(F::Utility);
+                if (has(G::SatisfiesCold)) f.Add(F::Warming);
+                if (has(G::DamageHealth) || has(G::DamageMagicka) || has(G::DamageStamina)) f.Add(F::Damage);
+                return true;
+            }
+            else {
+                return false;   // weapons, ammo, apparel, torches: their class needs no facet
+            }
+        }, v);
+        if (!handled) return std::nullopt;
+        return ff;
+    }
+#endif
+}
+
+void InstallSyntheticFacetResolver()
+{
+#ifndef NDEBUG
+    Effect::SetTestResolver(&SyntheticFacets);
+#endif
+}
+
+void RemoveSyntheticFacetResolver()
+{
+#ifndef NDEBUG
+    Effect::SetTestResolver({});
+#endif
+}
+
+namespace
+{
+    // R8.1 (0.23.55): the reason the candidate filters give one candidate on
+    // this state (nullopt: kept). The hard gates read the state as the
+    // pipeline does (Context::HardGateInputs), so a candidate the old context
+    // weight zeroed is dropped here before any scorer could see it.
+    [[maybe_unused]] std::optional<Core::Filter::Reason> FilterReasonFor(const Candidate::CandidateVariant& c,
+        const State::PlayerActorState& player, const State::TargetCollection& targets,
+        const State::WorldState& world, bool suppressFavorites = false)
+    {
+        Candidate::CooldownManager cooldowns;
+        const Candidate::CandidateConfig config{};
+        Candidate::CandidateFilters filters(cooldowns, config);
+        std::vector<Candidate::CandidateVariant> in{ c };
+        std::vector<Candidate::CandidateVariant> out;
+        Candidate::FilterStats stats;
+        std::vector<Core::Filter::Dropped> dropped;
+        filters.ApplyAllFilters(in, out, player, 1.0e6f,
+            Context::HardGateInputs(player, targets, world, suppressFavorites), stats, {}, nullptr, &dropped);
+        if (dropped.empty()) return std::nullopt;
+        return dropped.front().reason;
+    }
+}
 
 // =============================================================================
 // MULTIPLICATIVE SCORING FORMULA TESTS (Stage 2d)
@@ -80,16 +227,8 @@ void RunMultiplicativeScoringTests()
         player.vitals.health = 1.0f;  // Full health
 
         TargetCollection targets{};
-        GameState gameState{};
-        gameState.health = HealthBucket::VeryHigh;
 
         auto weights = engine.EvaluateRules(player, targets, world);
-
-        // Healing spell candidate (not needed at full health)
-        Candidate::SpellCandidate healingSpell{};
-        healingSpell.tags = Spell::SpellTag::RestoreHealth;
-        healingSpell.name = "Heal Self";
-        healingSpell.formID = 0x00012345;
 
         // Extract weight - should be low (~0.05 base relevance)
         float contextWeight = weights.healingWeight;  // Should be very low at full health
@@ -120,222 +259,12 @@ void RunMultiplicativeScoringTests()
             utility, contextWeight);
     }
 
-    // =========================================================================
-    // Test 2: Adaptive lambda scales with confidence
-    // =========================================================================
-    {
-        logger::info("  Test 2: Adaptive lambda scales with confidence..."sv);
-
-        ScorerConfig config;
-
-        config.lambdaMin = 0.5f;
-        config.lambdaMax = 3.0f;
-
-        // Test at different confidence levels
-        float lambda0 = config.lambdaMin + 0.0f * (config.lambdaMax - config.lambdaMin);  // 0.5
-        float lambda50 = config.lambdaMin + 0.5f * (config.lambdaMax - config.lambdaMin); // 1.75
-        float lambda100 = config.lambdaMin + 1.0f * (config.lambdaMax - config.lambdaMin); // 3.0
-
-        if (std::abs(lambda0 - 0.5f) > 0.01f || std::abs(lambda100 - 3.0f) > 0.01f) {
-            logger::error("TEST FAIL: Adaptive lambda should scale from 0.5 to 3.0"sv);
-            return;
-        }
-        logger::info("  ✓ Adaptive lambda: λ(0)={:.1f}, λ(0.5)={:.2f}, λ(1)={:.1f}"sv,
-            lambda0, lambda50, lambda100);
-    }
-
-    // =========================================================================
-    // Test 3: Multiplicative formula amplifies learning at high confidence
-    // =========================================================================
-    {
-        logger::info("  Test 3: Multiplicative formula amplifies learning..."sv);
-
-        float contextWeight = 0.7f;
-        float learningScore = 0.8f;
-        float lambdaLow = 0.5f;   // Low confidence
-        float lambdaHigh = 3.0f;  // High confidence
-
-        float utilityLow = contextWeight * (1.0f + lambdaLow * learningScore);
-        float utilityHigh = contextWeight * (1.0f + lambdaHigh * learningScore);
-
-        // utilityLow = 0.7 × (1 + 0.5×0.8) = 0.7 × 1.4 = 0.98
-        // utilityHigh = 0.7 × (1 + 3.0×0.8) = 0.7 × 3.4 = 2.38
-
-        float amplification = utilityHigh / utilityLow;  // Should be ~2.4×
-
-        if (amplification < 2.0f) {
-            logger::error("TEST FAIL: High confidence should amplify learning significantly"sv);
-            return;
-        }
-        logger::info("  ✓ Learning amplification: {:.1f}× at high confidence (low={:.2f}, high={:.2f})"sv,
-            amplification, utilityLow, utilityHigh);
-    }
-
-    // =========================================================================
-    // Test 4: Correlation bonuses are multiplicative and compound
-    // =========================================================================
-    {
-        logger::info("  Test 4: Correlation bonuses compound multiplicatively..."sv);
-
-        // Test compounding: bow+arrow bonus (2.0) + fortify archery buff (2.0)
-        // Additive (old): +2.0 + +2.0 = +4.0
-        // Multiplicative (new): ×3.0 × ×3.0 = ×9.0
-
-        float multiplier = 1.0f;
-        float bowArrowBonus = 2.0f;
-        float fortifyBonus = 2.0f;
-
-        // Apply as multiplicative
-        multiplier *= (1.0f + bowArrowBonus);    // ×3.0
-        multiplier *= (1.0f + fortifyBonus);     // ×3.0
-        // Result: ×9.0
-
-        if (std::abs(multiplier - 9.0f) > 0.01f) {
-            logger::error("TEST FAIL: Correlation bonuses should compound to ×9.0, got {:.1f}"sv, multiplier);
-            return;
-        }
-        logger::info("  ✓ Correlation compounding: ×{:.1f} (bow+arrow ×3.0, fortify ×3.0)"sv, multiplier);
-    }
-
-    // =========================================================================
-    // Test 5: Full integration (context × learning × correlation)
-    // =========================================================================
-    {
-        logger::info("  Test 5: Full multiplicative integration..."sv);
-
-        float contextWeight = 0.8f;        // High relevance
-        float learningScore = 0.6f;        // Moderate learning
-        float confidence = 0.7f;           // High-ish confidence
-        float correlationBonus = 3.0f;     // Bow+arrow (×3.0)
-        float lambdaMin = 0.5f;
-        float lambdaMax = 3.0f;
-
-        // Compute adaptive lambda
-        float lambda = lambdaMin + confidence * (lambdaMax - lambdaMin);  // 2.25
-
-        // Multiplicative formula
-        float utility = contextWeight * (1.0f + lambda * learningScore) * correlationBonus;
-        // = 0.8 × (1 + 2.25×0.6) × 3.0
-        // = 0.8 × (1 + 1.35) × 3.0
-        // = 0.8 × 2.35 × 3.0
-        // = 5.64
-
-        float expected = 5.64f;  // Hand-computed: 0.8 × (1 + 2.25×0.6) × 3.0
-
-        if (std::abs(utility - expected) > 0.01f) {
-            logger::error("TEST FAIL: Full integration mismatch"sv);
-            return;
-        }
-        logger::info("  ✓ Full integration: utility={:.2f} (ctx={:.1f}, λ={:.2f}, learn={:.1f}, corr=×{:.1f})"sv,
-            utility, contextWeight, lambda, learningScore, correlationBonus);
-    }
-
-    // =========================================================================
-    // Test 6: Favorites boost scales with rank (max → min across the cohort)
-    // =========================================================================
-    {
-        logger::info("  Test 6: Favorites boost scales with rank..."sv);
-
-        Scoring::ScorerConfig cfg{};  // favoritesMode=Boost, min=1.3, max=2.5
-
-        // Rank 0 of N gets max; last rank gets min; midpoint is halfway.
-        bool ok =
-            std::abs(cfg.GetFavoritesMultiplier(0, 5) - cfg.favoritesBoostMax) < 0.001f &&
-            std::abs(cfg.GetFavoritesMultiplier(4, 5) - cfg.favoritesBoostMin) < 0.001f &&
-            std::abs(cfg.GetFavoritesMultiplier(2, 5) -
-                (cfg.favoritesBoostMax + cfg.favoritesBoostMin) * 0.5f) < 0.001f &&
-            // Single favorite: rank 0 of 1 gets max.
-            std::abs(cfg.GetFavoritesMultiplier(0, 1) - cfg.favoritesBoostMax) < 0.001f &&
-            // Degenerate/disabled cases are neutral.
-            std::abs(cfg.GetFavoritesMultiplier(0, 0) - 1.0f) < 0.001f;
-
-        cfg.favoritesMode = Scoring::FavoritesMode::Off;
-        ok = ok && std::abs(cfg.GetFavoritesMultiplier(0, 5) - 1.0f) < 0.001f;
-
-        if (!ok) {
-            logger::error("TEST FAIL: Favorites rank scaling should interpolate max→min by rank"sv);
-            return;
-        }
-        logger::info("  ✓ Favorites rank scaling: rank 0 → ×{:.1f}, last rank → ×{:.1f}"sv,
-            Scoring::ScorerConfig{}.favoritesBoostMax, Scoring::ScorerConfig{}.favoritesBoostMin);
-    }
+    // Tests 2-5 checked arithmetic on their own constants and called no
+    // Huginn code (0.24.5: deleted); Test 6 went with the rank scaling (R8.4).
 
     logger::info("TEST PASS: All multiplicative scoring formula tests passed!"sv);
 #endif
 }
-
-// ============================================================================
-// Console Commands for Manual Contextual Bandit Testing (Debug Mode Only)
-// ============================================================================
-
-#ifndef NDEBUG
-
-void ConsoleCmd_ShowEquippedSpells()
-{
-    if (!g_stateEvaluator || !g_utilityScorer) {
-        RE::ConsoleLog::GetSingleton()->Print("Huginn: Systems not initialized");
-        return;
-    }
-
-    // Evaluate current game state
-    auto [currentState, playerState] = EvaluateCurrentGameState();
-
-    RE::ConsoleLog::GetSingleton()->Print("=== Currently Equipped Spells ===");
-    logger::info("[Console] === Currently Equipped Spells ==="sv);
-
-    // Log player equipped spells info
-    auto player = RE::PlayerCharacter::GetSingleton();
-    if (player) {
-        auto* leftSpell = player->GetActorRuntimeData().selectedSpells[RE::Actor::SlotTypes::kLeftHand];
-        auto* rightSpell = player->GetActorRuntimeData().selectedSpells[RE::Actor::SlotTypes::kRightHand];
-
-        if (leftSpell) {
-            RE::ConsoleLog::GetSingleton()->Print(
-                std::format("Left Hand: {} (0x{:08X})", leftSpell->GetName(), leftSpell->GetFormID()).c_str());
-        } else {
-            RE::ConsoleLog::GetSingleton()->Print("Left Hand: None");
-        }
-
-        if (rightSpell) {
-            RE::ConsoleLog::GetSingleton()->Print(
-                std::format("Right Hand: {} (0x{:08X})", rightSpell->GetName(), rightSpell->GetFormID()).c_str());
-        } else {
-            RE::ConsoleLog::GetSingleton()->Print("Right Hand: None");
-        }
-    }
-}
-
-#ifdef _DEBUG
-// Command: Toggle the StateManager debug widget (v0.6.1)
-void ConsoleCmd_ToggleStateManagerDebug()
-{
-    auto& widget = UI::StateManagerDebugWidget::GetSingleton();
-    widget.ToggleVisible();
-
-    bool isVisible = widget.IsVisible();
-    RE::ConsoleLog::GetSingleton()->Print(
-        std::format("StateManager Debug Widget: {}", isVisible ? "SHOWN" : "HIDDEN").c_str());
-
-    logger::info("[Console] StateManager debug widget toggled: {}"sv, isVisible ? "shown" : "hidden");
-}
-
-// Command: Force update StateManager (useful for testing)
-void ConsoleCmd_ForceUpdateStateManager()
-{
-    State::StateManager::GetSingleton().ForceUpdate();
-
-    auto worldState = State::StateManager::GetSingleton().GetWorldState();
-    auto playerState = State::StateManager::GetSingleton().GetPlayerState();
-    auto targets = State::StateManager::GetSingleton().GetTargets();
-
-    RE::ConsoleLog::GetSingleton()->Print(
-        std::format("StateManager force updated - {} tracked targets", targets.targets.size()).c_str());
-
-    logger::info("[Console] StateManager force updated - {} tracked targets"sv, targets.targets.size());
-}
-#endif
-
-#endif  // !NDEBUG (console commands)
 
 // =============================================================================
 // SPELL REGISTRY INTEGRATION TESTS
@@ -801,21 +730,15 @@ void RunItemRegistryTests()
     // Numbers are the real ones from 2026-09-25: LoreRim Restore Health
     // (Fair) is 8/s for 20 s, Apothecary Minor Healing is an instant 25.
     {
-        const auto potion = [](float mag, float dur) {
-            Item::ItemData d;
-            d.magnitude = mag;
-            d.duration = dur;
-            return d;
-        };
         const auto check = [](const char* what, float got, float want) {
             if (std::abs(got - want) > 0.001f) {
                 logger::error("TEST FAIL: RestoredWithin {}: got {:.2f}, expected {:.2f}"sv, what, got, want);
             }
         };
-        check("instant 25", potion(25.0f, 0.0f).RestoredWithin(5.0f), 25.0f);
-        check("8/s for 20s", potion(8.0f, 20.0f).RestoredWithin(5.0f), 40.0f);
-        check("8/s for 3s", potion(8.0f, 3.0f).RestoredWithin(5.0f), 24.0f);
-        check("zero window", potion(8.0f, 20.0f).RestoredWithin(0.0f), 8.0f);
+        check("instant 25", Item::RestoredWithin(25.0f, 0.0f, 5.0f), 25.0f);
+        check("8/s for 20s", Item::RestoredWithin(8.0f, 20.0f, 5.0f), 40.0f);
+        check("8/s for 3s", Item::RestoredWithin(8.0f, 3.0f, 5.0f), 24.0f);
+        check("zero window", Item::RestoredWithin(8.0f, 20.0f, 0.0f), 8.0f);
         logger::info("TEST PASS: RestoredWithin (instant vs heal-over-time) ran"sv);
     }
 
@@ -2386,7 +2309,7 @@ void RunUnitTests()
         for (int i = 0; i < 10; ++i) {
             ScoredCandidate scored;
             scored.candidate = Candidate::SpellCandidate{};
-            scored.utility = 10.0f - static_cast<float>(i);
+            scored.RankOnUtility(10.0f - static_cast<float>(i));
             testCandidates.push_back(scored);
         }
 
@@ -2754,20 +2677,15 @@ void RunUnitTests()
                 return;
             }
 
-            // And the reason must stay quiet for a shallow drop, so it cannot
-            // outrank a live combat reason for a tick (the observed harm).
+            // A shallow drop stays under half weight. (Before R8.4 this was
+            // "the Falling reason stays quiet", read off the weight at half
+            // the configured value; the reason derivation is gone, the ramp
+            // it relied on is what is left to test.)
             State::PlayerActorState shallow{};
             shallow.isFalling = true;
             shallow.fallDepth = State::PhysicsConstants::FALL_DEPTH_MIN + 1.0f;
-            const auto shallowWeights = engine.EvaluateRules(shallow, testTargets, testWorld);
-            if (engine.DominantReason(shallowWeights, {}) == Context::ContextReason::Falling) {
-                logger::error("TEST FAIL: a shallow drop must not report Falling");
-                return;
-            }
-            if (engine.DominantReason(
-                    engine.EvaluateRules(deepFall, testTargets, testWorld), {}) !=
-                Context::ContextReason::Falling) {
-                logger::error("TEST FAIL: a deep fall should report Falling");
+            if (engine.EvaluateRules(shallow, testTargets, testWorld).slowFallWeight >= 0.4f) {
+                logger::error("TEST FAIL: a shallow drop must stay under half the fall weight");
                 return;
             }
         }
@@ -3136,11 +3054,14 @@ void RunUnitTests()
                     return;
                 }
 
-                // Drawing the weight is what earns the label — same gate the
-                // display uses, so this closes weight → candidate → subtext.
+                // R8.3: the label speaks for an item whose own explanation is
+                // the reason (ScoredCandidate::explainedReason, set by the
+                // ranking from the largest theta n cap term); here the potion's
+                // explanation is the station's need.
                 Slot::SlotAssignment assignment{};
                 Scoring::ScoredCandidate scored{};
                 scored.candidate = st.potion;
+                scored.explainedReason = st.reason;
                 assignment.candidate = scored;
                 if (const auto got = Display::DeriveExplanationLabel(assignment, st.reason);
                     got != st.label) {
@@ -3280,6 +3201,12 @@ void RunUnitTests()
                 logger::error("TEST FAIL (6k): a heal for others with no follower near should weigh 0");
                 return;
             }
+            // R8.1: and the filters drop it before scoring (no_follower), so
+            // the cold-start rescue can no longer raise it from that 0.
+            if (FilterReasonFor(healOther, hurtPlayer, testTargets, testWorld) != Core::Filter::Reason::no_follower) {
+                logger::error("TEST FAIL (6k): a heal for others with no follower near should be filtered no_follower");
+                return;
+            }
 
             State::TargetCollection withFollower;
             State::TargetActorState follower;
@@ -3298,6 +3225,29 @@ void RunUnitTests()
                 logger::error("TEST FAIL (6k): a heal for others with a hurt follower should weigh allyHealWeight "
                     "{:.3f}, got {:.3f}", hurt.allyHealWeight, w);
                 return;
+            }
+            if (const auto r = FilterReasonFor(healOther, State::PlayerActorState{}, withFollower, testWorld)) {
+                logger::error("TEST FAIL (6k): a heal for others with a follower near was filtered ({})",
+                    Core::Filter::ReasonName(*r));
+                return;
+            }
+
+            // R8.1: favourites mode Suppress is a filter too (favorite_suppressed),
+            // not a skip inside the scorer: a favourite weapon goes, a plain one stays.
+            {
+                Candidate::WeaponCandidate fav{};
+                fav.name = "Favourite Sword";
+                fav.formID = 0x0BADF00D;
+                fav.isFavorited = true;
+                Candidate::WeaponCandidate plain = fav;
+                plain.isFavorited = false;
+                const State::PlayerActorState anyone{};
+                if (FilterReasonFor(fav, anyone, testTargets, testWorld, true) != Core::Filter::Reason::favorite_suppressed ||
+                    FilterReasonFor(fav, anyone, testTargets, testWorld, false).has_value() ||
+                    FilterReasonFor(plain, anyone, testTargets, testWorld, true).has_value()) {
+                    logger::error("TEST FAIL (6k): Suppress should filter a favourite (favorite_suppressed) and nothing else");
+                    return;
+                }
             }
 
             logger::info("  ✓ PASS: spells for others: 0 alone, {:.2f} with a hurt follower"sv, w);
@@ -3372,6 +3322,12 @@ void RunUnitTests()
                         st.name, stationWeight, Context::WeightForCandidate(gear, weights));
                     return;
                 }
+                // R8.1: its own station keeps it past the filters.
+                if (const auto r = FilterReasonFor(gear, testPlayer, testTargets, testWorld)) {
+                    logger::error("TEST FAIL (6j): at {} the fortify apparel was filtered ({})",
+                        st.name, Core::Filter::ReasonName(*r));
+                    return;
+                }
 
                 // Gear for a DIFFERENT craft must not ride the same station. The
                 // three weights are separate fields; reading the wrong one would
@@ -3388,6 +3344,12 @@ void RunUnitTests()
 
                 if (Context::WeightForCandidate(wrongCraft, weights) >= stationWeight - 0.01f) {
                     logger::error("TEST FAIL (6j): at {} apparel for another craft reached the station weight",
+                        st.name);
+                    return;
+                }
+                // R8.1: another craft's station is no station for it (no_workstation).
+                if (FilterReasonFor(wrongCraft, testPlayer, testTargets, testWorld) != Core::Filter::Reason::no_workstation) {
+                    logger::error("TEST FAIL (6j): at {} apparel for another craft should be filtered no_workstation",
                         st.name);
                     return;
                 }
@@ -3418,12 +3380,19 @@ void RunUnitTests()
                         st.name, stationWeight, Context::WeightForCandidate(dual, weights));
                     return;
                 }
+                // R8.1: and passes the filters at either of its stations.
+                if (const auto r = FilterReasonFor(dual, testPlayer, testTargets, testWorld)) {
+                    logger::error("TEST FAIL (6j): at {} a dual-fortify piece was filtered ({})",
+                        st.name, Core::Filter::ReasonName(*r));
+                    return;
+                }
             }
 
             // Away from any workstation every craft skill scores exactly 0 — not
-            // a small number, zero. minimumContextWeight drops it before scoring
-            // rather than after, which is the whole reason apparel costs nothing
-            // in the 99% of play that happens away from a bench.
+            // a small number, zero. R8.1 (0.23.55): and the no_workstation
+            // filter drops it before scoring (until then minimumContextWeight
+            // did), which is the whole reason apparel costs nothing in the 99%
+            // of play that happens away from a bench.
             {
                 State::PlayerActorState testPlayer{};
                 State::WorldState testWorld{};   // isLookingAtWorkstation stays false
@@ -3442,6 +3411,11 @@ void RunUnitTests()
                     if (const float w = Context::WeightForCandidate(gear, weights); w != 0.0f) {
                         logger::error("TEST FAIL (6j): {} apparel away from a workstation should "
                             "score 0.0, got {:.3f}", Apparel::CraftSkillToString(skill), w);
+                        return;
+                    }
+                    if (FilterReasonFor(gear, testPlayer, testTargets, testWorld) != Core::Filter::Reason::no_workstation) {
+                        logger::error("TEST FAIL (6j): {} apparel away from a workstation should be "
+                            "filtered no_workstation", Apparel::CraftSkillToString(skill));
                         return;
                     }
 
@@ -3981,7 +3955,7 @@ void RunUnitTests()
             smithingPotion.combatSkill = Item::CombatSkill::Smithing;
             smithingPotion.name = "Fortify Smithing Potion";
 
-            // Extract weight using UtilityScorer's GetContextWeight logic
+            // Extract the weight as Context::WeightForCandidate does
             float weight = 0.0f;
             if (Item::HasTag(smithingPotion.tags, Item::ItemTag::FortifyCombatSkill)) {
                 if (smithingPotion.combatSkill == Item::CombatSkill::Smithing) {
@@ -4255,7 +4229,7 @@ void RunUnitTests()
             spell.formID = static_cast<RE::FormID>(kBaseID + i);
             Scoring::ScoredCandidate sc{};
             sc.candidate = spell;
-            sc.utility = static_cast<float>(kTotal - i);  // descending
+            sc.RankOnUtility(static_cast<float>(kTotal - i));  // descending
             scored.push_back(sc);
         }
 
@@ -4605,168 +4579,30 @@ void RunUnitTests()
             "B back at n {:.2f}, A forgotten at 14h)"sv, rA, rB, nB);
     }
 
-    // Test 17: ContextReason derivation (architecture-critique #10) — the display
-    // explanation is read off the SAME weight map that ranks candidates, so the
-    // reported boundaries must match the vital thresholds and the suppressions.
+    // Test 17: the explanation label, and the context weights the legacy
+    // floors read. R8.4 (0.24.1): the reason derived off the weight map (the
+    // dominant reason and its thresholds, suppressions and priority: 17a-17h
+    // before) is gone with it; the label reads each item's own explanation,
+    // whose need -> reason mapping is host-tested (tests/core/
+    // ChoiceCutoverTests.cpp, ExplainedReason). What stays here: the weights a
+    // torch and survival food draw (the D2 feature's floors), the not_dark
+    // filter, and the label ladder (17i-17k).
     {
-        logger::info("TEST: ContextReason derived from context weights..."sv);
+        logger::info("TEST: explanation label and context weights..."sv);
 
-        // Pinned to DEFAULT config, not settings.BuildConfig(): these assertions
-        // are about the derivation, and the live INI can legitimately zero a
-        // weight (a rule at 0 never reports — that is a documented feature of
-        // Fires()), which would fail the test for a correct build.
+        // Pinned to DEFAULT config, not settings.BuildConfig(): the live INI
+        // can legitimately zero a weight, which would fail the test for a
+        // correct build.
         Context::ContextRuleEngine engine(State::ContextWeightConfig{});
 
-        const Context::ContextReasonSignals kNoSignals{};
-
-        // Helper: evaluate + name the reason in one step
-        const auto reasonFor = [&](const State::PlayerActorState& player,
-                                   const State::TargetCollection& targets,
-                                   const State::WorldState& world,
-                                   const Context::ContextReasonSignals& signals) {
-            return engine.DominantReason(engine.EvaluateRules(player, targets, world), signals);
-        };
-
-        // 17a: Vital bands land exactly on the old thresholds (15% / 30% HP)
-        {
-            State::TargetCollection targets{};
-            State::WorldState world{};
-
-            State::PlayerActorState healthy{};
-            healthy.vitals.health = 0.9f;
-            if (reasonFor(healthy, targets, world, kNoSignals) != Context::ContextReason::None) {
-                logger::error("TEST FAIL: 90%% HP should report no reason");
-                return;
-            }
-
-            State::PlayerActorState low{};
-            low.vitals.health = 0.25f;  // below LOW (0.30), above CRITICAL (0.15)
-            if (reasonFor(low, targets, world, kNoSignals) != Context::ContextReason::LowHealth) {
-                logger::error("TEST FAIL: 25%% HP should report LowHealth");
-                return;
-            }
-
-            State::PlayerActorState critical{};
-            critical.vitals.health = 0.10f;
-            if (reasonFor(critical, targets, world, kNoSignals) != Context::ContextReason::CriticalHealth) {
-                logger::error("TEST FAIL: 10%% HP should report CriticalHealth");
-                return;
-            }
-
-            // Just inside the LOW threshold — the curve inversion must not drift
-            State::PlayerActorState edge{};
-            edge.vitals.health = 0.299f;
-            if (reasonFor(edge, targets, world, kNoSignals) != Context::ContextReason::LowHealth) {
-                logger::error("TEST FAIL: 29.9%% HP should report LowHealth (threshold drift)");
-                return;
-            }
-            State::PlayerActorState justAbove{};
-            justAbove.vitals.health = 0.301f;
-            if (reasonFor(justAbove, targets, world, kNoSignals) == Context::ContextReason::LowHealth) {
-                logger::error("TEST FAIL: 30.1%% HP must not report LowHealth (threshold drift)");
-                return;
-            }
-
-            // Magicka and stamina invert DIFFERENT exponents (stamina defaults to
-            // 1.5, not 2.0), so the HP cases above do not cover them.
-            State::PlayerActorState lowMagicka{};
-            lowMagicka.vitals.magicka = 0.299f;
-            if (reasonFor(lowMagicka, targets, world, kNoSignals) != Context::ContextReason::LowMagicka) {
-                logger::error("TEST FAIL: 29.9%% MP should report LowMagicka");
-                return;
-            }
-            State::PlayerActorState okMagicka{};
-            okMagicka.vitals.magicka = 0.301f;
-            if (reasonFor(okMagicka, targets, world, kNoSignals) == Context::ContextReason::LowMagicka) {
-                logger::error("TEST FAIL: 30.1%% MP must not report LowMagicka (threshold drift)");
-                return;
-            }
-
-            State::PlayerActorState lowStamina{};
-            lowStamina.vitals.stamina = 0.299f;
-            if (reasonFor(lowStamina, targets, world, kNoSignals) != Context::ContextReason::LowStamina) {
-                logger::error("TEST FAIL: 29.9%% SP should report LowStamina");
-                return;
-            }
-            State::PlayerActorState okStamina{};
-            okStamina.vitals.stamina = 0.301f;
-            if (reasonFor(okStamina, targets, world, kNoSignals) == Context::ContextReason::LowStamina) {
-                logger::error("TEST FAIL: 30.1%% SP must not report LowStamina (threshold drift)");
-                return;
-            }
-        }
-
-        // 17b: Suppressions the old threshold pass ignored — an already-active
-        // buff means the context isn't driving scoring, so it isn't a reason
-        {
-            State::TargetCollection targets{};
-            State::WorldState world{};
-
-            State::PlayerActorState drowning{};
-            drowning.isUnderwater = true;
-            if (reasonFor(drowning, targets, world, kNoSignals) != Context::ContextReason::Underwater) {
-                logger::error("TEST FAIL: underwater should report Underwater");
-                return;
-            }
-
-            State::PlayerActorState breathing{};
-            breathing.isUnderwater = true;
-            breathing.buffs.hasWaterBreathing = true;
-            if (reasonFor(breathing, targets, world, kNoSignals) == Context::ContextReason::Underwater) {
-                logger::error("TEST FAIL: waterbreathing active must suppress the Underwater reason");
-                return;
-            }
-        }
-
-        // 17c: Elemental reasons scale with resistance (binary rules fire at
-        // half their configured weight)
-        {
-            State::TargetCollection targets{};
-            State::WorldState world{};
-
-            State::PlayerActorState burning{};
-            burning.effects.isOnFire = true;
-            if (reasonFor(burning, targets, world, kNoSignals) != Context::ContextReason::OnFire) {
-                logger::error("TEST FAIL: taking fire damage should report OnFire");
-                return;
-            }
-
-            State::PlayerActorState fireproof{};
-            fireproof.effects.isOnFire = true;
-            fireproof.resistances.fire = 80.0f;  // 80% resist → weight scaled to 0.2×
-            if (reasonFor(fireproof, targets, world, kNoSignals) == Context::ContextReason::OnFire) {
-                logger::error("TEST FAIL: 80%% fire resist must suppress the OnFire reason");
-                return;
-            }
-        }
-
-        // 17d: Priority — a more urgent reason wins over a co-occurring one
-        {
-            State::TargetCollection targets{};
-            State::WorldState world{};
-            State::PlayerActorState player{};
-            player.vitals.health = 0.10f;  // Critical
-            player.isSneaking = true;      // also true, lower priority
-
-            if (reasonFor(player, targets, world, kNoSignals) != Context::ContextReason::CriticalHealth) {
-                logger::error("TEST FAIL: CriticalHealth must outrank Sneaking");
-                return;
-            }
-        }
-
-        // 17e: Darkness is weight-backed now (darknessWeight), and goes quiet
-        // once the player can see; AllyInjured is still a label-only signal.
+        // 17e: Darkness: a torch draws darknessWeight in the dark and nothing
+        // in daylight, and the not_dark filter drops it there.
         {
             State::TargetCollection targets{};
             State::WorldState dark{};
             dark.lightLevel = 0.1f;
             dark.isDark = true;
             State::PlayerActorState player{};
-
-            if (reasonFor(player, targets, dark, kNoSignals) != Context::ContextReason::InDarkness) {
-                logger::error("TEST FAIL: low light should report InDarkness");
-                return;
-            }
 
             // A torch draws darkness and nothing else: the dark weight in a
             // cave, exactly 0 in daylight (no baseline), and it is hard-gated
@@ -4787,59 +4623,51 @@ void RunUnitTests()
                     logger::error("TEST FAIL: a torch must score 0 in daylight and be hard-gated");
                     return;
                 }
+                // R8.1: the not_dark filter drops it in daylight and with a
+                // torch already out, before scoring; in the dark it stays.
+                State::PlayerActorState torchOut = player;
+                torchOut.hasTorchEquipped = true;
+                if (FilterReasonFor(torch, player, targets, dark).has_value() ||
+                    FilterReasonFor(torch, player, targets, State::WorldState{}) != Core::Filter::Reason::not_dark ||
+                    FilterReasonFor(torch, torchOut, targets, dark) != Core::Filter::Reason::not_dark) {
+                    logger::error("TEST FAIL: a torch should pass the filters in the dark and be filtered "
+                        "not_dark in daylight or with a torch already out");
+                    return;
+                }
             }
 
+            // Night Eye up, or a torch out, zeroes the dark weight
+            // (DarknessApplies).
             State::PlayerActorState seeing = player;
             seeing.buffs.hasNightEye = true;
-            if (reasonFor(seeing, targets, dark, kNoSignals) == Context::ContextReason::InDarkness) {
-                logger::error("TEST FAIL: Night Eye up must silence InDarkness");
-                return;
-            }
             State::PlayerActorState torch = player;
             torch.hasTorchEquipped = true;
-            if (reasonFor(torch, targets, dark, kNoSignals) == Context::ContextReason::InDarkness) {
-                logger::error("TEST FAIL: a torch out must silence InDarkness");
-                return;
-            }
-
-            Context::ContextReasonSignals ally{};
-            ally.allyInjured = true;  // InDarkness is lower priority
-            if (reasonFor(player, targets, dark, ally) != Context::ContextReason::AllyInjured) {
-                logger::error("TEST FAIL: AllyInjured must outrank InDarkness");
+            if (engine.EvaluateRules(seeing, targets, dark).darknessWeight != 0.0f ||
+                engine.EvaluateRules(torch, targets, dark).darknessWeight != 0.0f) {
+                logger::error("TEST FAIL: Night Eye or a torch out must zero darknessWeight");
                 return;
             }
         }
 
-        // 17e2: Survival. Hunger and cold report from their first costly stage;
-        // a warming effect silences cold; survival off silences both.
+        // 17e2: Survival. Cold weighs in when freezing, a warming effect does
+        // not silence it (the cold level is the signal: LoreRim's aura is a
+        // long-lived ability), survival off does; alcohol is no meal by
+        // default, a warm stew answers the cold.
         {
             State::TargetCollection targets{};
             State::WorldState world{};
             State::PlayerActorState player{};
             player.survivalModeActive = true;
-            player.hungerLevel = State::SurvivalThreshold::HUNGER_HUNGRY;
-            if (reasonFor(player, targets, world, kNoSignals) != Context::ContextReason::Hungry) {
-                logger::error("TEST FAIL: Hungry should report Hungry");
-                return;
-            }
             player.hungerLevel = State::SurvivalThreshold::HUNGER_PECKISH;
             player.coldLevel = State::SurvivalThreshold::COLD_FREEZING;
-            if (reasonFor(player, targets, world, kNoSignals) != Context::ContextReason::Cold) {
-                logger::error("TEST FAIL: Freezing should report Cold");
-                return;
-            }
-            // A warming effect does NOT silence Cold: the cold level is the
-            // signal (LoreRim's aura is a long-lived ability).
             State::PlayerActorState warmed = player;
             warmed.buffs.hasWarmingEffect = true;
-            if (reasonFor(warmed, targets, world, kNoSignals) != Context::ContextReason::Cold) {
-                logger::error("TEST FAIL: Freezing with a warming effect should still report Cold");
-                return;
-            }
             State::PlayerActorState off = player;
             off.survivalModeActive = false;
-            if (reasonFor(off, targets, world, kNoSignals) == Context::ContextReason::Cold) {
-                logger::error("TEST FAIL: survival off must silence Cold");
+            if (engine.EvaluateRules(player, targets, world).coldWeight <= 0.0f ||
+                engine.EvaluateRules(warmed, targets, world).coldWeight <= 0.0f ||
+                engine.EvaluateRules(off, targets, world).coldWeight != 0.0f) {
+                logger::error("TEST FAIL: coldWeight should be up when freezing (warmed too) and 0 with survival off");
                 return;
             }
             const auto weights = engine.EvaluateRules(player, targets, world);
@@ -4865,81 +4693,6 @@ void RunUnitTests()
             }
         }
 
-        // 17f: Ambient combat weights are deliberately NOT reasons — otherwise
-        // every fight would relabel every slot "In Combat"
-        {
-            State::TargetCollection targets{};
-            State::WorldState world{};
-            State::PlayerActorState fighting{};
-            fighting.isInCombat = true;
-
-            if (reasonFor(fighting, targets, world, kNoSignals) != Context::ContextReason::None) {
-                logger::error("TEST FAIL: plain in-combat state must not produce a reason");
-                return;
-            }
-        }
-
-        // 17g: Workstation reasons report, but rank BELOW anything hurting you
-        {
-            State::TargetCollection targets{};
-            State::PlayerActorState player{};
-
-            State::WorldState forge{};
-            forge.isLookingAtWorkstation = true;
-            forge.workstationType = 1;  // kCreateObject
-            if (reasonFor(player, targets, forge, kNoSignals) != Context::ContextReason::AtForge) {
-                logger::error("TEST FAIL: crosshair on a forge should report AtForge");
-                return;
-            }
-
-            State::WorldState alchemy{};
-            alchemy.isLookingAtWorkstation = true;
-            alchemy.workstationType = 5;  // kAlchemy
-            if (reasonFor(player, targets, alchemy, kNoSignals) != Context::ContextReason::AtAlchemy) {
-                logger::error("TEST FAIL: crosshair on an alchemy lab should report AtAlchemy");
-                return;
-            }
-
-            // Standing at a forge while bleeding out must still say Low HP —
-            // crafting stations are ambient, not urgent
-            State::PlayerActorState hurt{};
-            hurt.vitals.health = 0.25f;
-            if (reasonFor(hurt, targets, forge, kNoSignals) != Context::ContextReason::LowHealth) {
-                logger::error("TEST FAIL: LowHealth must outrank AtForge");
-                return;
-            }
-        }
-
-        // 17h: Equipment reasons (weapon charge inverts its own curve; ammo is binary)
-        {
-            State::TargetCollection targets{};
-            State::WorldState world{};
-
-            State::PlayerActorState drained{};
-            drained.hasEnchantedWeapon = true;
-            drained.weaponChargePercent = 0.10f;
-            if (reasonFor(drained, targets, world, kNoSignals) != Context::ContextReason::WeaponLowCharge) {
-                logger::error("TEST FAIL: 10%% weapon charge should report WeaponLowCharge");
-                return;
-            }
-
-            // No enchanted weapon → no charge weight → no phantom label
-            State::PlayerActorState plain{};
-            plain.weaponChargePercent = 0.10f;
-            if (reasonFor(plain, targets, world, kNoSignals) == Context::ContextReason::WeaponLowCharge) {
-                logger::error("TEST FAIL: unenchanted weapon must not report WeaponLowCharge");
-                return;
-            }
-
-            State::PlayerActorState dry{};
-            dry.hasBowEquipped = true;
-            dry.arrowCount = 0;
-            if (reasonFor(dry, targets, world, kNoSignals) != Context::ContextReason::NeedsAmmo) {
-                logger::error("TEST FAIL: bow with no arrows should report NeedsAmmo");
-                return;
-            }
-        }
-
         // 17i: An override's own reason beats the tick's context reason
         {
             Slot::SlotAssignment assignment{};
@@ -4961,14 +4714,15 @@ void RunUnitTests()
             }
 
             // Without a stamped reason, the tick's context reason is used — but
-            // only on an item that reason actually ranks (#64). A healing potion
-            // draws healingWeight, which is what LowHealth is read off.
+            // only on an item whose own explanation it is (#64; R8.3: the
+            // ranking sets explainedReason from the largest theta n cap term).
             Slot::SlotAssignment plain{};
             Scoring::ScoredCandidate plainScored{};
             Candidate::ItemCandidate plainPotion{};
             plainPotion.name = "Potion of Minor Healing";
             plainPotion.tags = Item::ItemTag::RestoreHealth;
             plainScored.candidate = plainPotion;
+            plainScored.explainedReason = Context::ContextReason::LowHealth;
             plain.candidate = plainScored;
 
             const auto contextLabel = Display::DeriveExplanationLabel(
@@ -5003,13 +4757,19 @@ void RunUnitTests()
             }
         }
 
-        // 17k: A context reason speaks only for slots it actually ranked (#64)
+        // 17k: A context reason speaks only for slots it actually explains
+        // (#64). R8.3: "explains" = the item's own explanation (the largest
+        // theta n cap term of its score, ScoredCandidate::explainedReason),
+        // which the ranking sets; here each case states it. Before R8.3 the
+        // test derived it from the context weights.
         {
             const auto labelFor = [](Candidate::CandidateVariant candidate,
-                                     Context::ContextReason reason) {
+                                     Context::ContextReason reason,
+                                     Context::ContextReason explained = Context::ContextReason::None) {
                 Slot::SlotAssignment assignment{};
                 Scoring::ScoredCandidate scored{};
                 scored.candidate = std::move(candidate);
+                scored.explainedReason = explained;
                 assignment.candidate = scored;
                 return Display::DeriveExplanationLabel(assignment, reason);
             };
@@ -5037,19 +4797,19 @@ void RunUnitTests()
             enchantingPotion.name = "Potion of Enchanting";
             enchantingPotion.tags = Item::ItemTag::FortifyMagicSchool;
             enchantingPotion.school = Item::MagicSchool::Enchanting;
-            if (const auto label = labelFor(enchantingPotion, Context::ContextReason::AtEnchanter);
+            if (const auto label = labelFor(enchantingPotion, Context::ContextReason::AtEnchanter,
+                                        Context::ContextReason::AtEnchanter);
                 label != "At Enchanter") {
                 logger::error("TEST FAIL: AtEnchanter should label its own potion, got '{}'", label);
                 return;
             }
 
-            // Every candidate type gets its own mapping in WeightForCandidate,
-            // so each needs a positive case — an ItemCandidate-only suite would
-            // miss a regression in the spell, scroll or ammo arm.
+            // Every candidate type gets a positive case — an ItemCandidate-only
+            // suite would miss a regression in the spell, scroll or ammo arm.
             Candidate::SpellCandidate healingCase{};
             healingCase.name = "Healing";
             healingCase.tags = Spell::SpellTag::RestoreHealth;
-            if (const auto label = labelFor(healingCase, Context::ContextReason::LowHealth);
+            if (const auto label = labelFor(healingCase, Context::ContextReason::LowHealth, Context::ContextReason::LowHealth);
                 label != "Low HP") {
                 logger::error("TEST FAIL: LowHealth should label a healing spell, got '{}'", label);
                 return;
@@ -5058,7 +4818,7 @@ void RunUnitTests()
             Candidate::ScrollCandidate turnUndead{};
             turnUndead.name = "Scroll of Turn Undead";
             turnUndead.tags = Scroll::ScrollTag::AntiUndead;
-            if (const auto label = labelFor(turnUndead, Context::ContextReason::TargetUndead);
+            if (const auto label = labelFor(turnUndead, Context::ContextReason::TargetUndead, Context::ContextReason::TargetUndead);
                 label != "Undead") {
                 logger::error("TEST FAIL: TargetUndead should label an anti-undead scroll, got '{}'",
                     label);
@@ -5067,13 +4827,13 @@ void RunUnitTests()
 
             Candidate::AmmoCandidate steelArrows{};
             steelArrows.name = "Steel Arrow";
-            if (const auto label = labelFor(steelArrows, Context::ContextReason::NeedsAmmo);
+            if (const auto label = labelFor(steelArrows, Context::ContextReason::NeedsAmmo, Context::ContextReason::NeedsAmmo);
                 label != "Low Ammo") {
                 logger::error("TEST FAIL: NeedsAmmo should label ammo, got '{}'", label);
                 return;
             }
             // ...and the same arrows stay unlabelled under an unrelated reason.
-            if (const auto label = labelFor(steelArrows, Context::ContextReason::AtEnchanter);
+            if (const auto label = labelFor(steelArrows, Context::ContextReason::AtEnchanter, Context::ContextReason::NeedsAmmo);
                 !label.empty()) {
                 logger::error("TEST FAIL: AtEnchanter must not label ammo, got '{}'", label);
                 return;
@@ -5084,7 +4844,7 @@ void RunUnitTests()
             Candidate::ItemCandidate fireResist{};
             fireResist.name = "Potion of Resist Fire";
             fireResist.tags = Item::ItemTag::ResistFire;
-            if (const auto label = labelFor(fireResist, Context::ContextReason::OnFire);
+            if (const auto label = labelFor(fireResist, Context::ContextReason::OnFire, Context::ContextReason::OnFire);
                 label != "Fire Damage") {
                 logger::error("TEST FAIL: OnFire should label a resist-fire potion, got '{}'", label);
                 return;
@@ -5109,17 +4869,13 @@ void RunUnitTests()
                 return;
             }
 
-            // Signal-only reasons back no weight, so they can attribute nothing.
-            // `Ore Vein(Green Apple)` is the reported instance.
+            // A reason no explanation names attributes nothing (R8.4: no need
+            // maps to these two, display/NeedReason.h). `Ore Vein(Green Apple)`
+            // is the reported instance.
             Candidate::ItemCandidate apple{};
             apple.name = "Green Apple";
             for (const auto reason : {Context::ContextReason::LookingAtOre,
                                       Context::ContextReason::AllyInjured}) {
-                if (Context::WeightFieldFor(reason) != nullptr) {
-                    logger::error("TEST FAIL: signal-only reason {} gained a weight field",
-                        static_cast<int>(reason));
-                    return;
-                }
                 if (const auto label = labelFor(apple, reason); !label.empty()) {
                     logger::error("TEST FAIL: signal-only reason labelled an apple, got '{}'", label);
                     return;
@@ -5139,174 +4895,14 @@ void RunUnitTests()
             }
         }
 
-        logger::info("TEST PASS: ContextReason derivation (thresholds, suppression, priority)"sv);
+        logger::info("TEST PASS: explanation label and context weights (torch, survival, ladder)"sv);
     }
 
-    // =========================================================================
-    // Wildcard page cache — stranding is structurally unreachable (#70 + the
-    // bWildcardsEnabled and 1-slot-page cases that shared its root cause)
-    // =========================================================================
-    // The old cache was one global position-indexed array shared by every page,
-    // so an entry could survive at an index nothing on the current page could
-    // display; the liveness check still saw it and suppressed the re-roll that
-    // would have produced a usable one. All four shapes below used to be able to
-    // reach that state. Probabilities are pinned to 1.0 and the refractory to 0
-    // so the rolls are deterministic — this asserts bounds, not randomness.
-    {
-        using namespace Huginn::Scoring;
-
-        ScoredCandidateList pool;
-        for (int i = 0; i < 10; ++i) {
-            ScoredCandidate scored;
-            Candidate::SpellCandidate spell{};
-            spell.formID = static_cast<RE::FormID>(0x1000 + i);
-            spell.name = "WildcardTestSpell";
-            scored.candidate = spell;
-            scored.utility = 10.0f - static_cast<float>(i);
-            pool.push_back(scored);
-        }
-
-        WildcardManager mgr;
-        mgr.SetBaseProbability(1.0f);
-        mgr.SetMaxProbability(1.0f);
-        mgr.SetCooldown(1000.0f);      // nothing expires mid-test
-        mgr.SetRefractoryPeriod(0.0f); // every eligible page rolls on first apply
-
-        // Applying mutates the list (swaps + isWildcard), so each case gets a
-        // copy. Returned so a case can assert what was SURFACED, not just cached.
-        auto apply = [&](const WildcardPage& page) {
-            ScoredCandidateList work = pool;
-            mgr.ApplyWildcards(work, page);
-            return work;
-        };
-
-        auto surfacedCount = [](const ScoredCandidateList& list) {
-            return static_cast<size_t>(std::count_if(list.begin(), list.end(),
-                [](const ScoredCandidate& s) { return s.isWildcard; }));
-        };
-
-        // Highest cached index with a wildcard on a page, or SIZE_MAX if none.
-        auto highestCachedIndex = [&](size_t pageIndex) -> size_t {
-            size_t highest = SIZE_MAX;
-            for (size_t i = 0; i < Slot::MAX_SLOTS_PER_PAGE; ++i) {
-                if (mgr.GetWildcardForSlot(pageIndex, i) != 0) {
-                    highest = i;
-                }
-            }
-            return highest;
-        };
-
-        // Page 0: 7 slots, all wildcard-capable — the baseline that rolls.
-        apply({ .index = 0, .slotCount = 7, .wildcardSlots = 7 });
-        if (!mgr.HasActiveWildcard(0)) {
-            logger::error("TEST FAIL: 7-slot page rolled no wildcard at probability 1.0"sv);
-            return;
-        }
-        const size_t page0Count = mgr.GetActiveWildcardCount(0);
-
-        // Page 1: 4 slots. #70 — this used to inherit page 0's entries at
-        // indices 4-6, which ApplyWildcardsToRanking could never surface.
-        apply({ .index = 1, .slotCount = 4, .wildcardSlots = 4 });
-        if (!mgr.HasActiveWildcard(1)) {
-            logger::error("TEST FAIL: 4-slot page was blocked from rolling"sv);
-            return;
-        }
-        if (highestCachedIndex(1) >= 4) {
-            logger::error("TEST FAIL: 4-slot page cached a wildcard at index {}"sv,
-                highestCachedIndex(1));
-            return;
-        }
-        // ...and it did not disturb page 0, which the player can switch back to.
-        if (mgr.GetActiveWildcardCount(0) != page0Count) {
-            logger::error("TEST FAIL: applying page 1 changed page 0's cache ({} → {})"sv,
-                page0Count, mgr.GetActiveWildcardCount(0));
-            return;
-        }
-
-        // Page 2: 5 slots, none accepting wildcards (bWildcardsEnabled=false
-        // throughout). FindBestCandidate would skip every wildcard, so rolling
-        // one caches something no slot can ever seat.
-        apply({ .index = 2, .slotCount = 5, .wildcardSlots = 0 });
-        if (mgr.HasActiveWildcard(2)) {
-            logger::error("TEST FAIL: page with no wildcard-capable slots cached {} wildcard(s)"sv,
-                mgr.GetActiveWildcardCount(2));
-            return;
-        }
-
-        // Page 3: 1 slot. Slot 0 is excluded and scores base × 0 anyway, so the
-        // page rolls nothing — but it must reach the cache logic to say so,
-        // which the old slotCount < 2 guard returned before.
-        apply({ .index = 3, .slotCount = 1, .wildcardSlots = 1 });
-        if (mgr.HasActiveWildcard(3)) {
-            logger::error("TEST FAIL: 1-slot page cached a wildcard it cannot display"sv);
-            return;
-        }
-
-        // Page 4: 6 slots but only 2 accepting wildcards. A page can display at
-        // most as many wildcards as it has seats for them; the surplus would
-        // strand. Asserted as EQUALITY, not just an upper bound: at probability
-        // 1.0 the count is deterministic, and a cap that is too tight (an
-        // off-by-one, or one applied before startSlot) would leave a
-        // wildcard-capable page rolling nothing while an upper-bound check
-        // still passed.
-        apply({ .index = 4, .slotCount = 6, .wildcardSlots = 2 });
-        if (mgr.GetActiveWildcardCount(4) != 2) {
-            logger::error("TEST FAIL: page with 2 wildcard-capable slots cached {} wildcards, expected 2"sv,
-                mgr.GetActiveWildcardCount(4));
-            return;
-        }
-
-        // Page 5: 6 slots, ONE wildcard-capable. Every cached entry must also be
-        // surfaced — the invariant this whole class exists to hold.
-        //
-        // RollNewWildcards draws for slot i, and ApplyWildcardsToRanking only
-        // surfaces a wildcard by swapping it UP (it skips when foundIdx <=
-        // slotIdx). A draw from at or above i is therefore a roll that caches an
-        // entry nothing displays, while the cache reads as active and suppresses
-        // the re-roll for a full cooldown. With several slots rolling, a wasted
-        // draw is masked by its neighbours; with exactly one seat it IS the
-        // stall. Checks the surfaced count, not just the cached one, because
-        // cached-but-invisible is precisely the failure being excluded.
-        {
-            const auto work = apply({ .index = 5, .slotCount = 6, .wildcardSlots = 1 });
-            const size_t cached = mgr.GetActiveWildcardCount(5);
-            if (cached != 1) {
-                logger::error("TEST FAIL: 1-seat page cached {} wildcards, expected 1"sv, cached);
-                return;
-            }
-            if (surfacedCount(work) != cached) {
-                logger::error("TEST FAIL: 1-seat page cached {} wildcard(s) but surfaced {}"sv,
-                    cached, surfacedCount(work));
-                return;
-            }
-        }
-
-        // Reshape: page 0 shrinks under an INI reload. Its own cache is the one
-        // remaining way to strand an entry, and a shape change discards it.
-        apply({ .index = 0, .slotCount = 3, .wildcardSlots = 3 });
-        if (highestCachedIndex(0) >= 3) {
-            logger::error("TEST FAIL: reshaped page 0 kept a wildcard at index {}"sv,
-                highestCachedIndex(0));
-            return;
-        }
-
-        // Expiry reaches every page, not just the displayed one, and reports a
-        // lapse only for the page last applied (page 0 above).
-        mgr.SetCooldown(0.0f);
-        if (!mgr.UpdateExpiry()) {
-            logger::error("TEST FAIL: expiry did not report the displayed page lapsing"sv);
-            return;
-        }
-        for (size_t page = 0; page < 6; ++page) {
-            if (mgr.HasActiveWildcard(page)) {
-                logger::error("TEST FAIL: page {} survived expiry"sv, page);
-                return;
-            }
-        }
-
-        logger::info("TEST PASS: Wildcard page cache (per-page bounds, wildcard-capable "
-            "seats, cached==surfaced, 1-slot page, reshape, all-page expiry)"sv);
-    }
+    // Wildcard manager (R10): its decisions -- the roll on the displayed page
+    // only, one roll per refractory window, the per-page cache, refusal,
+    // reshape, combat, expiry -- are Core::Wildcard::Gate's, host-tested in
+    // tests/core/WildcardTests.cpp. Not driven here: a Commit that caches a
+    // wildcard logs a [Wildcard] info line and counts in the [Soak] heartbeat.
 
     logger::info("=== All unit tests passed! ==="sv);
 #endif
@@ -5471,7 +5067,7 @@ void RunRegressionTests()
         healingWardSpell.tags = Spell::SpellTag::RestoreHealth | Spell::SpellTag::Ward;
         healingWardSpell.name = "Healing Ward (multi-tag test)";
 
-        // Simulate GetContextWeight logic with max() accumulation
+        // Simulate the per-candidate weight lookup with max() accumulation
         float contextWeight = weights.baseRelevanceWeight;
         if (Spell::HasTag(healingWardSpell.tags, Spell::SpellTag::RestoreHealth)) {
             contextWeight = std::max(contextWeight, weights.healingWeight);
@@ -6451,7 +6047,10 @@ void RunSlotLockerOverrideScopeTest()
     auto* updateHandler = Update::UpdateHandler::GetSingleton();
     if (gen.IsInitialized() && updateHandler) updateHandler->RunExclusive([&] {
         auto player = State::StateManager::GetSingleton().GetPlayerState();
-        (void)gen.GenerateCandidates(player, 1000.0f, {}, nullptr);
+        // R8.1: the hard gates on this save's own state, as the pipeline reads it.
+        const auto gates = Context::HardGateInputs(player, State::StateManager::GetSingleton().GetTargets(),
+            State::StateManager::GetSingleton().GetWorldState(), false);
+        (void)gen.GenerateCandidates(player, 1000.0f, gates, {}, nullptr);
         for (const auto& c : gen.LastGathered()) {
             const auto* item = Candidate::TryGetAs<Candidate::ItemCandidate>(c);
             if (item && item->count > 1 && item->type == Item::ItemType::HealthPotion) {
@@ -6463,7 +6062,7 @@ void RunSlotLockerOverrideScopeTest()
         if (realPotion != 0) {
             gen.StartCooldown(realPotion, Candidate::SourceType::Potion);
             player.vitals.health = 1.0f;
-            const auto filtered = gen.GenerateCandidates(player, 1000.0f, {}, nullptr);
+            const auto filtered = gen.GenerateCandidates(player, 1000.0f, gates, {}, nullptr);
             const bool stillOffered = std::ranges::any_of(filtered,
                 [&](const Candidate::CandidateVariant& c) { return Candidate::GetFormID(c) == realPotion; });
             const auto found = gen.FindGathered(realPotion, 0);
@@ -7016,7 +6615,7 @@ void RunSlotSeatingTest()
 
             Scoring::ScoredCandidate sc{};
             sc.candidate = spell;
-            sc.utility = 10.0f - static_cast<float>(i);
+            sc.RankOnUtility(10.0f - static_cast<float>(i));
             list.push_back(sc);
         }
         return list;
@@ -7121,13 +6720,13 @@ void RunFillJobKeysTest()
         Candidate::WeaponCandidate w{};
         w.formID = 0x0BADF100; w.name = "FillProbeSword";
         w.tags = Weapon::WeaponTag::Melee;
-        Scoring::ScoredCandidate sc{}; sc.candidate = w; sc.utility = 3.0f;
+        Scoring::ScoredCandidate sc{}; sc.candidate = w; sc.RankOnUtility(3.0f);
         return sc;
     }();
     auto spell = [](RE::FormID id, std::string_view name, Spell::SpellType type) {
         Candidate::SpellCandidate s{};
         s.formID = id; s.name = name; s.type = type;
-        Scoring::ScoredCandidate sc{}; sc.candidate = s; sc.utility = 2.0f;
+        Scoring::ScoredCandidate sc{}; sc.candidate = s; sc.RankOnUtility(2.0f);
         return sc;
     };
 
@@ -7182,13 +6781,13 @@ void RunSlotClassCapTest()
     auto spell = [](size_t i, Spell::SpellType type, float utility) {
         Candidate::SpellCandidate s{};
         s.formID = 0x0BADF200 + static_cast<RE::FormID>(i); s.name = names[i]; s.type = type;
-        Scoring::ScoredCandidate sc{}; sc.candidate = s; sc.utility = utility;
+        Scoring::ScoredCandidate sc{}; sc.candidate = s; sc.RankOnUtility(utility);
         return sc;
     };
     auto food = [](RE::FormID id, Item::ItemType type) {
         Candidate::ItemCandidate f{};
         f.formID = id; f.name = "SlotClassCapFood"; f.sourceType = Candidate::SourceType::Food; f.type = type;
-        Scoring::ScoredCandidate sc{}; sc.candidate = f; sc.utility = 1.0f;
+        Scoring::ScoredCandidate sc{}; sc.candidate = f; sc.RankOnUtility(1.0f);
         return sc;
     };
 
@@ -7236,8 +6835,8 @@ void RunSlotClassCapTest()
         for (uint32_t k = 0; k < free; ++k) {
             list.push_back(spell(6 + k, Spell::SpellType::Healing, 3.0f));
         }
-        const float between = Core::DisplayUtility(
-            Core::BridgeScore(2.0f) + 0.5 * Core::ClassCapTerm(discount, free, free));
+        const float between = static_cast<float>(std::exp(
+            Core::BridgeScore(2.0f) + 0.5 * Core::ClassCapTerm(discount, free, free)));
         list.push_back(spell(4, Spell::SpellType::Healing, 2.0f));
         list.push_back(spell(5, Spell::SpellType::Damage, between));
 
@@ -7304,14 +6903,14 @@ void RunSlotClassCapHoldTest()
     auto spell = [](size_t i, Spell::SpellType type, float utility) {
         Candidate::SpellCandidate s{};
         s.formID = 0x0BADF300 + static_cast<RE::FormID>(i); s.name = names[i]; s.type = type;
-        Scoring::ScoredCandidate sc{}; sc.candidate = s; sc.utility = utility;
+        Scoring::ScoredCandidate sc{}; sc.candidate = s; sc.RankOnUtility(utility);
         return sc;
     };
     auto weapon = [](size_t i, float utility) {
         Candidate::WeaponCandidate w{};
         w.formID = 0x0BADF300 + static_cast<RE::FormID>(i); w.name = names[i];
         w.tags = Weapon::WeaponTag::Melee;
-        Scoring::ScoredCandidate sc{}; sc.candidate = w; sc.utility = utility;
+        Scoring::ScoredCandidate sc{}; sc.candidate = w; sc.RankOnUtility(utility);
         return sc;
     };
 
@@ -7320,9 +6919,9 @@ void RunSlotClassCapHoldTest()
     // the other challenger ties it (no win). Scores, not ratios (R7): the
     // hold asks s_challenger - s_holder > ln m.
     constexpr float kAxe = 0.325f;
-    const float weakened = Core::DisplayUtility(Core::BridgeScore(kAxe) +
+    const float weakened = static_cast<float>(std::exp(Core::BridgeScore(kAxe) +
         0.5 * Core::ClassCapTerm(discount, settings.ClassFreeSlots(), settings.ClassFreeSlots()) -
-        Core::LogHoldMargin(margin));
+        Core::LogHoldMargin(margin)));
 
     using SpellType = Spell::SpellType;
     const Scoring::ScoredCandidateList first = {
@@ -7430,14 +7029,14 @@ void RunHomeKeyTest()
     auto spell = [](size_t i, Spell::SpellType type, float utility) {
         Candidate::SpellCandidate s{};
         s.formID = kBase + static_cast<RE::FormID>(i); s.name = names[i]; s.type = type;
-        Scoring::ScoredCandidate sc{}; sc.candidate = s; sc.utility = utility;
+        Scoring::ScoredCandidate sc{}; sc.candidate = s; sc.RankOnUtility(utility);
         return sc;
     };
     auto weapon = [](size_t i, float utility) {
         Candidate::WeaponCandidate w{};
         w.formID = kBase + static_cast<RE::FormID>(i); w.name = names[i];
         w.tags = Weapon::WeaponTag::Melee;
-        Scoring::ScoredCandidate sc{}; sc.candidate = w; sc.utility = utility;
+        Scoring::ScoredCandidate sc{}; sc.candidate = w; sc.RankOnUtility(utility);
         return sc;
     };
 
@@ -7450,8 +7049,8 @@ void RunHomeKeyTest()
     // Back, A beats H by the margin but not N: the hold puts it on slot 7.
     // Halfway between them in score, plus ln m (the hold is a difference of
     // scores since R7, not a ratio of utilities).
-    const float returned = Core::DisplayUtility(
-        0.5 * (Core::BridgeScore(0.3f) + Core::BridgeScore(0.35f)) + Core::LogHoldMargin(margin));
+    const float returned = static_cast<float>(std::exp(
+        0.5 * (Core::BridgeScore(0.3f) + Core::BridgeScore(0.35f)) + Core::LogHoldMargin(margin)));
     const Scoring::ScoredCandidateList pass1 = { spell(0, SpellType::Healing, 1.0f), B, C, D, E, F, G, H };
     const Scoring::ScoredCandidateList pass2 = { B, C, D, E, F, G, N, H };
     const Scoring::ScoredCandidateList pass3 = { B, C, D, E, F, G, spell(0, SpellType::Healing, returned), N, H };
@@ -7524,7 +7123,7 @@ void RunHomeKeyTest()
         p.formID = kBase + 8; p.name = names[8]; p.type = Item::ItemType::BuffPotion;
         return p;
     }();
-    Scoring::ScoredCandidate potionScored{}; potionScored.candidate = potionN; potionScored.utility = 0.35f;
+    Scoring::ScoredCandidate potionScored{}; potionScored.candidate = potionN; potionScored.RankOnUtility(0.35f);
     Override::OverrideCollection drowning;
     {
         Override::OverrideResult result;
@@ -7782,90 +7381,77 @@ void RunCosaveTests()
         logger::info("  PASS: learner import clears old data and replaces with new"sv);
     }
 
-    // ── Test 4: Feature-count migration decode (pad / truncate) ─────────
+    // ── Test 4: BNDW accepts only v4 at the compiled feature count; decode ─
     {
-        using Huginn::Persist::DecodeV2EntryBlob;
+        using Huginn::Persist::BndwHeader;
+        using Huginn::Persist::CheckBndwHeader;
+        using Huginn::Persist::DecodeEntryBlob;
+        using Huginn::Persist::kBanditSerializationVersion;
         constexpr auto compiled = static_cast<uint32_t>(StateFeatures::NUM_FEATURES);
 
-        // Build a synthetic blob with diskFeatures weights per entry: v3's
-        // integer count, or v4's float.
-        auto makeBlob = [](uint32_t diskFeatures, uint32_t numItems, bool v4 = false) {
-            const size_t stride = sizeof(RE::FormID)
-                                + sizeof(float) * diskFeatures
-                                + sizeof(uint32_t) * 2;
+        // Accept / skip: the current version at the compiled count loads;
+        // any other version (v3, the pre-0.23.6 format) or feature count
+        // (the old pad / truncate migration's inputs) is skipped.
+        {
+            const bool ok = CheckBndwHeader(kBanditSerializationVersion, compiled) == BndwHeader::Accept
+                && CheckBndwHeader(3, compiled) == BndwHeader::WrongVersion
+                && CheckBndwHeader(kBanditSerializationVersion + 1, compiled) == BndwHeader::WrongVersion
+                && CheckBndwHeader(kBanditSerializationVersion, compiled - 2) == BndwHeader::WrongFeatureCount
+                && CheckBndwHeader(kBanditSerializationVersion, compiled + 3) == BndwHeader::WrongFeatureCount
+                && CheckBndwHeader(kBanditSerializationVersion, 0) == BndwHeader::WrongFeatureCount;
+            if (!ok) {
+                logger::error("[Cosave Test] FAIL: BNDW header accept/skip incorrect"sv);
+                return;
+            }
+            logger::info("  PASS: BNDW header: v{} at {} features accepted, other versions and counts skipped"sv,
+                kBanditSerializationVersion, compiled);
+        }
+
+        // Build a synthetic v4 blob: formID, the compiled weights, the float
+        // evidence and the minutes, field by field.
+        auto makeBlob = [](uint32_t numItems) {
+            constexpr size_t stride = sizeof(RE::FormID)
+                                    + sizeof(float) * compiled
+                                    + sizeof(uint32_t) * 2;
             std::vector<std::byte> blob(stride * numItems);
             std::byte* p = blob.data();
             for (uint32_t i = 0; i < numItems; ++i, p += stride) {
                 RE::FormID formID = 0x00040000 + i;
                 std::memcpy(p, &formID, sizeof(formID));
-                for (uint32_t f = 0; f < diskFeatures; ++f) {
+                for (uint32_t f = 0; f < compiled; ++f) {
                     float w = static_cast<float>(i * 100 + f + 1);  // distinct, nonzero
                     std::memcpy(p + sizeof(formID) + f * sizeof(float), &w, sizeof(w));
                 }
-                uint32_t trainCount = 10 + i;
                 float evidence = 10.5f + static_cast<float>(i);
                 uint32_t minutes = 20 + i;
-                std::byte* tail = p + sizeof(formID) + sizeof(float) * diskFeatures;
-                if (v4) {
-                    std::memcpy(tail, &evidence, sizeof(evidence));
-                } else {
-                    std::memcpy(tail, &trainCount, sizeof(trainCount));
-                }
-                std::memcpy(tail + sizeof(trainCount), &minutes, sizeof(minutes));
+                std::byte* tail = p + sizeof(formID) + sizeof(float) * compiled;
+                std::memcpy(tail, &evidence, sizeof(evidence));
+                std::memcpy(tail + sizeof(evidence), &minutes, sizeof(minutes));
             }
             return blob;
         };
 
-        // Pad: 16 on disk -> compiled 18, tail must be zero
+        // v4: decode must match the fields as written and a straight memcpy
+        // of SerializedEntry
         {
-            constexpr uint32_t disk = compiled - 2;
-            auto blob = makeBlob(disk, 2);
-            auto entries = DecodeV2EntryBlob(blob.data(), blob.size(), 2, disk, 3);
-            bool ok = entries.size() == 2
-                   && entries[1].formID == 0x00040001
-                   && entries[1].trainCount == 11.0f
-                   && entries[1].minutesSinceChosen == 21
-                   && entries[1].weights[0] == 101.0f
-                   && entries[1].weights[disk - 1] == static_cast<float>(100 + disk)
-                   && entries[1].weights[disk] == 0.0f
-                   && entries[1].weights[compiled - 1] == 0.0f;
-            if (!ok) {
-                logger::error("[Cosave Test] FAIL: pad migration decode incorrect"sv);
-                return;
-            }
-        }
-
-        // Truncate: 21 on disk -> compiled 18, extras dropped, tail fields intact
-        {
-            constexpr uint32_t disk = compiled + 3;
-            auto blob = makeBlob(disk, 2);
-            auto entries = DecodeV2EntryBlob(blob.data(), blob.size(), 2, disk, 3);
+            auto blob = makeBlob(2);
+            auto entries = DecodeEntryBlob(blob.data(), blob.size(), 2);
+            FeatureBanditLearner::SerializedEntry direct;
+            std::memcpy(&direct, blob.data() + sizeof(direct), sizeof(direct));
             bool ok = entries.size() == 2
                    && entries[0].formID == 0x00040000
-                   && entries[0].trainCount == 10.0f
-                   && entries[0].minutesSinceChosen == 20
                    && entries[0].weights[0] == 1.0f
-                   && entries[0].weights[compiled - 1] == static_cast<float>(compiled);
-            if (!ok) {
-                logger::error("[Cosave Test] FAIL: truncate migration decode incorrect"sv);
-                return;
-            }
-        }
-
-        // Equal count, v4: decode must match a straight memcpy of SerializedEntry
-        {
-            auto blob = makeBlob(compiled, 1, true);
-            auto entries = DecodeV2EntryBlob(blob.data(), blob.size(), 1, compiled, 4);
-            FeatureBanditLearner::SerializedEntry direct;
-            std::memcpy(&direct, blob.data(), sizeof(direct));
-            bool ok = entries.size() == 1
-                   && entries[0].formID == direct.formID
-                   && entries[0].weights == direct.weights
-                   && entries[0].trainCount == direct.trainCount
+                   && entries[0].weights[compiled - 1] == static_cast<float>(compiled)
                    && entries[0].trainCount == 10.5f
-                   && entries[0].minutesSinceChosen == direct.minutesSinceChosen;
+                   && entries[0].minutesSinceChosen == 20
+                   && entries[1].formID == direct.formID
+                   && entries[1].weights == direct.weights
+                   && entries[1].trainCount == direct.trainCount
+                   && entries[1].trainCount == 11.5f
+                   && entries[1].minutesSinceChosen == direct.minutesSinceChosen
+                   && entries[1].minutesSinceChosen == 21;
             if (!ok) {
-                logger::error("[Cosave Test] FAIL: equal-count decode differs from raw layout"sv);
+                logger::error("[Cosave Test] FAIL: v4 decode differs from the written fields"sv);
                 return;
             }
         }
@@ -7878,9 +7464,8 @@ void RunCosaveTests()
         // second time after a note above it, which did not survive grepping
         // for errors (2026-10-01).
         {
-            auto blob = makeBlob(compiled, 1);
-            auto entries = DecodeV2EntryBlob(blob.data(), blob.size() - 1, 1, compiled, 4,
-                /*unitTest=*/true);
+            auto blob = makeBlob(1);
+            auto entries = DecodeEntryBlob(blob.data(), blob.size() - 1, 1, /*unitTest=*/true);
             if (!entries.empty()) {
                 logger::error("[Cosave Test] FAIL: byteLen mismatch should reject decode"sv);
                 return;
@@ -7888,7 +7473,7 @@ void RunCosaveTests()
             logger::info("  PASS: short blob rejected"sv);
         }
 
-        logger::info("  PASS: learner feature-count migration pads, truncates, round-trips"sv);
+        logger::info("  PASS: learner BNDW v4 decode round-trips"sv);
     }
 
     logger::info("=== Cosave Serialization Tests PASSED ==="sv);

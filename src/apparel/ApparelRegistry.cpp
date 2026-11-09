@@ -169,34 +169,10 @@ namespace Huginn::Apparel
       return churn;
    }
 
-   const InventoryApparel* ApparelRegistry::GetApparel(RE::FormID formID, uint16_t uniqueID) const
-   {
-      // Build the key through InventoryApparel::Key() rather than re-inlining the
-      // bit layout — two copies of a packing expression drift.
-      InventoryApparel probe{};
-      probe.data.formID = formID;
-      probe.data.uniqueID = uniqueID;
-      const uint64_t key = probe.Key();
-
-      std::shared_lock lock(m_mutex);
-      auto it = m_index.find(key);
-      if (it == m_index.end() || it->second >= m_apparel.size()) return nullptr;
-      return &m_apparel[it->second];
-   }
-
    size_t ApparelRegistry::GetApparelCount() const noexcept
    {
       std::shared_lock lock(m_mutex);
       return m_apparel.size();
-   }
-
-   void ApparelRegistry::LogAllApparel() const
-   {
-      std::shared_lock lock(m_mutex);
-      logger::debug("[ApparelRegistry] {} craft-relevant items:"sv, m_apparel.size());
-      for (const auto& apparel : m_apparel) {
-         logger::debug("  {}"sv, apparel.ToString());
-      }
    }
 
    std::vector<ApparelRegistry::ScannedApparel> ApparelRegistry::ScanPlayerApparel() const

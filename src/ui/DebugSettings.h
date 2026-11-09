@@ -32,16 +32,10 @@ namespace Huginn::UI
         int recLogVerbosity = DebugDefaults::REC_LOG_VERBOSITY;
 
         /**
-         * @brief Load settings from INI file
-         * @param iniPath Path to Huginn.ini
+         * @brief Load [Debug] from the parsed dMenu INI (Settings::LoadDMenuIni,
+         * over the dMenu descriptor's defaults)
          */
-        void LoadFromFile(const std::filesystem::path& iniPath);
         void LoadFromIni(const CSimpleIniA& ini);
-
-        /**
-         * @brief Reset all settings to compile-time defaults
-         */
-        void ResetToDefaults();
 
         /**
          * @brief Apply visibility settings to debug widgets

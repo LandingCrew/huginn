@@ -81,27 +81,6 @@ namespace Huginn::Candidate
         void Clear();
 
         /**
-         * @brief Get the number of active (non-expired) cooldowns.
-         */
-        [[nodiscard]] size_t GetActiveCount() const noexcept;
-
-        /**
-         * @brief Get remaining cooldown time for an item.
-         * @param formID The form ID of the item
-         * @param type The source type
-         * @return Remaining seconds, or 0.0f if not on cooldown
-         */
-        [[nodiscard]] float GetRemainingCooldown(RE::FormID formID, SourceType type) const noexcept;
-
-        /**
-         * @brief Cancel a cooldown early.
-         * @param formID The form ID of the item
-         * @param type The source type
-         * @return true if a cooldown was cancelled
-         */
-        bool CancelCooldown(RE::FormID formID, SourceType type);
-
-        /**
          * @brief Snapshot all active (non-expired) cooldown keys.
          * Acquires the lock once; callers can then check the returned set lock-free.
          */
@@ -138,13 +117,8 @@ namespace Huginn::Candidate
         static constexpr float CLEANUP_INTERVAL_SECONDS = 5.0f;
 
         /**
-         * @brief Remove all expired entries from the map.
-         */
-        void CleanupExpired();
-
-        /**
          * @brief Remove all expired entries (caller must hold m_mutex).
-         * @note Internal helper - use CleanupExpired() for external calls.
+         * @note Internal helper; the caller holds the write lock.
          */
         void CleanupExpiredLocked();
 

@@ -59,16 +59,14 @@ namespace Huginn::Candidate
         SourceType sourceType = SourceType::Spell;
         std::string_view name;
 
-        // Pre-computed filter results (set by filters before scoring)
-        bool canAfford = true;           // Has enough magicka (spells) or count > 0 (consumables)
-        bool isEquipped = false;         // Already equipped in a slot
-        bool isOnCooldown = false;       // Recently used, in cooldown period
-        bool isBuffAlreadyActive = false; // Effect already active on player (waterbreathing, etc.)
+        // Already equipped (set by the gather; the filter visitor drops an
+        // equipped torch or ammo as Reason::equipped)
+        bool isEquipped = false;
 
         // Why an OVERRIDE surfaced this candidate (set by OverrideManager only —
         // ordinary candidates leave it None and the display falls back to the
         // per-tick context reason). See Context::ContextReason.
-        // NOTE: baseRelevance field removed in v0.12.x - replaced by ContextRuleEngine.contextWeight
+        // NOTE: baseRelevance field removed in v0.12.x (R8.3: ranked on the choice score)
         Context::ContextReason overrideReason = Context::ContextReason::None;
 
         // Deduplication key combines source type, unique ID, and form ID.
@@ -79,11 +77,6 @@ namespace Huginn::Candidate
             return (static_cast<uint64_t>(sourceType) << 48) |
                    (static_cast<uint64_t>(uniqueID) << 32) |
                    static_cast<uint64_t>(formID);
-        }
-
-        // Check if candidate passes basic pre-filters
-        [[nodiscard]] constexpr bool PassesBasicFilters() const noexcept {
-            return canAfford && !isEquipped && !isOnCooldown && !isBuffAlreadyActive;
         }
     };
 
@@ -220,14 +213,14 @@ namespace Huginn::Candidate
     // event, so `isEquipped` is what keeps a piece you are already wearing out of
     // the pool. It is also the only source with no baseline context weight — a
     // Fortify Smithing ring is relevant at a forge and nowhere else, so
-    // WeightForCandidate returns 0 away from a workstation instead of falling
+    // the legacy context weight is 0 away from a workstation instead of falling
     // back to baseRelevanceWeight.
     // =============================================================================
     struct ApparelCandidate : CandidateBase
     {
         Apparel::CraftSkill  craftSkill = Apparel::CraftSkill::None;  // Strongest craft
         float                magnitude = 0.0f;  // ...and its magnitude — the ranking key
-        // Every craft this piece fortifies. WeightForCandidate reads this rather
+        // Every craft this piece fortifies. The context weight reads this rather
         // than craftSkill: a "Fortify Alchemy 5 / Fortify Smithing 20" ring has a
         // Smithing primary but must still surface at an alchemy lab.
         Apparel::CraftMagnitudes magnitudes;
@@ -319,22 +312,25 @@ namespace Huginn::Candidate
         return GetBase(v).name;
     }
 
-    // Helper: Check if candidate is favorited. Single source of truth — used by
-    // both ScoredCandidate::IsFavorited and UtilityScorer's favorites gate.
-    // Only spells and weapons carry a favorites flag.
-    [[nodiscard]] inline bool IsFavorited(const CandidateVariant& v) noexcept {
-        return std::visit([](const auto& c) -> bool {
-            using T = std::decay_t<decltype(c)>;
-            if constexpr (std::is_same_v<T, SpellCandidate> ||
-                          std::is_same_v<T, WeaponCandidate>) {
-                return c.isFavorited;
-            } else {
-                return false;  // Items, scrolls, ammo don't have favorites
-            }
-        }, v);
+    // Helper: Check if candidate is favorited. Single source of truth -- used by
+    // ScoredCandidate::IsFavorited, the favorite_suppressed filter (R8.1,
+    // CandidateFilters) and the scorer's favourites logic. A candidate type is
+    // favourited when it carries an isFavorited flag (today spells and
+    // weapons); a type that gains one is picked up by every caller at once.
+    template <class T>
+    [[nodiscard]] constexpr bool IsFavoritedCandidate(const T& c) noexcept {
+        if constexpr (requires { c.isFavorited; }) {
+            return c.isFavorited;
+        } else {
+            return false;  // Items, scrolls, ammo don't have favorites
+        }
     }
 
-    // NOTE: GetRelevance() helper removed in v0.12.x - use ContextRuleEngine.Evaluate() instead
+    [[nodiscard]] inline bool IsFavorited(const CandidateVariant& v) noexcept {
+        return std::visit([](const auto& c) -> bool { return IsFavoritedCandidate(c); }, v);
+    }
+
+    // NOTE: GetRelevance() helper removed in v0.12.x (R8.3: ranked on the choice score)
 
     // Helper: Check if variant is a specific type
     template<typename T>

@@ -1,6 +1,8 @@
 #pragma once
 
 #include "StateFeatures.h"
+#include "core/Battery.h"
+#include "core/LearningClock.h"
 #include <chrono>
 #include <unordered_map>
 #include <shared_mutex>
@@ -37,26 +39,10 @@ namespace Huginn::Learning
    // to the PRIOR ("don't know any more"), not to 0 ("rejected"), and the UCB
    // rises, so a forgotten item is explored again. Replaces the 2%/hour weight
    // decay. `enabled` false: nothing fades and nothing is forgotten.
-   struct MemoryLife
-   {
-      bool enabled = true;
-      float lifeHours = 8.0f;          // T0: full strength this long after a pick
-      float lifePerPickHours = 2.0f;   // k: each doubling of the picks adds ~1.4 k
-      float fadeHours = 1.0f;          // s: the width of the knee
-      float forgetBelow = 0.05f;       // retention under this deletes the entry
-
-      // The one copy of the allowed ranges (the INI loader and the learner
-      // both clamp through this).
-      [[nodiscard]] MemoryLife Clamped() const noexcept
-      {
-         MemoryLife c = *this;
-         c.lifeHours = std::clamp(lifeHours, 0.1f, 10000.0f);
-         c.lifePerPickHours = std::clamp(lifePerPickHours, 0.0f, 1000.0f);
-         c.fadeHours = std::clamp(fadeHours, 0.05f, 1000.0f);
-         c.forgetBelow = std::clamp(forgetBelow, 0.0f, 0.5f);
-         return c;
-      }
-   };
+   // The struct and its retention math live in core/Battery.h (R8.2), shared
+   // with the new learner's per-item b (ChoiceLearner); the arithmetic is the
+   // same expression as before (Core::Battery::RetentionAt with lifeMult 1).
+   using MemoryLife = Core::Battery::MemoryLife;
 
    // =============================================================================
    // FEATURE BANDIT LEARNER (Phase 3.5b-d)
@@ -80,6 +66,13 @@ namespace Huginn::Learning
    class FeatureBanditLearner
    {
    public:
+      // `clock`: the shared learning clock (g_learningClock) its Update and
+      // Clear tick (core/LearningClock.h); none for the Debug suite's own
+      // learners, so they leave it alone.
+      explicit FeatureBanditLearner(Core::LearningClock::Clock* clock = nullptr) noexcept :
+         m_learningClock(clock)
+      {}
+
       // Core API
       [[nodiscard]] float GetRewardEstimate(RE::FormID formID, const StateFeatures& features) const;
       // `step` scales the gradient step; `countsAsTrain` false leaves the train
@@ -104,7 +97,9 @@ namespace Huginn::Learning
       // Delete every entry whose retention fell under forgetBelow. One
       // shared-lock pass finds them; the unique lock is taken only when one
       // is due. Returns the number forgotten. MaybeForgetFaded runs it at
-      // most once a minute of play, from the scoring pass.
+      // most once a minute of play, from the update loop (UpdateLoop.cpp,
+      // since R8.3; it was the scoring pass, which the legacy switch can
+      // turn off).
       size_t ForgetFaded();
       size_t MaybeForgetFaded();
       [[nodiscard]] uint64_t GetForgottenTotal() const noexcept {
@@ -170,16 +165,11 @@ namespace Huginn::Learning
       // The total is summed from the entries, not taken from the header.
       void ImportData(const std::vector<SerializedEntry>& entries);
 
-      // ── Learning clock (learning survives a reload, 0.22.11) ───────────
-      // Ticks on every Update() and every Clear(); saved with the character ID
-      // (cosave HCID record). A load of the same character keeps the in-memory
-      // learner only when its clock is not behind the save's -- so a reload
-      // after a death keeps the fight, and loading a LATER save of the same
-      // character restores that save's learning instead of discarding it. A
-      // Clear() (hg reset weights) ticks it too, so a reload cannot undo a
-      // reset with an older save.
-      [[nodiscard]] uint64_t GetClock() const;
-      void SetClock(uint64_t clock);
+      // The learning clock (learning survives a reload, 0.22.11) is shared
+      // since 0.24.22 (core/LearningClock.h): Update() and Clear() tick it,
+      // as the choice learner's changes and the resets do (a reset ticks
+      // twice while this class exists: Clear, then the reset site). R12
+      // deletes those two calls with this class.
 
       // Same-character reload: replace every DYNAMIC-form entry (0xFF------:
       // brewed potions, player enchantments, created spells) with the save's.
@@ -199,9 +189,10 @@ namespace Huginn::Learning
       // ally flap happened to move the hash. In a still scene nothing would
       // have moved it at all.
       //
-      // Update() ONLY. Not MaybeForgetFaded, which runs from inside the scoring
-      // loop (a forced run would re-enter it), and fading is gradual over
-      // hours -- the next run publishes it. Not ImportData or Clear either -- the load
+      // Update() ONLY. Not MaybeForgetFaded (it ran inside the scoring loop,
+      // where a forced run would re-enter it; from R8.3 it runs from the
+      // update loop), and fading is gradual over hours -- the next run
+      // publishes it. Not ImportData or Clear either -- the load
       // and reset paths already force a pass through
       // PipelineCoordinator::ResetCrossSaveState().
       //
@@ -257,7 +248,7 @@ namespace Huginn::Learning
 
       std::unordered_map<RE::FormID, ItemLearningData> m_items;
       float m_totalTrains = 0.0f;   // sum of n over m_items
-      uint64_t m_clock = 0;   // Learning clock, see GetClock -- under m_mutex
+      Core::LearningClock::Clock* m_learningClock = nullptr;   // shared, atomic; set at construction
       MemoryLife m_life;      // under m_mutex
 
       // One writer (the update loop); read anywhere, so atomic, not locked.

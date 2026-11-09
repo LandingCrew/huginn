@@ -1,12 +1,14 @@
 # Performance and Timing
 
+> **R11 (0.24.4):** the budgets below were measured on the old engine. Since R8.3 the hand-tuned engine (context weights × the bandit's learning score × multipliers) no longer ranks: every candidate is ranked on the choice score μ (θ over need × effect columns, b per item; doc 9, [9-implementation-map.md](../architecture/9-implementation-map.md)), and the old engine runs only for the D2 feature `ln learn mult` (`[Scoring] bLegacyLearnFeature`, or since 0.24.17 `bShadowLegacy`, which computes D2 in shadow beside the live engine B; confined by `tools/prune/r8_check.py`); the scoring zone is `Pipeline::RankOnChoice` (plus `Pipeline::LogChoiceRows`, named `ScoreShadow` before R8.3, for the v3 rows), and the legacy pass runs behind `bLegacyLearnFeature`.
+
 **Applies to v0.19.x.** Code claims verified against `src/` on 2026-08-29; the
 measurements are from the captures named below and nowhere else.
 
 > **Related documentation**
 > - [../profiling/tracy-traces.md](../profiling/tracy-traces.md) — the capture log. Every number here traces back to an entry there or to the roadmap items that cite one.
 > - [../roadmap.md](../roadmap.md) — "Tier 3 — hot-path perf" carries the current ranking and the 2026-08-26 figures.
-> - [../roadmap-archive.md](../roadmap-archive.md) — the archived O1 and #14 entries: what shipped, what was dropped, and why.
+> - `docs/roadmap-archive.md` (removed in dd73d24; `git show dd73d24^:docs/roadmap-archive.md`) — the archived O1 and #14 entries: what shipped, what was dropped, and why.
 > - [../refactor/wheeler-push-spikes.md](../refactor/wheeler-push-spikes.md) — the Wheeler push analysis whose ranking premise the long capture overturned.
 > - [../architecture/0-pipeline.md](../architecture/0-pipeline.md) — the pipeline these zones measure.
 > - [../testing/performance-profiling-guide.md](../testing/performance-profiling-guide.md) — how to build with Tracy and take a capture.
@@ -28,7 +30,7 @@ Four rules, in the order they bite:
    **3.23–3.87 ms** MTPC across short captures of 31–66 pushes. The 44:40
    capture of 2026-08-26, with **874 pushes**, puts the same zone at **986 µs**.
    There was never a 3.6 ms frame spike to fix; there was a small sample. See
-   the archived #14 entry in [../roadmap-archive.md](../roadmap-archive.md).
+   the archived #14 entry in `docs/roadmap-archive.md` (removed in dd73d24; `git show dd73d24^:docs/roadmap-archive.md`).
 2. **Per-tick pollers need length for the opposite reason.** They fire ~10 Hz,
    so their *totals* are what matter, and a short run under-reports them
    relative to the spiky zones. The 2026-08-23/24 captures ranked the display
@@ -81,7 +83,7 @@ session context and save size, are in
 | 2026-07-25 (`99cbb48`) | ~17:29 | `Display::Wheeler` 2.54 ms × 176; `Inventory::DeltaScan` 685 µs × 1,118 = 766 ms | Same small-sample problem on the push. The DeltaScan figure survives as a *large-inventory* data point — the hoarder worst case |
 | 2026-07-24 (`4791318`) | ~11:17 | `Inventory::DeltaScan` 161.3 µs × 157 | Tiny test save (3 items / 0 spells / 2 weapons) — this zone scales with inventory size |
 | 2026-06-13 (`slot-cleanup`) | ~13.8 min | `WeaponRegistry::Refresh` 1.25 ms × 736 = 918 ms, the #1 cost | This is the **before** side of O1, which shipped. The zone no longer walks the inventory at 2 Hz |
-| 2026-02-28 (v0.13.x) | ~30 s | `ScoreCandidates` 16.49 ms, `Display::Wheeler` 5.25 ms | Thirty seconds. Recorded in [../refactor/performance-optimizations.md](../refactor/performance-optimizations.md); treat as archaeology |
+| 2026-02-28 (v0.13.x) | ~30 s | `ScoreCandidates` 16.49 ms, `Display::Wheeler` 5.25 ms | Thirty seconds. Recorded in `docs/refactor/performance-optimizations.md` (removed in 326f720); treat as archaeology |
 
 ---
 
@@ -203,13 +205,13 @@ steadiness, and all three are configurable.
 A slot that receives new content is held for a duration, so the player has time
 to act on a recommendation whose triggering context has already passed.
 
-| Setting | Code default | Shipped `Huginn.ini` |
-|---|---|---|
-| `fLockDurationMs` | 3000 | **1000** |
-| `fMinLockDurationMs` | 500 | 500 |
-| `bLockOnFill` | true | true |
-| `bOverridesBreakLock` | true | true |
-| `iImmediateBreakPriority` | 50 | 50 |
+| Setting | Default (code and shipped `Huginn.ini`) |
+|---|---|
+| `fLockDurationMs` | 3000 |
+| `fMinLockDurationMs` | 500 |
+| `bLockOnFill` | true |
+| `bOverridesBreakLock` | true |
+| `iImmediateBreakPriority` | 50 |
 
 A post-activation lock (`LockSlotForActivation`) uses a longer 10 s hold so a
 just-used item stays visible even after it is consumed; `OnItemUsed` will not
@@ -217,11 +219,12 @@ break it. `SlotLocker::Update` returns true when any lock expired, and the calle
 forces a pipeline run so the freed slot refills without waiting for an unrelated
 state change.
 
-> **Measurement note.** With `fLockDurationMs = 1000`, `ceil(remaining / 1000)`
-> only ever yields 1, so the lock-timer subtext never counts down. Any attempt to
-> measure the 3 → 2 → 1 transitions needs the value raised to ~4000 first. This
-> is why the #14 lock-label measurements are recorded as weak evidence — locks
-> were live for only ~44 s of the 15-minute capture that produced them.
+> **Measurement note.** The #14 lock-label measurements ran with the INI then
+> shipping `fLockDurationMs = 1000`, where `ceil(remaining / 1000)` only ever
+> yields 1, so the lock-timer subtext never counted down. That is why they are
+> recorded as weak evidence: locks were live for only ~44 s of the 15-minute
+> capture that produced them. Measuring the 3 → 2 → 1 transitions needs a
+> duration of ~4000.
 
 ### Override hysteresis (`src/override/OverrideConfig.h`, `[Overrides]`)
 
@@ -230,9 +233,9 @@ and no override may clear before `minOverrideDurationMs` has elapsed.
 
 | Condition | Activation threshold | Hysteresis gap | Effective deactivation |
 |---|---|---|---|
-| Critical health | 0.10 | 0.15 | 0.25 |
-| Critical magicka | 0.10 | 0.15 | 0.25 |
-| Critical stamina | 0.10 | 0.15 | 0.25 |
+| Critical health | 0.35 | 0.15 | 0.50 |
+| Critical magicka | 0.35 | 0.15 | 0.50 |
+| Critical stamina | 0.35 | 0.15 | 0.50 |
 | Weapon charge | 0.25 | 0.05 | 0.30 |
 | Low ammo | 10 (absolute count) | 15 | 25 |
 
@@ -243,30 +246,35 @@ Weapon charge is deliberately nonzero: activation is `charge < threshold`, and a
 drained enchanted weapon keeps a sub-cost remainder rather than reaching exactly
 zero, so a zero threshold would never fire.
 
-### Wildcards (`src/learning/WildcardManager.h`, `[Wildcards]`)
+### Wildcards (`src/learning/WildcardManager.h`, `src/core/WildcardGate.h`, `[Wildcards]`)
 
 Exploration picks, so the learner can discover preferences it would otherwise
-never see ranked.
+never see ranked. Since R10 (0.24.3) each page has **one wildcard key** (the
+last key in fill order with `bWildcardsEnabled`; key 8 on the shipped pages),
+and a wildcard is drawn by relevance × sd from what the page does not show
+(`src/core/WildcardPick.h`; see [5-slots.md](../architecture/5-slots.md)).
 
 | Setting | Value | Meaning |
 |---|---|---|
-| `fBaseProbability` | 0.165 | `P(slot i) = base × i`, capped |
-| `fMaxProbability` | 0.5 | The cap |
-| `fCooldownSeconds` | 30 | How long a rolled wildcard persists |
-| `fRefractorySeconds` | 60 (INI) / 5 (code default) | Gap before a new roll |
-| First slot excluded | true | Slot 0 is always the top-scored pick |
+| `fBaseProbability` | 0.165 | P(roll) per refractory window with nothing uncertain near the page |
+| `fMaxProbability` | 0.5 | P(roll) per window with an unknown item at the page's edge |
+| `fUniformShare` | 0.1 | Share of the draw that ignores the weights (uniform over the pool) |
+| `fCooldownSeconds` | 30 | How long a wildcard stays on its key |
+| `fRefractorySeconds` | 60 | The window: one roll per window, and a failed roll restarts it |
 
 There is **no session cap**. Since v0.19.6 the cache is **per page**: each page
-owns its entries, its cooldown and its refractory timer, and records the page
-*shape* (`slotCount`, `wildcardSlots`) it was rolled against — a shape change
-from an INI hot-reload discards that page's cache wholesale. This closed three
+owns its wildcard, its cooldown and its refractory timer, and records the page
+*shape* (`slotCount` and its wildcard key) it was rolled against — a shape
+change from an INI hot-reload discards that page's cache. This closed three
 bugs of one kind (#70 and its two siblings), all "a cached wildcard nothing can
 display", which suppressed re-rolls because the liveness check scanned the whole
 cache while only a bounded prefix could ever be shown.
 
 `UpdateExpiry()` runs unconditionally every tick across **all** pages, because
-`ApplyWildcards` only runs on non-skipped pipeline ticks and a wildcard on a page
-the player has switched away from must still age out on its own timer.
+`WildcardManager::Plan`/`Commit` (around the allocation in
+`PipelineCoordinator::AllocateAndLock`) only run on non-skipped pipeline ticks,
+and a wildcard on a page the player has switched away from must still age out on
+its own timer.
 
 ### Context reason hold
 
@@ -282,9 +290,10 @@ Verified against the headers named.
 
 | Data | Structure | Where | Why |
 |---|---|---|---|
-| Per-item learning state | `std::unordered_map<FormID, ItemLearningData>` | `FeatureBanditLearner.h` | Sparse — most items are never trained. Weights, train count and last-update timestamp are **colocated in one struct**: one hash lookup per candidate, not three parallel maps |
-| Feature vector | `std::array<float, 18>` | `StateFeatures.h` | Fixed size, stack allocated, append-only wire order |
-| Wildcard state | `std::array<PageWildcards, MAX_PAGES>` | `WildcardManager.h` | Fixed, per-page; each holds `std::array<WildcardSlot, MAX_SLOTS_PER_PAGE>` |
+| Choice learner state | `Core::Choice::Model` (theta, per slot) and `std::unordered_map<std::uint32_t, Core::Choice::BBelief>` (b, per item) | `ChoiceLearner.h` | The live learner: a fixed model plus a sparse per-item map, one hash lookup per candidate |
+| Per-item learning state (the old learner, D2's input) | `std::unordered_map<FormID, ItemLearningData>` | `FeatureBanditLearner.h` | Sparse — most items are never trained. Weights, train count and last-update timestamp are **colocated in one struct**: one hash lookup per candidate, not three parallel maps |
+| Feature vector (the old learner, D2's input) | `std::array<float, 18>` | `StateFeatures.h` | Fixed size, stack allocated, append-only wire order |
+| Wildcard state | `Core::Wildcard::Gate<MAX_PAGES>` | `WildcardManager.h`, `core/WildcardGate.h` | Fixed, per-page: `std::array<PageCache, N> m_pages`, one cached wildcard per page (R10) |
 | Lock state | `std::array<LockedSlot, MAX_SLOTS_PER_PAGE>` | `SlotLocker.h` | Small, contiguous, snapshot-copyable under one lock acquisition |
 | Damage / healing history | `EventRingBuffer<T, 10>` | `StateTypes.h` | Fixed-size circular buffer, so the whole state copies out cheaply under a shared lock |
 | Delta-scan scratch | three reused `std::unordered_map<FormID, int32_t>` | `ItemRegistry.h` | `m_scanCounts` / `m_scanFilledCounts` / `m_scanSoulLevels` are members, cleared not reallocated — the scan itself is allocation-free |
@@ -531,14 +540,14 @@ none has been needed.
 | Document | Contents |
 |---|---|
 | [../architecture/0-pipeline.md](../architecture/0-pipeline.md) | Data flow: context → candidates → scoring → slots |
-| [../architecture/4-contextual-bandits.md](../architecture/4-contextual-bandits.md) | The learner's update rule and feature vector |
+| [../architecture/archive/4-contextual-bandits.md](../architecture/archive/4-contextual-bandits.md) | The learner's update rule and feature vector |
 | [../architecture/5-slots.md](../architecture/5-slots.md) | Slot classification, overrides, wildcards, locking |
 | [../profiling/tracy-traces.md](../profiling/tracy-traces.md) | Capture log — the source for every number above |
 | [../testing/performance-profiling-guide.md](../testing/performance-profiling-guide.md) | How to build with Tracy and take a capture |
 | [../playtest/LongPlaySoak.md](../playtest/LongPlaySoak.md) | Long-play soak protocol and the `[Soak]` heartbeat |
 | [../refactor/wheeler-push-spikes.md](../refactor/wheeler-push-spikes.md) | Wheeler push analysis (its P1 was dropped; P2–P3 landed) |
-| [../refactor/performance-optimizations.md](../refactor/performance-optimizations.md) | The 2026-02 optimization pass — archaeology, from a 30-second capture |
-| [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) | `hg status`, `hg recs`, `hg reload` and the rest |
+| `docs/refactor/performance-optimizations.md` (removed in 326f720; `git show 326f720^:docs/refactor/performance-optimizations.md`) | The 2026-02 optimization pass — archaeology, from a 30-second capture |
+| [Console commands](../../CLAUDE.md#console-commands) | `hg status`, `hg recs`, `hg reload` and the rest |
 
 > **The learner** is a linear contextual bandit — `FeatureBanditLearner`,
 > serialized by `BanditSerializer` into the `BNDW` cosave record.

@@ -64,7 +64,7 @@ namespace Huginn::State
 
    // Hostile-caster status (any living hostile currently casting)
    // Sourced from TargetCollection::cachedAnyCasting; drives ward/counter weights
-   // in ContextRuleEngine, so it must be a hash dimension or the pipeline-skip
+   // in the legacy context rules, so it must be a hash dimension or the pipeline-skip
    // gate ignores casting transitions.
    enum class CastingStatus : uint8_t
    {
@@ -115,7 +115,7 @@ namespace Huginn::State
       // Player vitals
       HealthBucket health;        // 6 states
       MagickaBucket magicka;      // 6 states
-      StaminaBucket stamina;      // 6 states (KEPT in struct for PotionDiscriminator, excluded from hash)
+      StaminaBucket stamina;      // 6 states (KEPT in struct for the legacy potion multiplier, excluded from hash)
 
       // Target context
       // 3 states. Distance to the CLOSEST LIVING HOSTILE, the actor the
@@ -138,13 +138,13 @@ namespace Huginn::State
       // Only the injured bit is read. Nothing reads allyStatus ITSELF --
       // StateEvaluator writes it and only the logging below consumes it -- but
       // the FACT it encodes is read through a different accessor, which is why
-      // grepping the field name is not enough to retire it: ScoreCandidates
-      // builds ContextReasonSignals{.allyInjured = targets.HasInjuredFollower()},
-      // ContextRuleEngine_Reason marks R::AllyInjured from it, and
-      // DominantReason can surface that as the "Ally Hurt" label. All of it
-      // runs BELOW CheckHashSkip, so the gate has to be able to see an ally
-      // becoming injured or the label never appears -- a follower taking fall
-      // damage beside an idle player at full vitals moves no other bucket.
+      // grepping the field name is not enough to retire it: the legacy context
+      // rules raise the ally heal weight off targets.HasInjuredFollower(), and
+      // until R8.4 an "Ally Hurt" label read it too (that label path is gone).
+      // All of it runs BELOW CheckHashSkip, so the gate has to be able to see
+      // an ally becoming injured or the D2 feature's floors go stale -- a
+      // follower taking fall damage beside an idle player at full vitals moves
+      // no other bucket.
       //
       // The None/Present half is what nothing reads, and it is also all of the
       // observed flapping: `Ally:None<->Present`, 11 times in a 565 s
@@ -168,7 +168,7 @@ namespace Huginn::State
 
       // Generate unique hash for weight table lookup
       // Returns value in range [0, kTotalStates - 1]
-      // Stamina excluded: PotionDiscriminator reads it directly, ContextRuleEngine uses raw float
+      // Stamina excluded: the legacy potion multiplier reads it directly, the context rules use raw float
       // AllyStatus narrowed to its injured bit: None and Present are the half
       // nothing reads, and all of the observed flapping (see the field)
       // Multi-radix bases: [6, 6, 3, 7, 4, 2, 2, 2, 2]

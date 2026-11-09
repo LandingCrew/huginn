@@ -50,9 +50,26 @@ carries none of them (every row before 0.23.53); the `favorite` flag bit; the
 context's `old` object (the run's scorer parameters, kept as written; None
 before); and the decision's `rid` (the id its v2 record carries; None when it
 has none, and before 0.23.53). main() also checks each row's floor `fl`
-against the context's `old` floors (floor_check) and prints the violations: the
-floors are derived by hand from UtilityScorer::ScoreCandidates' tests, and a
-real log is where the two would be seen to drift apart."""
+against the context's `old` floors (floor_check) and prints the violations: a
+reading of the floor tests in Python, against the logged values, beside the
+plugin's own two (see floor_check).
+
+0.23.56 (R8.2) appended the choice model's columns mu, sd, lm, um, ex, kept as
+the row tuple's SHADOW element (common.S_MU..S_EX). The model ran in shadow at
+0.23.56; from R8.3 (0.24.0) it is the live ranking, and lm / um are the D2
+feature as the live score read it (fitlib.row_features 'learn_live').
+
+0.24.17 appended the D2 engine in shadow beside the live one: row columns amu,
+ar, br, ak, bk (engine A's mu, the row's rank under A and under the live
+ranking, its key on A's and on the live ranking's stateless page), kept as the
+row tuple's SHADOW_A element (common.A_MU..A_BK), None on a row with none of
+them. The fit reads none of it; tools/shadow/shadow_compare.py reads ar, br,
+ak and bk.
+
+Logged and read by no script here (kept or dropped as said, for a later look):
+the row column amu; the head's `bootstrap` object (0.23.56: the seed's
+created_utc and sha256; kept in the heads) and `refreshPriorSec` (0.23.55:
+covered(i)'s left(r) centre, [Scoring] fRefreshPriorSec; dropped)."""
 import argparse
 import json
 import pickle
@@ -68,6 +85,13 @@ DEC_DEFAULTS = {'char': None, 'list': '', 'gen': 1, 'name': None, 'form': None, 
                 'learned': 1, 'preEquipped': 0, 'ep': None, 'rid': None}
 # The row columns 0.23.53 appended, in the order of the row tuple's OLD element.
 OLD_COLS = ('est', 'a', 'n', 'ucb', 'rec', 'prior', 'cw', 'fl', 'wu', 'hk')
+# 0.23.56 (R8.2): the choice model (in shadow at 0.23.56, the live ranking from
+# R8.3), by name (common.SHADOW, S_MU..S_EX): mu, sd, lm (ln learn mult), um
+# (util missing) -- both as the live score read them -- and ex ((need id, column
+# id) by the loader's global indices, or "learned"). None on older rows.
+SHADOW_COLS = ('mu', 'sd', 'lm', 'um', 'ex')
+# 0.24.17: the D2 engine in shadow (common.SHADOW_A, A_MU..A_BK).
+SHADOW_A_COLS = ('amu', 'ar', 'br', 'ak', 'bk')
 # A nothing record's episode fields 0.23.51 added (see the module docstring);
 # epSec defaults to the record's own durSec.
 EP_DEFAULTS = {'why': 'end', 'lap': 0}
@@ -115,7 +139,8 @@ def load(paths):
                 hcross = gix(r['cross'], crossix, cross)
                 segcaps = {}
                 seg = len(heads)
-                heads.append({k: r[k] for k in ('launch', 'list', 'build', 'kinds', 'src', 'row', 'flags', 'episode', 'filters', 'floors') if k in r}
+                heads.append({k: r[k] for k in ('launch', 'list', 'build', 'kinds', 'src', 'row', 'flags', 'episode', 'filters', 'floors',
+                                                'bootstrap') if k in r}
                              | {'ncols': len(r['cols']), 'nneeds': len(r['needs']), 'file': str(path)})
                 kinds, srcs = r['kinds'], r['src']
                 hfilters = r.get('filters', [])
@@ -125,6 +150,9 @@ def load(paths):
                 hfloors = r.get('floors', [])
                 iold = [rnames.index(n) if n in rnames else None for n in OLD_COLS]   # 0.23.53
                 ifl = OLD_COLS.index('fl')
+                ishadow = [rnames.index(n) if n in rnames else None for n in SHADOW_COLS]   # 0.23.56
+                ishadow_a = [rnames.index(n) if n in rnames else None for n in SHADOW_A_COLS]   # 0.24.17
+                iex = SHADOW_COLS.index('ex')
 
                 def row_tuple(f):
                     form, uid, kind, src, cap, flags, slot, util, x, wp = f[:10]
@@ -137,10 +165,23 @@ def load(paths):
                         if old[ifl] is not None:
                             old[ifl] = hfloors[old[ifl]]
                         old = tuple(old)
+                    sh = [f[i] if i is not None and i < len(f) else None for i in ishadow]
+                    if all(v is None for v in sh):
+                        sh = None
+                    else:
+                        ex = sh[iex]
+                        if isinstance(ex, list) and len(ex) == 2:
+                            sh[iex] = (hneed[ex[0]], hcol[ex[1]])
+                        elif ex != 'learned':
+                            sh[iex] = None
+                        sh = tuple(sh)
+                    sa = tuple(f[i] if i is not None and i < len(f) else None for i in ishadow_a)
+                    if all(v is None for v in sa):
+                        sa = None
                     return (form, uid, None if kind is None else kinds[kind], None if src is None else srcs[src],
                             -1 if cap == -1 else segcaps[cap], flags, slot, util,
                             tuple((hcross[i], v) for i, v in x), wp,
-                            None if fb is None else hfilters[fb], cr, old)
+                            None if fb is None else hfilters[fb], cr, old, sh, sa)
             elif t == 'cap':
                 c = tuple(sorted((hcol[i], v) for i, v in r['c']))
                 if c not in capkey:
@@ -240,11 +281,15 @@ FLOOR_TOL = 1e-3
 
 
 def floor_check(D):
-    """Check each row's old-engine floor (`fl`, 0.23.53) against the tests
-    UtilityScorer::ScoreCandidates applies, with the context's `old` floors.
-    PipelineCoordinator::CaptureEligible derives `fl` by copying those tests by hand;
-    this catches the two drifting apart, on a real log. Returns (Counter of violations
-    by kind, the rows checked, up to 5 examples per kind as (ctx key, row index, form)).
+    """Check each row's old-engine floor (`fl`, 0.23.53) against the floor tests, read
+    off the logged values and the context's `old` floors. The plugin writes `fl` from
+    the legacy module's score capture (src/learning/legacy/LegacyRun.cpp), which reads
+    the tests of the floor pass (src/learning/legacy/LegacyLearnFeature.h); since 0.23.56
+    the pipeline also compares the two per row and logs a [Legacy] warning when they
+    disagree. This is a third reading, in Python, of the logged
+    numbers: it catches a floor the INI's values (the context's `old`) would not give.
+    Returns (Counter of violations by kind, the rows checked, up to 5 examples per kind
+    as (ctx key, row index, form)).
     Kinds:
       not_eligible    fl set on a row that is not eligible
       scored_mismatch fl pass/cold on an unscored row, or ctx/util/suppressed on a scored one

@@ -1,5 +1,7 @@
 # Candidate Generation, Filtering & Priors
 
+> **R11 (0.24.4):** the filters below read the candidate's facets from the effect catalog (`core/CapFacets.h` via `effect/Facets.h`), not the classifiers' tags: full vitals (RestoreHealth / Magicka / Stamina, not for TargetsOthers or HealsOverTime, not for food), the active buffs (Invisibility, Muffle, ArmorBuff but not a ward, Summon, Warming, Waterbreathing), the resist check (any resist_* column the player already covers, potions and spells alike; never a hostile or damaging item, so an elemental cloak's resist rider does not filter it: `Core::Facets::ResistJudgeable`) and the no_follower gate (TargetsOthers). A candidate the catalog has no entry for passes every effect filter. Since R8.1 the context zeros are hard gates; since R8.3 nothing is dropped by a utility floor (the hand-tuned engine (context weights × the bandit's learning score × multipliers) no longer ranks: every candidate is ranked on the choice score μ (θ over need × effect columns, b per item; doc 9, [9-implementation-map.md](9-implementation-map.md)), and the old engine runs only for the D2 feature `ln learn mult` (`[Scoring] bLegacyLearnFeature`, confined by `tools/prune/r8_check.py`)).
+
 > **Purpose:** Reference for what becomes a candidate, the hard filters that remove
 > candidates, the intrinsic priors that bootstrap learning, and how survivors reach
 > `UtilityScorer`.
@@ -9,7 +11,7 @@
 > **See also:**
 > - [0-pipeline.md](0-pipeline.md) - Overall pipeline flow and the three-tier scoring system
 > - [5-slots.md](5-slots.md) - Slot classification, overrides, and allocation
-> - [4-contextual-bandits.md](4-contextual-bandits.md) - contextual bandit learning and the utility formula
+> - [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) - contextual bandit learning and the utility formula
 
 ---
 
@@ -83,7 +85,7 @@ vector — no in-place `erase_if`.
 
 | # | Stage | Where |
 |---|---|---|
-| 1 | **Consolidated visitor** — affordability, equipped, full vitals, active buff, in that order, early-exiting on the first failure | `RunVisitorFilters()`, `CandidateFilters.cpp:20` |
+| 1 | **Consolidated visitor** — affordability, equipped, full vitals, the hard gates (§2.7, 0.23.55), active buff (with the refresh pass, §2.8), in that order, early-exiting on the first failure | `RunVisitorFilters()` |
 | 2 | **Cooldown** — tested against a set of active cooldown keys snapshotted once per pass, so there is no per-candidate lock | `CandidateFilters.cpp:289` |
 | 3 | **Deduplication** — inline, via a reusable `unordered_set<uint64_t>` | `CandidateFilters.cpp:300` |
 | 4 | **Truncation** to `maxCandidatesAfterFilter` | `CandidateFilters.cpp:317` |
@@ -101,13 +103,18 @@ game's job threads.
 The visitor is written per variant alternative, and the arms are **not symmetric**. This
 table is the code, not an idealisation:
 
-| | Affordability | Equipped | Full vitals | Active buff |
-|---|---|---|---|---|
-| **Spell** | `currentMagicka < effectiveCost` → policy-dependent (§3) | `player.IsSpellEquipped(formID)` | RestoreHealth, RestoreMagicka | Invisibility, Muffle, Armor, `SpellType::Summon` once `summonCount` reaches `summonLimit` (0.23.46; before, any summon up hid them all), plus resist redundancy |
-| **Item** (Potion/Food/SoulGem) | `count <= 0` | — (never filtered) | RestoreHealth, RestoreMagicka, RestoreStamina — **skipped entirely for `Food` and `Alcohol`** | resist redundancy, Waterbreathing, Invisibility |
-| **Scroll** | `count <= 0` | — | RestoreHealth only | Invisibility, Muffle |
-| **Ammo** | `count <= 0` | `isEquipped` | — | — |
-| **Weapon / Staff** | always passes | always passes | — | — |
+| | Affordability | Equipped | Full vitals | Hard gates (§2.7) | Active buff |
+|---|---|---|---|---|---|
+| **Spell** | `currentMagicka < effectiveCost` → policy-dependent (§3) | `player.IsSpellEquipped(formID)` | RestoreHealth, RestoreMagicka | `favorite_suppressed`, `no_follower` (TargetsOthers) | Invisibility, Muffle, Armor, `SpellType::Summon` once `summonCount` reaches `summonLimit` (0.23.46; before, any summon up hid them all), plus resist redundancy |
+| **Item** (Potion/Food/SoulGem) | `count <= 0` | — (never filtered) | RestoreHealth, RestoreMagicka, RestoreStamina — **skipped entirely for `Food` and `Alcohol`** | — | resist redundancy, Waterbreathing, Invisibility |
+| **Scroll** | `count <= 0` | — | RestoreHealth only | `no_follower` (TargetsOthers) | Invisibility, Muffle |
+| **Ammo** | `count <= 0` | `isEquipped` | — | — | — |
+| **Weapon / Staff** | always passes | always passes | — | `favorite_suppressed` | — |
+| **Torch** | `count <= 0` | `isEquipped` | — | `not_dark` | — |
+| **Apparel** | — (worn pieces are never gathered) | — | — | `no_workstation` | — |
+
+Every active-buff test passes its item again in the buff's last `fRefreshPriorSec`
+seconds (§2.8).
 
 Gaps worth knowing, all present in v0.19.10:
 
@@ -120,11 +127,15 @@ Gaps worth knowing, all present in v0.19.10:
 **Full-vital threshold:** `State::DefaultState::FULL_VITAL` is `1.0` and
 `FULL_VITAL_EPSILON` is `0.01` (`CandidateFilters.cpp:8`), so the gate fires at ≥ 99%.
 
-**Resist redundancy:** `IsResistPotionRedundant` (`CandidateFilters.cpp:370`) checks the
-ResistFire/Frost/Shock/Poison/Magic item tags against `player.resistances` and the
-`resistThresholdToFilter` percentage. `IsResistSpellRedundant`
-has no tag to read — `SpellTag` is full at 32 bits — so it uses `SpellType::Defensive`
-plus `ElementType` instead. Magic resistance has no spell arm as a result.
+**Resist redundancy (R11):** `CandidateFilters::IsResistRedundant` checks the
+item's ResistFire/Frost/Shock/Poison/Magic facets (the effect catalog's resist_*
+columns) against `player.resistances` and the `resistThresholdToFilter` percentage,
+for potions and spells alike, unless that element's block is due for its refresh. A
+hostile or damaging item is never judged (`Core::Facets::ResistJudgeable`): LoreRim's
+Flame Cloak carries resist_frost beside its damage aura, and judged by that rider a
+Nord mage over the frost threshold lost it. Before R11 the potion check read the item
+tags and the spell check `SpellType::Defensive` plus `ElementType` (no Resist Magic
+arm); the history below describes that version.
 
 > **Changed in #130.** This accepted `SpellType::Buff` as well, from when an
 > elemental resist spell *was* typed `Buff`. #128 moved every spell that
@@ -166,12 +177,80 @@ drift (`CooldownManager.cpp:14`).
 
 ### 2.6 FilterStats
 
-`FilterStats` (`CandidateFilters.h:18`) counts what each stage removed. (Its
-`filteredByRelevance` counter, dead since the relevance filter went, was removed in 0.22.8.)
+`FilterStats` (`CandidateFilters.h:18`) counts what each stage removed; the hard gates
+count in `filteredByHardGate` (0.23.55). (Its `filteredByRelevance` counter, dead since the
+relevance filter went, was removed in 0.22.8.)
 
 > **The relevance filter is gone.** `baseRelevance` no longer exists on `CandidateBase`, and
-> neither does the `GetRelevance()` helper. Context-based exclusion now happens in
-> `UtilityScorer` via the two soft thresholds in §5.
+> neither does the `GetRelevance()` helper. Context-based exclusion happens in
+> `UtilityScorer` via the two soft thresholds in §5, except the four hard zeros, which are
+> filters again since 0.23.55 (§2.7).
+
+### 2.7 Hard gates (R8.1, 0.23.55)
+
+Map Phase 6 item 1: before the new scorer ranks anything, the cases in which the old engine
+gave a candidate a context weight of exactly 0, and the favourites Suppress skip, are
+candidate filters. The new scorer never sees those items, so it cannot fill a page with
+fortify rings and torches. They run in the visitor after full vitals and before the
+active-buff filters, and each drop is a `Core::Filter::Dropped` with its reason:
+
+| Reason | Drops | The old engine's zero it replaces |
+|---|---|---|
+| `no_follower` | a spell or scroll tagged `TargetsOthers` with no living follower near | `WeightForCandidate`'s `!followerPresent` arms |
+| `no_workstation` | apparel when no craft it fortifies (Smithing, Enchanting, Alchemy) has its station in the crosshair; a ring that fortifies two crafts passes at either | the apparel arm (no baseline; only the station's fortify weight) |
+| `not_dark` | a torch while darkness does not apply: daylight (`WorldState::isDark` false, `fDarkLightLevel` with its hysteresis), or Night Eye, a light spell or a torch already up | the torch arm (`darknessWeight` only) |
+| `favorite_suppressed` | a favourite (spells and weapons carry the flag) under `[Favorites] sFavoritesMode = Suppress` | the two Suppress skips in `UtilityScorer::ScoreCandidates`, deleted |
+
+One predicate per gate, in `src/core/HardGates.h` (host-tested), on facts read from the
+state by `Context::HardGateInputs` (`context/ContextRuleEngine.h`): `FollowerNear(targets)`,
+`StationCraft(world)` and `DarknessApplies(player, world)`. `EvaluateRules` raises
+`followerPresent`, the fortify weights and `darknessWeight` from the same three functions,
+so a gate drops exactly what the old weight zeroed. (A context weight configured to 0 in the
+INI still zeroes an item the gate lets through; the shipped weights are all positive.) The
+filter reads state, never a `ContextWeightMap`. `WeightForCandidate`'s zero arms and
+`IsHardContextGated` stay for the legacy learn feature (R8 PR 2) but no longer decide
+anything in a pipeline run.
+
+A Remembrance hold's own item that a gate drops (a torch taken off in daylight, a ring away
+from the forge) is set aside for the hold, as an unaffordable one is: until 0.23.55 those
+items passed the filters, so the hold could always find them. Not while it is on cooldown:
+0.23.54 dropped such an item at the cooldown stage, so the hold could not place it then.
+
+Behaviour against 0.23.54: such items are `filtered_by` their gate in the selection log
+instead of eligible and unscored (floor `ctx`, or `suppressed`); and a spell for others at
+context weight 0 can no longer be raised by the cold-start rescue (`IsHardContextGated`
+covered only apparel and torches). The gates run ahead of the active-buff filters and the
+cooldown stage, so an item that hits a gate as well is logged with the gate's reason where
+0.23.54 logged the active-buff one or `cooldown` (a `TargetsOthers` armour spell while
+armoured, no follower near: `no_follower`).
+
+### 2.8 The refresh pass (doc 11 decision 4, 0.23.55)
+
+Each active-buff filter (`invisibility`, `muffle`, `armor`, `summon_limit`, `warming`,
+`waterbreathing`, `resist`) lets its item through once the buff that blocks it has less than
+`[Scoring] fRefreshPriorSec` left (default 5 s; 0 turns the pass off), so the player can
+recast before it drops. An effect with no duration (abilities, worn enchantments, any
+constant effect) never runs out, so its block never passes.
+
+"The buff that blocks it" (`src/core/RefreshPass.h`):
+
+- invisibility, muffle, armor, warming, waterbreathing: every active effect that sets the
+  filter's flag; the block ends with the last of them (the longest remaining time; one
+  constant effect means never);
+- resist: the element's resistance stays over `resistThresholdToFilter` until enough of its
+  timed parts (value modifiers on the element's AV, weaknesses subtracting) have ended;
+  whatever no timed effect explains (gear, a race, an ability) is permanent;
+- summon_limit: a cast at the limit dismisses the oldest commanded summon or thrall, so the
+  block ends with that one's timer (`Coverage::OldestRemaining`, the value `covered(i)` reads,
+  so the two cannot disagree). With a thrall or any untimed summon as the oldest, it never
+  passes, even while a younger summon is in its last seconds.
+
+The magic-effects poll computes one bit per block (`ActorBuffs::refreshDue`, against the
+window and the threshold pushed into `StateManager`), so a block entering its last seconds
+marks the state changed, and the pipeline's skip gate compares the bits like its ambient
+signature: the item comes back on the next run, not when something else happens to move.
+The poll logs `[StateManager] Refresh due: <blocks> (window Ns)` on each change. The same
+`fRefreshPriorSec` is the centre of `covered(i)`'s `left(r)` prior in the selection log.
 
 ---
 
@@ -299,7 +378,7 @@ combat and AOE relevance, target type (undead / daedra / dragon), stealth, eleme
 while taking that damage type, environmental cases (underwater, looking at a lock, falling),
 weapon charge tiers, ammo need, and workstations.
 
-See [4-contextual-bandits.md](4-contextual-bandits.md) and the `[ContextWeights]` INI
+See [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) and the `[ContextWeights]` INI
 section for the full table.
 
 ### 4.8 Workstation context
@@ -338,7 +417,9 @@ Stage 2 → Stage 6.
    so the loop does two lock acquisitions instead of ~2N.
 3. **Soft gate 1** — skips any candidate whose context weight is below
    `minimumContextWeight` (`UtilityScorer.cpp:78`). **Favorited candidates are exempt**:
-   explicit player intent must stay observable to the learner even at low context.
+   explicit player intent must stay observable to the learner even at low context. (A
+   favourite under Suppress never gets here: the `favorite_suppressed` filter dropped it,
+   §2.7.)
 4. Scores each survivor (§6).
 5. **Soft gate 2** — keeps the result only if `utility >= minimumUtility`
    (`UtilityScorer.cpp:93`).
@@ -350,8 +431,11 @@ Stage 2 → Stage 6.
    the rank-scaled one. It never drops entries, even if rescaling pushes one under
    `minimumUtility`.
 8. `std::partial_sort` for the top N.
-9. `WildcardManager::ApplyWildcards` against the page **this tick allocates**, taken from
-   the pipeline snapshot rather than a live `SlotAllocator` read.
+9. No wildcard step here any more (R10): the ranked list is left in rank order.
+   `PipelineCoordinator::AllocateAndLock` asks `WildcardManager::Plan` what the page
+   **this tick allocates** (taken from the pipeline snapshot rather than a live
+   `SlotAllocator` read) wants of its wildcard key, the allocation pins or draws it, and
+   `WildcardManager::Commit` keeps the result.
 
 These two thresholds are what replaced the removed `baseRelevance` filter:
 
@@ -396,7 +480,7 @@ add it a second time.
 `correlationBonus`, `potionMultiplier` and `favoritesMultiplier` come from
 `CorrelationBooster`, `PotionDiscriminator` and the favorites mode respectively. See
 [0-pipeline.md](0-pipeline.md) Stage 6 and
-[4-contextual-bandits.md](4-contextual-bandits.md) for the learner side.
+[archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) for the learner side.
 
 ---
 
@@ -443,8 +527,8 @@ It is called on `kPostLoadGame`/`kNewGame` (`src/Main.cpp:221`) and again on
 > INI had no effect. Invisible because the shipped values matched those defaults.
 > `RefreshConfigFromGlobal()` is now called from `InitializeGameSystems` (outside
 > the `IsInitialized` guard, so a save load re-pushes rather than keeping the
-> previous game's values) and from `SettingsReloader`, and `ResetAllToDefaults`
-> resets the global too.
+> previous game's values) and from `SettingsReloader` (reload and Reset to
+> Defaults share `ApplyIni`, which loads the global and refreshes the generator).
 >
 > **Scope of `bEnableSoulGemRecharge`:** it gates `GatherSoulGemCandidates` and
 > nothing else, so with it off, `OverrideManager::FindSoulGem` still surfaces a
@@ -457,28 +541,38 @@ It is called on `kPostLoadGame`/`kNewGame` (`src/Main.cpp:221`) and again on
 > it is printed once at load, hundreds of lines above the `FindSoulGem` /
 > `WEAPON EMPTY` lines that name the override without naming its control.
 
-### 8.2 `[Scoring]` — thresholds that do apply
+### 8.2 `[Scoring]` — thresholds
 
 ```ini
 [Scoring]
-fMinimumUtility = 0.1                ; below this, dropped from results
-fMinimumContextWeight = 0.05         ; below this, skipped before scoring (favorites exempt)
-fColdStartUCBBoost = 0.2             ; context floor for untried items
-iTopNCandidates = 10
+fMinimumUtility = 0.1                ; the old utility floor (D2 feature / fallback only)
+fMinimumContextWeight = 0.05         ; the old context floor, favorites exempt (D2 feature / fallback only)
+fColdStartUCBBoost = 0.2             ; the old context floor for untried items (D2 feature / fallback only)
+iTopNCandidates = 10                 ; the old floors' top N (D2 feature / fallback only)
+fRefreshPriorSec = 5.0               ; the active-buff filters' refresh window (§2.8), 0-120, 0 = off
 ```
 
-Loaded by `ScorerSettings` (`src/learning/ScorerSettings.cpp`), which is hot-reloadable.
+The first four are the old engine's floors (`learning/legacy/LegacyLearnFeature.h`). They
+decide which rows get D2's `ln learn mult` feature (a row under them reads "util missing")
+and set the floor of the fallback ranking used when `Huginn_Bootstrap.json` is missing or
+invalid. Nothing is dropped from the live ranking (since R8.3). `fRefreshPriorSec` is live.
+
+Loaded by `ScorerSettings` (`src/learning/ScorerSettings.cpp`), which is hot-reloadable;
+`fRefreshPriorSec` is pushed into `StateManager` on every load.
 
 ### 8.3 `[Favorites]`
 
 ```ini
-sFavoritesMode = Boost               ; Boost / Off / Suppress
-fFavoritesBoostMin = 1.3
-fFavoritesBoostMax = 2.5
+sFavoritesMode = Boost               ; Boost / Off / Suppress (Suppress: a filter, §2.7)
+fFavoritesBoostMax = 2.5             ; the old utility's favourites multiplier
+fFavoriteLifeMult = 2.0              ; Boost: a favourite's b fades this many times slower, 1-100
 ```
 
-In Boost mode favorites are ranked by utility each update; the strongest gets `Max`, the
-weakest `Min`, linear in between, and a single favorite gets `Max`.
+`fFavoritesBoostMax` is a uniform multiplier in the old utility
+(`ScorerConfig::FavoritesMultiplier`): it reaches D2's floors and the fallback ranking only.
+Boost's live effect is `fFavoriteLifeMult` (read by `ChoiceLearner`, `ChoiceLearner.cpp:105`):
+under Boost, what the choice learner learned about a favourite (its b entry) keeps its
+useful life `fFavoriteLifeMult` times longer.
 
 ### 8.4 `[Overrides]`
 
@@ -494,9 +588,9 @@ bAllowImpurePotions = true
 bEnableDrowning = true               ; no threshold — binary
 ```
 
-> **Note on defaults:** the compile-time fallbacks in `src/override/OverrideConfig.h` are
-> **10%** for critical health/magicka/stamina; the shipped `Huginn.ini` sets **35%**.
-> Without the INI file the behavior differs significantly.
+> **Note on defaults:** since 0.24.8 the compile-time fallbacks in
+> `src/override/OverrideConfig.h` equal the shipped `Huginn.ini` values (35% for
+> critical health/magicka/stamina), so a missing INI or key behaves the same.
 
 ### 8.5 Compile-time only
 
@@ -571,7 +665,12 @@ There is no automated test suite in the repository; these are in-game checks
 - [ ] Healing spell and health potion excluded at ≥ 99% HP
 - [ ] Food and alcohol still surface at full health (vitals arm is skipped for them)
 - [ ] Resist potion excluded when that resistance is already above 50%
-- [ ] Invisibility potion excluded while invisible
+- [ ] Invisibility potion excluded while invisible, and offered again in the last
+      `fRefreshPriorSec` seconds of the effect (§2.8)
+- [ ] A spell for others is `filtered_by` `no_follower` with no follower near
+- [ ] A Fortify Smithing ring is `filtered_by` `no_workstation` away from a forge and offered at one
+- [ ] A torch is `filtered_by` `not_dark` in daylight and offered in a dark cave
+- [ ] Under `sFavoritesMode = Suppress` a favourite is `filtered_by` `favorite_suppressed`
 - [ ] Two enchanted weapons sharing a base FormID both survive dedup (distinct `uniqueID`)
 - [ ] Empty soul gems never appear; a stack of ten petty gems with one soul reports count 1
 
@@ -599,10 +698,10 @@ There is no automated test suite in the repository; these are in-game checks
 
 - [0-pipeline.md](0-pipeline.md) — Overall recommendation pipeline
 - [2-classifiers.md](2-classifiers.md) — How registry entries get their types and tags
-- [4-contextual-bandits.md](4-contextual-bandits.md) — Contextual bandit learning implementation
+- [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) — Contextual bandit learning implementation
 - [5-slots.md](5-slots.md) — Slot classification and overrides
 - [../reference/candidate-system.md](../reference/candidate-system.md) — Candidate system reference
-- [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) — `hg recs`, `hg reload`
+- [Console commands](../../CLAUDE.md#console-commands) — `hg recs`, `hg reload`
 - `src/candidate/CandidateGenerator.cpp` — Gathering from the registries
 - `src/candidate/CandidateFilters.cpp` — All hard filters
 - `src/candidate/CandidateTypes.h` — `SourceType`, `CandidateVariant`, dedup key

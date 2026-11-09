@@ -94,6 +94,13 @@ namespace Huginn::Slot
         ///   not reward the learner for the press.
         bool OnSlotActivated(size_t page, size_t slot, RE::FormID formID, Kind kind);
 
+        /// A press's equip that waited for a casting hand (the hand equip
+        /// gate, 0.24.26) is going through now: its pending capture is timed
+        /// from here, not from the press, or re-registered if it already
+        /// expired, so the window still covers the hand change. Call only for
+        /// a press OnSlotActivated did not take as the undo. Main thread.
+        void RearmCapture(size_t page, size_t slot, RE::FormID formID, Kind kind);
+
         /// Every tick, on the update loop's thread (not the main thread in
         /// gameplay): sample the hands, resolve pending captures,
         /// age the holds, and end any whose item is back in a hand (re-equipped
@@ -157,6 +164,10 @@ namespace Huginn::Slot
         static constexpr float kExpiringFraction = 0.4f;
 
     private:
+
+        /// OnSlotActivated's capture, under m_mutex: the slot must have
+        /// Remembrance on.
+        void AddPendingLocked(size_t page, size_t slot, RE::FormID formID, Kind kind, int64_t nowMs);
 
         static void Observe(Track& track, RE::FormID now, int64_t nowMs);
         /// The hold's length as it stands: full, or capped while mismatched.

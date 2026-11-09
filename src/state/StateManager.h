@@ -86,12 +86,6 @@ namespace Huginn::State
       // from persisting into the new session.
       void ResetTrackingState();
 
-      // Stage 3b: Poll all sensors and return true if ANY state changed
-      // Ignores timers - meant to be called when timer-based poll is due
-      // Returns: true if any sensor detected a change, false if all unchanged
-      // Takes m_pollMutex, like Update, ForceUpdate and ResetTrackingState.
-      [[nodiscard]] bool PollAll();
-
       // Stage 3c: Check if last Update() detected any state changes
       // Returns: true if last Update() changed any state, false otherwise
       // Used by UpdateLoop to skip expensive pipeline when state is stable
@@ -116,31 +110,20 @@ namespace Huginn::State
          return m_ammoCountChanged.exchange(false, std::memory_order_acq_rel);
       }
 
-      // True while instant-hit fire/frost/shock damage is inside the elemental
-      // enrichment window. The outer pipeline-skip gate must consult this: the
-      // enrichment flags (isOnFire/isFrozen/isShocked) decay with wall-clock time
-      // without any state delta, so an unchanged-state tick can still require a
-      // pipeline run. Mirrors the inner-gate bypass in CheckHashSkip.
-      [[nodiscard]] bool IsElementalWindowActive() const noexcept
-      {
-         return m_elementalWindowActive.load(std::memory_order_relaxed);
-      }
+      // R8.3: no elemental window accessor for the outer skip gate any more;
+      // the need signature (fire/frost/shock_damage_rate decay with time,
+      // NeedEvaluator) opens that gate. The enrichment itself
+      // (PipelineCoordinator::EnrichElementalDamage) stays: the legacy
+      // context rules read isOnFire and the like.
 
       // =============================================================================
-      // COMBAT TRANSITION TRACKING
+      // COMBAT STATE
       // =============================================================================
-      // Detected inside PollPlayerPosition (which already holds the lock and
-      // knows exactly when isInCombat flips). Avoids the full PlayerActorState
-      // copy that the old UpdateLoop combat tracking required.
-
-      enum class CombatTransition : uint8_t { None, Entered, Exited };
-
-      /// Consume and reset the combat transition flag (destructive read).
-      /// Returns the transition that occurred since the last call.
-      [[nodiscard]] CombatTransition ConsumeCombatTransition() noexcept
-      {
-         return m_combatTransition.exchange(CombatTransition::None, std::memory_order_acq_rel);
-      }
+      // The published combat flag flips inside PollPlayerPosition, which also
+      // stamps NeedSensorState::combatStartAt / combatEndAt on the same
+      // transition. R8.1 (0.23.55): the destructive combat-transition latch
+      // that fed the legacy potion multiplier's own timer is gone; it reads
+      // combatStartAt (GetCombatStartAt), the combat_onset clock.
 
       /// Lightweight combat state check (no full PlayerActorState copy).
       [[nodiscard]] bool IsInCombat() const noexcept
@@ -172,9 +155,6 @@ namespace Huginn::State
       // Get all targets (copy-out)
       [[nodiscard]] TargetCollection GetTargets() const noexcept;
 
-      // Get primary target only (copy-out)
-      [[nodiscard]] std::optional<TargetActorState> GetPrimaryTarget() const;
-
       // Get health tracking state (copy-out)
       [[nodiscard]] HealthTrackingState GetHealthTracking() const noexcept;
 
@@ -187,6 +167,12 @@ namespace Huginn::State
       // R3: the need vector's own readings (copy-out). Nothing that scores
       // reads them; see NeedSensorState.h.
       [[nodiscard]] NeedSensorState GetNeedSensors() const noexcept;
+
+      /// R8.1 (0.23.55): NeedSensorState::combatStartAt alone (NeedClock
+      /// seconds the published combat flag last went true; -1 never), without
+      /// the whole copy. The combat_onset need's clock, which the legacy
+      /// potion multiplier now reads too (core/CombatOnset.h).
+      [[nodiscard]] double GetCombatStartAt() const noexcept;
 
       /// 0.23.46 (selection log v3 only): what is active on the player in
       /// cap(i)'s column space (core/Coverage.h) and the actors the player
@@ -205,28 +191,6 @@ namespace Huginn::State
       // scoring target marked. Reads a copy of the targets and the actors as
       // they stand; any thread.
       [[nodiscard]] std::vector<std::string> DescribeTrackedActors() const;
-
-      // =============================================================================
-      // CONFIGURATION (Optional - defaults from StateManagerConstants.h)
-      // =============================================================================
-
-      // Set poll intervals (milliseconds)
-      void SetWorldPollInterval(float ms) noexcept { m_worldPollInterval = ms; }
-      void SetPlayerVitalsPollInterval(float ms) noexcept { m_playerVitalsPollInterval = ms; }
-      void SetPlayerMagicEffectsPollInterval(float ms) noexcept { m_playerMagicEffectsPollInterval = ms; }
-      void SetPlayerEquipmentPollInterval(float ms) noexcept { m_playerEquipmentPollInterval = ms; }
-      void SetPlayerSurvivalPollInterval(float ms) noexcept { m_playerSurvivalPollInterval = ms; }
-      void SetPlayerPositionPollInterval(float ms) noexcept { m_playerPositionPollInterval = ms; }
-      void SetTargetsPollInterval(float ms) noexcept { m_targetsPollInterval = ms; }
-
-      // Get poll intervals
-      [[nodiscard]] float GetWorldPollInterval() const noexcept { return m_worldPollInterval; }
-      [[nodiscard]] float GetPlayerVitalsPollInterval() const noexcept { return m_playerVitalsPollInterval; }
-      [[nodiscard]] float GetPlayerMagicEffectsPollInterval() const noexcept { return m_playerMagicEffectsPollInterval; }
-      [[nodiscard]] float GetPlayerEquipmentPollInterval() const noexcept { return m_playerEquipmentPollInterval; }
-      [[nodiscard]] float GetPlayerSurvivalPollInterval() const noexcept { return m_playerSurvivalPollInterval; }
-      [[nodiscard]] float GetPlayerPositionPollInterval() const noexcept { return m_playerPositionPollInterval; }
-      [[nodiscard]] float GetTargetsPollInterval() const noexcept { return m_targetsPollInterval; }
 
    private:
       StateManager();
@@ -408,7 +372,21 @@ namespace Huginn::State
 
    public:
       void SetDarkLightLevel(float level) noexcept { m_darkLightLevel.store(level); }
+
+      // R8.1 (0.23.55): the refresh pass (core/RefreshPass.h). The magic-effects
+      // poll computes ActorBuffs::refreshDue against these: the window
+      // ([Scoring] fRefreshPriorSec, pushed in by ScorerSettings) and the
+      // resist filter's threshold (CandidateConfig, pushed in by
+      // CandidateGenerator). Any thread; the poll reads them atomically.
+      void SetRefreshPriorSec(float sec) noexcept { m_refreshPriorSec.store(sec); }
+      [[nodiscard]] float GetRefreshPriorSec() const noexcept { return m_refreshPriorSec.load(); }
+      void SetResistFilterThreshold(float threshold) noexcept { m_resistFilterThreshold.store(threshold); }
    private:
+      float m_summonLimit = 1.0f;   // PollPlayerMagicEffects' last commanded-actor limit (0.24.24); reset in ResetTrackingState
+      std::atomic<float> m_refreshPriorSec{ Core::Refresh::kDefaultRefreshSec };
+      std::atomic<float> m_resistFilterThreshold{ 50.0f };   // CandidateConfig::resistThresholdToFilter's default
+      Core::Refresh::DueBits m_lastRefreshDue = 0;            // PollPlayerMagicEffects: for the transition line
+
       PlayerActorState m_playerState;
       TargetCollection m_targets;
       HealthTrackingState m_healthTracking;
@@ -481,12 +459,7 @@ namespace Huginn::State
       std::atomic<bool> m_lastUpdateChanged{true};  // Default true to run pipeline on first update
       std::atomic<bool> m_ammoCountChanged{false};  // See ConsumeAmmoCountChanged
 
-      // Elemental enrichment window flag (set in PollHealthTracking, read by the
-      // outer skip gate in UpdateLoop via IsElementalWindowActive)
-      std::atomic<bool> m_elementalWindowActive{false};
-
-      // Combat transition tracking (set in PollPlayerPosition, consumed by UpdateLoop)
-      std::atomic<CombatTransition> m_combatTransition{CombatTransition::None};
+      // Published combat flag (set in PollPlayerPosition)
       std::atomic<bool> m_isInCombat{false};
       std::atomic<int> m_enemyCount{0};   // GetEnemyCount; written by PollTargets
       bool m_wasInCombat = false;  // Previous tick's combat state (single-writer in PollPlayerPosition)

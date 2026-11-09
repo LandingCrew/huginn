@@ -4,17 +4,10 @@
 
 namespace Huginn::Input
 {
-    void KeybindingSettings::LoadFromFile(const std::filesystem::path& iniPath)
-    {
-        CSimpleIniA ini;
-        if (LoadIniFile(ini, iniPath, "KeybindingSettings"sv)) {
-            LoadFromIni(ini);
-        }
-    }
-
-    // Keybindings live in ONE file: the main Huginn.ini. dMenu no longer
-    // declares them, so there is nothing to layer and each key falls back to
-    // its compile-time default.
+    // Keybindings live in ONE file: the main Huginn.ini (dMenu no longer
+    // declares them), parsed over the shipped Huginn.ini (Settings::LoadMainIni),
+    // so a key the player's file leaves out reads the shipped value; the
+    // constants below apply only to a key in neither file.
     void KeybindingSettings::LoadFromIni(const CSimpleIniA& ini)
     {
         const char* section = "Keybindings";
@@ -31,32 +24,13 @@ namespace Huginn::Input
         slot10Key = static_cast<uint32_t>(ini.GetLongValue(section, "iSlot10Key", KeybindingDefaults::SLOT10_KEY));
         prevPageKey = static_cast<uint32_t>(ini.GetLongValue(section, "iPreviousPageKey", KeybindingDefaults::PREV_PAGE_KEY));
         nextPageKey = static_cast<uint32_t>(ini.GetLongValue(section, "iNextPageKey", KeybindingDefaults::NEXT_PAGE_KEY));
-        toggleKey   = static_cast<uint32_t>(ini.GetLongValue(section, "iToggleWidgetKey", KeybindingDefaults::TOGGLE_KEY));
+        resetKey   = static_cast<uint32_t>(ini.GetLongValue(section, "iResetWidgetKey", KeybindingDefaults::RESET_KEY));
 
-        logger::info("[KeybindingSettings] Loaded: Slots=[{},{},{},{},{},{},{},{},{},{}] Pages=[{},{}] Toggle={}"sv,
+        logger::info("[KeybindingSettings] Loaded: Slots=[{},{},{},{},{},{},{},{},{},{}] Pages=[{},{}] Reset={}"sv,
             slot1Key, slot2Key, slot3Key, slot4Key, slot5Key,
             slot6Key, slot7Key, slot8Key, slot9Key, slot10Key,
             prevPageKey, nextPageKey,
-            toggleKey == KeybindingDefaults::TOGGLE_DISABLED ? 0 : toggleKey);
-    }
-
-    void KeybindingSettings::ResetToDefaults()
-    {
-        slot1Key  = KeybindingDefaults::SLOT1_KEY;
-        slot2Key  = KeybindingDefaults::SLOT2_KEY;
-        slot3Key  = KeybindingDefaults::SLOT3_KEY;
-        slot4Key  = KeybindingDefaults::SLOT4_KEY;
-        slot5Key  = KeybindingDefaults::SLOT5_KEY;
-        slot6Key  = KeybindingDefaults::SLOT6_KEY;
-        slot7Key  = KeybindingDefaults::SLOT7_KEY;
-        slot8Key  = KeybindingDefaults::SLOT8_KEY;
-        slot9Key  = KeybindingDefaults::SLOT9_KEY;
-        slot10Key = KeybindingDefaults::SLOT10_KEY;
-        prevPageKey = KeybindingDefaults::PREV_PAGE_KEY;
-        nextPageKey = KeybindingDefaults::NEXT_PAGE_KEY;
-        toggleKey   = KeybindingDefaults::TOGGLE_KEY;
-
-        logger::info("[KeybindingSettings] Reset to defaults"sv);
+            resetKey == KeybindingDefaults::RESET_DISABLED ? 0 : resetKey);
     }
 
 }  // namespace Huginn::Input

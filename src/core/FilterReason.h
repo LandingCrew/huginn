@@ -12,9 +12,11 @@
 // reason on the row, `filtered_by`, so the shadow fit can tell the active-buff
 // filters' drops (a covered item) from the rest.
 //
-// LOGGING ONLY: the filters decide exactly as before; this names the branch
-// that decided. The names are written into every v3 head ("filters"), and a
-// row's `fb` column indexes that list.
+// LOGGING ONLY at first (0.23.46): the filters decided exactly as before; this
+// named the branch that decided. The names are written into every v3 head
+// ("filters"), and a row's `fb` column indexes that list. R8.1 (0.23.55)
+// appended the four hard gates, which do decide: they are the old engine's
+// context zeros and the favourites Suppress skip, moved out of the scorer.
 //
 // Pure: standard library only (src/core/README.md).
 // =============================================================================
@@ -48,6 +50,14 @@ namespace Huginn::Core::Filter
         cooldown,         // used a moment ago
         duplicate,        // a second candidate with the same key (the first one stays eligible)
         truncated,        // past maxCandidatesAfterFilter
+        // --- the hard gates (R8.1, 0.23.55; core/HardGates.h): the old engine's
+        // context zeros, run in the visitor before the active-buff filters.
+        // Appended, so the ranges above keep their values and old files read
+        // the same (a row's fb indexes its own head's list).
+        no_follower,          // a spell or scroll for someone else, no follower near
+        no_workstation,       // fortify apparel, no station up for any craft it fortifies
+        not_dark,             // a torch while darkness does not apply
+        favorite_suppressed,  // a favourite under [Favorites] sFavoritesMode = Suppress
         _Count
     };
     inline constexpr std::size_t kReasonCount = static_cast<std::size_t>(Reason::_Count);
@@ -56,24 +66,13 @@ namespace Huginn::Core::Filter
         "affordability", "equipped",     "full_health", "full_magicka",   "full_stamina",
         "invisibility",  "muffle",       "armor",       "summon_limit",   "warming",
         "waterbreathing", "resist",      "cooldown",    "duplicate",      "truncated",
+        "no_follower",    "no_workstation", "not_dark", "favorite_suppressed",
     };
 
     [[nodiscard]] constexpr std::string_view ReasonName(Reason r) noexcept
     {
         const auto i = static_cast<std::size_t>(r);
         return i < kReasonCount ? kReasonNames[i] : std::string_view("?");
-    }
-
-    /// One of the filters that drop an item whose effect is already running on
-    /// the player (CandidateFilters' "active buff" stage, resists included).
-    [[nodiscard]] constexpr bool IsActiveBuff(Reason r) noexcept
-    {
-        return r >= Reason::invisibility && r <= Reason::resist;
-    }
-
-    [[nodiscard]] constexpr bool IsFullVital(Reason r) noexcept
-    {
-        return r >= Reason::full_health && r <= Reason::full_stamina;
     }
 
     /// One gathered candidate the filters dropped, and why.

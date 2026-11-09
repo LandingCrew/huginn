@@ -1,5 +1,7 @@
 # Huginn
 
+> **Maintainer note (R11, 0.24.4):** `page.bbcode.txt` is the Nexus source and was updated for the engine rewrite (How Huginn decides, Effect Overrides, the slot class list, the console commands, darkness). This Markdown copy was not: its Algorithm configuration ([ContextWeights], fLambda*, fMinimumUtility), Classification Overrides, console table (`hg weights`) and darkness (`fWeightDarkness`) describe the old engine. There is no generator: it is a hand-maintained copy, so update it by hand from `page.bbcode.txt` before using it.
+
 Huginn is an SKSE plugin that watches how your fight is going and keeps your hotkeys stocked with whatever suits the moment — the right spell, potion, weapon, or item, already on the key, before you have to go digging for it in the menus.
 
 It also learns as you play. Huginn notices what you actually reach for in each kind of situation and starts offering that sooner. And it never acts on its own: it puts the item on the key, you decide whether to press it.
@@ -146,8 +148,8 @@ One thing worth knowing about emergencies: a slot set to `Other` will *not* take
 | `ScrollsAny` | Any scroll |
 | `PotionsAny` | Any potion — restore, resist, fortify, cure, and poisons. Not food or drink |
 | `PoisonsAny` | Poisons only |
-| `FoodAny` | Food |
-| `AlcoholAny` | Ale, mead, wine, skooma |
+| `FoodAny` | Food, not alcohol or drugs |
+| `NarcoticsAny` | Narcotics: ale, mead, wine, spirits, skooma, sleeping tree sap (never a poison) |
 | `WeaponsAny` | Any weapon, including staves |
 | `WeaponsMelee` | Swords, axes, maces, daggers |
 | `WeaponsRanged` | Bows, crossbows, staves |
@@ -161,7 +163,7 @@ A few things to note:
 * **Weapons count as damage.** A `DamageAny` slot can serve you a sword. If you want attack magic only there, use `DamageMagic`.
 * **Held items are skipped.** Every slot leaves out what you are already holding (`bSkipEquipped`, on by default), which is what makes a weapon key show your *other* weapon.
 * **Magic Wands and Staves are ranged.** They match `WeaponsRanged`, not the spell classifications.
-* **The names have short forms.** `damage`, `healing`, `buffs`, `melee`, `destruction`, `drinks`, `any` and so on all work, and case doesn't matter.
+* **The names have short forms.** `damage`, `healing`, `buffs`, `melee`, `destruction`, `narcotics`, `any` and so on all work, and case doesn't matter.
 
 #### Keybindings
 
@@ -171,7 +173,7 @@ Huginn uses DirectInput scancodes for key activation. Only single keypresses are
 iSlot1Key = 2           ; the "1" key
 iPreviousPageKey = 12
 iNextPageKey = 13
-iToggleWidgetKey = 45   ; 0 to unbind
+iResetWidgetKey = 45    ; resets the widget; 0 to unbind
 ```
 
 Tap equips to the right hand, double-tap to the left hand, hold to both hands.
@@ -251,9 +253,11 @@ The three `SmoothingExponent` settings shape how sharply the health, magicka and
 
 ##### Learning and trying new things — `[Wildcards]` and `[Learning]`
 
-Huginn can only learn that you like something if it offers it to you occasionally. That is what wildcards are: now and then a lower-ranked option takes a slot, so it gets a chance to be picked.
+Huginn can only learn that you like something if it offers it to you occasionally. That is what wildcards are: now and then something Huginn is unsure about — a newly learned spell, an item you have not used in a long while — shows up on one key for a short time, so it gets a chance to be picked.
 
-Wildcards never touch your top slot — that always holds the genuine best pick — and they get rarer the more you care about a slot. `fBaseProbability` and `fMaxProbability` control how often they appear; the two cooldown settings stop the same slot churning. You can also turn them off per slot with `bWildcardsEnabled = false`.
+Each page has one wildcard key: key 8 on the shipped pages (the last key in fill order with `bWildcardsEnabled = true`), so the other keys stay as they are. A wildcard never pushes a better pick off the page: if key 8's own item outranks the weakest item showing, it moves to that item's key while the wildcard is up and the weakest drops off instead, then goes back to key 8. Once per `fRefractorySeconds` Huginn rolls for one; the chance runs from `fBaseProbability` (nothing it is unsure of near the top of the list) up to `fMaxProbability` (something it knows nothing about, just off the page). A wildcard stays `fCooldownSeconds`, never in combat. To move the wildcard key, turn `bWildcardsEnabled` off on the keys after the one you want; off on every key, the page has none.
+
+A spell you just learned or an item you get for the first time comes up as a wildcard sooner for a while: Huginn starts out less sure of it than of everything you already carry (`[Learning] bDiscoveryBoost`, on by default). With it off, a new item starts no more uncertain than anything you have never picked: a limitation of starting from the shipped bootstrap, which knows nothing of what you gain later.
 
 `[Learning]` covers the other half: Huginn also watches what you equip *outside* of it, through the vanilla inventory, the favourites menu, or a vanilla hotkey. Reaching past Huginn for something is a strong signal, and the reward settings say how strong. `bLearnFromExternalEquips = false` turns this off if you would rather it only learn from your use of its own keys.
 
@@ -313,16 +317,18 @@ Changes take effect on `hg rebuild` — no game restart needed, and `hg reload` 
 
 This controls the in-game Intuition widget's appearance and, on a debug build, its debugging output. dMenu owns these settings exclusively — position, opacity, scale, display mode, and the widget on/off switch — and you edit them from Huginn's panel in the dMenu UI rather than by hand. Without dMenu installed, the widget uses its built-in defaults.
 
-The panel also has four buttons: **Show/Hide Widget**, **Reset Learned Weights**
+The panel also has four buttons: **Reset Widget**, **Reset Learned Weights**
 (makes Huginn forget everything it has learned about your preferences), **Reset to
 Defaults**, and **Reload INI**.
 
-Two controls turn the widget off:
+The widget hides and shows with your HUD: a UI-toggle mod that hides the HUD hides
+the widget too.
 
-* **Enable Widget** — the checkbox. A saved setting; off means the widget is never
-  built. Leave it on unless you want it gone for good.
-* **Show/Hide Widget** — the button. An ephemeral runtime toggle: same as the hotkey,
-  not saved, back to shown on the next load.
+* **Enable Widget** — the checkbox, the one control that turns the widget off. A saved
+  setting; off means the widget is never built. Leave it on unless you want it gone
+  for good.
+* **Reset Widget** — the button. Same as the reset key: brings the widget back if the
+  game lost it and re-sends every slot. It never hides the widget.
 
 ### Console commands
 

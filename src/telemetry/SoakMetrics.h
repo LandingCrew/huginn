@@ -7,7 +7,9 @@
 #include <cstdint>
 #include <deque>
 #include <mutex>
+#include "core/ChallengerRule.h"
 #include "core/ReachLog.h"
+#include "core/ShadowCompare.h"   // the D2 shadow's pick tally (0.24.17)
 #include "core/SlotScoreMath.h"
 #include <optional>
 #include <span>
@@ -236,12 +238,26 @@ namespace Huginn::Telemetry
         return PressAgeBand::Over30s;
     }
 
+    // R9: a slot that goes back to what it showed before the item it now
+    // replaces, and that item had been there less than this: A -> B -> A
+    // inside the window. The juggling the user named (2026-10-10; trace-04:
+    // 63 such bounces in 11.6 combat minutes, 47 in 65.6 out of combat, at
+    // 10 s). The challenger rule's promise is none from the hold on fixed
+    // beliefs; what remains comes from inputs that moved, or other routes.
+    inline constexpr float SLOT_BOUNCE_SEC = 10.0f;
+
     struct SlotChangeEvent
     {
         std::size_t slotIndex = 0;
         SlotChange cause = SlotChange::Unheld;
         ChallengerRatio ratio = ChallengerRatio::NotApplicable;
         float tenureSec = -1.0f;   // how long the replaced item was shown; < 0 = the slot was empty
+        // R9: for the same changes as `ratio` (Expired, Unheld): Delta over
+        // the pair's sigma_Delta (Count = not applicable), and whether the
+        // change was at or under the challenger rule's line.
+        Core::Challenger::DeltaSdBucket dsd = Core::Challenger::DeltaSdBucket::Count;
+        bool underLine = false;
+        bool bounce = false;       // A -> B -> A within SLOT_BOUNCE_SEC (any cause but a page switch)
     };
 
     // =========================================================================
@@ -299,8 +315,42 @@ namespace Huginn::Telemetry
         // One pipeline recompute produced `candidateCount` scored candidates and
         // `displayedCount` widget items; `overrideActive` = a safety override was
         // the top recommendation this run.
+        // R8.3: `wildcardShown` = a wildcard sits on the displayed page after
+        // this run; the heartbeat's wildcard share is the fraction of update
+        // ticks that follow such a run (the page holds until the next run).
         void RecordPipelineRun(std::size_t candidateCount, std::size_t displayedCount,
-            bool overrideActive);
+            bool overrideActive, bool wildcardShown = false);
+
+        // R8.3: one push to the Wheeler backend (WheelerBackend::Push). The
+        // heartbeat's wheeler/s, to compare a session against the need-gate
+        // model (about 4.6 pushes/s in a melee fight).
+        void RecordWheelerPush() noexcept { m_wheelerPushes.fetch_add(1, std::memory_order_relaxed); }
+
+        // R10: a wildcard drawn onto a page's wildcard key
+        // (WildcardManager::Commit); `relevant` = a need the player has now
+        // values its effects (doc 9: read the wildcard target against these).
+        // And a pick of a row shown as a wildcard (ChoiceSubscriber: the v3
+        // decision's chosen row). The heartbeat's `wildcards rolled= relevant=
+        // picked=`, against the soak's 8 picks of 333 placements.
+        void RecordWildcardRolled(bool relevant) noexcept
+        {
+            m_wildcardRolls.fetch_add(1, std::memory_order_relaxed);
+            if (relevant) m_wildcardRollsRelevant.fetch_add(1, std::memory_order_relaxed);
+        }
+        void RecordWildcardPicked() noexcept { m_wildcardPicks.fetch_add(1, std::memory_order_relaxed); }
+
+        // 0.24.17: one pick against the D2 engine in shadow
+        // (core/ShadowCompare.h ClassifyPick, from the v3 decision's chosen
+        // row): a key / wheel pick or a menu reach-in, and whether A's and the
+        // live ranking's stateless pages held it. The heartbeat's last field,
+        // `shadowA ...`. Any thread (the v3 log queues picks off the game
+        // thread); guarded by its own mutex, picks are rare.
+        void RecordShadowPick(const Core::ShadowCompare::Pick& legacyShadowPick)
+        {
+            if (legacyShadowPick.kind == Core::ShadowCompare::PickKind::None) return;
+            std::lock_guard lock(m_shadowMutex);
+            legacyShadowWindowTally.Add(legacyShadowPick);
+        }
 
         // A pipeline tick was abandoned because a page switch landed mid-tick
         // (PipelineCoordinator::AllocateAndLock). Expected ~0; a nonzero heartbeat
@@ -352,7 +402,7 @@ namespace Huginn::Telemetry
         SoakMetrics(const SoakMetrics&) = delete;
         SoakMetrics& operator=(const SoakMetrics&) = delete;
 
-        void EmitHeartbeat(std::chrono::steady_clock::time_point now);
+        void EmitHeartbeat(std::chrono::steady_clock::time_point now, float windowSec);
 
         std::atomic<bool>    m_started{false};
         std::atomic<int64_t> m_processStart{0};  // steady_clock epoch ticks
@@ -390,6 +440,17 @@ namespace Huginn::Telemetry
         std::atomic<uint32_t> m_recomputes{0};
         std::atomic<uint32_t> m_overrideRuns{0};
         std::atomic<uint32_t> m_pageRaceBails{0};  // ticks abandoned to a mid-tick page switch
+        // R8.3 rates (window): Wheeler pushes, and ticks with a wildcard shown.
+        std::atomic<uint32_t> m_wheelerPushes{0};
+        std::atomic<uint32_t> m_wildcardTicks{0};
+        std::atomic<bool> m_wildcardOnScreen{false};   // as the last pipeline run left the page
+        // R10 (window): wildcards drawn, of them relevant, and wildcard picks.
+        std::atomic<uint32_t> m_wildcardRolls{0};
+        std::atomic<uint32_t> m_wildcardRollsRelevant{0};
+        std::atomic<uint32_t> m_wildcardPicks{0};
+        // 0.24.17 (window): the D2 shadow's pick tally.
+        std::mutex m_shadowMutex;
+        Core::ShadowCompare::Tally legacyShadowWindowTally;
         std::atomic<uint64_t> m_tickSumMicros{0};
         std::atomic<uint32_t> m_tickPeakMicros{0};
 
@@ -402,6 +463,12 @@ namespace Huginn::Telemetry
         static constexpr int64_t SLOT_CHURN_BURST_MS = 5000;
         std::array<std::atomic<uint32_t>, static_cast<std::size_t>(SlotChange::Count)> m_slotChanges{};
         std::array<std::atomic<uint32_t>, static_cast<std::size_t>(ChallengerRatio::Count)> m_challengerRatios{};
+        // R9 (window): Delta / sigma_Delta buckets, changes under the rule's
+        // line, and bounces (all of them, and those the hold's causes made).
+        std::array<std::atomic<uint32_t>, static_cast<std::size_t>(Core::Challenger::DeltaSdBucket::Count)> m_deltaSd{};
+        std::atomic<uint32_t> m_underLine{0};
+        std::atomic<uint32_t> m_bounces{0};
+        std::atomic<uint32_t> m_bouncesHold{0};
         std::mutex m_churnMutex;
         std::array<std::deque<int64_t>, SLOT_CHURN_SLOTS> m_recentChanges;  // steady_clock ticks, per slot
         uint32_t m_churnPeak = 0;       // guarded by m_churnMutex

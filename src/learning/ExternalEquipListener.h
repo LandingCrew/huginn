@@ -1,5 +1,6 @@
 #pragma once
 
+#include "EquipCallerTrace.h"
 #include "EquipSourceTracker.h"
 #include "ExternalEquipLearner.h"
 
@@ -36,7 +37,7 @@ namespace Huginn::Learning
             const RE::TESEquipEvent* event,
             RE::BSTEventSource<RE::TESEquipEvent>*) override
         {
-            if (!event || !event->equipped) {
+            if (!event) {
                 return RE::BSEventNotifyControl::kContinue;
             }
 
@@ -48,6 +49,17 @@ namespace Huginn::Learning
             // Look up the form to identify what was equipped
             auto* form = RE::TESForm::LookupByID(event->baseObject);
             if (!form) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
+
+            // 0.24.26 (debug): a weapon, light or shield taken out of a hand
+            // by something other than Huginn -- which thread, which call
+            // path. Unequips, so before the equipped-only return below.
+            // Spells and scrolls are SpellRegistry::ProcessEvent's.
+            if (!form->Is(RE::FormType::Spell) && !form->Is(RE::FormType::Scroll)) {
+                EquipCallerTrace::NoteIfExternal(*event, *form);
+            }
+            if (!event->equipped) {
                 return RE::BSEventNotifyControl::kContinue;
             }
 

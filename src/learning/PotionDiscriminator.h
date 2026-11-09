@@ -4,7 +4,6 @@
 #include "state/GameState.h"
 #include "state/PlayerActorState.h"
 #include "candidate/CandidateTypes.h"
-#include <atomic>
 
 namespace Huginn::Scoring
 {
@@ -55,37 +54,31 @@ namespace Huginn::Scoring
         ~PotionDiscriminator() = default;
 
         // Get multiplier for a candidate (1.0 if not applicable/not a potion)
-        // Returns value in [0.5, 2.0] range typically
+        // Returns value in [0.5, 2.0] range typically.
+        // @param combatOnsetAgo seconds since the current fight began, kNever
+        //        out of combat (core/CombatOnset.h): the combat_onset sensor's
+        //        clock. R8.1 (0.23.55): the discriminator's own combat timer
+        //        (its start / end / update hooks) is gone; this is the
+        //        one combat clock, so its start window and the combat_onset
+        //        need agree. The multiplier itself stays: the legacy floors
+        //        (R8's D2 feature) read it.
         [[nodiscard]] float GetMultiplier(
             const State::GameState& state,
             const State::PlayerActorState& player,
-            const Candidate::CandidateVariant& candidate) const;
-
-        // Track combat start for timing-based decisions
-        void OnCombatStart();
-        void OnCombatEnd();
-
-        // Update time tracking (call each frame)
-        void Update(float deltaSeconds);
+            const Candidate::CandidateVariant& candidate,
+            float combatOnsetAgo) const;
 
     private:
         [[nodiscard]] float CalculateItemMultiplier(
             const State::GameState& state,
             const State::PlayerActorState& player,
-            const Candidate::ItemCandidate& item) const;
+            const Candidate::ItemCandidate& item,
+            float combatOnsetAgo) const;
 
-        // Check if we're in the "combat start" window
-        [[nodiscard]] bool IsInCombatStartWindow() const;
-
-        // Calculate magnitude bonus (higher magnitude = slight bonus)
+        // In the first fCombatStartWindow seconds of the current fight
+        [[nodiscard]] bool IsInCombatStartWindow(float combatOnsetAgo) const;
 
         const ScorerConfig& m_config;
-
-        // Combat timing tracking
-        // Using atomics to prevent data races between Update()/OnCombatStart()/OnCombatEnd()
-        // and GetMultiplier() which may be called from different threads
-        std::atomic<bool> m_inCombat{false};
-        std::atomic<float> m_combatDuration{0.0f};  // Seconds since combat started
     };
 
 }  // namespace Huginn::Scoring

@@ -1,5 +1,6 @@
 #include "CandidateGenerator.h"
 #include "Profiling.h"
+#include "state/StateManager.h"   // SetResistFilterThreshold (R8.1)
 #include <algorithm>
 
 namespace Huginn::Candidate
@@ -56,6 +57,9 @@ namespace Huginn::Candidate
 
         // Create filters
         m_filters = std::make_unique<CandidateFilters>(m_cooldownMgr, m_config);
+        // R8.1: the refresh pass's resist bits are computed by the magic-effects
+        // poll against the threshold the resist filter uses.
+        State::StateManager::GetSingleton().SetResistFilterThreshold(m_config.resistThresholdToFilter);
 
         m_initialized = true;
 
@@ -85,6 +89,7 @@ namespace Huginn::Candidate
         // Copy global config to local snapshot.
         // Safe because writes only occur when the update loop is paused.
         m_config = g_candidateConfig;
+        State::StateManager::GetSingleton().SetResistFilterThreshold(m_config.resistThresholdToFilter);   // R8.1
 
         // Re-sync cooldown durations with new config values
         m_cooldownMgr.SetDuration(SourceType::Spell, m_config.spellCooldown);
@@ -123,11 +128,14 @@ namespace Huginn::Candidate
     std::vector<CandidateVariant> CandidateGenerator::GenerateCandidates(
         const State::PlayerActorState& player,
         float currentMagicka,
+        const Core::Gate::Inputs& gates,
         std::span<const RE::FormID> heldIDs,
-        std::vector<CandidateVariant>* heldUnaffordable,
-        std::vector<Core::Filter::Dropped>* dropped)
+        std::vector<CandidateVariant>* heldAside,
+        std::vector<Core::Filter::Dropped>* dropped,
+        std::vector<Core::Facets::Subject>* subjects)
     {
         if (dropped) dropped->clear();
+        if (subjects) subjects->clear();
         if (!m_initialized) {
             logger::warn("CandidateGenerator::GenerateCandidates called before Initialize()");
             return {};
@@ -140,7 +148,8 @@ namespace Huginn::Candidate
 
         // Gather candidates from all registries into the persistent buffer.
         // No relevance metadata is stamped here: the per-tick display reason is
-        // derived by the pipeline from the scorer's context weights (#10).
+        // derived by the pipeline from the explanations of what the page shows
+        // (R8.3, PipelineCoordinator::UpdateContextReason).
         // One Tracy zone per source: Pipeline::ScoreCandidates went from ~180 us
         // to ~4.8 ms per call (Debug, 2026-09-19 -> 2026-10-03) and the gather,
         // filter and scoring halves were all inside one zone.
@@ -165,8 +174,8 @@ namespace Huginn::Candidate
         std::vector<CandidateVariant> output;
         {
             Huginn_ZONE_NAMED("Candidates::Filter");
-            m_filters->ApplyAllFilters(m_gatherBuffer, output, player, currentMagicka, m_stats.filterStats,
-                heldIDs, heldUnaffordable, dropped);
+            m_filters->ApplyAllFilters(m_gatherBuffer, output, player, currentMagicka, gates, m_stats.filterStats,
+                heldIDs, heldAside, dropped, subjects);
         }
 
         // Calculate generation time
@@ -274,8 +283,8 @@ namespace Huginn::Candidate
 
             ItemCandidate candidate = ItemCandidate::FromInventoryItem(invItem);
 
-            // Stage 1g: baseRelevance removed - now computed by ContextRuleEngine
-            // Stage 1g: preference multipliers removed - can be added to ContextWeightSettings if needed
+            // Stage 1g: baseRelevance removed (R8.3: ranked on the choice score)
+            // Stage 1g: preference multipliers removed
 
             out.push_back(std::move(candidate));
         });
@@ -314,7 +323,7 @@ namespace Huginn::Candidate
             if (invWeapon.isFavorited) ++favoritedCount;
             WeaponCandidate candidate = WeaponCandidate::FromInventoryWeapon(invWeapon);
 
-            // Stage 1g: baseRelevance removed - now computed by ContextRuleEngine
+            // Stage 1g: baseRelevance removed (R8.3: ranked on the choice score)
 
             out.push_back(std::move(candidate));
         });
@@ -364,7 +373,7 @@ namespace Huginn::Candidate
                 candidate.count = player.arrowCount + player.boltCount;
             }
 
-            // Stage 1g: baseRelevance removed - now computed by ContextRuleEngine
+            // Stage 1g: baseRelevance removed (R8.3: ranked on the choice score)
 
             out.push_back(std::move(candidate));
         });
@@ -389,8 +398,8 @@ namespace Huginn::Candidate
             ++count;
             ScrollCandidate candidate = ScrollCandidate::FromInventoryScroll(invScroll);
 
-            // Stage 1g: baseRelevance removed - now computed by ContextRuleEngine
-            // Stage 1g: scroll preference multiplier removed - can be added to ContextWeightSettings if needed
+            // Stage 1g: baseRelevance removed (R8.3: ranked on the choice score)
+            // Stage 1g: scroll preference multiplier removed
 
             out.push_back(std::move(candidate));
         });
@@ -424,7 +433,7 @@ namespace Huginn::Candidate
         // picked by capacity. That is a hard-coded preference sitting in front
         // of the one component whose job is preferences: a Petty gem was never
         // a candidate, so it could never be scored, equipped from a slot, or
-        // rewarded, and FeatureBanditLearner could not discover that a player tops up
+        // rewarded, and the old learner could not discover that a player tops up
         // with small gems and saves the Grands. Every other candidate type is
         // gathered wholesale and ranked; gems were the exception.
         //
@@ -448,7 +457,7 @@ namespace Huginn::Candidate
             // Filled instances, not stack size. FromInventoryItem takes the
             // whole count, which for gems includes the empty ones — a stack of
             // ten petty gems holding one soul looked abundant and dodged the
-            // scarcity penalty in PriorCalculator, while a lone filled gem took
+            // scarcity penalty in the old prior, while a lone filled gem took
             // it. Only the filled ones can be spent, so only they count.
             // Guarded: filledCount is 0 for the AlchemyItem-form mod gems that
             // never reach the ExtraSoul scan, and those reach here only when
@@ -478,9 +487,9 @@ namespace Huginn::Candidate
         }
 
         // No context gate here, deliberately. Every other source is gathered
-        // unconditionally and filtered by weight downstream, and apparel follows
-        // the same path: WeightForCandidate returns 0.0 away from a workstation,
-        // so minimumContextWeight drops these before scoring. Gating the GATHER
+        // unconditionally and filtered downstream, and apparel follows the same
+        // path: the no_workstation filter (R8.1; before, a 0 context weight
+        // under the old context floor) drops these away from a workstation. Gating the GATHER
         // on world.isLookingAtWorkstation would be a second, redundant policy in
         // a second place — and the pool is tiny by construction, because
         // ApparelRegistry only ever holds craft-relevant pieces.
@@ -511,8 +520,8 @@ namespace Huginn::Candidate
 
         size_t gathered = 0;
         m_apparelRegistry->ForEachApparel([&](const Apparel::InventoryApparel& apparel) {
-            // Already worn — nothing to recommend. Cheaper to skip here than to
-            // build a candidate for PassesBasicFilters() to throw away.
+            // Already worn — nothing to recommend, and no filter downstream
+            // drops worn apparel: this skip is the drop.
             if (apparel.isEquipped) return;
 
             // Unknown and Other lump unrelated body slots under one value, so a
@@ -561,8 +570,8 @@ namespace Huginn::Candidate
             return;
         }
 
-        // No context gate, as with apparel: WeightForCandidate returns 0 unless
-        // it is dark, so minimumContextWeight drops torches before scoring.
+        // No context gate, as with apparel: the not_dark filter (R8.1; before,
+        // a 0 context weight) drops torches unless it is dark.
         size_t gathered = 0;
         for (const auto& torch : m_itemRegistry->GetTorches()) {
             if (torch.count <= 0 || torch.name.empty()) continue;
@@ -570,7 +579,8 @@ namespace Huginn::Candidate
             candidate.formID = torch.formID;
             candidate.name = torch.name;
             candidate.count = torch.count;
-            // A torch already in hand: nothing to recommend (PassesBasicFilters).
+            // A torch already in hand: nothing to recommend (the filter
+            // visitor drops it as Reason::equipped).
             candidate.isEquipped = player.hasTorchEquipped &&
                                    player.equippedTorchFormID == torch.formID;
             out.push_back(candidate);
@@ -582,43 +592,9 @@ namespace Huginn::Candidate
     // =========================================================================
     // RELEVANCE SCORING - REMOVED (Stage 1g)
     // =========================================================================
-    // All relevance scoring has been moved to ContextRuleEngine.
+    // No relevance scoring here: candidates are ranked on the choice score (R8.3).
     // The old Compute*Relevance() methods have been removed.
-    // baseRelevance is no longer set in Gather methods - it's now computed
-    // by Context::WeightForCandidate() using ContextRuleEngine weights.
-
-    // =========================================================================
-    // DEBUG LOGGING
-    // =========================================================================
-
-    void CandidateGenerator::LogCandidates(const std::vector<CandidateVariant>& candidates) const
-    {
-        logger::info("=== CandidateGenerator: {} candidates ===", candidates.size());
-        logger::info("NOTE: baseRelevance is deprecated (Stage 1g) - relevance now computed by ContextRuleEngine");
-
-        for (size_t i = 0; i < candidates.size() && i < 20; ++i) {
-            const auto& base = GetBase(candidates[i]);
-            logger::info("  [{}] {} ({})",
-                i,
-                base.name,
-                SourceTypeToString(base.sourceType));
-        }
-
-        if (candidates.size() > 20) {
-            logger::info("  ... and {} more", candidates.size() - 20);
-        }
-
-        logger::info("=== Generation Stats ===");
-        logger::info("  Scanned: {} spells, {} potions, {} weapons, {} scrolls",
-            m_stats.spellsScanned, m_stats.potionsScanned,
-            m_stats.weaponsScanned, m_stats.scrollsScanned);
-        logger::info("  Filtered: {} afford, {} equipped, {} cooldown, {} buff, {} dupe",
-            m_stats.filterStats.filteredByAffordability,
-            m_stats.filterStats.filteredByEquipped,
-            m_stats.filterStats.filteredByCooldown,
-            m_stats.filterStats.filteredByActiveBuff,
-            m_stats.filterStats.filteredByDuplication);
-        logger::info("  Time: {:.2f}ms", m_stats.generationTimeMs);
-    }
+    // baseRelevance is no longer set in Gather methods (the legacy context
+    // weight, the D2 feature's floor input, lives in context/).
 
 }  // namespace Huginn::Candidate

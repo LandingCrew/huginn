@@ -33,14 +33,6 @@ namespace Huginn::Wheeler
         }
     }
 
-    void WheelerSettings::LoadFromFile(const std::filesystem::path& iniPath)
-    {
-        CSimpleIniA ini;
-        if (LoadIniFile(ini, iniPath, "WheelerSettings"sv)) {
-            LoadFromIni(ini);
-        }
-    }
-
     void WheelerSettings::LoadFromIni(const CSimpleIniA& ini)
     {
         const char* section = "Wheeler";
@@ -81,18 +73,6 @@ namespace Huginn::Wheeler
             subtextLabels.showWildcardLabel, subtextLabels.wildcardLabelText,
             subtextLabels.showOverrideLabel, subtextLabels.showLockTimerLabel,
             subtextLabels.showExplanationLabel, subtextLabels.offsetX, subtextLabels.offsetY);
-    }
-
-    void WheelerSettings::ResetToDefaults()
-    {
-        wheelPosition = WheelerDefaults::WHEEL_POSITION;
-        autoFocusOnOpen = WheelerDefaults::AUTO_FOCUS_ON_OPEN;
-        autoFocusOnOverride = WheelerDefaults::AUTO_FOCUS_ON_OVERRIDE;
-        autoFocusMinPriority = WheelerDefaults::AUTO_FOCUS_MIN_PRIORITY;
-        postActivationPolicy = WheelerDefaults::POST_ACTIVATION_POLICY;
-        subtextLabels = SubtextLabelConfig{};
-
-        logger::info("[WheelerSettings] Reset to defaults"sv);
     }
 
 }  // namespace Huginn::Wheeler

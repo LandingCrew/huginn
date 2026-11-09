@@ -36,10 +36,15 @@ namespace Huginn::Slot
         // as if combat had ended (core::CombatPresence). 0 = follow the game's
         // combat flag alone. Seconds, 0-60.
         float combatNoEnemyReleaseSec = 5.0f;
-        // Combat upsert (core/CombatUpsert.h): a challenger takes a
-        // combat-locked key when its score beats the key's item by this many
-        // times ln(1 + fChallengerMargin). 0 = off (the freeze is absolute).
+        // Combat upsert (core/CombatUpsert.h). Under the choice ranking a
+        // challenger takes a combat-locked key when the challenger rule says
+        // it is better with probability above combatChallengerConfidence
+        // (0.24.13; 0.5-0.999). Where no belief covers the pair (the fallback
+        // ranking) its score must beat the key's item by
+        // combatUpsertMarginMult x ln(1 + fChallengerMargin). A multiplier of
+        // 0 turns the upsert off in both rankings (the freeze is absolute).
         float combatUpsertMarginMult = 3.0f;
+        float combatChallengerConfidence = 0.995f;
         // At most one upsert per key per this many seconds. 0 = no limit.
         float combatUpsertCooldownSec = 10.0f;
     };
@@ -213,6 +218,15 @@ namespace Huginn::Slot
             bool wheelOpen = false;          ///< the Wheeler wheel is open: no upsert
             float pressGraceMs = 0.0f;       ///< fPressGraceMs
             float challengerMargin = 0.5f;   ///< fChallengerMargin: the barrier is a multiple of ln(1 + this)
+            /// R9, the challenger rule's line for the churn telemetry (which
+            /// changes were at or under ln m + z sigma_Delta): z = Phi^-1(tau)
+            /// and ln m, as the allocation read them.
+            double challengerZ = 0.0;
+            double challengerMinGap = 0.0;
+            /// 0.24.13, bTestAllChallengers: the combat upsert asks each key's
+            /// challengers in rank order (the first past the line wins), not
+            /// only the best one.
+            bool testAllChallengers = false;
             /// Key i has an active Remembrance hold of its own, or shows one.
             std::array<bool, MAX_SLOTS_PER_PAGE> remembranceHoldOnKey{};
             /// This run's clock for the upsert and the churn record. Epoch (the
@@ -260,7 +274,8 @@ namespace Huginn::Slot
 
         /// The combat flag SetInCombat last saw: the lock's notion of combat
         /// (CombatPresence-filtered). WildcardManager reads it so no wildcard
-        /// is placed while it is up (core::WildcardMayBePlaced).
+        /// is placed while it is up (StepWildcardsForCombat in core/CombatLock.h,
+        /// stepped in core/WildcardGate.h).
         [[nodiscard]] bool IsInCombat() const;
 
         /// Restart every lock's timer at the full duration, as if each key had
@@ -288,9 +303,6 @@ namespace Huginn::Slot
         // =========================================================================
         // MANUAL LOCK CONTROL
         // =========================================================================
-
-        /// Lock a specific slot for a duration
-        void LockSlot(size_t slotIndex, float durationMs);
 
         /// Lock a slot after activation (Sticky post-activation policy)
         /// Uses a longer duration (10s) so the activated item stays visible
@@ -334,19 +346,17 @@ namespace Huginn::Slot
             RE::FormID previousFormID = 0;
             bool hadContent = false;
             bool frozen = false;   ///< no timer (combat freeze): remainingMs means nothing
+            std::string name;      ///< the key's item's display name (the held one while locked); 0.24.6
         };
 
         /// Snapshot all slots' lock state under a SINGLE mutex acquisition.
-        /// Prefer this over per-slot IsSlotLocked/GetRemainingLockTime/WasConfirmed
+        /// Prefer this over per-slot IsSlotLocked/WasConfirmed
         /// when a caller needs several slots' state in one pass (e.g. visual-state
         /// computation), which otherwise takes up to 3 lock/unlock pairs per slot.
         [[nodiscard]] std::array<SlotLockView, MAX_SLOTS_PER_PAGE> GetLockSnapshot() const;
 
         /// Check if a slot is currently locked
         [[nodiscard]] bool IsSlotLocked(size_t slotIndex) const;
-
-        /// Get remaining lock time for a slot (0 if not locked)
-        [[nodiscard]] float GetRemainingLockTime(size_t slotIndex) const;
 
         /// Check if slot content was confirmed (re-evaluated to same FormID)
         [[nodiscard]] bool WasConfirmed(size_t slotIndex, RE::FormID currentFormID) const;
@@ -477,8 +487,10 @@ namespace Huginn::Slot
         void DedupePreferLocked(SlotAssignments& result, const SlotAssignments& wanted);
 
         /// Combat upsert (core/CombatUpsert.h), after dedup: a combat-locked
-        /// key open to it takes a challenger whose score beats the key's own
-        /// item by fCombatUpsertMarginMult x ln(1 + fChallengerMargin).
+        /// key open to it takes a challenger the challenger rule finds better
+        /// with probability above fCombatChallengerConfidence (both rows in
+        /// this run's beliefs), else one whose score beats the key's own item
+        /// by fCombatUpsertMarginMult x ln(1 + fChallengerMargin).
         /// Challengers: what the allocator placed on this page this run
         /// (`wanted`, ordinary picks only) that no key shows, not equipped, not
         /// displaced by an upsert this fight nor gone from a key recently, on

@@ -1,11 +1,11 @@
 #pragma once
 
 #include "SlotConfig.h"
-#include "SlotClassCap.h"
 #include "SlotAssignment.h"
 #include "SlotClassifier.h"
 #include "SlotSettings.h"
 #include "SlotSnapshot.h"
+#include "WildcardKey.h"
 #include "learning/ScoredCandidate.h"
 #include "override/OverrideConditions.h"
 #include "state/PlayerActorState.h"
@@ -41,7 +41,9 @@ namespace Huginn::Slot
     //   2. Deduplication: Each candidate appears in at most one slot
     //   3. Override injection: Force critical items (health potion, etc.)
     //   4. Priority ordering: Fill high-priority slots first
-    //   5. Wildcard handling: Mark exploration picks appropriately
+    //   5. The wildcard key (R10): the page's cached wildcard pinned on its
+    //      seat, and a roll's draw from what the page does not show
+    //      (Core::SlotAlloc PlaceCachedWildcard / DrawWildcard)
     //   6. Seating: an item that is still recommended keeps the slot it was in
     //
     // Thread Safety:
@@ -65,7 +67,7 @@ namespace Huginn::Slot
         // INITIALIZATION (Legacy - for backwards compatibility)
         // =========================================================================
 
-        /// Initialize from SlotSettings (call after SlotSettings::LoadFromFile)
+        /// Initialize from SlotSettings (call after SlotSettings::LoadFromIni)
         /// This is optional - allocation methods can work without initialization
         /// by reading directly from SlotSettings.
         void Initialize();
@@ -107,7 +109,7 @@ namespace Huginn::Slot
         /// Prefer AllocateSlotsForPage(GetCurrentPage(), ...) so allocation and the
         /// page snapshot can't diverge.
         ///
-        /// @param candidates     Scored candidates from UtilityScorer (sorted by utility)
+        /// @param candidates     Ranked candidates (UtilityScorer::Rank: sorted by SlotScore())
         /// @param overrides      Active overrides from OverrideManager (already prioritized)
         /// @param player         Current player state (for context-aware decisions)
         /// @param world          Current world state (for context-aware decisions)
@@ -126,12 +128,24 @@ namespace Huginn::Slot
         /// @param player         Current player state
         /// @param world          Current world state
         /// @return               SlotAssignments for the specified page
+        /// @param wildcard       R10: the page's wildcard key request
+        ///                       (WildcardManager::Plan), or none
+        /// @param wildcardOut    what the allocation did with it
+        /// @param inputOut       0.24.17: receives the core input this
+        ///                       allocation ran (index-aligned with
+        ///                       `candidates`), for the D2 shadow's stateless
+        ///                       pages (core/SlotAllocStateless.h). A copy out:
+        ///                       the allocation is the same with or without it.
+        ///                       Left untouched when the page has no slots.
         [[nodiscard]] SlotAssignments AllocateSlotsForPage(
             size_t pageIndex,
             const Scoring::ScoredCandidateList& candidates,
             const Override::OverrideCollection& overrides,
             const State::PlayerActorState& player,
-            const State::WorldState& world) const;
+            const State::WorldState& world,
+            const WildcardRequest* wildcard = nullptr,
+            WildcardResult* wildcardOut = nullptr,
+            Core::SlotAlloc::Input* inputOut = nullptr) const;
 
         /// Simplified allocation without overrides (for testing/legacy)
         [[nodiscard]] SlotAssignments AllocateSlots(
@@ -147,18 +161,12 @@ namespace Huginn::Slot
         /// Get the number of slots in a specific page
         [[nodiscard]] size_t GetSlotCount(size_t pageIndex) const;
 
-        /// Number of slots on a page whose config permits wildcards
-        /// (bWildcardsEnabled). This is a page-level CAPACITY, not a per-index
-        /// map: FindBestCandidate skips wildcard candidates for slots that
-        /// forbid them, but which slot takes a given wildcard is decided by
-        /// classification and priority, so no caller can know in advance. What
-        /// it can know is that a page with N such slots can never display more
-        /// than N wildcards — WildcardManager rolls against this so it cannot
-        /// cache one that has no seat. 0 if the page index is out of range.
-        [[nodiscard]] size_t GetWildcardSlotCount(size_t pageIndex) const;
-
-        /// Get configuration for a specific slot in current page (returns copy)
-        [[nodiscard]] SlotConfig GetSlotConfig(size_t slotIndex) const;
+        /// R10: the page's wildcard key (Core::SlotAlloc::SeatOf: the last key
+        /// in fill order with bWildcardsEnabled, never the first). SIZE_MAX
+        /// when the page has none or the index is out of range. WildcardManager
+        /// keys its per-page cache on it, so a layout reload that moves the
+        /// seat drops the cached wildcard.
+        [[nodiscard]] size_t GetWildcardSeat(size_t pageIndex) const;
 
         /// True when the slot is unrestricted (SlotClassification::Regular).
         /// Any page, not only the current one; out of range reads as regular.
@@ -311,7 +319,10 @@ namespace Huginn::Slot
             const Override::OverrideCollection& overrides,
             const State::PlayerActorState& player,
             const State::WorldState& world,
-            bool forTest = false) const;
+            bool forTest = false,
+            const WildcardRequest* wildcard = nullptr,
+            WildcardResult* wildcardOut = nullptr,
+            Core::SlotAlloc::Input* inputOut = nullptr) const;
 
         /// True if any slot on ANY configured page accepts this override
         /// category. Overrides are global; a page without an accepting slot is

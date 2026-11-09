@@ -68,7 +68,7 @@ namespace Huginn::Learning
          m_totalTrains += data.trainCount - before;
          data.chosenAt = now;
       }
-      m_clock++;
+      Core::LearningClock::Note(m_learningClock, Core::LearningClock::Event::OldLearnerUpdate);
 
       logger::trace("Learner update: item={:08X}, reward={:.2f}, error={:.3f}, est {:.3f}->{:.3f}"sv,
          formID, reward, error, prediction, DotProduct(w, phi));
@@ -110,18 +110,8 @@ namespace Huginn::Learning
 
    float FeatureBanditLearner::RetentionAt(const ItemLearningData& data, double now) const noexcept
    {
-      if (!m_life.enabled) {
-         return 1.0f;
-      }
-      // Hours, in double: the clock runs for days.
-      const double idle = std::max(0.0, now - data.chosenAt) / 3600.0;
-      const double life = m_life.lifeHours + m_life.lifePerPickHours * std::log1p(std::max(0.0f, data.trainCount));
-      const double s = m_life.fadeHours;
-      const double x = (idle - life) / s;
-      if (x > 60.0) {
-         return 0.0f;
-      }
-      return static_cast<float>(std::min(1.0, (1.0 + std::exp(-life / s)) / (1.0 + std::exp(x))));
+      // core/Battery.h (R8.2): the same expression, shared with ChoiceLearner's b.
+      return Core::Battery::RetentionAt(m_life, now, data.chosenAt, data.trainCount);
    }
 
    size_t FeatureBanditLearner::MaybeForgetFaded()
@@ -330,22 +320,10 @@ namespace Huginn::Learning
 
       m_items.clear();
       m_totalTrains = 0.0f;
-      m_clock++;
+      Core::LearningClock::Note(m_learningClock, Core::LearningClock::Event::OldLearnerClear);
 
       logger::info("FeatureBanditLearner cleared: {} items, {:.0f} total trains removed"sv,
          itemCount, totalTrains);
-   }
-
-   uint64_t FeatureBanditLearner::GetClock() const
-   {
-      std::shared_lock lock(m_mutex);
-      return m_clock;
-   }
-
-   void FeatureBanditLearner::SetClock(uint64_t clock)
-   {
-      std::unique_lock lock(m_mutex);
-      m_clock = clock;
    }
 
    size_t FeatureBanditLearner::ReplaceDynamicEntries(const std::vector<SerializedEntry>& saveEntries)

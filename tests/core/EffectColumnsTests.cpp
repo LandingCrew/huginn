@@ -78,7 +78,7 @@ TEST_CASE("effect columns: counts per level and lookups")
     CHECK(fam == 26);
     CHECK(spec == 136);
     CHECK(mod == 19);
-    CHECK(item == 25);
+    CHECK(item == 26);   // 25 before 0.24.9 added alcohol (named narcotic from 0.24.16)
     CHECK(weap == 23);
     CHECK(arm == 14);
     CHECK(ids.size() == kColumnCount);  // ids are unique

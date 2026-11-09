@@ -5,6 +5,8 @@
 #include "CooldownManager.h"
 #include "state/PlayerActorState.h"
 #include "core/FilterReason.h"
+#include "core/HardGates.h"     // R8.1: the hard gates' inputs
+#include "core/CapFacets.h"     // R11: the resist check reads facets
 #include <optional>
 #include <span>
 #include <vector>
@@ -27,6 +29,7 @@ namespace Huginn::Candidate
         size_t filteredByActiveBuff = 0;     // Buff already active
         size_t filteredByDuplication = 0;    // Duplicate items removed
         size_t filteredByFullVitals = 0;     // Healing when health is full, etc.
+        size_t filteredByHardGate = 0;       // R8.1: no follower / no workstation / not dark / suppressed favourite
         size_t outputCount = 0;              // Candidates after all filtering
 
         /// Reset all counters to zero
@@ -38,26 +41,25 @@ namespace Huginn::Candidate
             filteredByActiveBuff = 0;
             filteredByDuplication = 0;
             filteredByFullVitals = 0;
+            filteredByHardGate = 0;
             outputCount = 0;
-        }
-
-        /// Total filtered out
-        [[nodiscard]] size_t TotalFiltered() const noexcept {
-            return filteredByAffordability + filteredByEquipped + filteredByCooldown +
-                   filteredByActiveBuff + filteredByDuplication +
-                   filteredByFullVitals;
         }
     };
 
     /**
      * @brief Pre-filters for candidate selection.
      *
-     * Filters are applied in order of computational cost (cheapest first):
+     * Filters are applied in this order (the visitor stage first):
      * 1. Affordability - Can player use this? (magicka, count > 0)
      * 2. Equipped - Is it already equipped?
-     * 3. Cooldown - Was it used recently?
-     * 4. Full Vitals - Is healing/restore pointless?
-     * 5. Active Buff - Is the effect already active?
+     * 3. Full Vitals - Is healing/restore pointless?
+     * 4. Hard gates (R8.1) - the old engine's context zeros: a spell for
+     *    others with no follower near, fortify apparel with no station up,
+     *    a torch while it is not dark; and a favourite under Suppress
+     * 5. Active Buff - Is the effect already active? (passes again in the
+     *    buff's last fRefreshPriorSec seconds: ActorBuffs::refreshDue)
+     * 6. Cooldown - Was it used recently?
+     * 7. Deduplication, truncation
      *
      * Each filter returns true if the candidate should be KEPT.
      */
@@ -66,81 +68,7 @@ namespace Huginn::Candidate
     public:
         CandidateFilters(CooldownManager& cooldownMgr, const CandidateConfig& config);
 
-        // =========================================================================
-        // INDIVIDUAL FILTERS (return true to KEEP candidate)
-        // =========================================================================
-
-        /**
-         * @brief Check if player can afford to use this candidate.
-         *
-         * For spells: Computes effective cost via CalculateMagickaCost(player) with perk/enchant reductions
-         * For items: Checks if count > 0
-         * For weapons: Always returns true (no cost to equip)
-         *
-         * @param candidate The candidate to check
-         * @param currentMagicka Player's current magicka
-         * @return true if player can afford to use this candidate
-         */
-        [[nodiscard]] bool PassesAffordabilityFilter(
-            const CandidateVariant& candidate,
-            float currentMagicka
-        ) const;
-
-        /**
-         * @brief Check if candidate is already equipped.
-         *
-         * @param candidate The candidate to check
-         * @param player Current player state (for equipped items)
-         * @return true if candidate is NOT already equipped
-         */
-        [[nodiscard]] bool PassesEquippedFilter(
-            const CandidateVariant& candidate,
-            const State::PlayerActorState& player
-        ) const;
-
-        /**
-         * @brief Check if candidate is on cooldown (recently used).
-         *
-         * @param candidate The candidate to check
-         * @return true if candidate is NOT on cooldown
-         */
-        [[nodiscard]] bool PassesCooldownFilter(
-            const CandidateVariant& candidate
-        ) const;
-
-        /**
-         * @brief Check if candidate's buff effect is already active.
-         *
-         * Filters redundant recommendations:
-         * - Waterbreathing potion when already has waterbreathing
-         * - Resist Fire when fire resistance >= threshold
-         * - Invisibility when already invisible
-         *
-         * @param candidate The candidate to check
-         * @param player Current player state (for active buffs/resistances)
-         * @return true if buff effect is NOT already active
-         */
-        [[nodiscard]] bool PassesActiveBuffFilter(
-            const CandidateVariant& candidate,
-            const State::PlayerActorState& player
-        ) const;
-
-        /**
-         * @brief Check if restore/healing items are useful.
-         *
-         * Filters pointless recommendations:
-         * - Health potions when health is full
-         * - Magicka potions when magicka is full
-         * - Stamina potions when stamina is full
-         *
-         * @param candidate The candidate to check
-         * @param player Current player state (for vital percentages)
-         * @return true if item would be useful
-         */
-        [[nodiscard]] bool PassesFullVitalsFilter(
-            const CandidateVariant& candidate,
-            const State::PlayerActorState& player
-        ) const;
+        // ApplyAllFilters is the only filter API (the single-filter methods went in 0.24.5).
 
         // =========================================================================
         // BATCH FILTER OPERATIONS
@@ -161,17 +89,26 @@ namespace Huginn::Candidate
          * @param output       Destination for surviving candidates (cleared first)
          * @param player       Current player state
          * @param currentMagicka Player's current magicka
+         * @param gates        R8.1: the hard gates' facts (Context::HardGateInputs)
          * @param stats        Output statistics (reset then populated)
+         * @param heldAside    A Remembrance hold's own item that affordability
+         *                     or a hard gate dropped, set aside for the hold
+         * @param subjects     Index-aligned with output: the catalog subject the
+         *                     filters looked up for each survivor (spells,
+         *                     items, scrolls; a default Subject, known false,
+         *                     for the rest), so the pipeline need not look again
          */
         void ApplyAllFilters(
             std::vector<CandidateVariant>& gatherBuffer,
             std::vector<CandidateVariant>& output,
             const State::PlayerActorState& player,
             float currentMagicka,
+            const Core::Gate::Inputs& gates,
             FilterStats& stats,
             std::span<const RE::FormID> heldIDs = {},
-            std::vector<CandidateVariant>* heldUnaffordable = nullptr,
-            std::vector<Core::Filter::Dropped>* dropped = nullptr   // 0.23.46: each drop and its reason (v3 log)
+            std::vector<CandidateVariant>* heldAside = nullptr,
+            std::vector<Core::Filter::Dropped>* dropped = nullptr,  // 0.23.46: each drop and its reason (v3 log)
+            std::vector<Core::Facets::Subject>* subjects = nullptr
         );
 
         // =========================================================================
@@ -181,9 +118,6 @@ namespace Huginn::Candidate
         /// Get reference to configuration
         [[nodiscard]] const CandidateConfig& GetConfig() const noexcept { return m_config; }
 
-        /// Get reference to cooldown manager
-        [[nodiscard]] CooldownManager& GetCooldownManager() noexcept { return m_cooldownMgr; }
-
     private:
         CooldownManager& m_cooldownMgr;
         const CandidateConfig& m_config;
@@ -192,25 +126,25 @@ namespace Huginn::Candidate
         mutable std::unordered_set<uint64_t> m_deduplicationSet;
 
         // Single std::visit dispatch running affordability, equipped, full
-        // vitals, active buff: the filter that rejected the candidate, nullopt
-        // when it passed. 0.23.46: the reason names the branch (full_health,
-        // armor, summon_limit ...), not just the stage, for the v3 log.
+        // vitals, the hard gates (R8.1), active buff: the filter that rejected
+        // the candidate, nullopt when it passed. 0.23.46: the reason names the
+        // branch (full_health, armor, summon_limit ...), not just the stage,
+        // for the v3 log.
         [[nodiscard]] std::optional<Core::Filter::Reason> RunVisitorFilters(
             const CandidateVariant& candidate,
             const State::PlayerActorState& player,
-            float currentMagicka
+            float currentMagicka,
+            const Core::Gate::Inputs& gates,
+            Core::Facets::Subject& subject   // out: the catalog lookup, for the arms that read it
         ) const;
 
-        // Helper: Check resist potion against current resistances
-        [[nodiscard]] bool IsResistPotionRedundant(
-            const ItemCandidate& item,
-            const State::ActorResistances& resistances
-        ) const;
-
-        // Helper: Check resist spell against current resistances
-        [[nodiscard]] bool IsResistSpellRedundant(
-            const SpellCandidate& spell,
-            const State::ActorResistances& resistances
+        // Helper (R11): an item whose resist facets (core/CapFacets.h) the
+        // player already covers; an element whose block is due for its
+        // refresh (R8.1) is not redundant. Potions and spells alike.
+        [[nodiscard]] bool IsResistRedundant(
+            Core::Facets::Set facets,
+            const State::ActorResistances& resistances,
+            Core::Refresh::DueBits refreshDue
         ) const;
 
     };

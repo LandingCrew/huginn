@@ -1,10 +1,12 @@
 # Huginn Recommendation Pipeline
 
+> **R11 (0.24.4):** this page predates the engine rewrite. Since R8.3 the hand-tuned engine (context weights × the bandit's learning score × multipliers) no longer ranks: every candidate is ranked on the choice score μ (θ over need × effect columns, b per item; doc 9, [9-implementation-map.md](9-implementation-map.md)), and the old engine runs only for the D2 feature `ln learn mult` (`[Scoring] bLegacyLearnFeature`, confined by `tools/prune/r8_check.py`). The steps that changed: the skip gate keys on the need signature in place of the ambient signature and the elemental window; the display reason comes from the page's explanations (`PipelineCoordinator::UpdateContextReason`), not the context weights; scoring is `RankOnChoice`, not UtilityScorer's floors; the slot classes, filters, override finders and the label read the effect catalog's facets (`core/CapFacets.h`, R11), not the classifiers' tags; the hold uses the challenger rule (R9); the wildcard has a key of its own (R10). docs/README.md has the current tick.
+
 This document describes the data flow from game state to slot recommendations as currently implemented in v0.20.0.
 
 > **Related documentation:**
 > - [1-states.md](1-states.md) - State models (WorldState, PlayerActorState, TargetCollection, tracking states)
-> - [4-contextual-bandits.md](4-contextual-bandits.md) - contextual bandit learning implementation
+> - [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) - contextual bandit learning implementation
 > - [5-slots.md](5-slots.md) - Slot classification and overrides
 
 ---
@@ -187,14 +189,14 @@ The data bundle shared between steps. It is a *member* of the coordinator (`m_ct
 
 - **Inputs:** `deltaMs`, `player`, `actorValue`, `now`
 - **State snapshots:** `currentState` (`GameState`), `playerState`, `targets`, `worldState`, `healthTracking`, `currentMagicka`, `stateHash`
-- **Unhashed-state flags:** `elementalDamageActive`, `fallingActive`, `underwaterActive`
+- **Unhashed-state flags:** `fallingActive`, `underwaterActive`, `workstationActive`
 - **Pipeline outputs:** `scoredCandidates`, `overrides`, `rawAssignments`, `assignments`, `contextReason`
-- **Page snapshot:** `displayPageIndex`, `displayPageCount`, `displaySlotCount`, `displayWildcardSlots`, `displayPageName`
+- **Page snapshot:** `displayPageIndex`, `displayPageCount`, `displaySlotCount`, `displayWildcardSeat`, `displayPageName`
 
 > Only `HealthTrackingState` is snapshotted. `MagickaTrackingState` and
 > `StaminaTrackingState` used to ride along for the relevance tags; nothing consumes
-> them now that the display reason is derived from the context weights (#10), so they
-> are no longer copied onto the context each tick. `StateManager` still polls all
+> them now that the display reason comes from the page's explanations
+> (`UpdateContextReason`, R8.3), so they are no longer copied onto the context each tick. `StateManager` still polls all
 > three — see `GetPollTable()`.
 
 ### Two skip gates, one latch list
@@ -203,8 +205,8 @@ The skip check exists in two places and they consult the same list of latches.
 
 | Gate | Where | Asks |
 |---|---|---|
-| Outer | `RunPipelineIfNeeded()` in `src/UpdateLoop.cpp` | `StateManager::DidLastUpdateChangeState()`, `SlotAllocator::PeekPageChanged()`, `StateManager::IsElementalWindowActive()`, `PipelineCoordinator::NeedsForcedRun()` |
-| Inner | `PipelineCoordinator::CheckHashSkip()` | `stateHash == m_lastPipelineHash`, page changed, this tick's unhashed-state flags, `NeedsForcedRun()` |
+| Outer | `RunPipelineIfNeeded()` in `src/UpdateLoop.cpp` | `StateManager::DidLastUpdateChangeState()`, `SlotAllocator::PeekPageChanged()`, `PipelineCoordinator::NeedsForcedRun()` |
+| Inner | `PipelineCoordinator::CheckHashSkip()` | `stateHash == m_lastPipelineHash`, page changed, this tick's unhashed-state flags, the need / override / refresh signatures, `NeedsForcedRun()` |
 
 The outer gate returns before `RunPipeline` is ever called, so a latch wired into only
 the inner gate is dead in a static scene. `NeedsForcedRun()` is the single list, and it
@@ -344,7 +346,7 @@ graph LR
 
 | Struct | Purpose | Details |
 |--------|---------|---------|
-| `GameState` | Discretized buckets for the pipeline skip-check — 48,384 states, bases `[6, 6, 3, 7, 4, 2, 2, 2, 2]` (health, magicka, distance, targetType, enemyCount, allyInjured, anyCasting, inCombat, isSneaking). Stamina is excluded from the hash; `distance` is the closest living hostile's band (`ClosestEnemyDistanceBucket`, the actor the learner's `distanceNorm` measures), not the crosshair primary's; `allyStatus` enters it as one bit (is it `InjuredPresent`) rather than its three states; `targetType` is the primary's type only when it is a living hostile (`TargetCollection::ScoringTargetType`), so townspeople under the crosshair read as None. | See [4-contextual-bandits.md](4-contextual-bandits.md) |
+| `GameState` | Discretized buckets for the pipeline skip-check — 48,384 states, bases `[6, 6, 3, 7, 4, 2, 2, 2, 2]` (health, magicka, distance, targetType, enemyCount, allyInjured, anyCasting, inCombat, isSneaking). Stamina is excluded from the hash; `distance` is the closest living hostile's band (`ClosestEnemyDistanceBucket`, the actor the learner's `distanceNorm` measures), not the crosshair primary's; `allyStatus` enters it as one bit (is it `InjuredPresent`) rather than its three states; `targetType` is the primary's type only when it is a living hostile (`TargetCollection::ScoringTargetType`), so townspeople under the crosshair read as None. | See [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) |
 
 ### Stage 2: Candidate Generator
 
@@ -448,17 +450,17 @@ graph TD
 
 | Priority | Condition | Threshold | Hysteresis | Action | INI Toggle |
 |----------|-----------|-----------|------------|--------|------------|
-| 100 | CRITICAL_HEALTH | HP < 10% | 15% | Best health potion | `bEnableCriticalHealth` |
-| 70 | CRITICAL_MAGICKA | MP < 10% | 15% | Best magicka potion | `bEnableCriticalMagicka` |
-| 60 | CRITICAL_STAMINA | SP < 10% | 15% | Best stamina potion | `bEnableCriticalStamina` |
+| 100 | CRITICAL_HEALTH | HP < 35% | 15% | Best health potion | `bEnableCriticalHealth` |
+| 70 | CRITICAL_MAGICKA | MP < 35% | 15% | Best magicka potion | `bEnableCriticalMagicka` |
+| 60 | CRITICAL_STAMINA | SP < 35% | 15% | Best stamina potion | `bEnableCriticalStamina` |
 | 50 | DROWNING | Underwater, no buff | N/A | Waterbreathing potion | `bEnableDrowning` |
 | 40 | LOW_AMMO | < 10 arrows/bolts | 15 | Best ammo | `bEnableLowAmmo` |
 | 35 | WEAPON_EMPTY | Charge < 25% | 5% | Best filled soul gem | `bEnableWeaponCharge` |
 
-> **Note:** The three *vital* rows show the compile-time fallbacks in
-> `Override::Defaults` (`src/override/OverrideConfig.h`); the shipped
-> `configs/Huginn.ini` sets all three to **35%** for a more proactive experience, and
-> the INI value is authoritative at runtime. The weapon-charge row is 25% in *both*
+> **Note:** The thresholds are the shipped `configs/Huginn.ini` values, which the
+> compile-time fallbacks in `Override::Defaults` (`src/override/OverrideConfig.h`)
+> equal since 0.24.8; the INI value is authoritative at runtime. The weapon-charge
+> row is 25%
 > — the activation test is `charge < threshold` and a drained weapon keeps a small
 > unusable remainder rather than exactly 0, so a zero threshold would never fire.
 > Hysteresis is a *release gap*: the override stays active until the value rises above
@@ -650,7 +652,7 @@ graph TB
 **Slot Classifications** (from `SlotClassification` enum in `src/slot/SlotConfig.h`):
 
 - **Effect-based:** `DamageAny`, `DamageMagic`, `HealingAny`, `BuffsAny`, `DefensiveAny`, `SummonsAny`, `Utility`
-- **Item-type based:** `PotionsAny`, `ScrollsAny`, `SpellsAny`, `SpellsDestruction`, `SpellsRestoration`, `SpellsConjuration`, `SpellsIllusion`, `SpellsAlteration`, `WeaponsAny`, `WeaponsMelee`, `WeaponsRanged`, `FoodAny`, `AlcoholAny`, `AmmoAny`, `PoisonsAny`, `ApparelAny`
+- **Item-type based:** `PotionsAny`, `ScrollsAny`, `SpellsAny`, `SpellsDestruction`, `SpellsRestoration`, `SpellsConjuration`, `SpellsIllusion`, `SpellsAlteration`, `WeaponsAny`, `WeaponsMelee`, `WeaponsRanged`, `FoodAny`, `NarcoticsAny`, `AmmoAny`, `PoisonsAny`, `ApparelAny`
 - **Unrestricted:** `Regular` (accepts any candidate)
 
 **Duplicate Removal:**
@@ -821,7 +823,7 @@ graph LR
 | D | Displayed, page changed since the snapshot |
 | E | Displayed on current page |
 
-**Filters:** an outside equip needs player input behind it (`PlayerInputGate`: an open inventory/favorites/magic menu, a vanilla hotkey, or an own-wheel pick); the master toggle and a stale-cache check are the others. See [4-contextual-bandits.md](4-contextual-bandits.md#outside-selections-and-attribution).
+**Filters:** an outside equip needs player input behind it (`PlayerInputGate`: an open inventory/favorites/magic menu, a vanilla hotkey, or an own-wheel pick); the master toggle and a stale-cache check are the others. See [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md#outside-selections-and-attribution).
 
 **Removed signals (v0.13.0):**
 
@@ -832,7 +834,7 @@ graph LR
 | Misclick penalty (-3.0), v0.22.9 | Fired falsely off the late consumption event; the selection confirm window replaced it. |
 | Separate consumption reward (+5.0), v0.22.9 | Made every drink train twice; the count drop now only confirms a selection. |
 
-See [4-contextual-bandits.md](4-contextual-bandits.md) for learning update details and [../roadmap.md](../roadmap.md) for design rationale.
+See [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) for learning update details and [../roadmap.md](../roadmap.md) for design rationale.
 
 ---
 
@@ -906,6 +908,6 @@ graph TB
 ## See Also
 
 - [../README.md](../README.md) - Overall system design
-- [4-contextual-bandits.md](4-contextual-bandits.md) - Learning system (FeatureBanditLearner architecture)
+- [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) - Learning system (FeatureBanditLearner architecture)
 - [5-slots.md](5-slots.md) - Slot classification and overrides
 - [1-states.md](1-states.md) - State model architecture

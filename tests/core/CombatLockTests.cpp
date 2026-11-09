@@ -290,12 +290,6 @@ TEST_CASE("combat lock: the sweep locks every shown unlocked key but a wildcard"
     CHECK_FALSE(CombatSweepLocks(false, true, false));
 }
 
-TEST_CASE("combat lock: a wildcard may be placed out of combat only")
-{
-    CHECK(WildcardMayBePlaced(false));
-    CHECK_FALSE(WildcardMayBePlaced(true));
-}
-
 TEST_CASE("combat lock: the wildcard manager's step through a fight")
 {
     // Out of combat, before and after: exactly as before (place, keep, no restart).

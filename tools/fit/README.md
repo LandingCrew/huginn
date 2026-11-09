@@ -317,6 +317,23 @@ export.py). `--write-golden` rewrites
 | `bootstrap.py` | The bootstrap format, version 1: document, deterministic text, validation, item keys. No numpy. |
 | `test_fit.py` | The tests above. |
 
+## Reading logs written by 0.23.55 and later
+
+This means rewrite-r8's 0.23.55 (R8.1) and later. engine-rewrite's 0.23.55 is the lap clock build (#224), which has none of the changes below; `head.build` names the build and its git sha.
+
+- The head's `filters` gains four names after `truncated` (R8.1, `core/FilterReason.h`):
+  `no_follower` (a spell or scroll for someone else, no follower near), `no_workstation`
+  (fortify apparel with no station up for a craft it fortifies), `not_dark` (a torch while
+  darkness does not apply) and `favorite_suppressed` (a favourite under
+  `sFavoritesMode = Suppress`). `v3load.py` and `tools/replay` read `fb` by the head's own
+  list, so older files read the same.
+- Behaviour change in the same build: those items were eligible rows with floor `ctx` (or,
+  for Suppress, `suppressed`) and are now filter drops (`fb` set, not eligible). A spell for
+  others at context weight 0 can no longer be raised by the cold start (`cold`). The floor
+  `suppressed` is no longer written. The active-buff filters let their item through in the
+  buff's last `fRefreshPriorSec` seconds (default 5), so a covered item can be eligible with
+  `covered` > 0. Segment by build before pooling eligibility or floors across 0.23.55.
+
 ## Reading logs written by 0.23.46 and later
 
 - Rows have two more columns, named by the head's `row` list: `fb` (`filtered_by`, the candidate
@@ -399,3 +416,60 @@ So for the `three` group:
 
 The `picks` group reads no `nothing` record; there only `loadout_two_handed` is
 affected, and the same split applies.
+
+## Logs from 0.24.17 on: engine B live, D2 in shadow
+
+From 0.24.17 the live engine is B (`[Scoring] bLegacyLearnFeature = 0`), and with
+`bShadowLegacy = 1` the legacy pass still runs for the D2 shadow, so `util`, the
+`scored` flag, `fl` and the old parts are set on B's rows as under D2. A fit of
+**D2** reads them as before (fitlib.build derives util missing and ln learn mult
+from `util` and the old parts: right for D2, what the old floors kept). A fit of
+**B** must read the feature the live score read, the `lm` / `um` columns (0 / 1
+on every row under B), not `util`: the row feature `learn_live` (0.24.19), in
+the cv.py spec `theta + b + recent + learn mult as the live score read it
+(lm/um, B)`, which export.py exports like the D2 spec (the same two weights,
+`ln learn mult` and `util missing`). No row needs telling apart by engine: `lm`
+/ `um` are what the choice score read, on every row since 0.23.56 (in shadow
+then, live from 0.24.0): D2's values under engine A, 0 / 1 under B, whichever
+way the switch stood. A row logged before 0.23.56 has none and reads as
+`learn`. On logs from B alone the
+two columns read 0 / 1 on nearly every row, and a constant cancels within a
+choice set, so their weights stay near the prior; they matter when the data
+spans both engines. The shadow's own columns (`amu ar br ak bk`) are for
+tools/shadow/shadow_compare.py, which reads `ar br ak bk`; no fit reads them,
+and no script reads `amu`, the head's `bootstrap` object or `refreshPriorSec`.
+
+## The v2 log from 0.24.0 to 0.24.18: dropped rows
+
+From R8.3 (0.24.0) the v2 log (`Huginn_Selections.jsonl`) wrote every ranked
+candidate into a record's `cands`, the ones the old floors dropped with the
+default breakdown (`util`, `ctx`, `corr` and the learner's parts 0, `potion`
+and `fav` 1). `fitlib.load_v2` and `tools/replay` read "in `cands`" as "the old
+engine scored it", so those rows gave a zero context weight (the `ctx` and
+`cheap` baselines) and a zero learner state that hid the carried-forward one
+(`learner`, L1). From 0.24.19 the writer logs only the rows the floors kept, as
+before 0.24.0. A v2 record names no build, so both readers skip the rows by
+their values (`fitlib.v2_unscored`, `replay.v2_unscored`): `util`, `ctx` and
+`corr` all 0. `corr` is a multiplier the old scorer starts at 1, so no row it
+scored reads 0 and no record of another build loses a row.
+
+## R8.2: replay equivalence (`export_scores.py`, 0.23.56)
+
+`export_scores.py` writes fitlib's per-row logits under a bootstrap file
+(fitlib.Model.scores with p built from the document: theta by name, the pairs it
+lacks at the effects.csv prior, the recent rows appended as needs, b per form
+through the form map, kappa, the spec's feature weights; the curve needs re-read
+through the file's curves; theta_covered 0). The C++ core reproduces them
+(`tests/core/ChoiceReplayTests.cpp`).
+
+```sh
+python export_scores.py --synthetic --write-fixture      # the checked-in fixture (tests/core/fixtures/choice/)
+python export_scores.py --until 0.23.44                  # after v3load.py --char <id>: the real log, to the work dir
+HUGINN_REPLAY_FIXTURE=<work>/replay_scores.jsonl HUGINN_REPLAY_OUT=<work>/replay_cpp.jsonl \
+    <build>/tests/Release/huginn_core_tests.exe -tc="choice?replay*"
+python export_scores.py --compare <work>/replay_cpp.jsonl <work>/replay_scores.jsonl
+```
+
+`test_fit.py` (ReplayEquivalence) fails when the checked-in fixture is not what
+`--synthetic` writes now: a change to fitlib's model, the synthetic log or the
+shipped bootstrap regenerates it with `--write-fixture`.

@@ -2,6 +2,7 @@
 
 #include "StateConstants.h"
 #include "StateTypes.h"              // For EffectType
+#include "core/RefreshPass.h"       // ActorBuffs::refreshDue (R8.1)
 #include <cmath>
 #include <cstdint>
 #include <string_view>
@@ -15,7 +16,7 @@ namespace Huginn::State
   // to eliminate duplication and enable consistent vitals/effects/buffs handling.
   //
   // DESIGN RATIONALE:
-  // - Fixes duplication identified in state-refactoring.md (player vs target vitals)
+  // - Fixes the duplication between player and target vitals
   // - Enables future target buff/debuff detection (Phase 7)
   // - All structs trivially copyable for thread safety
   // =============================================================================
@@ -58,10 +59,6 @@ namespace Huginn::State
 
     [[nodiscard]] bool IsStaminaLow() const noexcept {
       return stamina < VitalThreshold::LOW;
-    }
-
-    [[nodiscard]] bool IsStaminaCritical() const noexcept {
-      return stamina < VitalThreshold::CRITICAL;
     }
 
 #ifdef _DEBUG
@@ -134,10 +131,6 @@ namespace Huginn::State
     bool hasMagickaPoison = false;  // Magicka damage over time
     bool hasStaminaPoison = false;  // Stamina damage over time
     bool hasHealthDrain = false;    // Health damage over time (bleeding)
-
-    [[nodiscard]] bool HasAnyDamageEffect() const noexcept {
-      return isOnFire || isPoisoned || isFrozen || isShocked || hasMagickaPoison || hasStaminaPoison || hasHealthDrain;
-    }
 
 #ifdef _DEBUG
     void LogDifferences(const ActorEffects& other, std::string_view prefix = "") const {
@@ -212,6 +205,13 @@ namespace Huginn::State
     // makes it 2). The summon filter hides summon spells only at the limit.
     std::uint8_t summonCount = 0;
     float summonLimit = 1.0f;
+    // R8.1 (0.23.55): the active-buff blocks due for their refresh -- blocking
+    // now, and ending within [Scoring] fRefreshPriorSec (core/RefreshPass.h,
+    // one bit per Core::Refresh::Block). The filters let the blocked item
+    // through on its bit. Computed by the magic-effects poll, and compared
+    // below, so a block entering its last seconds marks the state changed and
+    // the pipeline runs on it. Player only (0 on a target).
+    Core::Refresh::DueBits refreshDue = 0;
 
     EffectType activeCloakType = EffectType::None;  // Fire/Frost/Shock
 
@@ -230,24 +230,6 @@ namespace Huginn::State
     bool hasFortifyRestoration = false;
     bool hasFortifyAlteration = false;
     bool hasFortifyIllusion = false;
-    bool hasFortifyEnchanting = false;   // Not a school, but same pattern
-
-    [[nodiscard]] bool HasAnyBuff() const noexcept {
-      return hasWaterBreathing || isInvisible || hasMuffle || hasNightEye || hasLightSpell ||
-             hasArmorBuff || hasCloakActive || hasActiveSummon ||
-             hasHealthRegenBuff || hasMagickaRegenBuff || hasStaminaRegenBuff ||
-             hasFortifyDestruction || hasFortifyConjuration || hasFortifyRestoration ||
-             hasFortifyAlteration || hasFortifyIllusion || hasFortifyEnchanting;
-    }
-
-    [[nodiscard]] bool HasAnyFortifySchool() const noexcept {
-      return hasFortifyDestruction || hasFortifyConjuration || hasFortifyRestoration ||
-             hasFortifyAlteration || hasFortifyIllusion;
-    }
-
-    [[nodiscard]] bool HasAnyRegenDebuff() const noexcept {
-      return hasHealthRegenDebuff || hasMagickaRegenDebuff || hasStaminaRegenDebuff;
-    }
 
 #ifdef _DEBUG
     void LogDifferences(const ActorBuffs& other, std::string_view prefix = "") const {
@@ -286,6 +268,9 @@ namespace Huginn::State
         logger::trace("  {}.summons changed: {}/{} -> {}/{}", prefix, other.summonCount, other.summonLimit,
                       summonCount, summonLimit);
       }
+      if (refreshDue != other.refreshDue) {
+        logger::trace("  {}.refreshDue changed: {:#x} -> {:#x}", prefix, other.refreshDue, refreshDue);
+      }
       // Regen buffs/debuffs (v0.6.6)
       if (hasHealthRegenBuff != other.hasHealthRegenBuff) {
         logger::trace("  {}.hasHealthRegenBuff changed: {} -> {}", prefix, other.hasHealthRegenBuff, hasHealthRegenBuff);
@@ -321,9 +306,6 @@ namespace Huginn::State
       if (hasFortifyIllusion != other.hasFortifyIllusion) {
         logger::trace("  {}.hasFortifyIllusion changed: {} -> {}", prefix, other.hasFortifyIllusion, hasFortifyIllusion);
       }
-      if (hasFortifyEnchanting != other.hasFortifyEnchanting) {
-        logger::trace("  {}.hasFortifyEnchanting changed: {} -> {}", prefix, other.hasFortifyEnchanting, hasFortifyEnchanting);
-      }
     }
 #endif
 
@@ -340,6 +322,7 @@ namespace Huginn::State
                    hasActiveSummon == other.hasActiveSummon &&
                    summonCount == other.summonCount &&
                    summonLimit == other.summonLimit &&
+                   refreshDue == other.refreshDue &&
                    // Regen buffs/debuffs (v0.6.6)
                    hasHealthRegenBuff == other.hasHealthRegenBuff &&
                    hasHealthRegenDebuff == other.hasHealthRegenDebuff &&
@@ -352,8 +335,7 @@ namespace Huginn::State
                    hasFortifyConjuration == other.hasFortifyConjuration &&
                    hasFortifyRestoration == other.hasFortifyRestoration &&
                    hasFortifyAlteration == other.hasFortifyAlteration &&
-                   hasFortifyIllusion == other.hasFortifyIllusion &&
-                   hasFortifyEnchanting == other.hasFortifyEnchanting;
+                   hasFortifyIllusion == other.hasFortifyIllusion;
 
 #ifdef _DEBUG
       if (!equal) {
@@ -462,7 +444,6 @@ namespace Huginn::State
     bool hasCrossbowEquipped = false;
     bool hasTorchEquipped = false;
     RE::FormID equippedTorchFormID = 0;  // the torch in the left hand, 0 if none
-    float weaponChargeMax = 0.0f;
     std::int32_t boltCount = DefaultState::NO_ARROWS;  // see arrowCount
     RE::FormID equippedAmmoFormID = 0;  // FormID of equipped arrow/bolt (name looked up at display time)
     float equippedAmmoDamage = 0.0f;  // Base damage of equipped ammo (for bow total damage calc)
@@ -526,40 +507,6 @@ namespace Huginn::State
              (formID != 0 && equippedTorchFormID == formID);
     }
 
-    // Survival helpers
-    [[nodiscard]] bool IsStarving() const noexcept {
-      return survivalModeActive && hungerLevel >= SurvivalThreshold::HUNGER_FAMISHED;
-    }
-
-    [[nodiscard]] bool IsFreezing() const noexcept {
-      return survivalModeActive && coldLevel >= SurvivalThreshold::COLD_FREEZING;
-    }
-
-    [[nodiscard]] bool IsExhausted() const noexcept {
-      return survivalModeActive && fatigueLevel >= SurvivalThreshold::FATIGUE_WEARY;
-    }
-
-    [[nodiscard]] bool HasRestBonus() const noexcept {
-      return survivalModeActive && fatigueLevel < DefaultState::NEUTRAL_SURVIVAL;
-    }
-
-    // Warmth helpers (v0.6.6)
-    [[nodiscard]] bool IsWarmthLow() const noexcept {
-      return survivalModeActive && warmthRating < WarmthThreshold::LOW;
-    }
-
-    [[nodiscard]] bool HasGoodWarmth() const noexcept {
-      return warmthRating >= WarmthThreshold::HIGH;
-    }
-
-    [[nodiscard]] float GetWarmthContextWeight() const noexcept {
-      if (!survivalModeActive) return 0.0f;
-      // Higher weight when warmth is low (need warming items/spells)
-      if (warmthRating < WarmthThreshold::LOW) return 0.30f;
-      if (warmthRating < WarmthThreshold::MODERATE) return 0.15f;
-      return 0.0f;
-    }
-
     // Vampire/Werewolf helpers (v0.6.6)
     [[nodiscard]] bool IsVampire() const noexcept {
       return vampireStage > VampireThreshold::NOT_VAMPIRE;
@@ -567,32 +514,6 @@ namespace Huginn::State
 
     [[nodiscard]] bool IsSunVulnerable() const noexcept {
       return vampireStage >= VampireThreshold::SUN_VULNERABLE_STAGE;
-    }
-
-    [[nodiscard]] bool CanTransformToWerewolf() const noexcept {
-      return isWerewolf && !isInBeastForm;
-    }
-
-    // Survival context weight helpers (for recommendation engine)
-    [[nodiscard]] float GetHungerContextWeight() const noexcept {
-      if (!survivalModeActive) return 0.0f;
-      if (hungerLevel >= SurvivalThreshold::HUNGER_FAMISHED) return 0.30f;
-      if (hungerLevel >= SurvivalThreshold::HUNGER_HUNGRY) return 0.15f;
-      return 0.0f;
-    }
-
-    [[nodiscard]] float GetColdContextWeight() const noexcept {
-      if (!survivalModeActive) return 0.0f;
-      if (coldLevel >= SurvivalThreshold::COLD_FREEZING) return 0.30f;
-      if (coldLevel >= SurvivalThreshold::COLD_VERY_COLD) return 0.15f;
-      return 0.0f;
-    }
-
-    [[nodiscard]] float GetFatigueContextWeight() const noexcept {
-      if (!survivalModeActive) return 0.0f;
-      if (fatigueLevel >= SurvivalThreshold::FATIGUE_WEARY) return 0.30f;
-      if (fatigueLevel >= SurvivalThreshold::FATIGUE_TIRED) return 0.15f;
-      return 0.0f;
     }
 
     // Equality comparison (epsilon-tolerant)
@@ -620,7 +541,6 @@ namespace Huginn::State
              hasCrossbowEquipped == other.hasCrossbowEquipped &&
              hasTorchEquipped == other.hasTorchEquipped &&
              equippedTorchFormID == other.equippedTorchFormID &&
-             std::abs(weaponChargeMax - other.weaponChargeMax) < Epsilon::WEAPON_CHARGE &&
              boltCount == other.boltCount &&
              equippedAmmoFormID == other.equippedAmmoFormID &&
              std::abs(equippedAmmoDamage - other.equippedAmmoDamage) < 0.1f &&

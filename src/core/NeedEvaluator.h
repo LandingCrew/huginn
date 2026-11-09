@@ -9,8 +9,8 @@
 // is the csv's default (curve_kind, curve_p1, curve_p2) or the [Needs] INI
 // override.
 //
-// Logged only in R3: the rules keep scoring and nothing reads the vector but
-// the log and `hg needs` (needs/NeedMonitor.h).
+// Logged from R3; since R8.3 (0.24.0) the choice score reads the vector
+// (needs/NeedMonitor.h), and the log and `hg needs` show it.
 //
 // Signature() quantises each need to 0.05 (21 levels): the monitor logs a
 // line when it changes, and from R8 it joins the pipeline's skip gate (map
@@ -57,6 +57,12 @@ namespace Huginn::Core::Needs
     /// floor(v * 20 + 0.5) per need: 0..20.
     [[nodiscard]] std::uint8_t SignatureLevel(float v) noexcept;
     [[nodiscard]] NeedSignature Signature(const NeedArray& values) noexcept;
+
+    /// R8.3: the pipeline skip gate's key (PipelineCoordinator): the signature
+    /// folded to 64 bits (FNV-1a over the K levels). Vectors whose 0.05-step
+    /// levels agree everywhere share it; a step on any need changes it (a
+    /// collision costs one skipped run, at a 2^-64 chance).
+    [[nodiscard]] std::uint64_t SignatureHash(const NeedSignature& sig) noexcept;
 
     /// The [Needs] log line's deadband (0.23.16; logging only, the future skip
     /// gate keeps the plain signature): `now` is worth a line against the last

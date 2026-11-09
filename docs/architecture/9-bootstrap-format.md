@@ -282,7 +282,10 @@ What `bootstrap.validate` checks, and what a version-1 reader rejects:
 5. `kappa`: a number.
 6. `u0`: present (`bias`, and `need` with names from `needs`) exactly when
    `outcomes` is `three`; null otherwise.
-7. `recent`: null, or `window_s` and `taus_s`, and each feature's `family` in
+7. `recent`: null, or `window_s` and `taus_s` (`window_s` equal to the largest
+   of `taus_s` when there is one: `fitlib.recent_families` reads the window as
+   `max(taus)`, so a file that differed would score values it was not fitted
+   on), and each feature's `family` in
    `cols`, `tau_s` in `taus_s`, `theta` and `precision` (and `theta_strength`
    with `presence+strength`) of J numbers, every precision above 0, `u0`
    exactly with `three`.
@@ -293,6 +296,65 @@ What `bootstrap.validate` checks, and what a version-1 reader rejects:
    same plugin (ignoring case) and local.
 10. `curves`: needs from `needs`, each `["logistic", centre, slope]` with a
     slope other than 0.
+
+## The reader (R8.2, 0.23.56)
+
+`core/Bootstrap.{h,cpp}` on `core/MiniJson.{h,cpp}`; the plugin's
+`learning/ChoiceLearner` reads `Data/SKSE/Plugins/Huginn_Bootstrap.json` once,
+at the first game load (the build installs it there beside `Huginn.ini`:
+`src/CMakeLists.txt`, `install` and `COPY_OUTPUT`). Notes on what it does
+beyond the rules above:
+
+- **Rejection is whole.** A parse error or any rule violated logs one error
+  (the first three problems) and the new model stays off: no shadow scores, no
+  `bootstrap` in the v3 head. The old engine is unaffected.
+- **JSON.** Strict RFC 8259 (no NaN or infinity literals, which rule 4's finite
+  numbers exclude anyway); a repeated key keeps the last value, as Python's
+  `json` does; numbers read through `std::from_chars`, correctly rounded, so a
+  weight reads the same double the fit's Python reads.
+- **Names.** As above. The prior of a missing pair comes from
+  `core/ObviousPairs.h`, generated from effects.csv's `obvious_needs` by
+  `tools/effects/make_obvious_pairs.py` (a host test checks the two agree).
+  The shipped file predates three of the build's needs (`time_to_edge`,
+  `edge_approach`, `loadout_quarterstaff`): their rows read the prior. The
+  recent rows a file lacks are filled for the build's families (effects.csv's
+  family level, then the `kind_*` columns: `fitlib.recent_families`' list) at
+  each of the file's `taus_s`, at the dense prior. A recent row's strength
+  block (presence + strength) has no precision in version 1: it keeps the
+  dense prior's variance.
+- **theta_covered** is not in version 1 (the fit did not read `covered`). It
+  starts at `[Scoring] fCoveredPrior` (default -1) with precision 1 and is
+  learned online (doc 11 step 5).
+- **Fixed weights.** `kappa` and `features[].w` carry no precision in version
+  1, so the learner holds them at the file's values (no belief to update).
+- **Features the plugin supplies:** `ln learn mult` and `util missing` (the D2
+  feature, `learning/legacy/LegacyLearnFeature.h`), `ln util`, `slot N`,
+  `eligible`. A file that weighs `ln fav`, `ln corr`, `ln potion` or `ln
+  learner` is read, and a warning names them: they read 0 (R8.2 keeps only
+  D2's part of the old score).
+- **Items.** `TESDataHandler::LookupForm(local, plugin)`; an item is skipped
+  and counted when the form is gone, when its form type is not one the effect
+  catalog describes (spell, scroll, alchemy item, weapon, ammo, armour, soul
+  gem, light: the file names no kind, so "kind" is checked as "a catalog
+  kind"), when its name differs from `name` (exactly, or on the ASCII bytes
+  when either holds a byte >= 0x80: the dump's CSV reader replaces cp1252
+  bytes), or when another item already resolved to the same form. An item
+  whose `name` is empty is not name-checked (only its kind is), so a writer
+  should give every item its name; the shipped file names every item. One
+  info line names the counts, the parse time and the file's SHA-256.
+- **b and the character (`[Learning] sBootstrapBias`, roadmap R6 open point
+  4).** `match` (default): the file's b seeds the learner only when the save's
+  character (the cosave's HCID) is the file's `source.char`; theta applies to
+  every character. `always`, `never`. Taken at each load.
+- **Curves.** The file's curves re-read their need from the logged input
+  (`curve.with_curve`) for the new model only; the `[Needs]` lines and the old
+  engine are untouched. `ChoiceLearner::Curves()` hands them to PR 3's need
+  evaluator.
+- **Replay equivalence.** `tools/fit/export_scores.py` writes fitlib's per-row
+  logits under a file; `tests/core/ChoiceReplayTests.cpp` reproduces them to
+  1e-5 (on the checked-in synthetic fixture, and on the mage's 1,865 fitted
+  decisions through `HUGINN_REPLAY_FIXTURE`: largest difference 9e-11, hit@8,
+  page hit@1 and NLL identical).
 
 ## Producing one
 
@@ -327,8 +389,7 @@ python <repo>/tools/fit/export.py --spec "theta + b + recent + learn mult (D2)" 
 ```
 
 `configs/` holds the files the build installs into `Data/SKSE/Plugins/`
-(`Huginn.ini`, `Huginn_Overrides.ini`). R8 installs this one there as
-`Data/SKSE/Plugins/Huginn_Bootstrap.json`, beside `Huginn.ini`, in the change
-that adds its reader: until then no install or `COPY_OUTPUT` rule copies it and
-nothing in the plugin reads it. A refit replaces the file in place (the same
-name), with its provenance.
+(`Huginn.ini`, `Huginn_Overrides.ini`, and since R8.2, 0.23.56, this one as
+`Data/SKSE/Plugins/Huginn_Bootstrap.json`, beside `Huginn.ini`; the reader
+above). A refit replaces the file in place (the same name), with its
+provenance.

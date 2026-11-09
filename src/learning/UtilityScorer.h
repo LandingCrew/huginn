@@ -3,223 +3,100 @@
 #include "ScorerConfig.h"
 #include "context/VitalEnvelope.h"
 #include "ScoredCandidate.h"
-#include "PriorCalculator.h"
-#include "CorrelationBooster.h"
-#include "PotionDiscriminator.h"
 #include "WildcardManager.h"
-#include "state/GameState.h"
-#include "state/PlayerActorState.h"
-#include "state/TargetActorState.h"  // Contains TargetCollection
-#include "state/WorldState.h"        // For ContextRuleEngine (Stage 1f)
-#include "context/ContextWeightConfig.h"    // For ContextRuleEngine config
-#include "context/ContextRuleEngine.h"    // For ContextRuleEngine (Stage 1f)
-#include "FeatureBanditLearner.h"
-#include "UsageMemory.h"
-#include "StateFeatures.h"
-#include "candidate/CandidateTypes.h"
 
+#include <cstdint>
+#include <limits>
 #include <vector>
 
 namespace Huginn::Scoring
 {
+    /// What the old floors were in a run, for the [Recs] lines' lm note
+    /// (PipelineCoordinator::ScoreCandidates sets it per run).
+    enum class RecsFloors : std::uint8_t
+    {
+        none,     // no legacy pass ran (engine B, no shadow): lm 0 / um on every row
+        live,     // engine A (or the fallback): the floors decide which rows the live lm reads
+        shadow,   // engine B with D2 in shadow: lm 0 / um on every row; the floors ran for A only
+    };
+
     // =============================================================================
-    // UTILITY SCORER
+    // UTILITY SCORER -- the live scorer's duties (R8.4: OFF the D2 allowlist)
     // =============================================================================
-    // Unified scoring system for all candidate types (spells, potions, weapons, etc.)
-    //
-    // Scoring Formula (version-dependent):
-    //
-    // LEGACY (v0.12.x):
-    //   utility = (contextWeight + λ * learningScore + correlationBonus)
-    //             * potionMultiplier * favoritesMultiplier
-    //
-    // MULTIPLICATIVE (v1.0):
-    //   utility = contextWeight × (1 + λ(confidence) × learningScore)
-    //             × correlationBonus × potionMultiplier × favoritesMultiplier
-    //
-    // Where λ(confidence) = lambdaMin + confidence × (lambdaMax - lambdaMin)
-    //
-    // Where:
-    //   - contextWeight: From ContextRuleEngine (how relevant now) [0,1]
-    //   - learningScore: α*R + (1-α)*prior + β*UCB (learned + heuristic + exploration)
-    //   - correlationBonus: Equipment synergy bonuses (multiplicative in v1.0)
-    //   - potionMultiplier: Combat timing and value discrimination
-    //   - favoritesMultiplier: Boost/suppress favorited items
-    //
-    // The scorer:
-    //   1. Takes raw candidates from CandidateGenerator
-    //   2. Computes utility for each candidate
-    //   3. Sorts the whole list (stable; R7 -- the slot fill reads past the top N)
-    //   4. Applies wildcards for exploration
-    //   5. Returns ranked ScoredCandidateList
+    // Since the cutover (R8.3) nothing here ranks on utility, and since R8.4
+    // nothing here computes it: the legacy pass moved to the legacy module
+    // (src/learning/legacy/), and tools/prune/r8_check.py keeps the old engine
+    // out of this file. What is left:
+    //   - the rank sort (Rank, on SlotScore(): the choice score mu) and the
+    //     wildcard manager (R10: the per-page cache and clocks; the
+    //     allocation places and draws the wildcard on its key);
+    //   - the magicka / stamina envelopes the needs (and the legacy pass) read;
+    //   - the [Recs] lines;
+    //   - the [Scoring] config snapshot (ScorerSettings), of which the live
+    //     pipeline reads only favoritesMode (the favorite_suppressed filter,
+    //     the choice learner's battery).
     // =============================================================================
 
     class UtilityScorer
     {
     public:
-        UtilityScorer(Learning::FeatureBanditLearner& featureLearner, Learning::UsageMemory& usageMemory, const ScorerConfig& config = DefaultScorerConfig);
+        explicit UtilityScorer(const ScorerConfig& config = DefaultScorerConfig);
         ~UtilityScorer() = default;
 
-        // Main scoring method: Score all candidates and return ranked list
-        // Stage 1f: Added WorldState parameter for ContextRuleEngine
-        // @param displayPage The page THIS tick allocates, from the pipeline
-        //        snapshot (PipelineContext::displayPageIndex / displaySlotCount
-        //        / displayWildcardSlots). Wildcard eligibility is page-relative,
-        //        so it must come from the tick's snapshot rather than a live
-        //        SlotAllocator read — otherwise a page switch landing mid-tick
-        //        rolls wildcards against the new page while the pipeline
-        //        allocates the snapshotted one (critique #10).
-        // @param outWeights Optional: receives the context weight map this pass
-        //        scored against, so callers can explain the ranking without
-        //        re-deriving context (see DominantContextReason, critique #10).
-        [[nodiscard]] ScoredCandidateList ScoreCandidates(
-            const std::vector<Candidate::CandidateVariant>& candidates,
-            const State::GameState& state,
-            const State::PlayerActorState& player,
-            const State::TargetCollection& targets,
-            const State::WorldState& world,
-            const WildcardPage& displayPage,
-            Context::ContextWeightMap* outWeights = nullptr);
+        // R8.3: the whole list in rank order on SlotScore()'s score (stable;
+        // R7 -- the slot fill reads past the top N). R10: nothing is swapped
+        // into the ranking any more; the wildcard has a key of its own
+        // (WildcardManager::Plan, then the allocation).
+        void Rank(ScoredCandidateList& scored);
 
         // Configuration access
         [[nodiscard]] const ScorerConfig& GetConfig() const noexcept { return m_config; }
         void SetConfig(const ScorerConfig& config) { m_config = config; }
 
-        /// Replace the ContextRuleEngine's config snapshot (e.g., after INI hot-reload).
-        void SetContextWeightConfig(const State::ContextWeightConfig& config);
-
-        /// Name the dominant reason behind a weight map from ScoreCandidates'
-        /// outWeights. Thin forward to the owned ContextRuleEngine, whose config
-        /// (and therefore whose thresholds) this scorer already keeps in sync.
-        [[nodiscard]] Context::ContextReason DominantContextReason(
-            const Context::ContextWeightMap& weights,
-            const Context::ContextReasonSignals& signals) const
-        {
-            return m_contextEngine.DominantReason(weights, signals);
-        }
-
         // Component access (for advanced configuration)
         [[nodiscard]] WildcardManager& GetWildcardManager() noexcept { return m_wildcardMgr; }
 
-        // Combat state tracking (call from main update loop)
-        void OnCombatStart();
-        void OnCombatEnd();
+        // R8.1 (0.23.55): the combat start / end hooks are gone with the
+        // potion multiplier's own combat timer; the legacy pass takes the
+        // combat_onset clock instead.
         // @return true if a displayed exploration wildcard expired this tick
         //         (caller must force a pipeline run so the slot content swaps)
-        [[nodiscard]] bool Update(float deltaSeconds);
+        [[nodiscard]] bool Update();
 
         // Reset state (e.g., on save load)
         void Reset();
 
         // R3, read-only: magicka / stamina as the envelopes hold them (what the
-        // magicka_deficit / stamina_deficit needs read, needs.csv). No state
-        // change; the envelopes tick in Update as before.
+        // magicka_deficit / stamina_deficit needs read, needs.csv, and the
+        // legacy pass's context rules). No state change; the envelopes tick
+        // in Update as before.
         [[nodiscard]] float HeldMagicka(float raw) const noexcept { return m_magickaEnvelope.Value(raw); }
         [[nodiscard]] float HeldStamina(float raw) const noexcept { return m_staminaEnvelope.Value(raw); }
 
         // Recommendation logging (release-available; see DebugSettings::recLogVerbosity).
-        // detail: append learn's inputs (Q/P/UCB/α) to each line.
+        // detail: append the inputs the D2 feature was computed from, as the
+        // row's logged breakdown carries them, to each line.
         // force: bypass the membership-change dedup (on-demand `hg recs` dumps).
+        // fallback (R8.3): the list is the fallback ranking (no bootstrap;
+        // built by the legacy module, learning/legacy/LegacyRun.h).
+        // outsideU0 (R11): the run's outside option u0 (outcomes "three"),
+        // printed in the header; NaN when the model has none.
+        // floors: what the old floors were this run (the engine in the
+        // header; each line's lm note says what they did to that row).
         void LogTopCandidates(const ScoredCandidateList& ranked, size_t count = 5,
-            bool detail = false, bool force = false) const;
-
-        /// 0.23.53, LOGGING ONLY (selection log v3): what ScoreCandidates
-        /// computes for one candidate, with no floor applied -- the same
-        /// ScoreCandidateInternal the scoring loop calls, at the context
-        /// weight, learner metrics and recency the caller passes. The
-        /// favourites multiplier is the provisional one (rank 0 of 1); the
-        /// rank scaling and the potion tier order that ScoreCandidates applies
-        /// afterwards to the rows it kept are not. Reads only: nothing scored
-        /// is changed and nothing is kept.
-        [[nodiscard]] ScoredCandidate ExplainCandidate(
-            const Candidate::CandidateVariant& candidate,
-            const State::GameState& state,
-            const State::PlayerActorState& player,
-            const State::TargetCollection& targets,
-            const State::WorldState& world,
-            const Context::ContextWeightMap& weights,
-            float contextWeight,
-            const Learning::FeatureItemMetrics& metrics,
-            float recencyBoost)
-        {
-            return ScoreCandidateInternal(candidate, state, player, targets, world, weights, contextWeight, metrics,
-                recencyBoost);
-        }
+            bool detail = false, bool force = false, bool fallback = false,
+            double outsideU0 = std::numeric_limits<double>::quiet_NaN(),
+            RecsFloors floors = RecsFloors::none) const;
 
     private:
-        // Internal scoring implementation
-        // Stage 1f: Added WorldState and ContextWeightMap parameters
-        // Perf: contextWeight, metrics, recencyBoost pre-computed by caller to
-        //       avoid redundant GetContextWeight calls and per-candidate locking.
-        [[nodiscard]] ScoredCandidate ScoreCandidateInternal(
-            const Candidate::CandidateVariant& candidate,
-            const State::GameState& state,
-            const State::PlayerActorState& player,
-            const State::TargetCollection& targets,
-            const State::WorldState& world,
-            const Context::ContextWeightMap& weights,
-            float contextWeight,
-            const Learning::FeatureItemMetrics& metrics,
-            float recencyBoost);
-
-        // Get favorites multiplier for a candidate
-        [[nodiscard]] float GetFavoritesMultiplier(
-            const Candidate::CandidateVariant& candidate,
-            size_t rank,
-            size_t totalItems) const;
-
-        // Check if candidate is favorited
-        [[nodiscard]] bool IsCandidateFavorited(const Candidate::CandidateVariant& candidate) const;
-
-        // Boost mode: replace Step 7's provisional uniform max boost with the
-        // rank-scaled multiplier (rank 0 = strongest favorite → favoritesBoostMax,
-        // weakest → favoritesBoostMin) and recompute those utilities. Runs after
-        // the scoring loop + cold-start fallback, before the top-N sort. Never
-        // removes entries: favorites keep list membership even if rescaling drops
-        // them below minimumUtility (favorites-always-pass / learner-observability
-        // contract — rank scaling corrects order, not membership).
-        void ApplyFavoritesRankScaling(ScoredCandidateList& scored);
-
-        // Order the strengths of ONE potion (Restore Health Fair / Faint /
-        // Depleted: same type, same tags) by the configured preference. The
-        // family keeps its best utility; under Higher the strongest takes it and
-        // each weaker strength gets the one above divided by POTION_TIER_STEP
-        // (Lower reverses; None leaves the scores alone). A per-potion
-        // multiplier cannot do this -- it cannot see the siblings -- and the
-        // two it replaced flipped their order as health crossed a bucket.
-        // Runs with ApplyFavoritesRankScaling, before the top-N sort.
-        void ApplyPotionTierPreference(ScoredCandidateList& scored) const;
-
-        // Stage 1f: context→candidate weight mapping moved to
-        // Context::WeightForCandidate (context/ContextWeightForCandidate.h) — see
-        // architecture-critique #10. UtilityScorer just calls it.
-
-        // Stage 2b: Compute confidence-adaptive lambda for multiplicative formula
-        [[nodiscard]] float ComputeAdaptiveLambda(float confidence) const;
-
-        // Final utility formula — the single source of truth, used by both the
-        // normal scoring path (ScoreCandidateInternal Step 8) and the cold-start
-        // fallback in ScoreCandidates. Reads all factors from the breakdown:
-        //   utility = ctx × (1 + λ(confidence)×learn) × corr × potion × fav
-        [[nodiscard]] float ComputeUtility(const ScoreBreakdown& breakdown) const;
-
-        // Components
-        Learning::FeatureBanditLearner& m_featureLearner;
-        Learning::UsageMemory& m_usageMemory;
         ScorerConfig m_config;
-        PriorCalculator m_priorCalc;
-        CorrelationBooster m_correlationBooster;
-        PotionDiscriminator m_potionDiscrim;
         WildcardManager m_wildcardMgr;
 
-        // Live-path hold on magicka/stamina for context weights (ScoreCandidates
-        // only). Update thread, like the rest of scoring.
+        // The hold on magicka / stamina: the needs read it (HeldMagicka /
+        // HeldStamina), and the legacy pass scores its context rules on it.
+        // Update thread, like the rest of scoring.
         Context::VitalEnvelope m_magickaEnvelope;
         Context::VitalEnvelope m_staminaEnvelope;
-        Context::ContextRuleEngine m_contextEngine;  // Stage 1f: New component
-
-        // Scratch buffer for favorites rank scaling (update thread only, reused per tick)
-        std::vector<size_t> m_favoriteRankScratch;
     };
 
 }  // namespace Huginn::Scoring

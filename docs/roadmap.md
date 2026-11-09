@@ -488,7 +488,7 @@ Logging only: `Huginn_Selections_v3.jsonl` beside the unchanged v2 log.
     episode is cut into stretches on a shared 60 s grid of active seconds
     (unpaused, alive, at most 1 s per tick; the clock holds in a dialogue,
     in any other open menu that blocks gameplay input by its own flags (the
-    crafting menu does not pause; 0.23.55), with the movement controls
+    crafting menu does not pause; 0.23.55 on engine-rewrite, 0.24.7 on rewrite-r8), with the movement controls
     disabled and after 30 s without input, a stick counting only past the
     game's own deadzone (0.23.55)), and
     each unanswered stretch writes
@@ -580,7 +580,8 @@ agent runs the cheap test on today's log: one weight per slot class × logged
   widget hidden (12:48:57.458–12:49:02.859), so the player never saw it
   there first. So candidacy depended on context (ctx=0.00 outside the right
   one), not a cold-start block. The user accepts this for now; discovery
-  belongs to R10 (wildcards by uncertainty).
+  belongs to R10 (wildcards by uncertainty). *(R10, 0.24.3: a new spell has no
+  b, so the wildcard draw weighs it at b's prior sd; checked in game under R10.)*
 
 ### R6. Offline fit: go / no-go
 
@@ -604,7 +605,10 @@ Map Phase 4, in `tools/fit` (the scripts and their flags: [tools/fit/README.md](
     the old page showed, so they are biased toward A*, while menu picks are
     biased against it; pooling lets the two biases partly cancel.
   - Final test, after R8: `[Reach]` reach-ins per hour of play against the old
-    engine's baseline. R8 rolls back if it loses.
+    engine's baseline. R8 rolls back if it loses. The baseline (the October
+    soak, docs/playtest/Soak-2026-10-LoreRim.md): 92 reach-ins in 9.1 h, about
+    10 an hour, 1.1 to 20.8 per session and driven by the content (roads and
+    towns low, the dungeon session high), so compare like content.
 - **The rehearsal (2026-10-28, level 21; verified 2026-10-28, not the final
   fit).** Grouped 10-fold by launch over the mage's log. A* (the old ranking
   from the logged utilities): key/wheel hit@8 87.4%, menu 18.5% (82 of 443).
@@ -907,6 +911,380 @@ changed in the same PR, and the shipped INI loses the dead keys.
         nothing changes. **In game (you):** with Twin Souls (or any limit of 2)
         and one summon up, a second summon spell stays on offer; at two it
         drops out with `filtered_by` `summon_limit` in the v3 log.
+        **0.24.24:** the limit's entry point takes the spell being cast
+        (condition tab 1); the call left it out, so a perk with a tab-1
+        condition (`EPMagic_SpellHasKeyword`: Vigilant, Kitty's spell packs,
+        Ancient Blood, the Necromancy CC) read the result float as a spell
+        and crashed the game (2026-10-30, LoreRim, under
+        PerkEntryPointExtender). The limit is now evaluated with each distinct
+        spell of a live summon or reanimated thrall and the highest kept (order
+        independent; actors commanded by other effects, such as Bend Will, left out); with none
+        the last value stands, reset to 1 on every load.
+- [ ] **Summon limit per candidate spell** (follow-up to 0.24.24): a tab-1 perk
+      can raise one summon spell's limit and not another's (Undeath's Mass
+      Reanimate +100, Vigilant's +4/6/8 for its conjuration-keyword summons), so one value for
+      every summon spell is approximate. Evaluate the entry point per
+      candidate summon spell, cached per form and cleared on a load or a perk
+      change, where the summon filter (CandidateFilters), covered(i)
+      (core/Coverage.h), the upgrade gate (PipelineCoordinator) and the legacy
+      context weight test it; the v3 log's `summon.limit` keeps one value.
+- [x] **Steps 1-2 of the order above, built in 0.23.55 (R8.1, the first PR on
+      `rewrite-r8`)**, with doc 11 decision 4 (the filter half of step 5):
+      - Hard zeros into `CandidateFilters`: four reasons appended to
+        `core/FilterReason.h` (`no_follower`, `no_workstation`, `not_dark`,
+        `favorite_suppressed`; the v3 head writes the names, so old files read
+        the same). One predicate each in `core/HardGates.h`, on facts
+        `Context::HardGateInputs` reads from the state with the same three
+        functions `EvaluateRules` raises the old weights by (`FollowerNear`,
+        `StationCraft`, `DarknessApplies`); run in the visitor before the
+        active-buff filters. The two Suppress skips in `UtilityScorer` are gone;
+        `WeightForCandidate`'s zero arms and `IsHardContextGated` stay for the
+        legacy learn feature (PR 2), commented as unreachable in a run. A
+        Remembrance hold's own gated item is set aside for the hold, as an
+        unaffordable one is.
+      - One combat clock: `PotionDiscriminator`'s timer, `UtilityScorer`'s
+        `OnCombatStart` / `OnCombatEnd` and its `Update` pass-through, and
+        `ConsumeCombatTransition` with its `StateManager` plumbing are gone.
+        The discriminator's start window, sustained-combat and lingering-poison
+        tests read `NeedSensorState::combatStartAt` (`core/CombatOnset.h`), the
+        `combat_onset` need's clock; the multiplier stays (the legacy floors).
+      - The refresh pass: `[Scoring] fRefreshPriorSec = 5` (hot-reloaded); each
+        active-buff filter passes its item in the blocking buff's last
+        `fRefreshPriorSec` seconds, never for an effect with no duration
+        (`core/RefreshPass.h`; bits computed by the magic-effects poll,
+        `ActorBuffs::refreshDue`, and compared by the skip gate). `covered(i)`'s
+        `left(r)` is centred on the same key.
+      - Behaviour against 0.23.54 changes only so: the gated items are
+        `filtered_by` instead of eligible-unscored (`fl` `ctx`, or
+        `suppressed`, which is no longer written); a spell for others at
+        context weight 0 can no longer be raised by the cold start; buffs come
+        back in their last `fRefreshPriorSec` seconds (a summon spell at the
+        limit in the last seconds of the oldest summon, the one a cast
+        dismisses: never while a thrall or an untimed summon is the oldest).
+        The gates run before dedup and truncation, so a gated item no longer
+        takes a dedup key or a `maxCandidatesAfterFilter` place (the 10.8k
+        logged decisions have no `duplicate` or `truncated` row). They also run
+        before the active-buff filters and the cooldown stage, so an item that
+        hits a gate as well is logged with the gate's reason where 0.23.54
+        logged the active-buff one (`armor`, `invisibility`, ...) or
+        `cooldown`: a `TargetsOthers` armour spell while armoured with no
+        follower near reads `no_follower`, a Suppress favourite caught by an
+        active-buff filter reads `favorite_suppressed`. A shadow fit of
+        `covered(i)` from the `IsActiveBuff` drops loses those rows. A
+        Remembrance hold's gated item on cooldown is not set aside: 0.23.54
+        dropped it at cooldown, so the hold could not place it then either.
+      - The combat clock differs from the old timer. The old one advanced by
+        the tick's `deltaSeconds` (`UtilityScorer::Update` from
+        `UpdateSubsystems`): not at all while the world is unloaded (the tick
+        returns early through load screens and every load door), and at most
+        1 s across any gap between ticks (an alt-tab, a stall). The new one is
+        `NeedClock` (`steady_clock`), so load-door, alt-tab and gap time count
+        in full: `fCombatStartWindow` (10 s) can run out behind a load door
+        where the old timer was still inside it. Pausing menus are no
+        difference in kind: the loop ticks on the main thread while one is
+        open, so the old timer ran there too, short only of what the 1 s clamp
+        cut from each gap between ticks. And the old state outlived a
+        load: `UtilityScorer::Reset` never reset the discriminator, so a save
+        loaded mid-fight into a non-combat save kept `m_inCombat` true, and the
+        sustained-combat regen multiplier stayed on until the next combat exit.
+        The new clock reads `isInCombat`, so that is gone. Re-entering combat
+        inside the window restarts both clocks alike.
+      - The v3 head records `refreshPriorSec` (`covered(i)`'s `left(r)`
+        centre); a hot reload that changes it starts a new segment.
+- [x] **Steps 3-4 of the order above, built in 0.23.56 (R8.2, the second PR on
+      `rewrite-r8`): the bootstrap reader, `ChoiceLearner` and the choice scorer,
+      in shadow** (the old engine still ranks; the new model is computed and
+      logged). The map's Phase 6, as built, says what each piece is
+      ([9-implementation-map.md](architecture/9-implementation-map.md), "As
+      built (R8.2)"). **The D2 deviation:** R6 chose `theta + b + recent + learn
+      mult (D2)`, so R8 keeps the minimum old-scorer code that computes its
+      `ln learn mult` feature exactly (the old learner, prior, recency, the
+      context weights as a binary gate, the floors and the cold start), moved
+      into `src/learning/legacy/LegacyLearnFeature` unchanged in arithmetic,
+      behind `[Scoring] bLegacyLearnFeature = true` (read and logged here; PR 3
+      makes it the live input; PR 4 keeps it out of the prune). Retiring it
+      needs a refit on 0.23.53+ logs where a variant without the old scorer
+      passes the gate.
+      - Done-when items met here: the explanation label is the largest term
+        (host test); the update's Var_p precision, step = variance,
+        Plackett-Luce and opportunity counting (host tests); the scorer
+        reproduces R6's per-row logits on the logged data (1,865 decisions,
+        largest difference 9e-11, identical hit@8 / page hit@1 / NLL).
+      - New INI keys: `[Scoring] bLegacyLearnFeature`, `fCoveredPrior`;
+        `[Learning] sBootstrapBias` (default `match`, R6 open point 4, the
+        user's), `fThetaProcessNoise`; `[Favorites] fFavoriteLifeMult`.
+      - Not in this PR: the cosave (THTA/BIAS next to BNDW), the ranking by the
+        new score, the prune.
+      - **In game (you):** the shadow columns appear in the v3 log; the pages
+        match 0.23.55's (the old engine still ranks); the bootstrap line in
+        the log; `Pipeline::ScoreShadow` in a Tracy trace under 1 ms.
+- [x] **Steps 4-5 of the order above, built in 0.24.0 (R8.3, the third PR on
+      `rewrite-r8`): the cutover -- the pipeline ranks on the choice score --
+      and the cosave.** The map's Phase 6 says what each piece is
+      ([9-implementation-map.md](architecture/9-implementation-map.md), "As
+      built (R8.3)"). **FLAG: the old scorer's learning score is now a LIVE
+      SCORE INPUT** (D2's `ln learn mult`, w = 1.36, on the rows the old floors
+      pass), behind `[Scoring] bLegacyLearnFeature` (default true).
+      ContextRuleEngine still runs every pipeline pass, but only to decide
+      which rows that feature is computed on.
+      - The scorer: every candidate that passes the filters is ranked on mu
+        (`ScoredCandidate::score`; `SlotScore()` returns it, remembered-only
+        rows -inf, overrides +inf; `operator<` is `Core::RanksBefore`, score
+        then DPS, generation order on a full tie). The old floors decide only
+        where the legacy feature applies; they drop nothing from the ranking.
+        kappa and the slot features enter only the logged logit, after the
+        allocation (`core/ChoiceLive.h`). The explanation (largest theta n cap
+        term) feeds the label and the reason hold in place of `DominantReason`.
+        `[Recs]` / `hg recs` print mu, sd, the top three terms, b and the
+        legacy feature. A missing or invalid bootstrap falls back to ranking on
+        ln utility over the floors' rows (an error line, `hg status`), without
+        the favourites rank scaling and the potion tier preference.
+      - The legacy switch is live and hot-reloadable: off, no legacy pass runs
+        (no context rules, prior, correlation or potion work), the feature is 0
+        and util missing 1 on every row; the old learner and UsageMemory keep
+        training.
+      - The cosave: `THTA` (the bootstrap's created_utc and SHA-256; the keyed
+        weights {key, mu, var} that moved from the bootstrap, since the load
+        gives every other key the file's value; early only: an answered
+        onset moves all 486 of its need's theta and strength variances, so
+        long play nears the full ~36k) and `BIAS` ({formID, mu, var, n, play minutes,
+        favourite bit}: the variance and the bit beyond the map's plan), pure
+        codec `core/ChoiceCosave`, written in BanditSerializer's callbacks by
+        `persist/ChoiceSerializer`. **BNDW STAYS** (D2 reads the old learner's
+        per-item state); "THTA/BIAS replace BNDW" waits until D2 is retired.
+        A load follows the old learner's decision: a reload of the same
+        character keeps the in-memory learning (b's 0xFF forms from the save);
+        otherwise THTA per key over the bootstrap (unknown keys dropped and
+        counted), BIAS for b; no THTA = the bootstrap, b under sBootstrapBias.
+        With the model off (no bootstrap), a save writes back the records
+        its load read, so a session without the file loses no learning.
+        `hg reset weights`, `hg reset all` and the dMenu reset return theta to
+        the bootstrap and clear b; `hg status` and the `[Soak]` heartbeat
+        (`choice theta=moved/entries b=`) report the counts; the learner latch
+        also fires on a theta or b update.
+      - The bootstrap's curves override the [Needs] line (encumbrance =
+        logistic 0.988677 73.4157; logged once; `hg needs` says where each
+        curve came from); configs/Huginn.ini's line matches, with a comment
+        (`tools/needs/make_need_ids.py --check` reads the bootstrap).
+      - Replay equivalence through the live path (the legacy switch, the
+        ranking pass, then the allocation's kappa): synthetic fixture 1.1e-11;
+        the mage's 1,865 decisions (219,049 rows) 9.3e-11, hit@8 0.7968, page
+        hit@1 0.5457, page NLL 1.289071, pick NLL 1.966564 -- identical.
+      - Behaviour changes to expect in play: pages are always full (nothing is
+        under a floor any more); the wildcard draws from the whole ranked list
+        below the slot, not only the floors' rows (R10 replaced it, 0.24.3); external
+        equips of items the floors used to drop now classify as `miss` (a
+        ranked candidate), not `novel`, so the soak's accept denominators move;
+        the v3 rows' `util` lacks the favourites rank scaling and the potion
+        tier step; the situational label speaks only for items whose own
+        explanation is the page's reason (none in the fallback).
+      - **In game (you):** see the R8.3 PR for the checks: a save/reload keeps
+        the theta and b counts of `hg status`, `hg reset weights` returns theta
+        to the bootstrap, `bLegacyLearnFeature = 0` through `hg reload` keeps the
+        pages filled, a missing bootstrap ranks on the old utility, and the
+        `[Soak]` `rate` field against the model below.
+- [x] **Step 6 of the order above, built in 0.24.1 (R8.4, the fourth and
+      last PR on `rewrite-r8`): the prune, SMALLER than the map's list on
+      purpose (the D2 deviation).** The map's Phase 6 item 6 lists what went
+      and what stayed ([9-implementation-map.md](architecture/9-implementation-map.md),
+      "As built (R8.4)").
+      - **Pruned, with every consumer:** the favourites rank scaling and
+        `fFavoritesBoostMin` (the uniform `fFavoritesBoostMax` multiplier stays
+        inside the legacy floors); the potion tier preference,
+        `sPotionTierPreference` and its 1.5 step; the old weights' reason (the
+        dominant reason, its weight-field table, the per-slot attribution and
+        its two label-only signals: `ContextReasonAttribution.*` and
+        `ContextRuleEngine_Reason.cpp` deleted); utility as a display value (the
+        Verbose display mode shows mu and the explanation term, the scorer
+        debug widget mu, sd, the top terms, b and lm, `[Reach]` prints the score
+        (`score=`, was `util=`), `[Recs]` the score alone; `SlotAssignment`
+        lost its utility copy); the debug widget's UsageMemory event buffer;
+        tools/replay's old learner (`Learner`, `Current`, `ChoiceTarget`,
+        `UsefulLife`: the v2 replay keeps the logged-utility and context-only
+        policies); the Debug suite's tests of pruned code (the rank-scaling
+        test; the reason derivation tests 17a-17h; what they checked of the
+        weights stays). The skip gate's ambient signature and elemental
+        window: R8.3 left no remnant (one local renamed). The shipped INI loses
+        `sPotionTierPreference` and `fFavoritesBoostMin`; no other `[Scoring]`
+        or `[ContextWeights]` key lost its only reader (each one checked by
+        grep), and the dMenu JSON holds none of them.
+      - **Kept for D2 (the allowlist).** R6 chose D2, which needs the old
+        learner's learning score on the rows the old floors pass, so these stay,
+        each used only to compute `ln learn mult` and `util missing` (and the
+        audit trail): FeatureBanditLearner, StateFeatures, BanditSubscriber and
+        the passed-over logic, UsageMemory and its subscriber; PriorCalculator,
+        CorrelationBooster, PotionDiscriminator::GetMultiplier;
+        ComputeAdaptiveLambda, ComputeUtility, the cold start; fMinimumUtility,
+        fMinimumContextWeight, fColdStartUCBBoost, iTopNCandidates (the cold
+        start only: the rank prefix `[Reach]` and the v2 / v3 logs report is
+        `PipelineStateCache::kReportedRankPrefix` = 10 since the R8.4 review),
+        fLambdaMin/Max, the exploration weight, the correlation keys and
+        `[ContextWeights]`; IsHardContextGated, ContextRuleEngine::EvaluateRules,
+        ContextWeightMap, WeightForCandidate; the Config.h learning constants;
+        BNDW; the v2 selection log and the v3 OldScore columns; `hg weights`,
+        `hg dump weights` and the dumps' train-count columns (`hg theta` comes
+        in R11).
+      - **Also kept, not for D2's feature (named here so the claim above is
+        exact):** the R8.3 FALLBACK ranking -- ln utility over the kept rows,
+        used only while the bootstrap is missing or invalid (an error line and
+        `hg status` say so) -- now `Legacy::Run::FallbackRanking` in the legacy
+        module, the one place utility still ranks; and the R7 bridge
+        (`ScoredCandidate::RankOnUtility`, `Core::BridgeScore`,
+        `Core::DisplayUtility`, deleted in 0.24.5), which the fallback, the R7
+        golden snapshot format, the Debug capture harness and the slot tests use
+        to state slot scores as utilities. `r8_check` confines both. Pruned in the review: the
+        choice score's `ln util` feature (computed live from the old utility,
+        off D2's path: the bootstrap reader now refuses a weight on it, read as
+        0, and warns), the widget's `confidence` payload (exp(score), never read
+        by AS2: now 0), `ScoredCandidate::GetContextWeight` and the
+        `Globals::GetFeatureBanditLearner` / `GetUsageMemory` accessors (no
+        callers).
+      - **Confinement, mechanical:** `tools/prune/r8_check.py` (standard
+        library): the PRUNED symbols appear nowhere in the code under `src/`,
+        `tools/` and `tests/` (comments included, Markdown excluded), nor the
+        pruned keys in the shipped INI, its templates or the dMenu JSON; the
+        LEGACY lines appear only in the allowlisted files, each with its reason
+        (the legacy module, the old learner's own files and subscribers,
+        BanditSerializer, the v2 selection log, `core/OldScore.h` and the v3
+        format, the settings loaders, the R7 snapshot format and capture
+        harness, the legacy host tests), or in a BUDGETED file within its
+        count, each line matching one of the file's allowed forms. A file that
+        ranks or does slot math live is never allowed whole (review 3:
+        `ScoredCandidate.h`, whose `operator<` and `SlotScore()` rank, and
+        `core/SlotScoreMath.h` had been), nor is a file on the live learner's
+        path (review 4: `ChoiceSubscriber` moved out of `EquipSubscribers.h`
+        to its own header, budget 0; `SelectionLogV3.cpp`, which builds the v3
+        rows the learner trains on, is budgeted). A LEGACY line names the old
+        engine's types, globals or config fields, the utility -> rank-score
+        bridge, the legacy module's facade (`Legacy::` / `Scoring::Legacy`, its
+        include, `ctx.legacy`, `FallbackRanking`, `KeptFor`, `RowFor`,
+        `OldScoreCapture`, ...), or reads the old utility's members (`.utility`,
+        `.breakdown` and its fields; C++ only) -- so utility cannot rank or
+        display again through a wrapper or a member read (review 2: the first
+        version listed only the inner names, and nine probes passed it;
+        review 3 added qualified reads, `X::utility`, and the cold-start flag
+        `isColdStartBoosted`; review 4 the old utility's row feature
+        `ln_util`, kept only on its enum line, the bootstrap's refusal and
+        that refusal's host test, and a REQUIRED check that the refusal itself
+        stays). A few words are LEGACY in one file only: a
+        bare `utility` / `breakdown` in `ScoredCandidate.h`'s code (an
+        accessor or comparator written on it) and `Suppress` in
+        `PipelineCoordinator.cpp` (its one read is the favorite_suppressed
+        filter's input). A STALE list fails comments that describe a pruned
+        behaviour as live (the display reason derived from the context
+        weights), and a missing shipped INI or dMenu JSON fails the INI-key
+        check instead of passing it unread.
+        Budgets, patterned: `PipelineCoordinator.cpp` 24 lines (the pass or its
+        skip, the switch, the fallback call, the old learner's weights-changed
+        latch, the D2 feature per candidate, the v2 / v3 log copies, the
+        filter's Suppress input, the Debug widget's cold-start count, five
+        comments) and its header 6; `ScoredCandidate.h` 9 (the old utility's
+        fields, the cold-start flag, `RankOnUtility`, three comments);
+        `core/SlotScoreMath.h` 2 (the bridge's two definitions); `UpdateLoop.cpp` 4 (the old learner's play
+        clock and forget sweep, which run with the switch off so BNDW ages);
+        `SoakMetrics.cpp` 2 (the `[Soak]` heartbeat's old-learner counts: the
+        soak's check that the forget sweep keeps BNDW bounded; reads only, off
+        the lm / um path); `UtilityScorer.cpp` 6 (only `[Recs]` lines logging
+        lm's inputs, the fallback's line and the `[COLD]` tag) and its header
+        0; `PipelineStateCache.h` 4 (the v2 log's cached rows);
+        `UtilityScorerDebugWidget.cpp` 1 (the cold-start badge);
+        `SlotSnapshot.cpp` 1 (`BuildAllocInput`, the live allocation's input:
+        the utility token it carries for the R7 capture and the host legacy
+        slot policy; no live core reads it); `SelectionLogV3.cpp` 10 (the v3
+        row's utility copy and the OldScore columns' learner fill);
+        `ChoiceSubscriber.h` 0; `core/ChoiceScore.h`, `core/Bootstrap.cpp` and
+        `BootstrapTests.cpp` 1 each (`ln_util`). Counted: ConsoleCommands, Main,
+        Globals, SettingsReloader and `Tests.cpp` on their R8.4 line counts, so
+        a new use anywhere in them fails. To get there the legacy half of UtilityScorer
+        (the pass, the per-candidate score, λ, the favourites helper and the
+        old learner, prior, correlation, potion and context-rule members) moved
+        to `learning/legacy/LegacyScorer.{h,cpp}` (`g_legacyScorer`, review
+        fix), the pipeline reads the pass through `learning/legacy/LegacyRun.h`
+        (`Legacy::Run`: the kept rows, the floors' rows, the row each candidate
+        reads (pure since the review, host-tested in `LegacyRunTests`), the
+        weights, the fallback ranking; `Legacy::OldScoreCapture`: the v3
+        OldScore columns, moved unchanged from `CaptureEligible`; the old
+        learner's clock, forget sweep, counts and weights-changed latch), and
+        the facts the live filters and the skip gate share with the context
+        rules moved to `context/ContextFacts.h`. `tools/prune/test_r8_check.py`
+        runs 43 mutation probes in memory, each of which must fail the check
+        (review 4 added: `ln util` back in the learner's RowFeatures or in
+        RankOnChoice, the bootstrap's refusal dropped (two ways), the v3 row's
+        lm taken from the old utility, the old learner read in
+        ChoiceSubscriber, the alloc input's score taken from the old utility;
+        review 3 added: utility ranking again through `operator<` or
+        `SlotScore()`, an accessor on the bare utility, a bridge call in the
+        slot math, the stale reason comment back, a pointer to the old
+        utility, the cold-start flag or a Suppress skip in RankOnChoice, and
+        a missing INI or dMenu JSON; the earlier set:
+        utility ranking again in the pipeline (`sc.score = log(sc.utility)`),
+        an `ln util` feature in RankOnChoice, the Verbose breakdown back in
+        IntuitionMenu, `utility * contextWeight` in UtilityScorer, a facade
+        call from SoakMetrics, a display backend or a `using namespace`, a
+        changed allowed form, a breakdown read in SlotLocker, an old learner
+        call in UtilityScorer, a `topNCandidates` or `lambdaMax` read, a
+        `RankOnUtility` call or a dead accessor in the pipeline, a legacy
+        global in a console command or test, `DisplayUtility` in the HUD menu,
+        `g_legacyScorer` in a display backend, a pruned symbol (the tier
+        preference, a Suppress branch, the discriminator's timer, the
+        elemental window) and a pruned INI key). PRUNED also covers what R8.1
+        pruned that has a name (the potion multiplier's own combat timer:
+        `OnCombatStart` / `OnCombatEnd` / `ConsumeCombatTransition`, and its
+        members scoped to PotionDiscriminator) and `Suppress` in
+        UtilityScorer; the R8.1 Suppress skips had no name of their own, and
+        `FavoritesMode::Suppress` stays (the INI mode, the filter's input, and
+        the legacy scorer's fav = 0 arm that keeps a filter drop's v3 OldScore
+        columns as they were). Stale comments in surviving code that named
+        the old engine were edited (the classifiers, GameState.h,
+        CandidateGenerator, WeaponData.h and about 30 other files).
+        0.24.20 (the #242 review): a PRUNED or LEGACY name is caught in its
+        house spellings too (`m_` / `g_` / `s_` before it, a `Get` accessor
+        named for it), every name with `legacyShadow` anywhere in it, the v3
+        row's `Flag::Scored` (any qualifier) and its OldScore member reads
+        (`r.old.floor`, `r.old.wouldUtil`, ...; on the live learner's path any
+        `.old` read, an alias included); 20 more probes.
+      - **Behaviour against 0.24.0:** none in the ranking (the pruned steps were
+        already uncalled since R8.3; `ln util` had weight 0 in the shipped
+        bootstrap; the rank prefix constant equals the shipped
+        `iTopNCandidates`). Visible: the Verbose mode's detail text (`mu:`, or
+        `s:` in the fallback, none on a row only the Remembrance hold placed),
+        the debug widget, `[Reach]`'s `score=` field, `[Recs]` without the old
+        utility (with `detail`, lm's inputs), and the v3 head's `favMin` now
+        equals `favMax` (the multiplier is uniform). `[Soak]`, the cosave and
+        the v2 log are unchanged.
+      - **Retirement condition for the allowlist:** a refit on 0.23.53+ logs
+        (the v3 rows log the old learner on every row) where a variant without
+        the old scorer passes R6's gate -- L1 / L7 with fresh per-row learner
+        columns, or θ + b + recent with more data -- or the user's call. Then
+        the LEGACY list in `r8_check.py` becomes PRUNED, BNDW gives way to
+        THTA/BIAS, and the map's full Phase 6 list goes. The learning clock
+        and the load's keep-or-replace decision stay (0.24.22: one shared
+        clock in `core/LearningClock.h`, HCID in `persist/CharacterRecord.*`):
+        the retirement deletes the old learner's two tick calls and its
+        `ResolveLoadedLearner`, and moves the save/load callback registration
+        (`SaveCharacterRecord`, `LoadCharacterRecord`,
+        `ResetPendingCharacter`, called from BanditSerializer's SKSE
+        callbacks under its unique ID `'QCNO'`) out of BanditSerializer.
+        Nothing of the decision changes, but the reset sites must then
+        tick before the reset (or under the learner's lock): today the old
+        learner's `Clear` ticks first; without it, a save taken between
+        `ResetChoiceLearning` and the site's tick would pair the reset
+        learning with the pre-reset clock, and a fresh session loading the
+        pre-reset save then that one would keep memory and lose the
+        reset. 0.24.19: the fit
+        tools read 0.24 logs for that refit (tools/fit/README.md): the v2
+        log's rows the old floors dropped (written 0.24.0-0.24.18 with an
+        all-zero breakdown) are skipped and no longer written, and a fit of
+        the live engine B reads the D2 feature from `lm` / `um` (`learn_live`).
+      - **Box status at R8.4:** steps 1-6 built ([x] above); the need signature
+        in the skip gate [x]; doc 11 step 7 [ ] (not R8's code: the sensors are
+        still to build); the update-loop thread [ ] (undecided, not blocking);
+        the "Done when" below: mechanical part met (r8_check, both builds, the
+        host tests), the in-game part open; the cure, churn and reach checks
+        [ ] (the in-game session after this PR).
+      - **In game (you):** the R8 session below -- the R6 bootstrap on the mage;
+        cures, potions and gear; the churn, reach and rate comparisons; a
+        save/reload; `bLegacyLearnFeature = 0` for a few minutes.
 - [ ] With those sensors, doc 11 step 7: the attacker's race on every hit and
       `poison_damage_rate`, for anticipatory resists.
 - [ ] **Decide: which thread runs the update loop** (2026-10-09, two Tracy
@@ -975,6 +1353,11 @@ changed in the same PR, and the shipped INI loses the dead keys.
   term, the scorer reproduces R6's replay numbers on the logged data.
   **In game (you):** a session on the R6 bootstrap; cures, potions and gear
   rechecked (the old "cures reach the page" checks move here).
+  *R8.4 (0.24.1): the mechanical part is met -- `python -I
+  tools/prune/r8_check.py` passes (the grep, with D2's allowlist for what R8
+  keeps), Debug and Release build at /W4 /WX, the host tests are green and the
+  replay on the mage's 1,865 logged decisions is unchanged; the in-game part
+  is open.*
 - [ ] **In game (you): a cure reaches the page while poisoned.** Accept when,
       while `poisoned` is on and a cure-poison item is held, the new engine
       shows it on the displayed page within one tick and keeps it for the
@@ -989,16 +1372,35 @@ changed in the same PR, and the shipped INI loses the dead keys.
       is frozen; not fixed there. It also labelled Potato Soup `Poisoned`:
       on LoreRim that soup carries Resist Poison (`[PopulateItemTags]`), no
       cure, so the new effect data should rank it as prevention, not a cure.
-- [ ] The need signature joins the pipeline skip gate (moved from R3 by its
+- [x] The need signature joins the pipeline skip gate (moved from R3 by its
       verifier, round 1 on #188): a quantised (0.05) need signature, so
       continuous needs re-score; it then replaces `ambientSignature` and the
-      elemental window. Not in R3 because it is not "logged only": modelled
+      elemental window. **Built in 0.24.0 (R8.3):** `Core::Needs::SignatureHash`
+      (FNV-1a over the K levels of `Signature`) of the vector NeedMonitor
+      evaluates each tick (with the bootstrap's curves, so the vector the
+      score reads) is compared in both gates (`NeedsForcedRun`,
+      `CheckHashSkip`); `ambientSignature`, the coordinator's elemental latch,
+      `StateManager::IsElementalWindowActive` and `m_elementalWindowActive`
+      are gone (the enrichment of isOnFire and the like stays for the legacy
+      context rules). The `[Soak]` heartbeat gained `rate runs/s=..
+      wildcard=..% wheeler/s=..` for the comparison below. One known loss: the
+      enrichment window's close (fixed 5 s) no longer forces a run by itself;
+      the damage-rate needs decay on their own clock (kDamageDecayTauSec) and
+      move the signature while they do, but not at that instant; the window
+      only feeds the legacy feature's context gate, so the cost is a stale
+      legacy feature until the next run. Not in R3 because it is not "logged only": modelled
       at 0.17 -> 4.6 pipeline runs/s in a melee fight and 0.01 -> 0.44 on a
       quiet dungeon walk, a wildcard on screen ~20% -> ~32% of quiet
       exploration (a roll happens on each run with none showing), Wheeler
       pushes ~4.6/s in fights, and the soak denominators move. Here, where
       the scorer reads the needs, re-scoring on a need step is the point;
       measure the wildcard share and the Wheeler push rate when it lands.
+      **Flapping** (no hysteresis; the levels round at x.025): argued, not
+      measured -- no need in needs.csv is known to sit on a boundary with
+      noise (0/1 facts, darkness held 5 s / 3 s, one-way vitals and decays,
+      distance needs that follow motion), and a run per tick (~10/s) is the
+      ceiling. **Soak gate:** quiet-scene `runs/s` above 1 (model 0.44)
+      stops the soak until `Signature` gets one level of hysteresis.
 - [ ] **After the rework, measure slot churn against this baseline.** The
       user, on the R3 build's LoreRim session (2026-10-09): "slot churn
       definitely increased". Measured in that session: 4-6 slot changes a
@@ -1011,7 +1413,13 @@ changed in the same PR, and the shipped INI loses the dead keys.
       swings. R7's hold tie band was checked and is refuted as a cause. The
       new scorer reads cap(i), where that food is `fortify_vital_magicka`
       (0.23.16 fixture), and a continuous need replaces the tier flips; the
-      lock and the challenger rule are R9.
+      lock and the challenger rule are R9. **Accept (proposed at R8.4, the
+      user's call):** read from `[SlotChurn]` and the heartbeat, not worse
+      than the baseline on like content -- at most 6 a minute outdoors, at most
+      40.7 a minute in combat, a session median at most 7.2 a minute, and no
+      5-minute window above 141. Worse is not a rollback by itself (the
+      ranking is reach-ins' test); it goes to R9 as the challenger rule's
+      starting number.
 
 ### R9. Bayesian challenger rule
 
@@ -1019,18 +1427,250 @@ Map Phase 7: swap when μc − μi > ln m + z·σ_Δ, σ_Δ with shared weights
 cancelling. Lock, home keys and seating stay. Done when: host tests prove no
 swap-back on fixed beliefs; churn buckets on Δ/σ_Δ. **In game:** churn per
 press in the heartbeat against the R8 session.
+- [x] **The rule** (0.24.2): `core/ChallengerRule.h` -- swap when
+      μc − μi > ln m + z·σ_Δ + the hold's tie band, z = Φ⁻¹(τ). `[SlotLocker]
+      fChallengerConfidence` = τ (0.8, doc 9's starting value: z 0.842,
+      clamped to 0.5-0.999, so z ≥ 0) and `fChallengerMinGap` = ln m (0:
+      confidence alone; clamped to 0-5). The slot hold (PASS 1c,
+      `SlotAllocCore.h`, `TakesKey`) asks it of the best challenger for each
+      held key whenever the allocation's input carries the scorer's beliefs
+      for both rows; the class cap's terms shift both scores and add nothing
+      to σ_Δ. `fChallengerMargin` now rules only the rows with no belief: the
+      FALLBACK ranking (no bootstrap) and the R7 golden snapshots, which is
+      why every golden and adversarial test still passes unchanged. The combat
+      upsert's barrier stayed `fCombatUpsertMarginMult × ln(1 +
+      fChallengerMargin)` until 0.24.13 (closed below).
+- [x] **σ_Δ** (`core/ChoiceBeliefs.h`): σ_Δ² = Σⱼ (aⱼ(c) − aⱼ(i))² Wⱼ (+ the
+      strength block) + (covered(c) − covered(i))² var(θ_covered) + var(b_c) +
+      var(b_i), Wⱼ = Σₖ nₖ² var(θₖⱼ) (+ recent) from the ranking's own tick.
+      b is keyed by form, so two stacks of one form (another uniqueID or
+      temper) share one b and it cancels: their b part is (sd(b_c) −
+      sd(b_i))², 0 unless one stack reads b as a favorite.
+      `RankOnChoice` builds one `BeliefTable` per run after the ranking pass
+      (covered after the upgrade gate) and every ranked row carries it and
+      its index (`ScoredCandidate::ChoiceParts::beliefs`, `beliefRow`), so
+      Wheeler's other pages read the same beliefs. Host-tested: the healing
+      potion pair (θ enters through (0.8 − 0.3)², not 0.8² + 0.3²), the
+      disjoint pair reaching the √(σc² + σi²) bound exactly, a dense brute
+      force with presence+strength, recent and covered, and each row's own
+      σ² equal to `RowScore::var`.
+- [x] **No swap-back on fixed beliefs** (`tests/core/ChallengerRuleTests.cpp`):
+      the argument is in `ChallengerRule.h` (the line is ≥ 0 and symmetric in
+      the pair, so a reversed swap, or any cycle, would need 0 > 0). That
+      argument is the proof; the property test is evidence for it: 600
+      random pages (random layouts, settings, τ, ln m, sparse attributes,
+      scores about one σ_Δ apart, random holders seated, every candidate's
+      dedup key and name unique), 12 passes each with the seating memory
+      carried, no direct (holder, challenger) reversal, and no give-way in
+      the last 3 passes on that seed. It counts direct reversals only, not
+      longer cycles or visible A→B→A bounces (the verifier's adversarial run,
+      3,000 worlds x 30 passes with the class cap forced, found neither with
+      unique keys). 0.24.6: a variant keeps duplicate dedup keys and names
+      (a 12-form pool, 518 of 600 worlds with a shared key) and settles on
+      both hold paths, no swap-back (see the closed item below).
+      The same worlds under per-pass sampling (Thompson, ruled out in doc 9)
+      give 3,523 swap-backs (735 give-ways under the rule), so the test sees
+      one when there is one.
+- [x] **Churn buckets on Δ/σ_Δ:** `[SlotChurn]` prints the pair's σ_Δ and
+      Δ/σ_Δ (and "under the line"); the heartbeat's slotChurn gains
+      `dsd(gone <0 <0.5 <1 <2 <4 >=4 nosd)` beside `ratio(...)` (kept, so a
+      session compares against R8's) and `under=` (changes at or under the
+      rule's line, on raw scores: mostly seating, home-key moves and the
+      fill; the hold decides on Regular keys after the class cap, so a
+      holder past its class's free count can give way to a challenger whose
+      raw lead is under the line, and those capped give-ways count here
+      too). `[Hold]` prints the gap against ln m + z·sd and P(better).
+- [x] **Churn per press in the heartbeat:** a last section, `| perPress
+      churn=N presses=M churn/press=X bounce10s=B (hold=H)`. churn = every
+      visible change but a page switch, a Used backfill, a Remembrance hold
+      and an override (trace-04's "without player or safety causes"). R8's
+      heartbeat has the same causes and presses, so
+      `python -I tools/soak/churn_per_press.py <R8 log> <R9 log>` gives both
+      sessions' figures the same way (the sum over the sum, per launch too).
+      For scale, trace-04 (0.23.26, the old engine): **12.37 churn per press**
+      (928 over 75 presses; hold causes 10.11 per press).
 - [ ] **Slot juggling is a tracked problem** (the user, 2026-10-10: "need
       watch the slot juggling"): the allocator moves items between slots too
-      often. An analysis of that night's session is being written, in local
-      trace notes (`traces/2026-10-10/trace-04-analysis.md`, not checked in). Its
-      numbers join the churn baseline under R8, and this stage is judged
-      against both.
+      often. The analysis is in local trace notes
+      (`traces/2026-10-10/trace-04-analysis.md`, not checked in), on 0.23.26:
+      - **Baseline (page 0, 77.2 unpaused minutes):** 1,092 changes; in combat
+        39.9 a minute (24.4 without player or safety causes), out of combat
+        9.6 (8.3). A→B→A on one slot within 5 s / 10 s: 37 / 63 in combat,
+        23 / 47 out. Of the 795 expired/unheld changes, 361 (45%) were not a
+        challenger clearing the margin (143 incumbent gone, 127 scored lower,
+        91 at 1-1.5×).
+      - **What R9 answers:** the hold's share -- near ties and score swings on
+        band flips (pattern 4: 434 changes passed the old 1.5×). Under the
+        rule a give-way needs P(better) > 0.8, never reverses on fixed
+        beliefs, and `under=` counts every change that got past without
+        clearing the line. The heartbeat's new `bounce10s` is the analysis's
+        A→B→A at 10 s, live (`hold=` the ones the hold's causes made).
+      - **What R9 does not answer** (each still counted, so the session shows
+        what is left): the magicka affordability filter dropping and
+        returning spells (pattern 1, the largest out-of-combat driver; a
+        candidate filter, R8.1's territory); home-key returns moving the
+        gap-filler (pattern 2: kept, "lock, home keys and seating stay");
+        wildcards (pattern 3: R10); the Remembrance hold's end (pattern 5:
+        the player's own press).
+      - **Judged against both baselines** in the R9 session: R8's session
+        (its heartbeat through `churn_per_press.py`) and trace-04's numbers
+        above. Not a rollback by itself if worse, as for R8.
+- [ ] **In game (you):** a session on 0.24.2 like the R8 one -- the
+      `[Soak]` `perPress` section against R8's (the tool), `dsd(...)` and
+      `under=`, `bounce10s`; whether a clearly better item is slow to take a
+      key (`[Hold]` lines with P near 0.8 are the rule at work; raise or
+      lower `fChallengerConfidence`). Recheck "workstation gear holds its key
+      at the bench" (Kept outside the rewrite) here.
+- Open: the lock's length is still 3 s (map Phase 7: shorten it after
+  measuring the `Expired` buckets, now on Δ/σ_Δ); slot captures (Debug
+  `--capture-slots`) do not record the beliefs, so a capture from a
+  choice-ranked session replays with the fixed margin.
+- [x] **Closed in 0.24.13 (`combat-upsert-bayes`): the combat upsert uses
+  the challenger rule** (the user, 2026-10-30). A frozen key goes to a
+  challenger when μc − μi > ln m + z_combat·σ_Δ, z_combat =
+  Φ⁻¹(`fCombatChallengerConfidence`), its own key at 0.995 (z 2.576):
+  mid-fight swaps cost more than calm ones, and the old upsert was
+  deliberately 3× the calm margin -- 3 × z(0.8) = z(0.9942). The pair's
+  σ_Δ comes from this run's table when the frozen item was scored this
+  run; otherwise (an older run's row) and in the FALLBACK ranking the
+  fixed barrier `fCombatUpsertMarginMult × ln(1 + fChallengerMargin)`
+  stays, and 0 still turns the upsert off in both rankings. The upsert
+  line prints σ_Δ and P like `[Hold]`. Host-tested
+  (`tests/core/CombatUpsertTests.cpp`): no swap-back and every page
+  settles on random fixed beliefs (1,500 worlds), a sure challenger takes
+  the key and an uncertain one does not, and the fallback planner equals
+  the pre-0.24.13 one on 4,000 random pages.
+- [x] **Closed in 0.24.13: "only the best challenger is asked" is a
+  switch.** `[SlotLocker] bTestAllChallengers` (0 = the best challenger
+  only, as before; 1 = in rank order, the first past the line takes the
+  key), for the hold and the combat upsert alike, hot-reloaded by `hg
+  reload`. Under the fixed margin the switch changes nothing (a lower
+  score cannot clear a line the best one missed), so the golden and
+  fallback paths are bit-identical; host-tested on 300 synthetic pages,
+  and the R9 property worlds (unique and duplicate keys) settle with no
+  swap-back with it on. **In game (you):** leave it at 0 for the R9
+  session; to try it, `bTestAllChallengers = 1`, `hg reload`, and look
+  for `[Hold]` / combat upsert lines ending `higher challenger(s) missed
+  the line`.
+- [x] **Closed in 0.24.6 (`sweep-allocator`): two candidates with ONE dedup
+  key on a page.** Seating and the hold found a key's owner by the first
+  match (the `seats[j]` lookups), so a key already taken could read as free
+  and the page churn with nothing moving -- the R9 verifier's synthetic
+  worlds, on both the rule and the fixed margin. The pipeline cannot hand
+  the allocator two such rows today: `CandidateFilters` step 6 drops a
+  second candidate of a key as `duplicate` (two plain stacks of one weapon
+  form with no `ExtraUniqueID`), and the Remembrance rows added after the
+  ranking are only for a form no ranked row has, once per form
+  (`PipelineCoordinator::ScoreCandidates`). Tempered or enchanted stacks with
+  their own uniqueID are different keys of one form (one per page by the
+  formID dedup); two forms of one name, one per page by the name dedup; a
+  spell and a scroll of one effect, different keys. The core gives every key
+  one row anyway (`Engine::MarkShadowed` / `OwnerOf`: the first ranked row
+  with the key; the rest are never placed, found or drawn), so no caller can
+  bring the churn back. Host-tested: the R9 property test with duplicate keys
+  and names settles on both paths (fails without the fix: some worlds stay
+  unsettled, how many depends on how the fix is taken out), a named case, and the golden test's page invariant (no shadowed
+  row shown).
 
 ### R10. Wildcards by uncertainty
 
 Map Phase 8: a reserved slot per page, ranked by relevance × σ plus a small
 random term, propensity logged, flags per page (Wheeler leak). **In game:**
 wildcard picks against the soak's 8 of 333.
+- [x] **Built in 0.24.3 (`r10-wildcards`, on `rewrite-r8`).** As built:
+      [9-implementation-map.md](architecture/9-implementation-map.md), Phase 8
+      "As built"; the design: [5-slots.md](architecture/5-slots.md#wildcard-system).
+      - **The reserved slot:** one wildcard key per page, the last key in fill
+        order with `bWildcardsEnabled`, never the first (`Core::SlotAlloc::SeatOf`;
+        key 8 on the shipped pages, named at load by `[SlotSettings]`). The
+        cached wildcard is pinned there (a pass of its own, like a Remembrance
+        hold); a roll draws on the finished page and puts its row there. The
+        rank swap, the hold's and the fill's special cases for it, and the
+        same-type draw are gone.
+      - **Relevance × σ:** w = logistic(μ − μ_cut) × σ (μ_cut: the row the
+        wildcard puts off the page -- the key's own item, or, when that item
+        outranks the weakest row shown, the weakest row, whose key it moves
+        to, so a wildcard never pushes the page's best rows off it; σ: the posterior sd, high for an item never
+        picked, one whose battery ran down, a newly learned spell, a pairing
+        with little evidence); the random term is a uniform share of the draw
+        (`[Wildcards] fUniformShare = 0.1`), so the propensity stays exact;
+        P(roll) runs from `fBaseProbability` (nothing uncertain near the page)
+        to `fMaxProbability` (an unknown item at its edge), once per refractory
+        window (a failed roll restarts it), so it sets how often wildcards
+        appear (`core/WildcardGate.h`, host-tested).
+      - **Propensity logged:** v3 `wp` = P(roll) × P(the draw shows the form),
+        per window.
+      - **Flags per page:** an off-screen Wheeler page shows its own cached
+        wildcard and never rolls; it no longer inherits the displayed page's.
+      - **Discovery (R5's note, newly learned spells not on the HUD):** a new
+        spell has no b, so its σ carries b's prior sd (0.5), as does every
+        never-picked item; it weighs high when its score is also near the
+        page. Whether that brings new spells up often enough is the in-game
+        check below.
+        **0.24.14, the discovery boost** (the user's call, 2026-10-30: an INI
+        option, default on): a spell learned or an item gained for the first
+        time on the character draws with b's variance × m(age) =
+        1 + (M − 1)·2^(−age/H), M = 4, H = 1 h of play, until it decays or its
+        first pick; never what a load finds. Wildcard draw only: in the
+        challenger rule a larger σ would make it take a key later, and in the
+        summon gate it would move μ. Cosave record DISC.
+        `docs/architecture/5-slots.md`, "The discovery boost".
+      - **Telemetry:** `[Soak] ... wildcards rolled= relevant= picked=`
+        (relevant: a need the player had at the draw values the item's
+        effects); one `[Wildcard] Page P key K: 'name' (p=..)` info line per
+        draw.
+- [ ] **In game (you):** a session of ordinary play on the R10 build.
+      - The load log names each page's wildcard key: `[SlotSettings] Page 0
+        'Main': 8 slots, wildcard key 8` (and the `[WildcardConfig]` line shows
+        the uniform share).
+      - Out of combat a wildcard appears on key 8 only (never on another key),
+        with the Wildcard subtext on the wheel; it stays about 30 s, then key
+        8's own item comes back; none in combat.
+      - When key 8's own item is better than the weakest item shown, a
+        wildcard moves it to that item's key (the `[Wildcard]` line ends
+        `its item moved to key J`) rather than taking it off the page; it goes
+        back to key 8 when the wildcard ends.
+      - Turn Wheeler to page 2 while page 1 shows a wildcard: page 2's key 8
+        shows no wildcard label unless page 2 rolled its own.
+      - The heartbeat's `wildcards rolled= relevant= picked=` over the session,
+        against the soak's 8 picks of 333 placements (2%); and against the
+        relevant rolls (doc 9's measure). Note any wildcard that made no sense.
+      - Learn a new spell and play on: note whether, and after how many
+        `[Wildcard]` lines, it comes up on key 8. It has no special boost:
+        every never-picked carried item shares b's prior sd, so it competes on
+        how close its score is to the page (open question in the PR).
+- [x] **Closed in 0.24.6 (`sweep-allocator`), from R10's verifier:**
+      - *A wildcard counted though the locker hid it.* `WildcardManager::Commit`
+        ran before `SlotLocker::ApplyLocks`, so a draw the locker did not show
+        was cached, logged (`[Wildcard] Page P key K`) and counted in
+        `rolled=`. R10 already skipped the roll while key 8's lock held and
+        kept lock-held forms out of the pool; the post-lock dedup compares
+        NAMES, so a row named like a lock's item of another form was still
+        drawn and cleared. Now the pool also leaves out lock-held names
+        (`WildcardIn::heldNames`), and `Commit` runs after `ApplyLocks` and
+        counts a draw only if the seat shows it (`Core::Wildcard::DrawnShown`;
+        else `CommitFate::NotShown`: not cached, logged or counted, the roll
+        waits). The `[Soak]` field order is unchanged.
+      - *Two ordinary rows of one name on a page* (synthetic seeds 409 and
+        459, both arithmetics). The code means one per name (the fill, the
+        draw and the post-lock dedup all dedup by name: the player cannot
+        tell two forms of one name apart); the slot hold's owners were the
+        gap, and the override and Remembrance passes checked forms only. All
+        check names now; the golden page invariant checks every row (one
+        wildcard, on its key; no form, name or shadowed row twice). The
+        PR's verifier found one more: a guest (an item an override pushed out
+        of its seat, held where it stands) was checked against the overrides
+        and holds only, not against the seat owners already held, so a page
+        could read [Twin] [override] [Twin], or one form on two keys for two
+        stacks (predates 0.24.6). Guests now check against every holder
+        accepted before them too; a named adversarial test and 2000 built
+        synthetic worlds pin it.
+      - **In game (you), on the rewrite-r8 session:** no key shows the same
+        name as another (two enchanted copies, or a potion and a hold of its
+        twin); a `[Wildcard] Page P key K` line is always followed by that item
+        on key K (the debug log's `drew '...' but the slot locks did not show
+        it` line, if any, names one that was not, and no `[Wildcard]` info line
+        or `rolled=` count goes with it).
 
 ### R11. Console, telemetry, docs; retire the classifiers
 
@@ -1040,6 +1680,121 @@ override layer (and the [overrides directory](#an-overrides-directory-so-mod-aut
 delete the classifiers and per-type dumps; rewrite `CLAUDE.md`,
 `docs/README.md`, the architecture docs and the Nexus page; archive
 `4-contextual-bandits.md`. Review the slot classes as a whole here (below).
+
+**Built in 0.24.4 (R11, `r11-retire` on `rewrite-r8`), SMALLER than the map's
+list on purpose: the D2 deviation again.** The map says "delete
+`SpellClassifier`, `ItemClassifier`, the tag enums, the scroll classifier".
+They cannot go while D2 stays: D2's `ln learn mult` applies on the rows the
+old floors keep, the floors need the old context weight, and the context
+weight (`ContextWeightForCandidate`), the correlations and the potion
+multiplier read the classifiers' tags and types. Deleting them would change
+which rows carry the feature, so D2 would no longer be R6's D2. **So R11
+retires the classifiers from the live engine and confines them to D2**, the
+way R8.4 confined the old learner; they go when D2 goes (R8's retirement
+condition: a refit on 0.23.53+ logs where a variant without the old scorer
+passes R6's gate, or the user's call).
+- [x] **Re-derived from cap(i):** one pure module, `core/CapFacets.h` (facets:
+      the yes/no questions, each from named effects.csv columns; the 24 slot
+      classes' `Matches` and the `Classify` order), read through
+      `effect/Facets.h` (the catalog's `FindOrMapId`). Its readers: the slot
+      classes (`SlotClassifier`, the class cap, the slot settings' override
+      probes, the snapshot's match masks), the candidate filters (full vitals,
+      the active buffs, the resist check -- one `IsResistRedundant` for potions
+      and spells -- and the no_follower gate), the override finders (the three
+      restore potions by facet, ranked by the potion's own restore row
+      (`PotionRestoreWithin`),
+      `ItemRegistry::GetBestPotion` deleted; the restore-spell fallback; the
+      cure; waterbreathing), the "Ally Support" label (TargetsOthers) and the
+      widget's potion styling. Every ranked row carries its subject
+      (`ScoredCandidate::subject`, filled once per run). The ammo / charge
+      display reads `WeaponType` and the stack, form facts, unchanged.
+      Host tests: `CapFacetsTests` (each facet's columns, each class arm, no
+      dead class, and real items from the three dump fixtures).
+- [x] **Review of the slot classes as a whole:**
+      [5-slots.md](architecture/5-slots.md), "Slot classes, re-derived from
+      cap(i)": per class, the facets, the change against the classifiers and
+      why. The enum stays (players name it). Visible changes: FoodAny takes
+      every food, alcohol included; AlcoholAny is food that intoxicates or
+      costs its drinker something that is not a vital drain (the catalog has
+      no alcohol column; raw fish's paralysis is a known stray); SummonsAny no
+      longer takes every Conjuration spell; BuffsAny takes a Fortify
+      <craft> potion; Utility takes slow fall and cure spells; a damage
+      cloak or rune is DamageAny by its effect. An item the catalog does not
+      map matches only what its source decides. 0.24.9: cap(i) gained an `alcohol`
+      column (drink and drug marks of the records, effects.csv); AlcoholAny
+      reads it and FoodAny excludes alcohol again (the user, 2026-10-30).
+      0.24.16: drugs and alcohol are one group, narcotics (the user,
+      2026-10-30): the column is `narcotic`, the class NarcoticsAny (never
+      a poison); Sweet Skooma, vanilla's Sleeping Tree Sap and Redwater
+      Skooma are caught by their drug MGEFs.
+- [x] **Confined, mechanically:** `tools/prune/r8_check.py` gains CLASSIFIER
+      (the classifiers, the tag and type enums, `HasTag`, the override
+      loaders, `.tags` / `.tagsExt` / `.element` reads; code only, comments
+      stripped) allowed only in the classifiers' own files, the candidate
+      types that copy them, D2's inputs (the context rules and weight, the
+      correlations, the potion multiplier, the prior, the legacy module), the
+      override-section parser, the Debug registry widget, and budgets (the
+      soul gem split in `CandidateGenerator.cpp`, 2 exact lines; `Tests.cpp`,
+      counted); PRUNED gains the per-type dumps and the live helpers they
+      replaced; REQUIRED keeps the facet readers wired. 21 new mutation probes
+      (67 in all), each of which must fail it.
+- [x] **Per-type dumps deleted** (`hg dump spells / food / potions / scrolls /
+      weapons / apparel / diseases`); `hg dump all` ships in every build and
+      its slot class is the cap-derived one; `hg dump weights` (the old
+      learner, D2) describes items by the catalog's kind and facets.
+- [x] **The override layer as a directory** (`core/OverrideFiles.h`):
+      `Data/SKSE/Plugins/Huginn/EffectOverrides/*.ini` alphabetically, the
+      player's `Huginn_EffectOverrides.ini` last; plugin-relative keys
+      (`<plugin>|<local FormID>` = an effects.csv column); a file that cannot
+      be read, or whose format version (`[Huginn] iFormatVersion`) is newer
+      than this build reads or invalid, is skipped and named; entries for plugins not loaded are skipped quietly;
+      later files' replacements are counted. `Huginn_Overrides.ini` (type /
+      tag) is NOT replaced: it corrects the classifiers, so it now reaches D2
+      only, and its one shipped fix (Arcane Mass Inhibition, Debuff) is part
+      of what keeps D2 exact.
+- [x] **Console:** `hg theta` (what ranks, θ / b counts, the drift from the
+      bootstrap, b's spread, the outside option now), `hg theta <FormID>`
+      (b, cap, facets, every θ·n·a term at the live need vector, the largest
+      weights under any need), `hg dump theta` (every moved θ beside the
+      bootstrap's, every b); `[Recs]`'s header carries the run's outside
+      option u0; `hg weights` is labelled the old learner's. The dMenu reset
+      button's text and toast say what it does now.
+- [x] **Telemetry:** `[Soak]` appends `drift` (means moved, mean / rms /
+      largest |Δμ| and where, variances moved, mean ln variance ratio, b's
+      spread, θ_covered; `core/ThetaDrift.h`, host-tested); every field before
+      it keeps its place (docs/playtest/LongPlaySoak.md).
+- [x] **Docs:** CLAUDE.md and docs/README.md describe the new pipeline;
+      `4-contextual-bandits.md` archived (`architecture/archive/`, banner);
+      R11 banners on the pre-rewrite pages (0, 1, 2, 3, 6, 7, 8, 11,
+      Performance, classifier-coverage, candidate-system, TESTING-INDEX) say
+      what changed;
+      5-slots.md's class section rewritten; the Nexus page (bbcode) rewritten
+      where it described the old engine (how Huginn decides, effect overrides,
+      the class list, the console, darkness); `page.md` flagged as not
+      regenerated.
+- [ ] Not in R11: the classifiers' deletion (with D2, above); lifting
+      `ApparelClassifier`'s scope guard (all armour as candidates: a decision
+      of 2026-10-08, not an R11 item); a full rewrite of the pre-rewrite
+      architecture pages' bodies (they carry banners).
+- **Behaviour against 0.24.3:** μ is computed as before (it reads cap(i) as
+  before; the D2 pass reads the same tags), so it moves only through the
+  candidate set (the D2 floors' cold start counts the rows that pass). What
+  moves: the candidate set the filters pass, which slots accept
+  an item (the review above), which candidates the filters drop (by facet:
+  e.g. an armour-spell filter no longer drops a ward; a multi-resist spell is
+  redundant when any one of its resists is covered; Resist Magic counts for
+  spells; a hostile or damaging spell, an elemental cloak with its resist
+  rider, is never resist-filtered), which items an override may surface (pure
+  by the self_harm / intoxication / hostile facets; a restore potion ranked by its restore
+  row, not its costliest effect), and the "Ally Support" label;
+  the v3 rows' `fb` follows the filters.
+- **In game (you):** see the R11 PR: a typed page (page 2 on the shipped
+  layout) fills as before with the reviewed classes; `hg theta`, `hg theta
+  <FormID>`, `hg dump theta`, `hg dump all` in a Release build; the `[Soak]`
+  drift section; the dMenu reset text; an effect override file in
+  `Huginn/EffectOverrides/` loads (log line); the critical-health override
+  still finds a potion and the poisoned override a cure.
+
 
 ### R12. Baseline soak and release (in game, you)
 
@@ -1122,8 +1877,8 @@ start before R8 unless it blocks play.
 - **Remembrance follow-ups:** a pair pseudo-item, external equips, instance
   tracking, Wheeler `Empty` policy, a dMenu toggle. Design in
   [architecture/5-slots.md](architecture/5-slots.md).
-- **Review the slot classes as a whole** -- do it in R11, when they are
-  re-derived from cap.
+- **Review the slot classes as a whole** -- done in R11 (0.24.4):
+  [5-slots.md](architecture/5-slots.md), "Slot classes, re-derived from cap(i)".
 - **Workstation gear holds its key at the bench**, and the bench flicker
   standing still (confirm with a still camera first). Recheck after R9.
 - **`ApparelRegistry` copies half of `FormRegistry`** -- refactor when R2
@@ -1138,6 +1893,18 @@ start before R8 unless it blocks play.
 - **uid87 ExtraHealth read 0, then 1.00, then 1.30** (LoreRim Long Bow). Watch
   only; close if it stays quiet.
 - **A torch on a Huginn Wheeler wheel** is unverified (XS).
+- **0.24.26, the hand equip gate** (Known bugs, below). In game: press a spell
+  key while holding a charged spell in that hand -- the swap waits for the
+  release (an info `[HandEquip] ... went after N ms held` line), and a charge
+  held past 3 s drops the press (`[HandEquip] ... dropped ... still charged,
+  held after 3.0 s`); the cast is never cut short. Watch for a `went ahead
+  through` debug line (a caster state 7-9 that did not clear in 250 ms: is
+  one of them a resting state?). Then draw a weapon from
+  the inventory and watch for a `[HandModel] ... behaviour graph disagrees`
+  warning (there should be none). In the inventory the number keys must reach
+  the favourites, not Huginn. Debug log: `[EquipCaller]` names the thread and
+  call path of every hand change Huginn did not make (the load-time Fireball
+  drop below).
 
 The old engine's pending checks (cures reach the page, Cure Greater over plain
 Cure Disease, useful life, the Phase 3 comparison) test code that is frozen.
@@ -1175,6 +1942,40 @@ perks, level -- stay out (CLAUDE.md, Forbidden Information).
   R3 use `steady_clock`; fix the old ones when they become needs.
 
 The transform cache and the 37 misread races: done in R0.
+
+**Fixed in v0.24.26 -- a slot key swapped a spell over a charged one.**
+2026-10-31 00:38 (LoreRim): a tap fired 0.6 s into a Fireball charge and put
+Calm Touch in the right hand; the charge was cancelled, the caster went idle
+with no release, and from then on the behaviour graph ignored equips
+(iRightHandType stayed 9, weapons stayed on the sheath node) until the game
+froze. A slot key's equip into a hand (spell, scroll, weapon, staff, torch)
+is now parked and done on the main thread once the player lets go of the
+cast -- both hands checked unless a right-hand equip leaves the left alone
+-- and never interrupts it: a cast still going after 3 s drops the press
+(a first cut interrupted at 1 s, which only split the 00:38 sequence over
+two frames). Caster states 7-9 are waited on 250 ms at most; both waits run
+on the game clock (`core/HandEquipGate.h`, `input/HandEquipGate`). A shield
+waits as a left-hand item. While an equip waits, its selection is held
+undecided and its confirm window, Remembrance capture and own-press note
+restart from the equip (`core/SelectionGate.h`). If the hook stops ticking
+with an equip parked for 5 s, an error line says so and the keys equip inline
+until it runs again. Potions, food,
+poisons, ammo and other apparel do not wait. After a hand equip while drawn
+(kDrawn, not sheathing) and with both casters idle, the hands are redrawn, as
+Wheeler-Refined does (`[Equip] bRedrawAfterHandEquip`).
+The slot keys, and a tap still waiting out the double-tap window, now do
+nothing in a loading screen, the main menu, a pausing menu, a menu that takes
+the controls (favourites, dialogue, crafting) or without the
+player's 3D, and the key goes to the menu (the inventory's favourites). New
+diagnostics: a debug line of both casters and the graph before each hand
+equip; caster states 7-9 named (they read as idle before); a
+`[HandModel]` warning when the graph's hand type clearly disagrees with the
+hand for 1 s, drawn and settled; and `[EquipCaller]`, the thread and stack
+of every hand item taken off not by Huginn. Open: the Fireball that leaves the
+right hand 3-6 s after every load of one save (no Huginn path logs it; the
+`[EquipCaller]` line should name who), and the other-hand weapon swap and
+bows still equip as before (Wheeler unequips unqueued and cleans both hands
+first).
 
 **Old engine, frozen (R8 replaces it; left as they are because old-engine
 scoring is frozen).** Found in the LoreRim R3 session (2026-10-09); the
@@ -1249,8 +2050,11 @@ first: a different default; [modifier keys](#modifier-key-bindings); a
 read-only widget mode. The double-fire counts as a reach-in for metric 1.
 
 ### An overrides directory, so mod authors can ship their own
-**Status:** open (the user, 2026-10-02); lands with R11's per-list override
-layer. `Huginn_Overrides.ini` becomes a directory, SPID `_DISTR.ini` style.
+**Status:** built in 0.24.4 (R11) for the effect overrides
+(`core/OverrideFiles.h`: `Huginn/EffectOverrides/*.ini`, the player's file
+last); the notes below were the brief. `Huginn_Overrides.ini` (the old
+classifiers' type / tag file) stays a single file: it reaches only D2.
+(The user, 2026-10-02.) `Huginn_Overrides.ini` becomes a directory, SPID `_DISTR.ini` style.
 Plugin-relative keys (`[Spell:0x800~Mod.esp]`), never runtime FormIDs, names
 or editor IDs; alphabetical precedence, the player's file last; missing plugins
 skipped quietly; one bad file cannot break the rest; a documented vocabulary

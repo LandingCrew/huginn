@@ -7,7 +7,9 @@
 #include <numeric>
 #include <set>
 #include "SlotClassifier.h"
+#include "core/ChallengerRule.h"
 #include "candidate/CandidateTypes.h"
+#include "core/SlotAllocCore.h"   // SeatOf: the page's wildcard key (R10)
 
 namespace Huginn::Slot
 {
@@ -16,15 +18,6 @@ namespace Huginn::Slot
     // configured from INI and round-trips to Regular.
     static_assert(SLOT_CLASSIFICATION_COUNT == 24,
         "SlotClassification changed — update ParseClassification and ClassificationToIniString");
-
-    void SlotSettings::LoadFromFile(const std::filesystem::path& iniPath)
-    {
-        CSimpleIniA ini;
-        if (LoadIniFile(ini, iniPath, "SlotSettings"sv)) {
-            SKSE::log::info("[SlotSettings] Loading from: {}"sv, iniPath.string());
-            LoadFromIni(ini);
-        }
-    }
 
     void SlotSettings::LoadFromIni(const CSimpleIniA& ini)
     {
@@ -123,13 +116,20 @@ namespace Huginn::Slot
                     return f == OverrideFilter::HP || f == OverrideFilter::Any;
                 };
 
-                Candidate::ItemCandidate potion{};
-                potion.type = Item::ItemType::HealthPotion;
-                potion.tags = Item::ItemTag::RestoreHealth;
-                Candidate::SpellCandidate spell{};
-                spell.type = Spell::SpellType::Healing;
-                spell.tags = Spell::SpellTag::RestoreHealth;
-                const std::array<Candidate::CandidateVariant, 2> probes{ potion, spell };
+                // R11: the probes are stated as the effect catalog would read
+                // a healing potion and a self-cast restore spell
+                // (core/CapFacets.h), not as classifier tags.
+                Core::Facets::Subject potion;
+                potion.source = Core::Facets::Source::Item;
+                potion.known = true;
+                potion.kind = Core::Effect::Kind::Potion;
+                potion.facets.Add(Core::Facets::F::RestoreHealth);
+                Core::Facets::Subject spell;
+                spell.source = Core::Facets::Source::Spell;
+                spell.known = true;
+                spell.kind = Core::Effect::Kind::Spell;
+                spell.facets.Add(Core::Facets::F::RestoreHealth);
+                const std::array<Core::Facets::Subject, 2> probes{ potion, spell };
 
                 std::set<size_t> landing;
                 for (const auto& probe : probes) {
@@ -138,7 +138,7 @@ namespace Huginn::Slot
                     for (const size_t s : order) {
                         if (!acceptsHealth(slots[s].overrideFilter)) continue;
                         if (firstAccepting == SIZE_MAX) firstAccepting = s;
-                        if (SlotClassifier::Matches(probe, slots[s].classification)) {
+                        if (Core::Facets::Matches(probe, slots[s].classification)) {
                             firstMatching = s;
                             break;
                         }
@@ -156,20 +156,21 @@ namespace Huginn::Slot
 
             newPages.push_back(std::move(page));
 
-            // Log page summary. The `w` flag and the wildcard-capable count are
-            // not cosmetic: WildcardManager caps a page's rolls at the number of
-            // slots accepting wildcards (SlotAllocator::GetWildcardSlotCount ->
-            // PipelineContext::displayWildcardSlots), so that count is the only
-            // thing separating "this page rolled nothing because it is unlucky"
-            // from "because it has no seat for a wildcard" — and without it here
-            // neither is distinguishable from a log.
+            // Log page summary. The `w` flag and the wildcard key are not
+            // cosmetic: R10 gives each page ONE wildcard key, the last key in
+            // fill order with bWildcardsEnabled and never the first
+            // (Core::SlotAlloc::SeatOf, SlotAllocator::GetWildcardSeat), so this
+            // line is the only place that says which key it is -- or that the
+            // page has none, which is otherwise indistinguishable from a page
+            // that is merely unlucky.
             std::string slotSummary;
-            size_t wildcardCapable = 0;
+            std::vector<Core::SlotAlloc::SlotRec> seatRecs;
             for (size_t s = 0; s < newPages.back().slots.size(); ++s) {
                 const auto& slot = newPages.back().slots[s];
-                if (slot.wildcardsEnabled) {
-                    ++wildcardCapable;
-                }
+                Core::SlotAlloc::SlotRec rec;
+                rec.wildcardsEnabled = slot.wildcardsEnabled;
+                rec.priority = slot.priority;
+                seatRecs.push_back(rec);
                 if (s > 0) slotSummary += "|";
                 // `:r0` only when remembrance is off: it is on by default,
                 // and the common line stays as it was.
@@ -180,9 +181,11 @@ namespace Huginn::Slot
                     slot.wildcardsEnabled ? 1 : 0,
                     slot.remembrance ? "" : ":r0");
             }
-            SKSE::log::info("[SlotSettings] Page {} '{}': {} slots, {} wildcard-capable [{}]"sv,
+            const size_t seat = Core::SlotAlloc::SeatOf(seatRecs);
+            SKSE::log::info("[SlotSettings] Page {} '{}': {} slots, {} [{}]"sv,
                 p, newPages.back().name, newPages.back().slots.size(),
-                wildcardCapable, slotSummary);
+                seat == Core::SlotAlloc::npos ? std::string("no wildcard key") : std::format("wildcard key {}", seat + 1),
+                slotSummary);
         }
 
         // Slot-position stickiness. Read here rather than in the SlotLocker
@@ -202,8 +205,24 @@ namespace Huginn::Slot
             static_cast<float>(finiteOr(ini.GetDoubleValue("SlotLocker", "fChallengerMargin", 0.5), 0.5)), 0.0f, 10.0f);
         m_holdSeatedItems.store(hold, std::memory_order_release);
         m_challengerMargin.store(margin, std::memory_order_release);
-        SKSE::log::info("[SlotSettings] Hold seated items: {} (challenger margin {:.0f}%)"sv,
-            hold ? "on" : "off", margin * 100.0f);
+        // R9: the Bayesian challenger rule. Out-of-range values clamp to the
+        // rule's own range (core/ChallengerRule.h): tau below 0.5 would let a
+        // probably-worse item in and break the no-swap-back argument.
+        const float confidence = static_cast<float>(std::clamp(
+            finiteOr(ini.GetDoubleValue("SlotLocker", "fChallengerConfidence", 0.8), 0.8),
+            Core::Challenger::kMinConfidence, Core::Challenger::kMaxConfidence));
+        const float minGap = static_cast<float>(Core::Challenger::ClampMinGap(
+            ini.GetDoubleValue("SlotLocker", "fChallengerMinGap", 0.0)));
+        m_challengerConfidence.store(confidence, std::memory_order_release);
+        m_challengerMinGap.store(minGap, std::memory_order_release);
+        // 0.24.13: the hold and the combat upsert ask every challenger in rank
+        // order (the first past the line wins), or the best one only.
+        const bool testAll = ini.GetBoolValue("SlotLocker", "bTestAllChallengers", false);
+        m_testAllChallengers.store(testAll, std::memory_order_release);
+        SKSE::log::info("[SlotSettings] Hold seated items: {} (challenger rule: P(better) > {:.3f}, z {:.3f}, ln m {:.3f}, "
+                        "asks {}; fallback ranking: margin {:.0f}%)"sv,
+            hold ? "on" : "off", confidence, Core::Challenger::ZForConfidence(confidence), minGap,
+            testAll ? "every challenger in rank order" : "the best challenger", margin * 100.0f);
 
         const bool returnHome = ini.GetBoolValue("SlotLocker", "bReturnToHomeKey", true);
         const float homeMemorySec = std::clamp(
@@ -293,10 +312,18 @@ namespace Huginn::Slot
         m_keepSlotPositions.store(true, std::memory_order_release);
         m_holdSeatedItems.store(true, std::memory_order_release);
         m_challengerMargin.store(0.5f, std::memory_order_release);
+        m_challengerConfidence.store(0.8f, std::memory_order_release);
+        m_challengerMinGap.store(0.0f, std::memory_order_release);
+        m_testAllChallengers.store(false, std::memory_order_release);
         m_returnToHomeKey.store(true, std::memory_order_release);
         m_homeKeyMemorySec.store(60.0f, std::memory_order_release);
         m_classRepeatDiscount.store(0.5f, std::memory_order_release);
         m_classFreeSlots.store(3, std::memory_order_release);
+        // The Remembrance and fill-job keys: LoadFromIni's fallbacks.
+        m_remembranceDurationMs.store(15000.0f, std::memory_order_release);
+        m_remembranceMismatchMs.store(5000.0f, std::memory_order_release);
+        m_remembranceToJobKey.store(false, std::memory_order_release);
+        m_fillJobKeysFromRegular.store(false, std::memory_order_release);
         m_pressGraceMs.store(600.0f, std::memory_order_release);
         m_vitalBucketHysteresis.store(0.03f, std::memory_order_release);
         m_distanceBucketHysteresis.store(0.1f, std::memory_order_release);
@@ -406,7 +433,7 @@ namespace Huginn::Slot
         if (lower == "weaponsmelee" || lower == "melee") return SlotClassification::WeaponsMelee;
         if (lower == "weaponsranged" || lower == "ranged") return SlotClassification::WeaponsRanged;
         if (lower == "foodany" || lower == "food") return SlotClassification::FoodAny;
-        if (lower == "alcoholany" || lower == "alcohol" || lower == "drinks") return SlotClassification::AlcoholAny;
+        if (lower == "narcoticsany" || lower == "narcotics" || lower == "narcotic") return SlotClassification::NarcoticsAny;
         if (lower == "ammoany" || lower == "ammo" || lower == "ammunition") return SlotClassification::AmmoAny;
         if (lower == "apparelany" || lower == "apparel" || lower == "armor") return SlotClassification::ApparelAny;
         if (lower == "regular" || lower == "any" || lower == "all") return SlotClassification::Regular;
@@ -439,7 +466,7 @@ namespace Huginn::Slot
             case SlotClassification::WeaponsMelee: return "WeaponsMelee";
             case SlotClassification::WeaponsRanged: return "WeaponsRanged";
             case SlotClassification::FoodAny:      return "FoodAny";
-            case SlotClassification::AlcoholAny:   return "AlcoholAny";
+            case SlotClassification::NarcoticsAny: return "NarcoticsAny";
             case SlotClassification::AmmoAny:      return "AmmoAny";
             case SlotClassification::ApparelAny:   return "ApparelAny";
             case SlotClassification::Regular:      return "Regular";

@@ -1,5 +1,7 @@
 # Sequences and redundancy: what was just picked, what is already up
 
+> **R11 (0.24.4):** sections 1 to 3 describe the code at v0.23.24 on purpose. Since then the filters in section 2.1 read the effect catalog's facets (`core/CapFacets.h` via `effect/Facets.h`), not the classifiers' tags and types: the summon filter is the Summon facet against the summon limit (0.23.46), the armour filter the ArmorBuff facet (a ward no longer counts), and the two resist checks are one, `CandidateFilters::IsResistRedundant`, over the resist_* facets for potions and spells alike. A hostile or damaging item is never resist-filtered (`Core::Facets::ResistJudgeable`): LoreRim's elemental cloaks carry a resistance to the opposite element beside their damage, and cloaks stay unfiltered as the table says. Since R8.3 the hand-tuned engine (context weights × the bandit's learning score × multipliers) no longer ranks: every candidate is ranked on the choice score μ (doc 9, [9-implementation-map.md](9-implementation-map.md)), and the old engine runs only for the D2 feature `ln learn mult` (`[Scoring] bLegacyLearnFeature`).
+
 **Status: proposal (2026-10-10). Nothing here is built.** Sections 1 to 3
 describe the code at `f04c1a9` (v0.23.24, branch `engine-rewrite`) and the
 selection log as it stood at 16:42 that day, and cite them by file and line.
@@ -165,9 +167,9 @@ previous pick's context. That is the feedback loop to watch (section 4.4).
 |---|---|---|---|
 | Summon | `hasActiveSummon`: any living actor whose commanding actor is the player (`StateManager_MagicEffects.cpp:537-560`; the archetype test is skipped on purpose, `:510-514`) | every `SpellType::Summon` dropped (`CandidateFilters.cpp:71`); context rule only in combat with none up (`ContextRuleEngine.cpp:365`) | A bool, not a count, and no limit: under Twin Souls (2) the second summon is hidden. Reanimated thralls count as summons. Of 90 summon picks (89 spells, 1 scroll), **1** was made with every summon hidden: the menu Wraith (menu context 01:02:19.741, pick at about 01:02:22.6, decision record 01:02:25). The definition: no summon row of any kind (spell or scroll) was eligible or shown, the chosen row included. Counting only "the chosen row is not eligible" gives 5. Of the other 4, 2 are key presses of summons that were shown although ineligible, with every other summon ineligible too (section 5, caveat), and 2 are menu picks of the Skeletal Hero made while other summons were eligible, so the summon filter was not what dropped it. |
 | Armour spell | `hasArmorBuff`: any ValueModifier on DamageResist (`StateManager_MagicEffects.cpp:397-404`) | `SpellTag::Armor` dropped (`CandidateFilters.cpp:69`) | Any armour-rating buff counts, a potion included. No strength comparison, so Oakflesh up still hides Stoneflesh. |
-| Cloak | `hasCloakActive` and `activeCloakType` (`StateManager_MagicEffects.cpp:495-507`) | **none**. Only the debug widget reads it (`StateManagerDebugWidget.cpp:416`) | Cloak spells are not redundant-filtered at all. |
+| Cloak | `hasCloakActive` and `activeCloakType` (`StateManager_MagicEffects.cpp:495-507`) | **none**. Only the debug widget reads it (`StateManagerDebugWidget.cpp:416`) | Cloak spells are not redundant-filtered at all. (R11: still true; a cloak's resist rider is not judged, `ResistJudgeable`.) |
 | Invisibility, Muffle, warming (spells); Waterbreathing, Invisibility (items) | flags in `ActorBuffs` (`PlayerActorState.h:197-208`) | spells `CandidateFilters.cpp:64-75`; items `:111-116` (Waterbreathing is item-only, `:112`) | Hand-listed per tag. |
-| Resists | player resistances | `IsResistSpellRedundant` / `IsResistPotionRedundant` (`CandidateFilters.cpp:79,109`) | Rule thresholds. |
+| Resists | player resistances | the spell and potion resist checks (`CandidateFilters.cpp:79,109`; one `IsResistRedundant` over the resist facets since R11) | Rule thresholds. |
 
 These filters run before the v3 log's `eligible` flag is set
 (`9-selection-log-v3.md`, flag `eligible`). A covered item is still logged, as
@@ -197,7 +199,7 @@ while the filters stand.
   (`StateManager_MagicEffects.cpp:121,371,617`), paired with a **negative**
   starting θ on Restore. That is exactly the pattern redundancy needs, built
   for one family.
-- **Effects (243):** cap(i) describes the item, never the player. The one
+- **Effects (244):** cap(i) describes the item, never the player. The one
   runtime cross-feature that reads the player's active effects is
   `school_fortified` (`effects.csv:202`; `effect/CrossFeatures.cpp:44`).
 - **R8 plan:** "hard zeros to `CandidateFilters` first"

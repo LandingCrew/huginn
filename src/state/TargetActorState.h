@@ -85,54 +85,9 @@ namespace Huginn::State
       return std::sqrt(distanceToPlayerSq);
       }
 
-      // Distance bucket helpers (performance-optimized using squared distance)
-      [[nodiscard]] bool IsTargetMelee() const noexcept {
-      constexpr float MELEE_MAX_SQ = DistanceThresholds::MELEE_MAX * DistanceThresholds::MELEE_MAX;
-      return distanceToPlayerSq > DefaultState::NO_TARGET && distanceToPlayerSq < MELEE_MAX_SQ;
-      }
-
-      [[nodiscard]] bool IsTargetClose() const noexcept {
-      constexpr float CLOSE_MIN_SQ = DistanceThresholds::CLOSE_MIN * DistanceThresholds::CLOSE_MIN;
-      constexpr float CLOSE_MAX_SQ = DistanceThresholds::CLOSE_MAX * DistanceThresholds::CLOSE_MAX;
-      return distanceToPlayerSq >= CLOSE_MIN_SQ && distanceToPlayerSq < CLOSE_MAX_SQ;
-      }
-
-      [[nodiscard]] bool IsTargetMid() const noexcept {
-      constexpr float MID_MIN_SQ = DistanceThresholds::MID_MIN * DistanceThresholds::MID_MIN;
-      constexpr float MID_MAX_SQ = DistanceThresholds::MID_MAX * DistanceThresholds::MID_MAX;
-      return distanceToPlayerSq >= MID_MIN_SQ && distanceToPlayerSq < MID_MAX_SQ;
-      }
-
-      [[nodiscard]] bool IsTargetRanged() const noexcept {
-      constexpr float RANGED_MIN_SQ = DistanceThresholds::RANGED_MIN * DistanceThresholds::RANGED_MIN;
-      constexpr float MAX_RANGE_SQ = TargetTracking::DETECTION_RANGE_SQ;
-      return distanceToPlayerSq >= RANGED_MIN_SQ && distanceToPlayerSq <= MAX_RANGE_SQ;
-      }
-
       // Vitals helpers
       [[nodiscard]] bool IsTargetHealthCritical() const noexcept {
       return vitals.health < VitalThreshold::TARGET_CRITICAL;
-      }
-
-      [[nodiscard]] bool IsTargetHealthVeryLow() const noexcept {
-      return vitals.health < VitalThreshold::TARGET_VERY_LOW;
-      }
-
-      [[nodiscard]] bool IsTargetHealthLow() const noexcept {
-      return vitals.health < VitalThreshold::TARGET_LOW;
-      }
-
-      [[nodiscard]] bool IsTargetMagickaLow() const noexcept {
-      return vitals.magicka < VitalThreshold::TARGET_RESOURCE_LOW;
-      }
-
-      [[nodiscard]] bool IsTargetStaminaLow() const noexcept {
-      return vitals.stamina < VitalThreshold::TARGET_RESOURCE_LOW;
-      }
-
-      // Stagger helpers (v0.6.6)
-      [[nodiscard]] bool IsDamageWindowOpen() const noexcept {
-      return isStaggered && !isDead;
       }
 
       // Vitals polling helpers (v0.6.11)
@@ -332,87 +287,10 @@ namespace Huginn::State
       }
 
       // =============================================================================
-      // QUERY METHODS
-      // =============================================================================
-
-      // Get target by FormID
-      [[nodiscard]] std::optional<TargetActorState> GetTarget(RE::FormID formID) const noexcept {
-      if (const auto* t = Find(formID)) {
-        return *t;
-      }
-      return std::nullopt;
-      }
-
-      // Get all nearby enemies (hostile actors)
-      [[nodiscard]] std::vector<TargetActorState> GetNearbyEnemies() const {
-      std::vector<TargetActorState> enemies;
-      enemies.reserve(targets.size());
-      for (const auto& target : targets) {
-        if (target.isHostile && !target.isDead) {
-           enemies.push_back(target);
-        }
-      }
-      return enemies;
-      }
-
-      // Get most injured ally (for targeted healing recommendations)
-      [[nodiscard]] std::optional<TargetActorState> GetMostInjuredAlly() const noexcept {
-      std::optional<TargetActorState> mostInjured;
-      float lowestHealth = 1.0f;
-
-      for (const auto& target : targets) {
-        if (!target.isHostile && !target.isDead && target.vitals.health < lowestHealth) {
-           lowestHealth = target.vitals.health;
-           mostInjured = target;
-        }
-      }
-      return mostInjured;
-      }
-
-      // =============================================================================
       // FOLLOWER QUERIES (v0.6.10)
       // =============================================================================
       // Followers are player teammates (IsPlayerTeammate()) - not random friendly NPCs.
-      // These methods enable Heal Other/Grand Healing recommendations for followers.
       // =============================================================================
-
-      // Get all nearby followers (player teammates)
-      [[nodiscard]] std::vector<TargetActorState> GetNearbyFollowers() const {
-      std::vector<TargetActorState> followers;
-      followers.reserve(targets.size());
-      for (const auto& target : targets) {
-        if (target.isFollower && !target.isDead) {
-           followers.push_back(target);
-        }
-      }
-      return followers;
-      }
-
-      // Get injured followers (for healing spell recommendations)
-      [[nodiscard]] std::vector<TargetActorState> GetInjuredFollowers() const {
-      std::vector<TargetActorState> injured;
-      injured.reserve(targets.size());
-      for (const auto& target : targets) {
-        if (target.isFollower && !target.isDead && target.vitals.IsHealthLow()) {
-           injured.push_back(target);
-        }
-      }
-      return injured;
-      }
-
-      // Get most injured follower (best healing target)
-      [[nodiscard]] std::optional<TargetActorState> GetMostInjuredFollower() const noexcept {
-      std::optional<TargetActorState> mostInjured;
-      float lowestHealth = 1.0f;
-
-      for (const auto& target : targets) {
-        if (target.isFollower && !target.isDead && target.vitals.health < lowestHealth) {
-           lowestHealth = target.vitals.health;
-           mostInjured = target;
-        }
-      }
-      return mostInjured;
-      }
 
       // Count followers
       [[nodiscard]] int GetFollowerCount() const noexcept {

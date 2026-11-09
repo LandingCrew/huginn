@@ -1,5 +1,7 @@
 # Huginn UI/UX Architecture
 
+> **R11 (0.24.4):** since R8.3 the hand-tuned engine (context weights × the bandit's learning score × multipliers) no longer ranks: every candidate is ranked on the choice score μ (θ over need × effect columns, b per item; doc 9, [9-implementation-map.md](9-implementation-map.md)), and the old engine runs only for the D2 feature `ln learn mult` (`[Scoring] bLegacyLearnFeature`, confined by `tools/prune/r8_check.py`). On the widget: the Verbose mode shows μ and the explanation term, the label is the largest θ·n·cap term's need (or "Ally Support", from the TargetsOthers facet since R11), potion styling reads the restore facets; the wildcard has a key of its own (R10).
+
 How recommendations reach the player: the **display backend layer** that fans a
 tick's slot assignments out to every display target, the **Intuition Widget**
 (Scaleform HUD), the **Wheeler backend** (radial menu), and the **ImGui debug
@@ -29,12 +31,12 @@ this doc, and it is the single easiest thing to get wrong:
 | `[Wheeler]`, `[Subtexts]`, `[Input]` | `Data/SKSE/Plugins/Huginn.ini` (main INI) |
 
 dMenu owns `[Widget]` and `[Debug]`; the main `Huginn.ini` does **not** define
-them ("one key, one home"). `IntuitionMenu::ReapplySettings()` reads
-`GetDMenuIniPath()` for exactly this reason — reading the main INI there would
-silently reset every widget setting to its compile-time default
-(`src/ui/IntuitionMenu.cpp:426`, `src/Globals.cpp:138`). If the dMenu file is
-absent, `GetDMenuIniPath()` falls back to the main INI, where the keys are
-undefined, so every value lands on its default.
+them ("one key, one home"). Every `[Widget]`/`[Debug]` read goes through
+`Settings::LoadDMenuIni(GetDMenuIniPath())` for exactly this reason: the dMenu
+descriptor's defaults (compiled in) with dMenu's file over them. If the dMenu
+file is absent, `GetDMenuIniPath()` falls back to the main INI, where the keys
+are undefined, so every value reads the descriptor's default (0.24.10; see
+[7-dmenu-integration.md](7-dmenu-integration.md)).
 
 ---
 
@@ -128,7 +130,7 @@ page-consistent:
    line rather than clamped, because a clamp would never converge and would pin
    the pipeline's hash-skip gate open.
 3. Snapshot `displayPageIndex`, `displayPageCount`, `displaySlotCount`,
-   `displayWildcardSlots` and `displayPageName` onto the tick context, all read
+   `displayWildcardSeat` and `displayPageName` onto the tick context, all read
    **by index** so they describe the same page even if an off-thread switch
    lands between statements.
 
@@ -215,7 +217,7 @@ to the UI thread.
 | C++ | AS2 | Parameters | Purpose |
 |---|---|---|---|
 | `SetSlot` | `setSlot` | index, name, type, confidence, detail, visualState | Update one slot; a name change triggers the slot-change animation |
-| `ClearSlot` | `clearSlot` | index | Hide a slot and reset its animation state |
+| (none since 0.24.5) | `clearSlot` | index | Hide a slot and reset its animation state; the C++ `ClearSlot` wrapper had no caller and went in 0.24.5 |
 | `SetSlotCount` | `setSlotCount` | count | Set visible slot count, resize background |
 | `SetPage` | `setPage` | current, total, name | Page pips + inline page-name label (hidden when `total <= 1`) |
 | `SetWidgetAlpha` | `setWidgetAlpha` | alpha (0–100) | Overall widget opacity |
@@ -230,9 +232,11 @@ to the UI thread.
   1280x720 stage, then the centring offset).
 - `SetVisible(bool)` — toggles `_root`'s `DisplayInfo` visibility.
 - `Show()` / `Hide()` — queue `kShow` / `kHide` on `RE::UIMessageQueue`.
-- `ToggleUserHidden()` / `IsUserHidden()` / `ResetUserHidden()` — the player's
-  hide latch.
-- `ReapplySettings()` / `ReapplySettings(const IntuitionConfig&)` — hot-reload.
+- `ResetWidget()` — the reset key and dMenu's Reset Widget (0.24.28).
+- `FollowHudAlpha()` — copies the HUD Menu's `_root._alpha` onto ours, from
+  `AdvanceMovie` every 50 ms (0.24.28).
+- `ReapplySettings(const IntuitionConfig&)` — hot-reload (the no-argument
+  overload that re-read the INI itself went in 0.24.10: unused).
 - `MapSlotContentType()` and `BuildSlotDetail()` — static helpers the backend
   calls while building its change-detection view.
 
@@ -277,7 +281,7 @@ Four independent things can hide the widget, and they compose:
 |---|---|---|
 | `bEnabled` (INI) | `IntuitionSettings::IsEnabled()` | Persistent preference |
 | Pausing menu open | `HudVisibilityManager` | Automatic |
-| Player hide latch | `IntuitionMenu::IsUserHidden()` | Session; resets on load |
+| HUD hidden or faded | `IntuitionMenu::FollowHudAlpha()` | Follows the HUD Menu's `_root._alpha` |
 | Wheeler wheel open | `IntuitionBackend` and the Wheeler callbacks | While a wheel is up |
 
 `HudVisibilityManager` is a `MenuOpenCloseEvent` sink. On every menu event it
@@ -285,8 +289,7 @@ recomputes:
 
 ```cpp
 visible = !ui->GameIsPaused()
-       && IntuitionSettings::GetSingleton().IsEnabled()
-       && !IntuitionMenu::IsUserHidden();
+       && IntuitionSettings::GetSingleton().IsEnabled();
 ```
 
 Console and Favorites do not set `kPausesGame`, so the widget correctly stays up
@@ -294,19 +297,32 @@ during those overlays. The manager also re-sends `kShow` when `LoadingMenu`
 closes: Skyrim *closes* custom `IMenu` instances across a cell transition
 without destroying them, and `SetVisible(true)` does nothing to a closed menu.
 
-**The hide latch** (default key `x` — `iToggleWidgetKey = 45` in the main INI's
-`[Input]`; `0` unbinds) has to be a latch rather than a one-shot
-`SetVisible(false)`, because `HudVisibilityManager` recomputes from scratch on
-every menu event and a bare hide would be undone by the next menu the player
-opens. It is therefore enforced in three places: inside `SetVisible` (so the
-several independent re-show paths cannot defeat it), inside `Show()` (so a cell
-transition's re-show does not resurrect a hidden widget and leave the next
-keypress dead), and in the `UpdateVisibility` predicate. It is session-scoped and
-reset on load on purpose: it is a "get out of my way for a moment" control, not a
-preference — `bEnabled` is the preference, and a latch that survived a restart
-would be indistinguishable from the widget being broken. The same latch is
-flipped by the dMenu **Show/Hide Widget** button
-(`src/settings/SettingsReloader.cpp:201`).
+**Following the HUD** (0.24.28). The widget has no hide key of its own. On
+the UI thread, every 50 ms, `IntuitionMenu::FollowHudAlpha` reads the HUD Menu's
+`_root._alpha` and sets ours to match (alpha, not `_visible`, so it composes with
+the visibility gates above). A HUD-toggle mod such as Ultimate Immersion Toggle
+sets that alpha to 0 and back, so the widget hides and shows with the rest of
+the HUD, and fades with it. With no HUD Menu the widget stays at full alpha.
+
+Before 0.24.28 the key (`x`) flipped a hide latch of Huginn's own. LoreRim binds
+the same key to Ultimate Immersion Toggle, a Papyrus script with its own flag that
+ignores a press while any of some 25 menus is open and runs late under Papyrus
+lag. Any press one counted and the other did not left them inverted for the rest
+of the session (2026-11-02 19:33:43: the HUD up with the widget hidden, then the
+reverse). Two flags on one key cannot be kept in step; one state can.
+
+**The reset key** (default `x`, `iResetWidgetKey = 45` in the main INI's
+`[Keybindings]`; `0` unbinds) puts the widget back in a known state: it reopens
+the menu if `RE::UI` closed it (through `Show()` and its one-`kShow` guard,
+which also forces one pipeline run), re-applies the HUD's alpha, asks for a full
+re-send of the bar on the next push, and recomputes visibility through
+`UpdateVisibility` (a paused game, an open dialogue or `bEnabled = false` still
+hide it; skipped while a Wheeler wheel the widget hides behind is up). It never
+hides the widget. With the menu open it forces no pipeline run: the HUD-toggle
+mod shares the key, so every HUD toggle is a reset, and a forced run can re-draw
+the wildcard key mid-fight. The key is gated like the slot keys (loading screen,
+main menu, a pausing menu, a menu that takes the controls) and still consumed
+there. The dMenu **Reset Widget** button does the same, without the gate.
 
 `IntuitionBackend::Push` re-asserts `SetVisible(false)` on *every* tick while a
 Wheeler wheel is open, not once on the transition: a game menu opening or closing
@@ -500,9 +516,11 @@ bMinimalCounts = true       ; Minimal shows "Iron Arrow - [12]" (0.21.12)
 sSlotEffect = slide         ; slide | fade | instant       (or 0 | 1 | 2)
 ```
 
-The values above are the compile-time defaults in `IntuitionDefaults`
-(`src/ui/IntuitionSettings.h`); with no dMenu INI present, these are what you
-get.
+The values above are the defaults: the `"default"` fields of the dMenu
+descriptor (`Huginn.json`), compiled in, which every `[Widget]` read is
+layered on (`Settings::LoadDMenuIni`); `IntuitionDefaults`
+(`src/ui/IntuitionSettings.h`) holds the same values as the loader's fallback.
+With no dMenu INI present, these are what you get.
 
 ### Read-only mode (`bReadOnly`, 0.19.11)
 
@@ -537,9 +555,9 @@ Effect dropdown is ordered `Tint, Pulse, None`, so index 0 is `Tint`, not
 the same setting the name-matching fallback would have chosen. A non-numeric
 value (including `1minimal`) falls through to name matching.
 
-**Hot reload:** `hg reload` → `IntuitionMenu::ReapplySettings()` re-reads the
-dMenu INI and applies a whole `IntuitionConfig` snapshot; `SettingsReloader`
-calls the config-taking overload directly to avoid a second file read. A disabled
+**Hot reload:** `hg reload` → `SettingsReloader` re-reads the dMenu INI (over
+the descriptor's defaults) and calls `IntuitionMenu::ReapplySettings(const
+IntuitionConfig&)` with the whole snapshot. A disabled
 widget is hidden and the styling work skipped; an enabled one is `Show()`n (a
 no-op if already open), then position, alpha, scale, child alpha and the three
 effect modes are pushed in a single deferred GFx batch.
@@ -1011,10 +1029,6 @@ fOffsetX = 0                     ; subtext X offset from entry center (px)
 fOffsetY = 90                    ; subtext Y offset from entry center (px)
 ```
 
-The shipped INI sets `fOffsetY = 90`; the compile-time default in
-`WheelerDefaults::SUBTEXT_OFFSET_Y` is `20`, which is what applies if the key is
-absent.
-
 ---
 
 ## ImGui Debug Widgets
@@ -1135,7 +1149,7 @@ graph TB
 | Auto-sizing background | Implemented | Widens to the longest visible name |
 | Display modes | Implemented | minimal / normal / verbose |
 | Hot reload | Implemented | `hg reload` and the dMenu Reload INI button |
-| Player hide latch | Implemented | `iToggleWidgetKey` (default `x`), session-scoped |
+| Follows the HUD | Implemented | HUD Menu `_root._alpha`; reset key `iResetWidgetKey` (default `x`), 0.24.28 |
 | Auto-hide behind Wheeler | Implemented | Re-asserted per tick while a wheel is open |
 
 ### Wheeler integration
@@ -1191,7 +1205,7 @@ graph TB
 8. **A missing dMenu INI silently defaults the widget.** `[Widget]` and
    `[Debug]` live only in dMenu's file; if it is absent, `GetDMenuIniPath()`
    falls back to the main INI, which does not define those keys, and every value
-   lands on its compile-time default.
+   reads the dMenu descriptor's default (compiled in, `Settings::LoadDMenuIni`).
 
 **No longer a limitation:** strings exported to Wheeler were once modelled as
 indefinite borrows, requiring address-stable storage for the lifetime of the
@@ -1210,5 +1224,5 @@ reason from the old one.
 - [3-candidate-filtering.md](3-candidate-filtering.md) — candidate scoring pipeline
 - [7-dmenu-integration.md](7-dmenu-integration.md) — the dMenu panel that owns `[Widget]`
 - [../reference/intuition-scaleform-build.md](../reference/intuition-scaleform-build.md) — SWF toolchain
-- [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) — `hg reload`, `hg recs`, `hg page`
+- [Console commands](../../CLAUDE.md#console-commands) — `hg reload`, `hg recs`, `hg page`
 - [../README.md](../README.md) — overall system design

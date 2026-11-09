@@ -1,16 +1,9 @@
 #include "ScorerSettings.h"
 #include "IniLoad.h"
+#include "state/StateManager.h"   // SetRefreshPriorSec (R8.1)
 
 namespace Huginn::Scoring
 {
-    void ScorerSettings::LoadFromFile(const std::filesystem::path& iniPath)
-    {
-        CSimpleIniA ini;
-        if (LoadIniFile(ini, iniPath, "ScorerSettings"sv)) {
-            LoadFromIni(ini);
-        }
-    }
-
     void ScorerSettings::LoadFromIni(const CSimpleIniA& ini)
     {
         // =====================================================================
@@ -36,8 +29,6 @@ namespace Huginn::Scoring
         combatStartWindow = ReadClampedFloat(ini, section, "fCombatStartWindow", ScorerDefaults::COMBAT_START_WINDOW, 0.0f, 1000.0f, "ScorerSettings"sv);
         regenPotionCombatStartMult = ReadClampedFloat(ini, section, "fRegenPotionCombatStartMult", ScorerDefaults::REGEN_POTION_COMBAT_START_MULT, 0.0f, 1000.0f, "ScorerSettings"sv);
         flatRestoreLowResourceMult = ReadClampedFloat(ini, section, "fFlatRestoreLowResourceMult", ScorerDefaults::FLAT_RESTORE_LOW_RESOURCE_MULT, 0.0f, 1000.0f, "ScorerSettings"sv);
-        potionTierPreference = ParsePotionTierPreference(
-            ini.GetValue(section, "sPotionTierPreference", ScorerDefaults::POTION_TIER_PREFERENCE));
 
         // Thresholds
         minimumUtility = ReadClampedFloat(ini, section, "fMinimumUtility", ScorerDefaults::MINIMUM_UTILITY, 0.0f, 1000.0f, "ScorerSettings"sv);
@@ -48,6 +39,12 @@ namespace Huginn::Scoring
         topNCandidates = static_cast<size_t>(
             ini.GetLongValue(section, "iTopNCandidates", static_cast<long>(ScorerDefaults::TOP_N_CANDIDATES)));
 
+        // Refresh pass (R8.1): pushed to the state layer, which computes the
+        // active-buff filters' refresh bits on its next magic-effects poll.
+        refreshPriorSec = ReadClampedFloat(ini, section, "fRefreshPriorSec", ScorerDefaults::REFRESH_PRIOR_SEC,
+            0.0f, ScorerDefaults::REFRESH_PRIOR_SEC_MAX, "ScorerSettings"sv);
+        State::StateManager::GetSingleton().SetRefreshPriorSec(refreshPriorSec);
+
         // =====================================================================
         // [Favorites] section
         // =====================================================================
@@ -56,51 +53,18 @@ namespace Huginn::Scoring
         const char* modeStr = ini.GetValue(favSection, "sFavoritesMode", ScorerDefaults::FAVORITES_MODE);
         favoritesMode = ParseFavoritesMode(modeStr);
 
-        favoritesBoostMin = ReadClampedFloat(ini, favSection, "fFavoritesBoostMin", ScorerDefaults::FAVORITES_BOOST_MIN, 0.0f, 1000.0f, "ScorerSettings"sv);
         favoritesBoostMax = ReadClampedFloat(ini, favSection, "fFavoritesBoostMax", ScorerDefaults::FAVORITES_BOOST_MAX, 0.0f, 1000.0f, "ScorerSettings"sv);
 
         logger::info("[ScorerSettings] Loaded: λMin={:.2f}, λMax={:.2f}, "
-            "exploration={:.2f}, favorites={}, boostRange=[{:.1f}, {:.1f}], "
-            "minUtility={:.2f}, minCtxWeight={:.2f}, coldStart={:.2f}, topN={}, potionTier={}",
+            "exploration={:.2f}, favorites={}, boost={:.1f}, "
+            "minUtility={:.2f}, minCtxWeight={:.2f}, coldStart={:.2f}, topN={}, "
+            "refreshPrior={:.1f}s",
             lambdaMin, lambdaMax, explorationWeight,
             favoritesMode == FavoritesMode::Boost ? "Boost" :
                 favoritesMode == FavoritesMode::Off ? "Off" : "Suppress",
-            favoritesBoostMin, favoritesBoostMax,
+            favoritesBoostMax,
             minimumUtility, minimumContextWeight, coldStartUCBBoost, topNCandidates,
-            potionTierPreference == PotionTierPreference::Higher ? "Higher" :
-                potionTierPreference == PotionTierPreference::Lower ? "Lower" : "None");
-    }
-
-    void ScorerSettings::ResetToDefaults()
-    {
-        lambdaMin = ScorerDefaults::LAMBDA_MIN;
-        lambdaMax = ScorerDefaults::LAMBDA_MAX;
-        explorationWeight = ScorerDefaults::EXPLORATION_WEIGHT;
-
-        bowArrowBonus = ScorerDefaults::BOW_ARROW_BONUS;
-        crossbowBoltBonus = ScorerDefaults::CROSSBOW_BOLT_BONUS;
-        meleeDefensiveBonus = ScorerDefaults::MELEE_DEFENSIVE_BONUS;
-        silverUndeadBonus = ScorerDefaults::SILVER_UNDEAD_BONUS;
-        fortifySchoolBonus = ScorerDefaults::FORTIFY_SCHOOL_BONUS;
-        staffLowMagickaBonus = ScorerDefaults::STAFF_LOW_MAGICKA_BONUS;
-        twoHandedDefensiveBonus = ScorerDefaults::TWO_HANDED_DEFENSIVE_BONUS;
-
-        combatStartWindow = ScorerDefaults::COMBAT_START_WINDOW;
-        regenPotionCombatStartMult = ScorerDefaults::REGEN_POTION_COMBAT_START_MULT;
-        flatRestoreLowResourceMult = ScorerDefaults::FLAT_RESTORE_LOW_RESOURCE_MULT;
-        potionTierPreference = PotionTierPreference::Higher;
-
-        minimumUtility = ScorerDefaults::MINIMUM_UTILITY;
-        minimumContextWeight = ScorerDefaults::MINIMUM_CONTEXT_WEIGHT;
-        coldStartUCBBoost = ScorerDefaults::COLD_START_UCB_BOOST;
-
-        topNCandidates = ScorerDefaults::TOP_N_CANDIDATES;
-
-        favoritesMode = FavoritesMode::Boost;
-        favoritesBoostMin = ScorerDefaults::FAVORITES_BOOST_MIN;
-        favoritesBoostMax = ScorerDefaults::FAVORITES_BOOST_MAX;
-
-        logger::info("[ScorerSettings] Reset to defaults"sv);
+            refreshPriorSec);
     }
 
     ScorerConfig ScorerSettings::BuildConfig() const
@@ -122,7 +86,6 @@ namespace Huginn::Scoring
         cfg.combatStartWindow = combatStartWindow;
         cfg.regenPotionCombatStartMult = regenPotionCombatStartMult;
         cfg.flatRestoreLowResourceMult = flatRestoreLowResourceMult;
-        cfg.potionTierPreference = potionTierPreference;
 
         cfg.minimumUtility = minimumUtility;
         cfg.minimumContextWeight = minimumContextWeight;
@@ -131,7 +94,6 @@ namespace Huginn::Scoring
         cfg.topNCandidates = topNCandidates;
 
         cfg.favoritesMode = favoritesMode;
-        cfg.favoritesBoostMin = favoritesBoostMin;
         cfg.favoritesBoostMax = favoritesBoostMax;
 
         return cfg;
@@ -142,13 +104,6 @@ namespace Huginn::Scoring
         if (_stricmp(str, "Off") == 0) return FavoritesMode::Off;
         if (_stricmp(str, "Suppress") == 0) return FavoritesMode::Suppress;
         return FavoritesMode::Boost;  // Default
-    }
-
-    PotionTierPreference ScorerSettings::ParsePotionTierPreference(const char* str)
-    {
-        if (str && _stricmp(str, "None") == 0) return PotionTierPreference::None;
-        if (str && _stricmp(str, "Lower") == 0) return PotionTierPreference::Lower;
-        return PotionTierPreference::Higher;  // Default: use the best one now
     }
 
 }  // namespace Huginn::Scoring

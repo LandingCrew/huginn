@@ -275,6 +275,113 @@ TEST_CASE("effect mapper: amount and level values, percentiles within the load o
     CHECK(CapOf(r, 0, Col::kind_potion) == 1.0f);
 }
 
+TEST_CASE("effect mapper: a timed level grades among timed effects, apart from constant gear (0.24.27)")
+{
+    World w;
+    const auto resist = w.Add(Mgef(kArchValueModifier, "FireResist", "Resist Fire"));
+    // Gear, constant: 30, 50, 70.
+    for (const float mag : { 30.0f, 50.0f, 70.0f }) {
+        auto& a = w.Item(Kind::Armour, "Ring");
+        World::Fx(a, resist, mag);
+    }
+    // Potions, timed: 50 x 60/3600 = 0.83, 20 x 300/3600 = 1.67 and
+    // 30 x 600/3600 = 5. Pooled with the gear, the first read 1/6.
+    auto& p1 = w.Item(Kind::Potion, "Resist Fire, 60 s");
+    World::Fx(p1, resist, 50, 60);
+    auto& p2 = w.Item(Kind::Potion, "Resist Fire, 300 s");
+    World::Fx(p2, resist, 20, 300);
+    auto& p3 = w.Item(Kind::Potion, "Resist Fire, 600 s");
+    World::Fx(p3, resist, 30, 600);
+    const auto r = w.Build();
+    CHECK(CapOf(r, 0, Col::resist_fire) == doctest::Approx(1.0 / 3.0));
+    CHECK(CapOf(r, 1, Col::resist_fire) == doctest::Approx(2.0 / 3.0));
+    CHECK(CapOf(r, 2, Col::resist_fire) == doctest::Approx(1.0));
+    CHECK(CapOf(r, 3, Col::resist_fire) == doctest::Approx(1.0 / 3.0));
+    CHECK(CapOf(r, 4, Col::resist_fire) == doctest::Approx(2.0 / 3.0));
+    CHECK(CapOf(r, 5, Col::resist_fire) == doctest::Approx(1.0));
+    CHECK(CapOf(r, 3, Col::resist) == CapOf(r, 3, Col::resist_fire));   // the family follows its specific
+    CHECK(r.pops.Size(Col::resist_fire, 0) == 3);
+    CHECK(r.pops.Size(Col::resist_fire, Populations::kGroupTimed) == 3);
+}
+
+TEST_CASE("effect mapper: a level of an hour or more grades with gear, its own scale")
+{
+    World w;
+    const auto resist = w.Add(Mgef(kArchValueModifier, "FireResist", "Resist Fire"));
+    for (const float mag : { 30.0f, 50.0f, 70.0f }) {
+        auto& a = w.Item(Kind::Armour, "Ring");
+        World::Fx(a, resist, mag);
+    }
+    auto& hour = w.Item(Kind::Food, "Resist Fire, an hour");
+    World::Fx(hour, resist, 40, 3600);           // 40 x 3600/3600 = 40
+    auto& forever = w.Item(Kind::Potion, "Resist Fire, sentinel");
+    World::Fx(forever, resist, 60, 99999999);    // clipped to 3600: 60
+    const auto r = w.Build();
+    // One population, 30 40 50 60 70: neither row tops a timed population.
+    CHECK(r.pops.Size(Col::resist_fire, 0) == 5);
+    CHECK(r.pops.Size(Col::resist_fire, Populations::kGroupTimed) == 0);
+    CHECK(CapOf(r, 3, Col::resist_fire) == doctest::Approx(2.0 / 5.0));
+    CHECK(CapOf(r, 4, Col::resist_fire) == doctest::Approx(4.0 / 5.0));
+    CHECK(CapOf(r, 1, Col::resist_fire) == doctest::Approx(3.0 / 5.0));
+}
+
+TEST_CASE("effect mapper: too few timed items grade against gear; so does a perk row graded outside its population")
+{
+    World w;
+    const auto fire = w.Add(Mgef(kArchValueModifier, "FireResist", "Resist Fire"));
+    const auto frost = w.Add(Mgef(kArchValueModifier, "FrostResist", "Resist Frost"));
+    for (const float mag : { 30.0f, 50.0f, 70.0f }) {
+        auto& a = w.Item(Kind::Armour, "Ring");
+        World::Fx(a, fire, mag);
+    }
+    for (const float mag : { 40.0f, 60.0f }) {
+        auto& a = w.Item(Kind::Armour, "Frost Ring");
+        World::Fx(a, frost, mag);
+    }
+    // The column's only timed item: alone in its population it would read 1.0.
+    auto& p = w.Item(Kind::Potion, "Resist Fire, 60 s");
+    World::Fx(p, fire, 50, 60);
+    const auto r = w.Build();
+    REQUIRE(r.pops.Size(Col::resist_fire, Populations::kGroupTimed) < kMinTimedGroup);
+    CHECK(CapOf(r, 5, Col::resist_fire) == doctest::Approx(1.0 / 3.0));  // below every ring, present
+
+    // A timed perk row on a column no timed item has (empty timed population):
+    // graded against the frost rings, not at the top.
+    KeptRow row;
+    row.col = Col::resist_frost;
+    row.raw = 0.5f;
+    row.graded = true;
+    row.timed = true;
+    ItemMapping m;
+    m.perkRows.push_back(PerkRow{ row, { { 0x1234u } } });
+    const auto perks = GradePerkRows(m, r.pops);
+    REQUIRE(perks.size() == 1);
+    CHECK(perks[0].v == doctest::Approx(1.0 / 2.0));
+}
+
+TEST_CASE("effect mapper: one item in both populations of a column takes the better grade")
+{
+    World w;
+    const auto resist = w.Add(Mgef(kArchValueModifier, "FireResist", "Resist Fire"));
+    for (const float mag : { 30.0f, 50.0f, 70.0f }) {
+        auto& a = w.Item(Kind::Armour, "Ring");
+        World::Fx(a, resist, mag);
+    }
+    for (auto [mag, dur] : { std::pair{ 50.0f, 60u }, std::pair{ 20.0f, 300u }, std::pair{ 30.0f, 600u } }) {
+        auto& p = w.Item(Kind::Potion, "Resist Fire");
+        World::Fx(p, resist, mag, dur);
+    }
+    // An instant 40 (group 0) and 20 x 600/3600 = 3.33 (timed).
+    auto& s = w.Item(Kind::Spell, "Fire Ward");
+    World::Fx(s, resist, 40);
+    World::Fx(s, resist, 20, 600);
+    const auto r = w.Build();
+    CHECK(r.pops.Size(Col::resist_fire, 0) == 4);                           // 30 40 50 70
+    CHECK(r.pops.Size(Col::resist_fire, Populations::kGroupTimed) == 4);    // 0.83 1.67 3.33 5
+    CHECK(CapOf(r, 6, Col::resist_fire) == doctest::Approx(3.0 / 4.0));     // max(2/4, 3/4)
+    CHECK(CapOf(r, 1, Col::resist_fire) == doctest::Approx(3.0 / 4.0));     // ring 50 among 30 40 50 70
+}
+
 TEST_CASE("effect mapper: sentinels -- full restore and permanent durations")
 {
     World w;
@@ -798,6 +905,129 @@ TEST_CASE("effect mapper: weapon, ammo, armour, soul gem and light features")
     CHECK(CapOf(r, 10, Col::light_radius) == doctest::Approx(std::log1p(512.0) / std::log1p(1024.0)));
     CHECK(DescribesItem(r.caps[0], Kind::Weapon));
     CHECK_FALSE(DescribesItem(r.caps[4], Kind::Weapon));  // an unenchanted staff says nothing
+}
+
+TEST_CASE("effect mapper: the narcotic column (alcohol and drugs), each mark and what is not one")
+{
+    World w;
+    auto restore = Mgef(kArchValueModifier, "Health", "Restore Health");
+    restore.keywords = { "MagicAlchRestoreHealth" };
+    const auto heal = w.Add(restore);
+    auto featAlcohol = Mgef(kArchDualValueModifier, "DamageResist", "Alcohol");
+    featAlcohol.keywords = { "Feat_KW_Alcohol" };
+    const auto feat = w.Add(featAlcohol);
+    auto boob = Mgef(kArchValueModifier, "StaminaRateMult", "Inebriation", kFlagDetrimental);
+    boob.keywords = { "BOOB_AlcoholBadEffect" };
+    const auto inebriation = w.Add(boob);
+    auto drugs = Mgef(kArchValueModifier, "Stamina", "Skooma");
+    drugs.keywords = { "MAG_FoodItemDrugs" };
+    const auto skoomaFx = w.Add(drugs);
+    // The vanilla drink drawback, as vanilla has it: no alcohol keyword at all.
+    auto drawback = Mgef(kArchValueModifier, "StaminaRateMult", "Damage Stamina Regeneration", kFlagDetrimental);
+    drawback.formId = 0x0010C645;
+    drawback.plugin = "Skyrim.esm";
+    drawback.keywords = { "MagicAlchHarmful" };
+    const auto vanillaDrawback = w.Add(drawback);
+    // The same local id from another plugin, and a light plugin's ...645: not it.
+    auto elsewhere = drawback;
+    elsewhere.plugin = "Other.esp";
+    const auto otherPlugin = w.Add(elsewhere);
+    auto light = drawback;
+    light.formId = 0xFE10C645;
+    const auto lightId = w.Add(light);
+    // MagicAlchHarmful alone (poisoned cheese, Rendil's Screaming Cheese's paralysis): no mark.
+    auto paralysis = Mgef(kArchParalysis, "Paralysis", "Paralysis", kFlagDetrimental);
+    paralysis.keywords = { "MagicAlchHarmful" };
+    const auto paralyse = w.Add(paralysis);
+    // The drug MGEFs, by plugin and local id (0.24.16). Formids as the runtime
+    // has them in LoreRim (Requiem.esp at 0x87, WindhelmSSE.esp at 0x82).
+    auto drugMgef = [&](std::uint32_t formId, std::string plugin, std::string name) {
+        auto m = Mgef(kArchScript, "", std::move(name));
+        m.formId = formId;
+        m.plugin = std::move(plugin);
+        return w.Add(m);
+    };
+    const auto drugged = drugMgef(0x000E3CBB, "Skyrim.esm", "Drugged");                    // dunSleepingTreeDruggedAlch
+    const auto redwaterFx = drugMgef(0x0201391E, "Dawnguard.esm", "DLC1RedwaterSkoomaScriptEffect");
+    const auto skoomaSide = drugMgef(0x870693C3, "Requiem.esp", "Damage Health");          // REQ_AlchDamageHealthSkoomaSide
+    const auto spirited = drugMgef(0x87191518, "Requiem.esp", "Spiritedness");             // REQ_Effect_Drug_Skooma01_FX
+    const auto moonshine = drugMgef(0x82367FBC, "WindhelmSSE.esp", "Drugged");              // 0WHMoonshine
+    const auto notRequiem = drugMgef(0x330693C3, "Other.esp", "Damage Health");            // Requiem's local id, another plugin
+    auto invis = Mgef(kArchInvisibility, "Invisibility", "Invisibility");
+    invis.keywords = { "MagicInvisibility", "MagicAlchBeneficial" };
+    const auto invisible = w.Add(invis);
+
+    auto food = [&](std::string name, std::vector<std::string> kws, std::vector<std::uint32_t> fx) -> std::size_t {
+        auto& it = w.Item(Kind::Food, std::move(name));
+        it.keywords = std::move(kws);
+        for (const auto e : fx) World::Fx(it, e, 10, 60);
+        return w.items.size() - 1;
+    };
+    const auto ocf = food("Ale (OCF)", { "VendorItemFood", "OCF_AlchDrinkAlcohol" }, { heal });
+    const auto tweaks = food("Snowberry Mead", { "VendorItemFood", "AlcoholMead" }, { heal });
+    const auto featOnly = food("Brass Brandy", { "VendorItemFood" }, { feat, heal });
+    const auto boobOnly = food("Balmora Blue", { "VendorItemFood" }, { heal, inebriation });
+    const auto gourmet = food("Skooma (Simonrim)", { "MAG_FoodTypeDrugs" }, { heal });
+    const auto gourmetFx = food("Skooma (effect)", {}, { skoomaFx });
+    const auto vanilla = food("Argonian Bloodwine", { "VendorItemFood" }, { heal, vanillaDrawback });
+    const auto caco = food("Mead (CACO)", { "CACO_IsAlcohol" }, { heal });
+    const auto bread = food("Bread", { "VendorItemFood", "OCF_AlchFood_Bread" }, { heal });
+    const auto rawFish = food("Raw Salmon", { "OCF_AlchFood_FishRaw", "VendorItemFoodRaw" }, { heal, paralyse });
+    const auto notThisOne = food("Other ...645", {}, { heal, otherPlugin });
+    const auto notLight = food("Light ...645", {}, { heal, lightId });
+    auto potionOf = [&](std::string name, std::vector<std::string> kws, std::vector<std::uint32_t> fx,
+                        Kind kind = Kind::Potion) -> std::size_t {
+        auto& it = w.Item(kind, std::move(name));
+        it.keywords = std::move(kws);
+        for (const auto e : fx) World::Fx(it, e, 10, 45);
+        return w.items.size() - 1;
+    };
+    // Sweet Skooma (Unmarked Locations Pack) as LoreRim has it: Requiem's Skooma
+    // effects and no drug keyword (OCF_VesselBottleSkooma is a bottle, not a drug).
+    const auto sweetSkooma = potionOf("Sweet Skooma", { "REQ_VendorItem_BlackMarket", "OCF_VesselBottleSkooma" },
+                                      { heal, skoomaSide, paralyse, spirited });
+    const auto spiritedOnly = potionOf("Skooma (Spiritedness only)", {}, { spirited });
+    // Vanilla's Sleeping Tree Sap and Redwater Skooma: VendorItemFood only, Drugged.
+    const auto vanillaSap = potionOf("Sleeping Tree Sap (vanilla)", { "VendorItemFood" }, { heal, drugged });
+    const auto vanillaRedwater = potionOf("Redwater Skooma (vanilla)", { "VendorItemFood" }, { heal, redwaterFx });
+    const auto homebrew = potionOf("Windhelm Homebrew (scene)", { "VendorItemFood" }, { moonshine });
+    // Not one: a Disguised Invisibility Potion (a Skooma bottle, VendorItemFood),
+    // Holy Water (VendorItemFood), Requiem's local id from another plugin, and
+    // poisons wearing a drug keyword or a drug effect (a poison is applied, not taken).
+    const auto disguised = potionOf("Disguised Invisibility Potion", { "VendorItemFood", "OCF_VesselBottleSkooma" },
+                                    { invisible });
+    const auto holyWater = potionOf("Holy Water", { "VendorItemFood" }, { heal });
+    const auto otherSide = potionOf("Other ...0693C3", {}, { heal, notRequiem });
+    const auto poisonKw = potionOf("Poisoned Skooma", { "OCF_AlchDrug", "OCF_AlchDrugSkooma" }, { paralyse }, Kind::Poison);
+    const auto poisonFx = potionOf("Poisoned Firebrand Wine", { "VendorItemFood" }, { paralyse, drugged, vanillaDrawback },
+                                   Kind::Poison);
+    // A Skooma the load order makes a potion (OCF_AlchDrug), and a weapon wearing a drink keyword.
+    auto& potion = w.Item(Kind::Potion, "Skooma (LoreRim)");
+    potion.keywords = { "OCF_AlchDrug", "OCF_AlchDrugSkooma" };
+    World::Fx(potion, heal, 10, 0);
+    const std::size_t skoomaPotion = w.items.size() - 1;
+    auto& club = w.Item(Kind::Weapon, "Bottle Club");
+    club.weaponType = 4;
+    club.damage = 5;
+    club.keywords = { "OCF_AlchDrinkAlcohol" };
+    const std::size_t weapon = w.items.size() - 1;
+
+    const auto r = w.Build();
+    for (const auto i : { ocf, tweaks, featOnly, boobOnly, gourmet, gourmetFx, vanilla, caco, skoomaPotion, sweetSkooma,
+                          spiritedOnly, vanillaSap, vanillaRedwater, homebrew }) {
+        INFO(w.items[i].name);
+        CHECK(CapOf(r, i, Col::narcotic) == 1.0f);
+        CHECK(IsNarcotic(w.items[i], w.effects));
+    }
+    for (const auto i : { bread, rawFish, notThisOne, notLight, weapon, disguised, holyWater, otherSide, poisonKw, poisonFx }) {
+        INFO(w.items[i].name);
+        CHECK(CapOf(r, i, Col::narcotic) == 0.0f);
+        CHECK_FALSE(IsNarcotic(w.items[i], w.effects));
+    }
+    // The column is an item feature beside the kind, never an effect.
+    CHECK(CapOf(r, ocf, Col::kind_food) == 1.0f);
+    CHECK_FALSE(IsEffect(Col::narcotic));
+    CHECK(ValueRuleName(Col::narcotic) == "P");
 }
 
 TEST_CASE("effect mapper: populations and the cap's text form")

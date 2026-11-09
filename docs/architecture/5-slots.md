@@ -1,12 +1,13 @@
 # Huginn Slot Architecture
 
 This document describes the multi-page slot system — classification, allocation,
-locking, overrides and wildcards — as implemented in **v0.19.x**.
+locking, overrides and wildcards — as implemented in **v0.19.x, updated for R7-R11
+(v0.24.4) where noted**.
 
 > **Related documentation:**
 > - [0-pipeline.md](0-pipeline.md) - Overall pipeline flow including slot allocation
 > - [1-states.md](1-states.md) - State models used for override detection
-> - [2-classifiers.md](2-classifiers.md) - Spell/item/weapon tags the classifier reads
+> - [2-classifiers.md](2-classifiers.md) - The old classifiers (since R11 an input to the D2 feature only; the slot classes read cap(i))
 > - [6-ui-ux.md](6-ui-ux.md) - How assignments are rendered (widget, Wheeler)
 
 ---
@@ -26,8 +27,8 @@ locking, overrides and wildcards — as implemented in **v0.19.x**.
 
 Owning code: `src/slot/` (allocation, locking, classification, settings),
 `src/override/` (override evaluation), and `src/learning/WildcardManager.{h,cpp}`
-(exploration picks — it lives under `learning/` because a wildcard is an
-exploration action of the bandit, not a slot-layout concern).
+(exploration picks — it lives under `learning/` because it draws wildcards by
+the choice model's uncertainty, relevance x sd (R10), not by slot layout).
 
 ---
 
@@ -94,43 +95,70 @@ the old default and six archetypes -- and a set of five test pages live in
 
 ## Slot Classification System
 
-`SlotClassification` (`src/slot/SlotConfig.h`) has 24 values. `SlotClassifier`
-(`src/slot/SlotClassifier.cpp`) dispatches on the candidate variant — spell,
-item, scroll, weapon or ammo — so the same classification means different things
-per source type.
+`SlotClassification` (`src/core/SlotClassification.h` since R11; it was in
+`src/slot/SlotConfig.h`) has 24 values, unchanged: players name them in their
+INI layouts (`sClassification = HealingAny`). **What each one matches was
+re-derived from cap(i) in R11 (0.24.4)**: `SlotClassifier`
+(`src/slot/SlotClassifier.cpp`) asks `core/CapFacets.h`'s `Matches` and
+`Classify` (pure, host-tested in `tests/core/CapFacetsTests.cpp`, including
+real spells, potions, poisons and food from the three dump fixtures) about the
+candidate's subject: its source (the candidate variant), its school and weapon
+type (form facts), and the effect catalog's facets of its form. The old spell,
+item and scroll classifiers' types and tags are not read for this any more;
+they feed only the D2 legacy feature (`tools/prune/r8_check.py` CLASSIFIER).
+Each ranked row carries its subject (`ScoredCandidate::subject`, filled once per
+pipeline run); a row built elsewhere is looked up on demand.
 
-### Effect-Based Classifications
+### Slot classes, re-derived from cap(i) (R11): the review
 
-| Classification | Spells / scrolls match on | Items match on |
-|---|---|---|
-| **DamageAny** | `SpellType::Damage` | `ItemType::Poison` (weapon candidates also match) |
-| **DamageMagic** | `SpellType::Damage` | — (no items, no weapons): the "attack magic" key |
-| **HealingAny** | `SpellType::Healing`, or the `RestoreHealth` tag | `HealthPotion`, or the `RestoreHealth` tag |
-| **BuffsAny** | `SpellType::Buff`, or `Armor` / `Invisibility` / `Muffle` tags | `BuffPotion`, or any `Fortify*` / `Invisibility` tag |
-| **DefensiveAny** | `SpellType::Defensive`, or `Ward` / `Armor` tags | `ResistPotion`, or any `Resist*` tag |
-| **SummonsAny** | `SpellType::Summon`, or `Conjuration` / `SummonDaedra` / `SummonUndead` / `SummonCreature` / `BoundWeapon` tags | — (no item summons) |
-| **Utility** | `SpellType::Utility`, or `Light` / `DetectLife` / `Telekinesis` tags, or the `Unlock` extended tag | `CurePotion`, or `Waterbreathing` / `CureDisease` / `CurePoison` tags |
+The roadmap asked for the classes to be reviewed as a whole when they were
+re-derived. Per class, the facets it reads (`core/CapFacets.h` names the
+columns), what changed against the classifier version, and why.
 
-### Item-Type-Based Classifications
+| Class | Spells / scrolls (R11) | Items (R11) | Change against the classifiers |
+|---|---|---|---|
+| **DamageAny** | Damage (the damage or absorb family) | a poison (catalog kind Poison) | Weapons still match, as before. A spell is damage by its effects, not by the classifier's costliest-effect type: a cloak or a rune that deals damage now matches; a Fear does not |
+| **DamageMagic** | Damage | -- | as DamageAny, spells and scrolls only |
+| **HealingAny** | RestoreHealth (restore_health or restore_health_other) or RegenHealth | not a poison, and RestoreHealth or RegenHealth | food that restores health still matches; a regeneration potion now does |
+| **BuffsAny** | not hostile, and Fortify (vital, skill or combat), Regen, Stealth (invisibility, muffle, disguise) or ArmorBuff | not a poison, and Fortify or Invisibility | a Fortify Smithing potion (fortify_skill) now matches (the classifier left utility skills out); food with a fortify rider (LoreRim's "Fortify Magicka" pies) matches |
+| **DefensiveAny** | not hostile, and the defense family (armour, ward, spell absorb, reflect, ...) or the resist family | not a poison, and the resist family | Resist Disease counts now; a resist rider on food matches, as the tag did |
+| **SummonsAny** | the summon family (creatures, reanimation, bound weapons) | -- | the classifier's `Conjuration` tag arm (any conjuration spell) is gone: a Soul Trap is not a summon |
+| **Utility** | not hostile, and vision, utility, movement or cure | not a poison, and cure, utility or vision | slow fall / water walking (movement) and a cure SPELL now count; torches still match |
+| **PotionsAny** | -- | catalog kind Potion or Poison | unchanged in intent: not food, not soul gems |
+| **PoisonsAny** | -- | kind Poison | unchanged |
+| **ScrollsAny** / **SpellsAny** | any scroll / any spell | -- | unchanged |
+| **Spells&lt;School&gt;** | the candidate's school (form fact) | -- | unchanged (spells and scrolls) |
+| **WeaponsAny** / **WeaponsMelee** / **WeaponsRanged** | -- | -- | from the weapon's type (bow, crossbow, staff = ranged; blades, axes, maces, daggers = melee), the same split the weapon tag encoded |
+| **FoodAny** | -- | kind Food, and not Narcotic | R11 (0.24.4) took every food, alcohol included; **0.24.9 takes alcohol out again**, now that cap(i) has a column for it (the user, 2026-10-30: alcohol is a hybrid of food, potion and poison, not food for a food key; 0.24.16 groups drugs with it as narcotics). Rendil's Screaming Cheese and raw fish with a paralysis, which R11's alcohol reading took, are food again |
+| **NarcoticsAny** | -- | Narcotic: the `narcotic` column, a potion or food, never a poison | alcohol and drugs, one group (the user, 2026-10-30: "just group into narcotics"; 0.24.9 called it AlcoholAny and the column `alcohol`, 0.24.16 renamed both). Read from the records' drink and drug marks (effects.csv `narcotic`, `core/EffectMapper.h` IsNarcotic: OCF's and LoreRim - Food Tweaks' item keywords, Requiem's and BOOB's effect keywords, and drink or drug MGEFs by plugin and local id: the drink drawback Skyrim.esm 10C645, vanilla's Drugged 0E3CBB and Redwater Skooma effect, Requiem's two Skooma effects, WindhelmSSE's moonshine), no longer guessed from side effects. On LoreRim's 2026-10-10 dump: the 56 drinks and Balmora Blue (food), and the six Skoomas (Sweet Skooma included), Sleeping Tree Sap and the Windhelm Homebrew scene potion, which the load order makes potions: those match PotionsAny too. A poison never matches: the mapper sets the column only on a potion or food, and the class checks the kind as well (a poison is applied, not taken) |
+| **AmmoAny** / **ApparelAny** | -- | ammo / apparel candidates | unchanged |
+| **Regular** | everything | everything | unchanged |
 
-| Classification | Matches |
-|---|---|
-| **PotionsAny** | Health, magicka, stamina, resist, buff and cure potions plus poisons — **not** food, alcohol or soul gems |
-| **PoisonsAny** | `ItemType::Poison` only |
-| **ScrollsAny** | Any scroll |
-| **SpellsAny** | Any spell (scrolls do **not** match) |
-| **SpellsDestruction / SpellsRestoration / SpellsConjuration / SpellsIllusion / SpellsAlteration** | Spells whose `MagicSchool` is that school |
-| **WeaponsAny** | Any weapon candidate |
-| **WeaponsMelee** | Weapons carrying the `Melee` tag |
-| **WeaponsRanged** | Weapons carrying the `Ranged` tag |
-| **FoodAny** | `ItemType::Food` |
-| **AlcoholAny** | `ItemType::Alcohol` (ale, mead, wine, skooma) |
-| **AmmoAny** | Ammo candidates (arrows, bolts) |
-| **ApparelAny** | Fortify-crafting gear (scores only at a workstation) |
+**No catalog entry** (an out-of-scope form, or before the catalog is ready):
+a candidate matches only what its source decides -- Regular, SpellsAny /
+ScrollsAny, the school classes, the weapon classes, AmmoAny, ApparelAny,
+PotionsAny / FoodAny from its source type -- and no effect class. The choice
+score reads only b for such an item too.
 
-The classes overlap in ways a player cannot guess (DamageAny takes weapons,
-HealingAny and PotionsAny both take health potions, …). A review of them as a
-whole is on the roadmap.
+**The overlaps, reviewed.** They remain, on purpose: a class is a filter on a
+key, not a partition of the items. DamageAny takes weapons and poisons
+(an "anything that hurts" key); HealingAny and PotionsAny both take a health
+potion; PotionsAny and NarcoticsAny both take a Skooma potion. FoodAny and
+NarcoticsAny no longer overlap (0.24.9). A layout that wants disjoint keys
+names the narrower class (DamageMagic, PoisonsAny, NarcoticsAny). What matters is
+that each class now means its effects, so a player can predict it from what an
+item does, and that the slot classes, the filters and the override finders read
+the same facets and cannot disagree.
+
+**Classify()** (the class cap's group, the v2 log's and the dump's class) walks
+`core/CapFacets.h`'s `kClassPriority`, most specific first: HealingAny,
+DamageMagic, PoisonsAny, DamageAny, DefensiveAny, BuffsAny, SummonsAny,
+Utility, NarcoticsAny (before PotionsAny, which takes a Skooma potion too), FoodAny,
+PotionsAny, ScrollsAny, the weapon classes, AmmoAny, ApparelAny, the school
+classes, SpellsAny, then Regular. A weapon classifies as DamageAny, as before
+(the class cap groups all weapons there); the class cap still groups all food
+(source type Food) as FoodAny, drink included: that grouping is the page's
+variety on Regular keys, not a food key, and 0.24.9 and 0.24.16 leave it as it was.
 
 ### Regular (Unrestricted)
 
@@ -139,15 +167,6 @@ that accepts soul gems, which have no dedicated classification — relevant
 because the `WeaponCharge` override surfaces a soul gem and therefore needs a
 `Regular` slot that also accepts its category (see
 [Override placement](#override-placement)).
-
-### Classify()
-
-`SlotClassifier::Classify()` returns a single best-fit classification for
-display and debugging. It walks a fixed most-specific-first order: the effect
-classifications, then `FoodAny` before `AlcoholAny` before `PotionsAny`, then
-`ScrollsAny`, then `WeaponsMelee` / `WeaponsRanged` before `WeaponsAny`, then
-`AmmoAny`, then the per-school spell filters before `SpellsAny`, falling back to
-`Regular`.
 
 ---
 
@@ -158,7 +177,7 @@ classifications, then `FoodAny` before `AlcoholAny` before `PotionsAny`, then
 | Field | Type | Default | Purpose |
 |-------|------|---------|---------|
 | `classification` | `SlotClassification` | `Regular` | What type of candidate can appear |
-| `wildcardsEnabled` | `bool` | `true` | Allow wildcard exploration picks |
+| `wildcardsEnabled` | `bool` | `true` | May be the page's wildcard key (the last such key in fill order is; R10) |
 | `overrideFilter` | `OverrideFilter` | `Any` | Which override categories accepted (`None`, `Any`, `HP`, `MP`, `SP`, `Other`) |
 | `skipEquipped` | `bool` | `true` | Skip candidates already equipped (show alternatives only). Default on since v0.21.51 |
 | `remembrance` | `bool` | `true` | Pressing this slot holds what the equip took off here (see [Remembrance](#remembrance)) |
@@ -178,8 +197,8 @@ are three distinct type systems.
 | Type | Meaning | Notes |
 |------|---------|-------|
 | **Empty** | Slot has no content | Slot hidden in UI |
-| **Normal** | Standard utility-based assignment | Most common |
-| **Override** | Forced by an override condition | Stamped with `kOverrideUtility = 1000.0f`, a cosmetic marker — consumers test `AssignmentType::Override`, never the utility value |
+| **Normal** | Standard score-based assignment (mu) | Most common |
+| **Override** | Forced by an override condition | Stamped with `Core::kPinnedScore`, the +inf sentinel (`SlotAllocator.cpp`) — consumers test `AssignmentType::Override`, never the score |
 | **Wildcard** | Exploration pick | Distinct styling in the widget |
 | **Remembered** | What pressing this slot took off ([Remembrance](#remembrance)) | Not ranked; labelled "Swap Back". Seating and dedup treat it like an override (`IsPinned()`) |
 
@@ -229,14 +248,14 @@ breaking) and the display path (auto-focus, subtexts).
 ### Override Rules
 
 Priorities are fixed constants (`src/override/OverrideConditions.h:20`).
-Thresholds are runtime settings; the table gives the **code default** and, where
-it differs, the **shipped INI value**.
+Thresholds are runtime settings; the table gives the default (the code default
+and the shipped INI value are the same).
 
-| Priority | Condition | Category | Activation threshold (code / shipped) | Hysteresis gap | Item surfaced | INI toggle |
+| Priority | Condition | Category | Activation threshold | Hysteresis gap | Item surfaced | INI toggle |
 |---|---|---|---|---|---|---|
-| 100 | **CriticalHealth** | HP | HP < 10% / **35%** | +15% | Best health potion | `bEnableCriticalHealth` |
-| 70 | **CriticalMagicka** | MP | MP < 10% / **35%** | +15% | Best magicka potion | `bEnableCriticalMagicka` |
-| 60 | **CriticalStamina** | SP | SP < 10% / **35%** | +15% | Best stamina potion | `bEnableCriticalStamina` |
+| 100 | **CriticalHealth** | HP | HP < 35% | +15% | Best health potion | `bEnableCriticalHealth` |
+| 70 | **CriticalMagicka** | MP | MP < 35% | +15% | Best magicka potion | `bEnableCriticalMagicka` |
+| 60 | **CriticalStamina** | SP | SP < 35% | +15% | Best stamina potion | `bEnableCriticalStamina` |
 | 50 | **Drowning** | Other | Underwater with no waterbreathing buff (boolean, not threshold-based) | n/a | Waterbreathing **potion** | `bEnableDrowning` |
 | 40 | **LowAmmo** | Other | Bow/crossbow equipped and ammo < 10 (absolute count) | +15 | Best arrow/bolt in inventory | `bEnableLowAmmo` |
 | 35 | **WeaponCharge** | Other | Enchanted weapon equipped and charge < 25% | +5% | Best **filled** soul gem | `bEnableWeaponCharge` |
@@ -245,8 +264,24 @@ it differs, the **shipped INI value**.
 `charge < threshold`, and a drained enchanted weapon keeps a small unusable
 charge remainder rather than exactly 0, so a 0.0 threshold would never fire.
 
-Drowning surfaces only a potion. Waterbreathing *spells* have no dedicated tag
-and reach the player through normal contextual scoring instead.
+Drowning surfaces an item (a potion, or food that carries waterbreathing; never
+a poison): the longest-lasting one with the catalog's Waterbreathing facet
+(R11). Waterbreathing *spells* reach the player through the score (the
+`underwater` and `deep_water_ahead` needs).
+
+**R11: the finders read the effect catalog.** Which items each override may
+surface is decided by `core/CapFacets.h` facets of the item's form, not by the
+old classifiers' types and tags: a restore potion is catalog kind Potion with
+the RestoreHealth / RestoreMagicka / RestoreStamina facet, ranked by what
+its restore row of that vital gives back within the urgent window (an effect
+walk, `PotionRestoreWithin`; not `ItemData::magnitude`, which is the costliest
+effect's, so a "Restore Health 120 + Restore Magicka 30" potion counts 30 as a
+magicka potion); the restore-spell fallback takes the spells with that facet
+(its own effect walk measures the amount); the Poisoned cure is CurePoison and
+not a poison; waterbreathing ranks on its own row's duration. Pure before
+impure is the catalog's self_harm, intoxication and hostile facets
+(`Core::Facets::HasSideEffect`), not `ItemData`'s damage / ravage / weakness
+tags. An item the catalog has no entry for is not offered by an override.
 
 **Override category** (`src/override/OverrideConditions.h:38`):
 ```cpp
@@ -266,7 +301,9 @@ stamp is loud rather than silently aliasing another condition's latch entry.
 
 **Potion selection.** All three vitals finders share one policy
 (`SelectPotion`): prefer the best *pure* potion from
-`ItemRegistry::GetBestPotion`, and fall back to one with harmful side effects
+`BestRestorePotion` (R11: the potions with the restore facet, ranked by what
+they restore within the urgent window, `ItemData::RestoredWithin`; it replaced
+`ItemRegistry`'s pick by classifier type), and fall back to one with harmful side effects
 (skooma and friends) only when `bAllowImpurePotions = true` (default true). If
 neither exists the condition still reports as active but carries no candidate,
 and the allocator skips it.
@@ -347,6 +384,18 @@ are shown, by rank; passes 3-5 decide WHERE they sit.
 1. **Overrides** take a slot whose filter and classification accept them.
    Then **Remembrance** holds (Pass 1a) take the slot the player pressed, and
    the slot hold (Pass 1c) keeps seated items against near-tied challengers.
+   A seated item gives way when its best challenger clears the challenger
+   rule's line (`fChallengerConfidence`, `fChallengerMinGap`; the fixed
+   `fChallengerMargin` without beliefs). `bTestAllChallengers = 1` (0.24.13)
+   asks the rest in rank order when the best one misses the RULE's line, and
+   the first that clears it takes the key: a surely-better item gets in while
+   an uncertain top rival would have kept the holder, at the cost of a little
+   more movement. Under the fixed margin the switch changes nothing (a lower
+   score cannot clear a line the best one missed, so the hold stops there),
+   which keeps the golden snapshots and the fallback ranking bit-identical
+   (`tests/core/ChallengerRuleTests.cpp`). No swap-back holds either way:
+   every swap clears a line >= 0 that is symmetric in its pair. `[Hold]`
+   lines end `; K higher challenger(s) missed the line` for such a give-way.
 2. **Rank fill** gives every remaining slot the best candidate it accepts.
 3. **Seating** puts items that were already on screen back in the slots they
    held (see [Seating](#seating-anti-juggling) below).
@@ -360,7 +409,7 @@ else about a call is still a pure function of its inputs.
 
 ```
    scored candidates            active overrides
-  (sorted by utility)        (sorted by priority)
+   (sorted by score)         (sorted by priority)
            |                          |
            v                          v
   +-------------------------------------------------+
@@ -377,10 +426,13 @@ else about a call is still a pure function of its inputs.
            |
            v
   PASS 1a  remembered item -> the slot the player pressed
-           (classification ignored; skipped if an override has it)
+           (classification ignored; skipped if an override has it,
+           or the page already shows its name)
            |
            v
-  PASS 1c  hold seated items unless a challenger wins by the margin
+  PASS 1c  hold seated items unless a challenger clears the line
+           (the challenger rule; the fixed margin without beliefs;
+           the best challenger, or all in rank order: bTestAllChallengers)
            |
            v
   PASS 2   remaining slots <- best matching candidate, deduped
@@ -430,7 +482,7 @@ even that fails, one of three things happens:
 ### Pass 2 — normal fill
 
 For every still-empty slot in priority order, `FindBestCandidate()`
-(`src/slot/SlotAllocator.cpp:575`) scans the utility-sorted candidate list and
+(`src/slot/SlotAllocator.cpp:575`) scans the score-sorted candidate list and
 returns the first candidate that:
 
 1. is not already assigned **by FormID**, and
@@ -442,12 +494,9 @@ returns the first candidate that:
    `PlayerActorState::IsItemEquipped` (the ~100 ms equipment poll), to cover the
    timing gap between the two.
 
-If the winning candidate is flagged `isWildcard` but the slot sets
-`wildcardsEnabled = false`, the search is re-run with `skipWildcards = true`.
-Reusing `FindBestCandidate` for the retry (rather than an inline rescan) means
-the fallback still honours `skipEquipped`, and returns cleanly empty when no
-alternative exists — so a wildcard is never left sitting in a slot that forbids
-wildcards.
+R10: the fill places ranked rows only. The wildcard is not a candidate flag
+any more but a placement on the page's wildcard key (see
+[Wildcard System](#wildcard-system)), so the fill's old wildcard re-run is gone.
 
 Duplicates are simply filtered out. There is no learner penalty for being a
 duplicate.
@@ -457,8 +506,9 @@ duplicate.
 One strong slot class could take the whole page: a hungry character at an
 alchemy lab got eight foods on eight keys and none of the craft gear
 (2026-10-05). On a **Regular** key, the first `iClassFreeSlots` items of one
-class on the page (3) compete at full utility; each one past that competes at
-x`fClassRepeatDiscount` (0.5), then x0.25, and so on. Keys with a job are never
+class on the page (3) compete at full score; each one past that competes at
++ ln `fClassRepeatDiscount` (x0.5 on exp(score)), then + 2 ln d (x0.25), and so on
+(additive on the score since R7, `SlotClassCap.h`). Keys with a job are never
 capped, and overrides and Remembrance holds are never moved for it, though they
 count towards their class.
 
@@ -472,12 +522,12 @@ column for `tools/replay`.
   FoodAny), so seven foods on a page never had more than three in one class.
 - **Placement only.** `FindBestCandidate` weighs a Regular key's choice by the
   cap (`src/slot/SlotClassCap.h`); ranking, the learner and the selection log keep
-  every item's true utility, so learning never sees an item as worse because a
+  every item's true score, so learning never sees an item as worse because a
   sibling took a key first.
 - **The hold uses it too** (Pass 1c), or a crowd that formed before the cap
   applied would stay. Every held item is counted before any is judged, and a
-  held item's factor is its rank by utility within its class -- the weakest of
-  four held weapons holds at x0.5, the other three at full. The item being
+  held item's term is its rank by score within its class -- the weakest of
+  four held weapons holds at + ln d (x0.5 on exp(score)), the other three at full. The item being
   judged leaves the count while its challenger is found, so a challenger of
   the same class is weighed as the holder was. Counted slot by slot instead,
   a challenger for a high-priority slot could not see the holders further
@@ -556,7 +606,7 @@ for testing and log reading:
 |---------|------|--------|
 | 3 | T: Emergencies | Regular keys with HP / MP / SP / Other on 1-4; key 5 PotionsAny with no overrides as a control |
 | 4 | T: Classes A | Ten keys, one class each: WeaponsMelee, WeaponsRanged, AmmoAny, DamageMagic, HealingAny, DefensiveAny, SummonsAny, BuffsAny, Utility, ScrollsAny |
-| 5 | T: Classes B | PotionsAny, FoodAny, AlcoholAny, ApparelAny, DamageAny and the five spell schools |
+| 5 | T: Classes B | PotionsAny, FoodAny, NarcoticsAny, ApparelAny, DamageAny and the five spell schools |
 | 6 | T: Ranking | Eight Regular keys with no overrides, wildcards or swap back: churn from ranking and the hold alone |
 | 7 | T: Swap | Swap back and equip: one key with `bSkipEquipped = 0`, one with `bRemembrance = 0` |
 
@@ -587,6 +637,51 @@ the registries and `GetDeduplicationKey()` use) per slot, per page, on the
 allocator. The allocator has to own it: `SlotLocker` is keyed by slot index and
 knows only the display page, and the Wheeler pages never reach the locker at
 all, so nothing else sees every page.
+
+**One owner per key (0.24.6).** Seats, last placements, home claims and
+departures name an item by its key, so a key must name one row of the list.
+The game's list has one: `CandidateFilters` drops a second candidate of a key
+as `duplicate` (two plain stacks of one weapon form with no `ExtraUniqueID`,
+say), and a Remembrance row is added only for a form no ranked row has, once.
+What does reach the allocation is several rows of one *form* with different
+keys (a tempered or enchanted stack with its own uniqueID beside the plain
+one: one form, one key on the page, by the formID dedup), several forms of one
+*name* (two enchanted copies, a player-made item: one name per page, below),
+and a spell and a scroll of one effect (different forms and source types:
+different keys, ordinary rows). The core does not rely on the filter: the key's
+row is the first ranked row with it in list order (the scorer's order, so its
+best), else the first remembered-only row; any other row with the key is
+*shadowed* and no pass places it, finds it or draws it
+(`Engine::MarkShadowed`, `OwnerOf`). Before this every "the row with this key"
+lookup (the hold's owners and guests, the wildcard seat's owner) took the
+first match while the fill could place another, so a key the page showed could
+read as free; on synthetic pages with shared keys that left pages that never
+settled (a `HoldGaveWay` every pass with no visible change) under the
+challenger rule and the fixed margin alike (R9's verifier). Host-tested: the R9
+property test's worlds with duplicate keys and names kept settle on both paths
+(`tests/core/ChallengerRuleTests.cpp`).
+
+**One name per page (0.24.6).** Every pass that puts an item on a key checks
+the form and the display name against what the page already shows: the fill
+and the draw did, and since 0.24.6 the override passes, the Remembrance pass
+and the slot hold's owners and guests do too. Two forms of one name read as one item to
+the player, and `SlotLocker`'s post-lock dedup clears one of them by name
+anyway (`core/DedupRules.h`). The hold was the gap: it checked its seat owners
+only against what the overrides and holds had placed, so two seated forms
+named alike (R10's synthetic seeds 409 and 459, two Normal "Twin" rows) were
+both held. Now the owner the fill would serve first keeps its seat and the
+other is an ordinary row, which the name dedup keeps off the page. A guest (an
+item standing on another key because an override sits in its seat) was the
+second gap: it was checked against the overrides and holds only, not against
+the seat owners the hold had already kept, so a page could read [Twin]
+[override] [Twin], or show one form on two keys when the guest was a second
+stack of a held owner. A guest is now checked against what the page will show:
+the overrides, the holds and every holder accepted before it; one that shares
+a form or a name with them waits off the page. The golden test's page
+invariant checks every row: at most one wildcard, only on its key, no form
+twice, no name twice, no shadowed row; besides the generator's sequences, it
+runs on 2000 worlds built to reach the guest case (an override pinned in a
+seat whose owner stands as a guest, a third seat's owner its twin).
 
 **Pass 3 resolves chains, not swaps.** A departure shifts a run of items up by
 one, so putting them back starts at the bottom: the last item drops into the
@@ -637,7 +732,9 @@ minutes landed on a different key, nearly all of them within a minute. So:
   as an item an override displaced already does. It is held there (a guest in
   the slot hold) until the hold ends, not moved by the fill when another slot
   empties. When the slot frees, the slot
-  hold seats it there unless a challenger beats it by `fChallengerMargin`; if
+  hold seats it there unless a challenger clears the challenger rule's line
+  (`fChallengerConfidence`, `fChallengerMinGap`; `fChallengerMargin` when the
+  ranking carries no beliefs); if
   it leaves the page meanwhile, the claim lapses with it. On LoreRim's first
   run this was 17 of the 22 returns that missed their key (2026-10-06).
 - **One run, not three.** The gap-filler has usually been on the returner's
@@ -738,7 +835,7 @@ change at all.
   [Locked] --matching override >= break pri-->  [Unlocked]
   [Locked] --OnItemUsed(formID)-->              [Unlocked]
 
-  Lock duration:      3000 ms code default, 1000 ms in the shipped INI
+  Lock duration:      3000 ms (fLockDurationMs)
   Min before break:   500 ms (fMinLockDurationMs)
   Override bypass:    priority >= 50 (iImmediateBreakPriority)
   Sticky activation:  10000 ms (ACTIVATION_LOCK_MS, src/slot/SlotLocker.h:188)
@@ -880,7 +977,7 @@ the keys, and they lock again when it returns. Changing
 `fCombatLockDurationMs` mid-fight affects locks taken after the change.
 
 **Wildcards in combat** (0.23.40; `Core::DecideCombatOnset`, `LockForFill`,
-`CombatSweepLocks`, `WildcardMayBePlaced`). A wildcard is an exploration pick,
+`CombatSweepLocks`, `StepWildcardsForCombat`). A wildcard is an exploration pick,
 and under the freeze it held its key all fight: a mage's never-equipped Iron
 Dagger, rolled at 08:55:51, was converted at onset (08:56:04) and combat-locked
 again when it came back (08:57:50, 2026-10-12). Now a key whose lock holds a
@@ -943,17 +1040,38 @@ reports no departures). Apart from these reconcile rules, play without Wheeler
 is unchanged: nothing is hidden, and `EquipManager` equips a uid-0 weapon by
 its base form.
 
-**Combat upsert** (`fCombatUpsertMarginMult`, default 3, 0 = off;
-`fCombatUpsertCooldownSec`, default 10, 0 = no limit; `src/core/CombatUpsert.h`,
-wired in `SlotLocker::ApplyCombatUpserts`, after dedup and before the combat
-sweep; 0.23.38). The freeze cut page-0 changes in combat from 34-60 a minute to
-about 9, but made the key absolute. A challenger now takes a combat-locked key
-when `s(challenger) - s(item on the key) > fCombatUpsertMarginMult x ln(1 +
-fChallengerMargin)` (3 x ln 1.5 = 1.216, about 3.4x the utility under the
-bridge; both scores finite). It is measured against the item ON the key -- this
-run's score if it was scored, else the last score the key had (the conservative
-side) -- never against the allocator's seating, which keeps reshuffling behind
-the locks (48 `[Hold]` give-ways in 200 s at margins of 0.4-0.9). Challengers are
+**Combat upsert** (`fCombatChallengerConfidence`, default 0.995;
+`fCombatUpsertMarginMult`, default 3, 0 = off; `fCombatUpsertCooldownSec`,
+default 10, 0 = no limit; `src/core/CombatUpsert.h`, wired in
+`SlotLocker::ApplyCombatUpserts`, after dedup and before the combat sweep;
+0.23.38, the challenger rule since 0.24.13). The freeze cut page-0 changes in
+combat from 34-60 a minute to about 9, but made the key absolute. A challenger
+now takes a combat-locked key when R9's challenger rule
+(`core/ChallengerRule.h`) says it is the better item with probability above
+`fCombatChallengerConfidence`: `s(challenger) - s(item on the key) > ln m +
+z_combat x sigma_Delta`, z_combat = Phi^-1(`fCombatChallengerConfidence`),
+ln m = `fChallengerMinGap` -- the hold's own rule at a stricter confidence,
+read whenever this run's beliefs cover both rows (the choice ranking, with the
+frozen item scored this run). Why its own key and not `fChallengerConfidence`:
+a key that changes mid-fight costs more than one that changes at rest (the
+misclicks behind the freeze), and the fixed-margin upsert was deliberately 3x
+the calm hold's margin (3 x ln 1.5 against ln 1.5). The default keeps that
+ratio on z: 3 x z(0.8) = 2.525 = z(0.9942), and 0.995 (z 2.576, 3.06x) is the
+nearest round value. Where no belief covers the pair -- the FALLBACK ranking
+(no bootstrap, no sigma), or a frozen item this run did not score, whose row
+belongs to an older run's table -- the fixed barrier stays, as the hold falls
+back to the fixed margin: `s(challenger) - s(item on the key) >
+fCombatUpsertMarginMult x ln(1 + fChallengerMargin)` (3 x ln 1.5 = 1.216,
+about 3.4x the utility under the bridge). Both scores finite either way.
+`fCombatUpsertMarginMult = 0` still turns the upsert off in both rankings.
+No swap-back on fixed beliefs, as for the hold: both lines are >= 0 and the
+rule's is symmetric in the pair, so the displaced item could not take its key
+back even without the departure memory below (host-tested on random pages,
+`tests/core/CombatUpsertTests.cpp`). It is measured against the item ON the
+key -- this run's score if it was scored, else the last score the key had (the
+conservative side) -- never against the allocator's seating, which keeps
+reshuffling behind the locks (48 `[Hold]` give-ways in 200 s at margins of
+0.4-0.9). Challengers are
 the allocator's ordinary picks for this page (not override, Remembrance or
 wildcard) that no key shows (by item or name) and that are not equipped (the
 locker cannot see `bSkipEquipped`), on a key the allocator placed them on or
@@ -974,7 +1092,12 @@ upserting another key in the same run. The combat
 lock's no-enemy release (`fCombatNoEnemyReleaseSec`) ends the fight for this
 too: the "displaced this fight" list is cleared, as at combat end. A page
 switch clears each key's upsert cooldown and press record.
-Pairing is greedy on the margin (`PlanCombatUpserts`). Never on a key showing
+Each open key asks its best fitting challenger (by score), or with
+`bTestAllChallengers = 1` its challengers in rank order until one clears the
+line; the keys' picks are paired greedy on the margin (`PlanCombatUpserts`).
+Under the fixed barrier alone the two settings, and the pre-0.24.13 planner
+(every passing pair, greedy on the margin), give the same picks: a lower score
+cannot clear a barrier the best one missed. Never on a key showing
 an override, a Remembrance item or a wildcard, that the allocator wants for an
 override or Remembrance item this run (a non-urgent override waiting out
 `fMinLockDurationMs`: an upsert first would be two changes and would restart
@@ -987,9 +1110,12 @@ max(`fPressGraceMs`, 500 ms) after it closes (`WheelClosedRecently`, stamped by
 window + 100 ms), so a pending hold or tap never acts on an upsert even with
 `fPressGraceMs = 0`; when the press acts; and on a Huginn-wheel activation.
 The 500 ms floor is the default of those two. The new item is combat-locked
-like any other. One info line each,
-`[SlotLocker] Slot N combat upsert: 'Old' -> 'New' (s=+a vs -b, +d > 3.0 x ln m
-0.405)`, and the change counts as `upsert` in `[SlotChurn]` and the heartbeat.
+like any other. One info line each, with P(better) like the `[Hold]` lines
+when the rule decided, `[SlotLocker] Slot N combat upsert: 'Old' -> 'New'
+(s=+a vs -b, +d > ln m 0.000 + z 2.58 x sd 0.300, P 0.999)`, else
+`(s=+a vs -b, +d > 3.0 x ln m 0.405, no belief)`; either ends `; K higher
+challenger(s) missed the line` when `bTestAllChallengers` went past the best.
+The change counts as `upsert` in `[SlotChurn]` and the heartbeat.
 Replayed on the 2026-10-11 12:05-13:27 log (11 fights, 15.7 min in combat, 105
 page-0 changes), before the page limit and the departure rule: about 32-36
 upserts at 3 (2.0-2.3 a minute) and 69-71 at 2. An upper bound: the log has the
@@ -1072,6 +1198,34 @@ using previous Z`. Not covered: Huginn's own Wheeler wheels (Wheeler equips its
 entry before it calls back), and shouts (not an inventory form; the usability
 check refuses them, so a shout is never the previous item acted on).
 
+**Hand equip gate** (0.24.26; `src/core/HandEquipGate.h`, `src/input/HandEquipGate`).
+A press whose item goes into a hand (spell, scroll, weapon, staff, torch, shield) does
+its bookkeeping in `EquipSlot` at the press -- the press grace above, the
+Remembrance note on the page pressed, the selection, the own-press note -- and
+then parks the equip (form and stack captured at the press, one pending: a new
+press replaces it and withdraws its selection, or hands it over when it is
+the same item). The PlayerCharacter::Update hook, on the main thread, equips
+it as soon as the checked hands' magic casters are idle -- both hands unless a
+right-hand equip leaves the left alone -- and never interrupts a cast: one
+still going 3 s after the park drops the press; caster states 7-9 hold it at
+most 250 ms (both on the game clock, so slow time and pauses stretch them).
+Outside gameplay the pending equip is dropped and a selection the press
+opened is withdrawn (a weapon swap half done is finished instead, unless a
+save loads, and a press that arrives meanwhile is dropped rather than replace
+it). While it waits, its form's
+selection is held undecided (`core/SelectionGate.h`); when it goes, the
+confirm window, the press's Remembrance capture (`Remembrance::RearmCapture`)
+and the own-press note restart from the equip. After the equip, while drawn
+(kDrawn) and with both casters idle, the hands are redrawn as Wheeler-Refined
+does (`[Equip]
+bRedrawAfterHandEquip`). Potions, food, poisons, ammo, other apparel and soul
+gems act at once, as before. If the hook stops ticking with an equip parked
+for 5 s, an error line says so and the keys equip inline until it runs again.
+The slot keys themselves do nothing, and are not consumed, in a loading
+screen, the main menu, a pausing menu or a menu that takes the controls -- the
+favourites menu (which does not pause), dialogue, crafting, by each open
+menu's flags, read on the main thread (`SlotKeysBlockedBy`, `ObserveMenus`).
+
 **Bucket hysteresis** (`fVitalBucketHysteresis` default 0.03,
 `fDistanceBucketHysteresis` default 0.1; `src/core/BucketHysteresis.h`, wired in
 `StateEvaluator`). The HP/MP/SP level and the closest-enemy distance band feed
@@ -1109,58 +1263,210 @@ full page. One debug line per entry written while open:
 
 ## Wildcard System
 
-Wildcards are exploration picks: a lower-ranked candidate swapped up into a slot
-so the bandit gets evidence about items the player would otherwise never see.
-`WildcardManager` (`src/learning/WildcardManager.{h,cpp}`) runs *before*
-allocation, mutating the ranked candidate list and setting `isWildcard` on the
-promoted entry; `SlotAllocator` then treats it like any other candidate, apart
-from the `wildcardsEnabled` check.
+*Rewritten in R10 (0.24.3), map Phase 8: wildcards by uncertainty.*
 
-**Probability model** (`GetProbabilityForSlot`, `src/learning/WildcardManager.cpp:199`):
+A wildcard is "Huginn isn't sure about this one": an item the page does not
+show, put on a key for a while so the learner hears whether the player wants
+it ([doc 9](9-context-as-learner-input.md#exploration-uncertainty-ranked-wildcards)).
 
-```
-P(slot i) = min(fBaseProbability * i, fMaxProbability)
-```
+**One wildcard key per page.** `Core::SlotAlloc::SeatOf`
+(`src/core/SlotAllocCore.h`) names it: the last key in fill order
+(`PriorityOrder`: lowest `iPriority`, ties to the higher slot index) of those
+with `bWildcardsEnabled`, never the first key in fill order. On the shipped
+pages that is key 8 (the Jobs page already called key 8 "Wildcard"). A page
+whose only wildcard-enabled key is its top one, or a one-key page, has none.
+`[SlotSettings] Page N '...': K slots, wildcard key S` names it at load;
+`SlotAllocator::GetWildcardSeat(page)` is the same rule.
 
-Slot 0 is excluded by default (`m_firstSlotExcluded = true`) — it is always the
-top-scored pick. With the shipped base 0.165 and cap 0.5: slot 1 = 16.5%,
-slot 2 = 33%, slot 3 = 49.5%, slot 4 and beyond = 50%.
+**Placed, not swapped.** Until R10 (0.24.3) a wildcard was swapped up into a rank
+position, and the slot hold and the fill carried special cases for the swapped
+row (it scored low by design, so the hold had to exempt it; the class-capped
+fill had to keep its position). Both special cases are gone. The allocation
+core has passes of its own:
 
-**Per-page cache (v0.19.6).** Each page owns its own entry array, its own
-cooldown clock and its own refractory clock (`PageWildcards`,
-`src/learning/WildcardManager.h:162`). Each array also records the page **shape**
-(`slotCount`, `wildcardSlots`) it was rolled against; any shape change — an INI
-hot-reload resizing a page, or toggling `bWildcardsEnabled` — discards that
-page's cache wholesale. This replaced a single global array indexed by position
-and shared by every page, which could strand a cached wildcard that nothing
-could display and thereby suppress re-rolls for a full cooldown.
+- **PASS 1w** (after overrides and Remembrance, before the hold and the fill):
+  the page's cached wildcard is pinned on its seat (`Kind::Wildcard`, which
+  `SlotState::IsPinned` now includes: seating never moves it, it claims no
+  seat). An override or a Remembrance hold on the seat, or showing the item,
+  wins the run (`PinFate::SeatBusy`, kept); a seat that no longer takes the
+  item (its class; equipped under skip-equipped -- the player has it in hand)
+  refuses it (`PinFate::Refused`, the manager drops it).
+- **PASS 4p** (after the refill, seating on): the seat's owner. Pinned before
+  the hold, the wildcard keeps its seat's owner out of it, and the hold keeps
+  that owner from challenging any other key (a displaced owner, as with an
+  override). With the other keys held it had no way back on the page, even as
+  the page's best row: with seating, which row owns the wildcard key is
+  whatever got there first, and R9's challenger rule keeps it there. So an
+  owner the page does not show, while it outranks the weakest ranked row on a
+  key that takes it, moves to that key and the weakest row leaves instead
+  (`RehomeSeatOwner`, `RehomeFor`; each after the class cap, as the hold weighs
+  a holder). The old engine kept the top pick out of the wildcard's reach
+  ("slot 0 is always excluded"); this keeps that promise for any row that
+  would otherwise be shown.
+- **PASS 4w** (on the finished page, before the seating record): the roll.
+  The pool is every ranked row the page does not show (by formID and by name)
+  that the seat takes -- every item type; the old same-type draw is gone. Each
+  row weighs
 
-**Capacity cap.** A page can display at most as many wildcards as it has slots
-with `bWildcardsEnabled`. `SlotAllocator::GetWildcardSlotCount(pageIndex)`
-supplies that count (via `PipelineContext::displayWildcardSlots`) and rolling
-stops once it is reached. It is a page-level *capacity*, not a per-index map:
-allocation decides which slot takes a given wildcard, by classification and
-priority, so no caller can know in advance which one it will be.
+  ```
+  w_i = rel_i * sd_i,    rel_i = logistic(mu_i - mu_cut)
+  ```
 
-**Draw window.** A wildcard is only ever surfaced by swapping a lower-ranked
-candidate *up*. `SelectRandomCandidate` is therefore called with
-`minIndex = i + 1`, so a roll for slot *i* can only draw from below it. Drawing
-at or above *i* would cache an entry the swap step skips (`foundIdx <= slotIdx`)
-while the cache still reads as active — a wasted roll that stalls re-rolling for
-a whole cooldown.
+  with mu the choice score, sd its posterior standard deviation, and mu_cut
+  the score of the row the wildcard puts off the page, so rel is the model's
+  own probability that the player prefers the row to what the page would
+  show. That row is the seat's occupant, unless the occupant outranks the
+  weakest ranked row on another key that takes it: then the occupant moves to
+  that key and the weakest row leaves (`RehomeFor`, as in PASS 4p), and mu_cut
+  is its score. One key changes besides the seat; the `[Wildcard]` line says
+  `its item moved to key J`. P(roll) = base + (max - base) * min(1, max_i w_i / 0.25)
+  (0.25 = an item tied with the cut at the prior sd of b, 0.5). The draw is a
+  mixture: `fUniformShare` uniform over the pool, the rest in proportion to w.
+  The row drawn takes the seat. The row that left is remembered as departed,
+  and home keys bring it back when the wildcard ends; a moved occupant keeps
+  its claim on the seat (it is on screen) and goes home then too.
+- **Slot locks** (`PipelineCoordinator::AllocateAndLock`, from
+  `SlotLocker::GetLockSnapshot`). The roll runs before `ApplyLocks`, and a
+  locked key shows its locked item whatever the allocation says. So a roll
+  waits while the seat's lock still holds (not spent: the next unlocked run in
+  the window rolls), and every form a lock holds on the page is kept out of
+  the pool (`WildcardIn::heldForms`), and since 0.24.6 every name
+  (`WildcardIn::heldNames`): the post-lock dedup compares names, so it would
+  clear such a wildcard as a second copy, and the rows just under the cut --
+  the likeliest draws -- are the ones that just left a key and are still held
+  there. The move above passes over a key whose row a lock holds.
+- **Counted once shown (0.24.6).** `WildcardManager::Commit` runs after
+  `ApplyLocks`, and a draw counts only if the page shows it on the seat
+  (`Core::Wildcard::DrawnShown`: the seat is the wildcard, that stack). One the
+  locker kept off -- a lock kept or taken inside `ApplyLocks` itself, the one
+  case the exclusions above cannot see -- is not cached, not logged, not
+  counted in `rolled=`, and does not spend the window's roll
+  (`CommitFate::NotShown`, a debug line); the next run in the window rolls
+  again, as after a page race. Before 0.24.6 `Commit` ran before
+  `ApplyLocks` (R10's verifier), so such a draw was cached for its cooldown,
+  logged and counted although the player never saw it.
 
-Wildcards are also **source-type coherent**: the type is taken from the current
-top-ranked candidate, so a spell-led ranking rolls spell wildcards.
+The math is `src/core/WildcardPick.h`; the host tests are
+`tests/core/WildcardTests.cpp`. Rows with no sd (the fallback ranking, no
+bootstrap) weigh 0 and the draw is uniform.
+
+**What lands on the list** (doc 9): items never picked and items whose battery
+ran down (b back at its prior N(0, 0.25)), pairings with little evidence
+(theta's variance where an active need meets the row's effects), newly gained
+spells and items (below) -- all through sd; and only those close enough to the
+page to matter, through rel.
+
+**The discovery boost (0.24.14).** A newly learned spell has no b, so up to
+0.24.13 its sd carried b's prior sd (0.5) -- the same as each of the hundreds
+of items the character carries and has never picked, so nothing set it apart.
+Now an item the player newly GAINS during play draws with b's variance
+multiplied by
+
+    m(age) = 1 + (M - 1) * 2^(-age / H)      age = play seconds since the gain
+    sd_w   = sqrt(var + (m - 1) * var_b)     var_b = b's variance as read now
+
+(`[Learning] bDiscoveryBoost = true`, `fDiscoveryBoostVarMult` M = 4,
+`fDiscoveryBoostHalfLifeSec` H = 3600; hot-reloadable; `core/DiscoveryBoost.h`,
+host-tested in `tests/core/DiscoveryBoostTests.cpp`). At the gain its b's sd
+is twice the prior's (1.0); after an hour of play the multiplier is 2.5, and
+the boost is dropped once m - 1 < 0.01 (8.2 hours at the defaults, about b's
+useful life) or at the item's first pick, whichever comes first. With b's part
+dominating the row's sd, a new item weighs up to twice what an equally
+relevant never-picked item weighs, and it lifts P(roll) as an unknown item at
+the edge of the page does (its w reaches wRef at rel 0.25 instead of 0.5).
+
+- **Gained** means: a `TESContainerChangedEvent` puts a form into the player's
+  inventory from anywhere else (picked up, bought, looted, crafted, given),
+  or the spell registry adds a spell in play (`SpellRegistry::TakeNewlyLearned`,
+  `LearnedAt`'s meaning) -- and the form is not in the character's seen set.
+  Not gained: anything present when a character or a save loads (the load
+  primes the seen set with the inventory's entries and base container, the
+  registry's spells and every form b holds an entry for, without a boost;
+  gains arriving while a load is under way are dropped; a chest's contents
+  with no b entry cannot be primed, so on the first load with DISC such an
+  item reads as new when it comes back), a count change of a form already seen, or a form gained again
+  after it left (sold, used up, a spell removed and re-added). The seen set is
+  never pruned; b's forget pass returns an unused item to its prior, and that
+  item is not new.
+- **The wildcard only.** The row's score variance (`ScoredCandidate::ChoiceParts::var`),
+  the challenger rule's sigma_Delta, the summon upgrade gate and the logged sd
+  stay the unboosted posterior; only `SlotSnapshot` reads `WildcardVar()`
+  for the draw's `sd`. A boosted sigma in the challenger rule would work
+  against discovery: c takes i's key only when mu_c - mu_i > ln m +
+  z sigma_Delta (z >= 0), so a larger var(b_c) makes a new item take a held
+  key LATER (and a seated one harder to move); in the upgrade gate it would
+  pull covered toward 0.5 and move mu.
+- **Saved** in the cosave record DISC (seen forms; boosted forms with their
+  play seconds since the gain), under the load decisions BIAS follows (a
+  reload of the same character keeps memory, dynamic forms from the save; a
+  saved dynamic form that no longer exists is dropped at the load),
+  written whether or not the bootstrap is usable.
+- **Seen in game:** `[Discovery] ... newly gained (inventory|spell)` (debug),
+  one `[Discovery] Load: ...` summary per load (info), `new xM sd_w=` on the
+  `[Recs]` line, the `[Wildcard]` line's `sd=` (the draw's), `hg theta <id>`
+  and `hg status`.
+- **Off** (`bDiscoveryBoost = false`): m = 1 and a new item starts no more
+  uncertain than any never-picked item; the tracker keeps running, so turning
+  it back on boosts nothing old.
+
+**The manager** (`src/learning/WildcardManager.{h,cpp}`) owns, per page, the
+cached wildcard, its propensity and its clocks, and nothing else. Its
+decisions are `Core::Wildcard::Gate` (`src/core/WildcardGate.h`, host-tested
+in `tests/core/WildcardTests.cpp`); the manager adds the clock, the uniforms,
+the uid check on the ranked list, the logs and the heartbeat:
+
+- `Plan(page, list)`, before the page's allocation: pin the cached wildcard,
+  or -- nothing cached, the refractory over, not in combat, the displayed
+  page -- ask for a roll with two uniforms;
+- `Commit(page, result, drawnShown)`, after it and after `ApplyLocks` (and
+  only for an allocation the pipeline
+  keeps: after the page-race check, so an abandoned tick caches, logs and
+  counts nothing; `Plan` itself steps the clocks before that check, so an
+  abandoned tick that asked for a roll leaves the window open and the next run
+  rolls with fresh uniforms -- with page races, about none in play, the logged
+  per-window propensity runs a little low): cache a drawn wildcard (info line `[Wildcard] Page P key
+  K: 'name' (p=..: roll .. x draw .. of N; rel= sd= w= ..)`) the page shows
+  (one the locks hid counts for nothing, above), drop a refused
+  one, and spend a roll that drew nothing;
+- `UpdateExpiry()`, every tick, across all pages.
+
+**One roll per window.** Once `fRefractorySeconds` have passed since the
+page's last wildcard ended, the next run whose seat can take one rolls; a roll
+that fails (or comes up with an empty pool) is spent and the refractory
+restarts. A run whose seat an override, a hold or a slot lock has never
+evaluates the roll, and the next run in the window tries. So P(roll) is the chance per window that
+a wildcard appears and the uncertainty term governs how often they do: with
+the shipped clocks a page shows one about every 30 + 60 / P(roll) seconds
+(150 s at the max, about 6.5 minutes at the base). Before this a failed roll
+tried again on the next run, and P(roll) only set a delay of a few runs.
+
+**Per-page cache (v0.19.6, kept).** Each page owns its wildcard and its own
+cooldown and refractory clocks, keyed by the page shape (`slotCount`, `seat`):
+an INI reload that resizes the page or moves its seat drops the page's
+wildcard.
+
+**Per-page flags (R10; the Wheeler leak).** A Wheeler page the player is not
+viewing is allocated on the push (`WheelerBackend`) with its OWN cached
+wildcard pinned (`WildcardPage::display = false`: it never rolls). Before
+R10 it was allocated from the displayed page's ranked list, wildcard swap and
+flags included, so the displayed page's wildcard leaked onto the other wheels.
 
 **Persistence and cooldowns:**
 
-- Once rolled, a page's wildcards persist for `fCooldownSeconds` (30 s default).
-- After they expire, that page waits `fRefractorySeconds` before rolling again
-  (code default 5 s; the **shipped INI sets 60 s**).
-- `UpdateExpiry()` runs unconditionally every tick across **all** pages, because
-  `ApplyWildcards` only runs on non-skipped pipeline ticks — otherwise an
-  expired wildcard would stay on screen while the pipeline is idle. It returns
-  `true` if any page's wildcards lapsed, and the caller forces a pipeline run.
+- Once drawn, a page's wildcard stays `fCooldownSeconds` (30 s default).
+- After it expires (or the seat refuses it, or a roll draws nothing), that
+  page waits `fRefractorySeconds` before rolling again (60 s default).
+- Combat (0.23.40, unchanged): none placed, every page's dropped at onset, the
+  refractory restarted on every page when it ends.
+- `UpdateExpiry()` returns `true` if any page's wildcard lapsed, and the caller
+  forces a pipeline run.
+
+**Logged:** the v3 log's `wp` on the row shown as the wildcard is
+P(roll) x P(the draw shows its form) (two stacks of one form: both shares),
+the chance per window that the window shows that form;
+the `[Soak]` heartbeat appends `wildcards rolled= relevant= picked=` (relevant:
+the row had a positive theta n cap term when drawn; picked: a pick whose chosen
+row was shown as the wildcard).
 
 ---
 
@@ -1185,9 +1491,10 @@ See [6-ui-ux.md](6-ui-ux.md) for the display side. The slot-relevant parts:
 - **Feedback.** Every Wheeler activation is a player selection
   (`SelectionTracker::Select`, `EquipSource::Wheeler`, wired in `src/Main.cpp`).
   Once it confirms -- a consumable's count drops, an equip is still worn 3 s
-  later -- the learner gets one reward, `EQUIP_REWARD` (+8.0) or
-  `CONSUME_REWARD` (+5.0). A pick off the player's own wheel is noted as player
-  input instead, so the equip that follows counts as an outside selection.
+  later -- the pick goes to `ChoiceLearner::OnPick` (through the v3 decision and
+  `ChoiceSubscriber`), and to the old learner's choice target for D2. A pick off
+  the player's own wheel is noted as player input instead, so the equip that
+  follows counts as an outside selection.
 - Opening and closing a wheel without acting carries **no penalty** — there is
   no skip-penalty path in the code.
 
@@ -1211,7 +1518,7 @@ iSlotCount = 8            ; 1-10 (clamped). Code default 7 on page 0, 3 elsewher
 
 [Page0.Slot0]
 sClassification = DamageAny   ; SlotClassification enum name (unknown -> Regular + warning)
-bWildcardsEnabled = true      ; Allow wildcard exploration picks in this slot
+bWildcardsEnabled = true      ; May be the page's wildcard key (the last such key in fill order is)
 bOverridesEnabled = HP        ; OverrideFilter: None/Any/HP/MP/SP/Other (true/false also accepted)
 iPriority = 6                 ; Allocation order (higher = filled first)
 bSkipEquipped = true          ; Skip already-equipped candidates (default on)
@@ -1227,11 +1534,14 @@ per-slot defaults described under
 ```ini
 [SlotLocker]
 bKeepSlotPositions = true       ; Keep an item in the slot it was already in (seating)
-bHoldSeatedItems = true         ; Hold a seated item until a challenger beats it by the margin
-fChallengerMargin = 0.5         ; How much better a challenger must score (0.5 = 50%; 0.25 before 0.23.6)
+bHoldSeatedItems = true         ; Hold a seated item until a challenger clears the line
+fChallengerConfidence = 0.8     ; P(challenger better) it needs: lead > fChallengerMinGap + z x sigma_Delta (0.24.2)
+fChallengerMinGap = 0           ; A minimum lead on top, in score units (0 = confidence alone)
+bTestAllChallengers = 0         ; 1 = ask challengers in rank order, first past the line wins (hold and combat upsert; 0.24.13)
+fChallengerMargin = 0.5         ; The fixed margin, only when the ranking carries no beliefs (0.5 = 50%)
 bReturnToHomeKey = true         ; A returning item takes back the key it left (home keys)
 fHomeKeyMemorySec = 60          ; ...if it left within this long; 0-600, 0 = off
-iClassFreeSlots = 3             ; Class cap: items of one slot class on Regular keys at full utility (1-10)
+iClassFreeSlots = 3             ; Class cap: items of one slot class on Regular keys at full score (1-10)
 fClassRepeatDiscount = 0.5      ; ...and x this for each one past them; 1.0 = off
 fRemembranceDurationMs = 15000  ; Remembrance hold length; 0 = off everywhere
 fRemembranceMismatchDurationMs = 5000  ; ...on a key whose class it does not fit
@@ -1244,6 +1554,9 @@ bOverridesBreakLock = true      ; Allow high-priority overrides to break locks
 iImmediateBreakPriority = 50    ; Override priority that bypasses fMinLockDurationMs
 fCombatLockDurationMs = -1      ; In combat: -1 = freeze until combat ends, 0 = fLockDurationMs, else ms (<= 120000)
 fCombatNoEnemyReleaseSec = 5    ; ...but combat ends for the lock after this long with no enemy; 0 = off, 0-60
+fCombatChallengerConfidence = 0.995 ; Combat upsert: P(challenger better) it needs (the challenger rule; 0.24.13)
+fCombatUpsertMarginMult = 3.0   ; ...0 = off; else its fixed barrier, x ln(1 + fChallengerMargin), with no belief
+fCombatUpsertCooldownSec = 10   ; At most one combat upsert per key per this long; 0 = no limit
 fPressGraceMs = 600             ; Misclick guard: a key changed this recently acts on its previous item; 0-2000, 0 = off
 fVitalBucketHysteresis = 0.03   ; HP/MP/SP level moves up only this far past a boundary (falls at it); 0-0.1
 fDistanceBucketHysteresis = 0.1 ; Distance band moves only this fraction past a boundary, both ways; 0-0.5
@@ -1254,15 +1567,15 @@ fDistanceBucketHysteresis = 0.1 ; Distance band moves only this fraction past a 
 ```ini
 [Overrides]
 bEnableCriticalHealth = true
-fCriticalHealthThreshold = 0.35   ; Shipped; code default 0.10
+fCriticalHealthThreshold = 0.35   ; Activates below 35%
 fCriticalHealthHysteresis = 0.15  ; RELEASE GAP: deactivates at 0.35 + 0.15 = 50%
 
 bEnableCriticalMagicka = true
-fCriticalMagickaThreshold = 0.35  ; Code default 0.10
+fCriticalMagickaThreshold = 0.35
 fCriticalMagickaHysteresis = 0.15
 
 bEnableCriticalStamina = true
-fCriticalStaminaThreshold = 0.35  ; Code default 0.10
+fCriticalStaminaThreshold = 0.35
 fCriticalStaminaHysteresis = 0.15
 
 bAllowImpurePotions = true        ; Allow potions with side effects (skooma, etc.)
@@ -1292,10 +1605,11 @@ bEnableDrowning = true            ; Boolean condition, no threshold
 
 ```ini
 [Wildcards]
-fBaseProbability = 0.165         ; P(slot i) = base * i
-fMaxProbability = 0.5            ; Probability cap
-fCooldownSeconds = 30            ; How long a page's wildcards persist once rolled
-fRefractorySeconds = 60          ; Shipped; code default 5. Wait after expiry before re-rolling
+fBaseProbability = 0.165         ; P(roll) with nothing uncertain near the page
+fMaxProbability = 0.5            ; P(roll) with an unknown item at the page's edge
+fUniformShare = 0.1              ; the draw's uniform share (every row keeps share/N)
+fCooldownSeconds = 30            ; How long a page's wildcard stays once drawn
+fRefractorySeconds = 60          ; The window: one roll per window, a failed roll restarts it
 ```
 
 ### [Keybindings] (page cycling)
@@ -1349,9 +1663,10 @@ Input Thread (- / = keys)
 
 Update Thread (~100ms tick)
   -> OverrideManager::Update() / SlotLocker::Update()   [unconditional]
-  -> WildcardManager::ApplyWildcards()                  [pipeline ticks only]
+  -> WildcardManager::Plan()                            [pipeline ticks only, before the allocation]
   -> SlotAllocator::AllocateSlotsForPage()              [seating: mutex-guarded]
   -> SlotLocker::ApplyLocks()                           [mutex-guarded]
+  -> WildcardManager::Commit()                          [after the locks: counts a draw only if shown (0.24.6)]
   -> Slot::ComputeVisualStates() -> IntuitionMenu / Wheeler
 
 Wheeler Callback Thread
@@ -1365,10 +1680,11 @@ Wheeler Callback Thread
 
 - [0-pipeline.md](0-pipeline.md) - Overall recommendation pipeline
 - [1-states.md](1-states.md) - State models for override detection
-- [2-classifiers.md](2-classifiers.md) - Spell/item/weapon tags the classifier reads
+- [2-classifiers.md](2-classifiers.md) - The old classifiers (since R11 an input to the D2 feature only)
 - [3-candidate-filtering.md](3-candidate-filtering.md) - What reaches the allocator
-- [4-contextual-bandits.md](4-contextual-bandits.md) - Learning system (EquipEventBus, reward signals)
+- [9-implementation-map.md](9-implementation-map.md) - The live learner (ChoiceLearner) and the choice score
+- [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) - The old learner, D2's input (EquipEventBus, reward signals)
 - [6-ui-ux.md](6-ui-ux.md) - Intuition widget and Wheeler display
 - [7-dmenu-integration.md](7-dmenu-integration.md) - dMenu-owned settings
 - [8-future-work.md](8-future-work.md) - Planned work
-- [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) - `hg page`, `hg unlock`, `hg reload`
+- [Console commands](../../CLAUDE.md#console-commands) - `hg page`, `hg unlock`, `hg reload`

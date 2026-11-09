@@ -1,0 +1,770 @@
+// Host tests for R8.3, the cutover: the THTA and BIAS cosave codec
+// (core/ChoiceCosave.h: round trip, version rejection, an unknown key dropped,
+// a reset with the model off emptying the carried records and what the
+// next load does with them (0.24.18),
+// the bootstrap merge), the need signature that joins the skip gate
+// (core/NeedEvaluator.h: kNever inputs, a boundary step), the ranking's order
+// (core/SlotScoreMath.h RanksBefore: score first, ties keep generation order
+// under std::stable_sort), the legacy switch (core/ChoiceLive.h: off gives
+// constant features and a score that ignores the old learner), and the
+// ranking pass (core/ChoiceLive.h: top terms, positions and kappa only after
+// the allocation), the blob caps the plugin checks before a read, and the
+// CriticalHealth label (display/NeedReason.h).
+
+#include "core/Bootstrap.h"
+#include "core/ChoiceCosave.h"
+#include "core/ChoiceLive.h"
+#include "core/ChoiceScore.h"
+#include "core/NeedEvaluator.h"
+#include "core/NeedSnapshot.h"
+#include "core/SlotScoreMath.h"
+#include "display/NeedReason.h"
+
+#include <doctest/doctest.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <limits>
+#include <optional>
+#include <ostream>
+#include <string>
+#include <vector>
+
+using namespace Huginn::Core;
+namespace CC = Huginn::Core::ChoiceCosave;
+namespace C = Huginn::Core::Choice;
+
+namespace
+{
+    constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
+    constexpr double kInf = std::numeric_limits<double>::infinity();
+
+    CC::ThetaRecord SampleTheta()
+    {
+        CC::ThetaRecord r;
+        r.createdUtc = "2026-10-29 12:29:59";
+        r.sha256 = std::string(64, 'a');
+        r.entries = { { 0x1111111111111111ull, 0.25, 0.09 }, { 0x2222ull, -1.5, 1.0 }, { 0xFFFFFFFFFFFFFFFFull, 3.0, 1e-6 } };
+        return r;
+    }
+
+    CC::BiasRecord SampleBias()
+    {
+        CC::BiasRecord r;
+        r.entries = { { 0x0001A2B3u, 0.5, 0.2, 3.5f, 42u, 0 }, { 0xFF000801u, -0.25, 0.25, 1.0f, 0u, CC::kBiasFavorite } };
+        return r;
+    }
+
+    template <class T>
+    void Poke(std::vector<std::byte>& blob, std::size_t at, T v)
+    {
+        REQUIRE(at + sizeof(T) <= blob.size());
+        std::memcpy(blob.data() + at, &v, sizeof(T));
+    }
+
+    C::Model Blank()
+    {
+        C::Model m;
+        m.theta.assign(C::K * C::J, C::Weight{ 0.0, 1.0 });
+        m.covered = C::Weight{ 0.0, 1.0 };
+        return m;
+    }
+
+    constexpr auto kHD = static_cast<std::size_t>(Needs::NeedId::health_deficit);
+    constexpr auto kMD = static_cast<std::size_t>(Needs::NeedId::magicka_deficit);
+    constexpr auto kRH = static_cast<std::uint16_t>(Effect::Col::restore_health);
+    constexpr auto kRM = static_cast<std::uint16_t>(Effect::Col::restore_magicka);
+}
+
+// ---------------------------------------------------------------------------
+// The cosave codec
+// ---------------------------------------------------------------------------
+
+TEST_CASE("cosave THTA: a round trip keeps every entry and the bootstrap identity to the bit")
+{
+    const auto r = SampleTheta();
+    const auto blob = CC::EncodeTheta(r);
+    CHECK(blob.size() == 4 + 2 + r.createdUtc.size() + 2 + r.sha256.size() + 4 + r.entries.size() * CC::kThetaStride);
+    std::string why;
+    const auto back = CC::DecodeTheta(blob, CC::kThetaVersion, &why);
+    REQUIRE_MESSAGE(back.has_value(), why);
+    CHECK(back->createdUtc == r.createdUtc);
+    CHECK(back->sha256 == r.sha256);
+    CHECK(back->entries == r.entries);
+    CHECK(back->dropped == 0);
+}
+
+TEST_CASE("cosave BIAS: a round trip keeps formID, mu, var, n, minutes and the favourite bit")
+{
+    const auto r = SampleBias();
+    const auto blob = CC::EncodeBias(r);
+    CHECK(blob.size() == 8 + r.entries.size() * CC::kBiasStride);
+    const auto back = CC::DecodeBias(blob, CC::kBiasVersion);
+    REQUIRE(back.has_value());
+    CHECK(back->entries == r.entries);
+    CHECK((back->entries[1].flags & CC::kBiasFavorite) != 0);
+}
+
+TEST_CASE("cosave: an empty learner writes and reads back empty records")
+{
+    CC::ThetaRecord t;
+    const auto tb = CC::DecodeTheta(CC::EncodeTheta(t), CC::kThetaVersion);
+    REQUIRE(tb.has_value());
+    CHECK(tb->entries.empty());
+    CHECK(tb->createdUtc.empty());
+    const auto bb = CC::DecodeBias(CC::EncodeBias(CC::BiasRecord{}), CC::kBiasVersion);
+    REQUIRE(bb.has_value());
+    CHECK(bb->entries.empty());
+}
+
+TEST_CASE("cosave: a version this build does not read is rejected, in the blob or in the record header")
+{
+    auto blob = CC::EncodeTheta(SampleTheta());
+    std::string why;
+    CHECK_FALSE(CC::DecodeTheta(blob, CC::kThetaVersion + 1, &why).has_value());   // the SKSE header says 2
+    CHECK(why.find("version") != std::string::npos);
+    Poke<std::uint32_t>(blob, 0, CC::kThetaVersion + 1);                             // the blob says 2
+    CHECK_FALSE(CC::DecodeTheta(blob, CC::kThetaVersion + 1).has_value());
+    CHECK_FALSE(CC::DecodeTheta(blob, CC::kThetaVersion).has_value());
+
+    auto bias = CC::EncodeBias(SampleBias());
+    CHECK_FALSE(CC::DecodeBias(bias, 0).has_value());
+    Poke<std::uint32_t>(bias, 0, 7u);
+    CHECK_FALSE(CC::DecodeBias(bias, CC::kBiasVersion).has_value());
+}
+
+TEST_CASE("cosave: a length that does not match the count, a truncated blob or a count over the cap is rejected")
+{
+    const auto good = CC::EncodeTheta(SampleTheta());
+    auto shortBlob = good;
+    shortBlob.pop_back();
+    CHECK_FALSE(CC::DecodeTheta(shortBlob, CC::kThetaVersion).has_value());
+    auto longBlob = good;
+    longBlob.push_back(std::byte{ 0 });
+    CHECK_FALSE(CC::DecodeTheta(longBlob, CC::kThetaVersion).has_value());
+    CHECK_FALSE(CC::DecodeTheta(std::span<const std::byte>(good.data(), 3), CC::kThetaVersion).has_value());
+    CHECK_FALSE(CC::DecodeTheta(std::span<const std::byte>{}, CC::kThetaVersion).has_value());
+
+    // a count past the cap, whatever the bytes after it
+    auto huge = CC::EncodeBias(CC::BiasRecord{});
+    Poke<std::uint32_t>(huge, 4, CC::kMaxBiasEntries + 1);
+    std::string why;
+    CHECK_FALSE(CC::DecodeBias(huge, CC::kBiasVersion, &why).has_value());
+    CHECK(why.find("cap") != std::string::npos);
+
+    // a string length past its cap
+    auto badText = good;
+    Poke<std::uint16_t>(badText, 4, static_cast<std::uint16_t>(CC::kMaxText + 1));
+    CHECK_FALSE(CC::DecodeTheta(badText, CC::kThetaVersion).has_value());
+}
+
+TEST_CASE("cosave: the blob caps the plugin checks before reading hold the largest valid record, and no more")
+{
+    // Both strings at their cap and no entries: the header part of the cap.
+    CC::ThetaRecord t;
+    t.createdUtc.assign(CC::kMaxText, 'u');
+    t.sha256.assign(CC::kMaxText, 'f');
+    const auto header = CC::EncodeTheta(t);
+    CHECK(header.size() + static_cast<std::size_t>(CC::kMaxThetaEntries) * CC::kThetaStride == CC::kMaxThetaBlobBytes);
+    CHECK(CC::EncodeBias(CC::BiasRecord{}).size() + static_cast<std::size_t>(CC::kMaxBiasEntries) * CC::kBiasStride ==
+          CC::kMaxBiasBlobBytes);
+    // A record length must fit SKSE's u32.
+    static_assert(CC::kMaxThetaBlobBytes < 0xFFFFFFFFull);
+    static_assert(CC::kMaxBiasBlobBytes < 0xFFFFFFFFull);
+}
+
+TEST_CASE("cosave: entries that are not finite or have var <= 0 are dropped and counted, the rest kept")
+{
+    CC::ThetaRecord t = SampleTheta();
+    t.entries.push_back({ 0x3333ull, kNaN, 1.0 });
+    t.entries.push_back({ 0x4444ull, 1.0, 0.0 });
+    t.entries.push_back({ 0x5555ull, 1.0, -kInf });
+    const auto back = CC::DecodeTheta(CC::EncodeTheta(t), CC::kThetaVersion);
+    REQUIRE(back.has_value());
+    CHECK(back->entries.size() == 3);
+    CHECK(back->dropped == 3);
+
+    CC::BiasRecord b = SampleBias();
+    b.entries.push_back({ 0x0102u, 0.1, 0.0, 1.0f, 0u, 0 });                                       // var 0
+    b.entries.push_back({ 0x0103u, 0.1, 0.1, std::numeric_limits<float>::infinity(), 0u, 0 });     // n inf
+    b.entries.push_back({ 0u, 0.1, 0.1, 1.0f, 0u, 0 });                                            // no form
+    const auto bb = CC::DecodeBias(CC::EncodeBias(b), CC::kBiasVersion);
+    REQUIRE(bb.has_value());
+    CHECK(bb->entries.size() == 2);
+    CHECK(bb->dropped == 3);
+}
+
+TEST_CASE("cosave merge: saved keys override the bootstrap, missing keys keep the file's, unknown keys are dropped and counted")
+{
+    const std::vector<std::uint64_t> buildKeys{ 10, 20, 30, 40 };
+    const std::vector<CC::ThetaEntry> saved{ { 20, 1.0, 0.5 }, { 99, 7.0, 1.0 }, { 40, -2.0, 0.25 }, { 98, 1.0, 1.0 } };
+    CC::MergeReport rep;
+    const auto merged = CC::MergeTheta(buildKeys, saved, rep);
+    CHECK(rep.applied == 2);
+    CHECK(rep.fromFile == 2);    // 10 and 30 keep the bootstrap's value
+    CHECK(rep.unknown == 2);     // 98 and 99 this build no longer knows
+    CHECK(rep.duplicate == 0);
+    REQUIRE(merged.size() == 2);
+    CHECK(merged[0] == CC::ThetaEntry{ 20, 1.0, 0.5 });   // in the build's key order
+    CHECK(merged[1] == CC::ThetaEntry{ 40, -2.0, 0.25 });
+}
+
+TEST_CASE("cosave merge: a key saved twice keeps the last value; an empty save keeps every file value")
+{
+    const std::vector<std::uint64_t> buildKeys{ 1, 2 };
+    CC::MergeReport rep;
+    const auto merged = CC::MergeTheta(buildKeys, std::vector<CC::ThetaEntry>{ { 1, 0.1, 1.0 }, { 1, 0.9, 0.5 } }, rep);
+    CHECK(rep.duplicate == 1);
+    CHECK(rep.applied == 1);
+    REQUIRE(merged.size() == 1);
+    CHECK(merged[0].mu == 0.9);
+    const auto none = CC::MergeTheta(buildKeys, std::vector<CC::ThetaEntry>{}, rep);
+    CHECK(none.empty());
+    CHECK(rep.fromFile == 2);
+    CHECK(rep.unknown == 0);
+}
+
+TEST_CASE("cosave merge: a save from before the narcotic column (0.24.8) keeps its weights; the new column takes the file's")
+{
+    // THTA is keyed by name (Bootstrap::StableKey), never by position: inserting
+    // the column after kind_light (0.24.9, then named alcohol) moved every later
+    // column's index, not its key.
+    using Bootstrap::StableKey;
+    const std::string_view need = Needs::kNeeds[0].id;
+    std::vector<std::uint64_t> buildKeys;
+    std::vector<CC::ThetaEntry> saved;   // what a 0.24.8 save holds: every column but this one
+    for (std::size_t j = 0; j < C::J; ++j) {
+        const auto key = StableKey("theta", need, Effect::kColumns[j].id);
+        buildKeys.push_back(key);
+        if (Effect::kColumns[j].id != "narcotic") saved.push_back(CC::ThetaEntry{ key, 0.25 + 0.001 * j, 0.5 });
+    }
+    CC::MergeReport rep;
+    const auto merged = CC::MergeTheta(buildKeys, saved, rep);
+    CHECK(rep.applied == C::J - 1);
+    CHECK(rep.fromFile == 1);    // narcotic: the bootstrap's value (the prior: the file has no such column)
+    CHECK(rep.unknown == 0);
+    REQUIRE(merged.size() == C::J - 1);
+    const auto narcoticKey = StableKey("theta", need, "narcotic");
+    CHECK(std::none_of(merged.begin(), merged.end(), [&](const CC::ThetaEntry& e) { return e.key == narcoticKey; }));
+    // school_alteration moved from index 192 to 193; its saved weight still lands on it.
+    const auto school = StableKey("theta", need, "school_alteration");
+    const auto at = std::find_if(merged.begin(), merged.end(), [&](const CC::ThetaEntry& e) { return e.key == school; });
+    REQUIRE(at != merged.end());
+    CHECK(at->mu == doctest::Approx(0.25 + 0.001 * static_cast<double>(Effect::Index(Effect::Col::school_alteration))));
+}
+
+TEST_CASE("cosave merge: a 0.24.9 save's alcohol weights are dropped; narcotic starts at the file's")
+{
+    // 0.24.16 renamed the column (the user, 2026-10-30: alcohol and drugs are one
+    // group, narcotics). The key is the name, so a 0.24.9 save's alcohol key is
+    // one the build no longer knows: dropped and counted, never carried over
+    // (no backward-compatibility path; the column relearns from the prior).
+    using Bootstrap::StableKey;
+    const std::string_view need = Needs::kNeeds[0].id;
+    std::vector<std::uint64_t> buildKeys;
+    std::vector<CC::ThetaEntry> saved;
+    for (std::size_t j = 0; j < C::J; ++j) {
+        const std::string_view col = Effect::kColumns[j].id;
+        buildKeys.push_back(StableKey("theta", need, col));
+        const std::string_view savedAs = col == "narcotic" ? std::string_view("alcohol") : col;
+        saved.push_back(CC::ThetaEntry{ StableKey("theta", need, savedAs), 0.25 + 0.001 * j, 0.5 });
+    }
+    CC::MergeReport rep;
+    const auto merged = CC::MergeTheta(buildKeys, saved, rep);
+    CHECK(rep.applied == C::J - 1);
+    CHECK(rep.fromFile == 1);    // narcotic
+    CHECK(rep.unknown == 1);     // alcohol
+    REQUIRE(merged.size() == C::J - 1);
+    for (const std::string_view gone : { std::string_view("alcohol"), std::string_view("narcotic") }) {
+        const auto key = StableKey("theta", need, gone);
+        CHECK(std::none_of(merged.begin(), merged.end(), [&](const CC::ThetaEntry& e) { return e.key == key; }));
+    }
+}
+
+TEST_CASE("cosave reset with the model off: the carried THTA keeps its identity and no entries, BIAS is present and empty")
+{
+    // 0.24.18: a reset in fallback mode (no bootstrap) used to leave the
+    // records carried from the load in place, so every save wrote the learning
+    // from before the reset back.
+    std::optional<CC::ThetaRecord> theta = SampleTheta();
+    theta->dropped = 2;
+    std::optional<CC::BiasRecord> bias = SampleBias();
+    bool resetHolds = false;
+    CC::ResetCarried(theta, bias, resetHolds);
+    CHECK(resetHolds);
+    REQUIRE(theta.has_value());
+    CHECK(theta->entries.empty());
+    CHECK(theta->dropped == 0);
+    CHECK(theta->createdUtc == SampleTheta().createdUtc);
+    CHECK(theta->sha256 == SampleTheta().sha256);
+    REQUIRE(bias.has_value());   // present: the next load does not seed b under sBootstrapBias
+    CHECK(bias->entries.empty());
+
+    // What the saves then write reads back as the reset: no theta entry (every
+    // key takes the file's value), no b.
+    const auto tb = CC::DecodeTheta(CC::EncodeTheta(*theta), CC::kThetaVersion);
+    REQUIRE(tb.has_value());
+    CC::MergeReport rep;
+    const std::vector<std::uint64_t> buildKeys{ 0x1111111111111111ull, 0x2222ull };
+    CHECK(CC::MergeTheta(buildKeys, tb->entries, rep).empty());
+    CHECK(rep.fromFile == buildKeys.size());
+    const auto bb = CC::DecodeBias(CC::EncodeBias(*bias), CC::kBiasVersion);
+    REQUIRE(bb.has_value());
+    CHECK(bb->entries.empty());
+}
+
+TEST_CASE("cosave reset with the model off: a load that carried nothing writes no THTA and an empty BIAS")
+{
+    std::optional<CC::ThetaRecord> theta;
+    std::optional<CC::BiasRecord> bias;
+    bool resetHolds = false;
+    CC::ResetCarried(theta, bias, resetHolds);
+    CHECK(resetHolds);
+    CHECK_FALSE(theta.has_value());   // the load starts theta from the file either way
+    REQUIRE(bias.has_value());
+    CHECK(bias->entries.empty());
+}
+
+TEST_CASE("cosave carry with the model off: a reload of the same character after a reset keeps the reset")
+{
+    // 0.24.18: the fallback reload took the save's records as a load does, so
+    // a quickload (or a death) after a reset brought the learning from before
+    // it back, and every later save wrote it. The ready path keeps the model.
+    std::optional<CC::ThetaRecord> theta = SampleTheta();
+    std::optional<CC::BiasRecord> bias = SampleBias();
+    bool resetHolds = false;
+    CC::ResetCarried(theta, bias, resetHolds);
+    const auto carry =
+        CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetHolds, SampleTheta(), SampleBias());
+    CHECK(carry.keptCarried);
+    CHECK(resetHolds);   // 0.24.23: a reload does not spend the bit
+    REQUIRE(theta.has_value());
+    CHECK(theta->entries.empty());   // not the save's three
+    REQUIRE(bias.has_value());
+    // b's dynamic forms come from the save (the engine reuses their IDs), as
+    // ChoiceLearner::ReplaceDynamicB; the plugin's form stays dropped.
+    CHECK(carry.dynamicDropped == 0);
+    CHECK(carry.dynamicTaken == 1);
+    REQUIRE(bias->entries.size() == 1);
+    CHECK(bias->entries[0] == SampleBias().entries[1]);
+}
+
+TEST_CASE("cosave carry with the model off: a reload with no reset takes the save's records")
+{
+    // The carried records never learn while the model is off, but the
+    // learning clock keeps running (the old learner and the discovery boost
+    // tick it): load S_early, play past S_late's clock,
+    // load S_late of the same character, and the load is a reload. Keeping
+    // S_early's records there would write them over S_late's (the verifier on
+    // #243); before 0.24.18 the fallback took the save's, and it still does.
+    std::optional<CC::ThetaRecord> theta = SampleTheta();
+    std::optional<CC::BiasRecord> bias = SampleBias();
+    CC::ThetaRecord savedTheta;
+    savedTheta.createdUtc = "2026-10-30 08:00:00";
+    savedTheta.entries = { { 0x3333ull, 9.0, 1.0 } };
+    CC::BiasRecord savedBias;
+    savedBias.entries = { { 0x0002C3D4u, 1.0, 0.2, 1.0f, 0u, 0 }, { 0xFF000900u, 0.75, 0.1, 2.0f, 5u, 0 } };
+    bool resetHolds = false;
+    const auto carry = CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetHolds, savedTheta, savedBias);
+    CHECK_FALSE(carry.keptCarried);
+    CHECK(carry.dynamicDropped == 0);
+    CHECK(carry.dynamicTaken == 0);
+    REQUIRE(theta.has_value());
+    CHECK(theta->createdUtc == savedTheta.createdUtc);
+    CHECK(theta->entries == savedTheta.entries);
+    REQUIRE(bias.has_value());
+    CHECK(bias->entries == savedBias.entries);   // the dynamic form with them
+
+    // A save without the records: none carried, as a load (the next load with
+    // the bootstrap starts theta from the file and seeds b).
+    CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetHolds, std::nullopt, std::nullopt);
+    CHECK_FALSE(theta.has_value());
+    CHECK_FALSE(bias.has_value());
+}
+
+TEST_CASE("cosave carry with the model off: a reset holds across reloads, not only the first")
+{
+    // #243's known limit: every load decision spent the bit, so reset, load a
+    // pre-reset save (kept, emptied), load it again: the second reload took
+    // the save's records and the pre-reset theta and b came back. The reset
+    // ticked the learning clock past that save, so every load of it is a
+    // reload, and every one keeps the emptied records (0.24.23).
+    std::optional<CC::ThetaRecord> theta = SampleTheta();
+    std::optional<CC::BiasRecord> bias = SampleBias();
+    bool resetHolds = false;
+    CC::ResetCarried(theta, bias, resetHolds);
+    for (int load = 0; load < 2; ++load) {
+        CAPTURE(load);
+        const auto carry =
+            CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetHolds, SampleTheta(), SampleBias());
+        CHECK(carry.keptCarried);
+        CHECK(resetHolds);
+        REQUIRE(theta.has_value());
+        CHECK(theta->entries.empty());
+        CHECK(theta->createdUtc == SampleTheta().createdUtc);   // the bootstrap identity kept
+        // b's dynamic forms come from the save at each reload, as
+        // ChoiceLearner::ReplaceDynamicB does: the second drops the first's.
+        CHECK(carry.dynamicDropped == (load == 0 ? 0u : 1u));
+        CHECK(carry.dynamicTaken == 1);
+        REQUIRE(bias.has_value());
+        REQUIRE(bias->entries.size() == 1);
+        CHECK(bias->entries[0] == SampleBias().entries[1]);
+    }
+}
+
+TEST_CASE("cosave carry with the model off: a replace after a reset takes the save's records and ends the hold")
+{
+    // Reset, reload (kept), then a later save or another character: adopted
+    // as the ready model adopts it, so the bit is cleared and the reload of
+    // it after that takes its save's records.
+    std::optional<CC::ThetaRecord> theta = SampleTheta();
+    std::optional<CC::BiasRecord> bias = SampleBias();
+    bool resetHolds = false;
+    CC::ResetCarried(theta, bias, resetHolds);
+    CHECK(CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetHolds, SampleTheta(), SampleBias())
+              .keptCarried);
+    CHECK(theta->entries.empty());
+    CHECK_FALSE(CC::CarryLoaded(CC::LoadDecision::Replace, theta, bias, resetHolds, SampleTheta(), SampleBias())
+                    .keptCarried);
+    CHECK_FALSE(resetHolds);
+    REQUIRE(theta.has_value());
+    CHECK(theta->entries == SampleTheta().entries);
+    REQUIRE(bias.has_value());
+    CHECK(bias->entries == SampleBias().entries);
+
+    CC::ThetaRecord savedTheta;
+    savedTheta.entries = { { 0x3333ull, 9.0, 1.0 } };
+    CHECK_FALSE(CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetHolds, savedTheta, std::nullopt)
+                    .keptCarried);
+    CHECK(theta->entries == savedTheta.entries);
+    CHECK_FALSE(bias.has_value());
+}
+
+TEST_CASE("cosave carry with the model off: a new game after a reset clears the bit")
+{
+    std::optional<CC::ThetaRecord> theta = SampleTheta();
+    std::optional<CC::BiasRecord> bias = SampleBias();
+    bool resetHolds = false;
+    CC::ResetCarried(theta, bias, resetHolds);
+    CC::CarryLoaded(CC::LoadDecision::NewGame, theta, bias, resetHolds, std::nullopt, std::nullopt);
+    CHECK_FALSE(resetHolds);
+    CHECK_FALSE(theta.has_value());
+    CHECK_FALSE(bias.has_value());
+    // The reload after it is a plain one: the save's records.
+    CHECK_FALSE(CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetHolds, SampleTheta(), SampleBias())
+                    .keptCarried);
+    CHECK(theta->entries == SampleTheta().entries);
+    CHECK(bias->entries == SampleBias().entries);
+}
+
+TEST_CASE("cosave carry with the model off: a failed load keeps the reset bit, so the reload after it keeps the reset")
+{
+    // A failed load restored nothing: the old learner, the character and the
+    // carried records are as they were, so the reset is still the latest
+    // thing that happened to them.
+    std::optional<CC::ThetaRecord> theta = SampleTheta();
+    std::optional<CC::BiasRecord> bias = SampleBias();
+    bool resetHolds = false;
+    CC::ResetCarried(theta, bias, resetHolds);
+    CHECK_FALSE(CC::CarryLoaded(CC::LoadDecision::Failed, theta, bias, resetHolds, SampleTheta(), SampleBias())
+                    .keptCarried);
+    CHECK(resetHolds);
+    CHECK(theta->entries.empty());
+    CHECK(CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetHolds, SampleTheta(), SampleBias())
+              .keptCarried);
+    CHECK(theta->entries.empty());
+    CHECK(resetHolds);
+}
+
+TEST_CASE("cosave carry with the model off: a reload after a reset swaps only b's dynamic forms, theta kept")
+{
+    std::optional<CC::ThetaRecord> theta = SampleTheta();
+    std::optional<CC::BiasRecord> bias = SampleBias();
+    CC::ThetaRecord savedTheta;
+    savedTheta.entries = { { 0x3333ull, 9.0, 1.0 } };
+    CC::BiasRecord savedBias;
+    savedBias.entries = { { 0x0002C3D4u, 1.0, 0.2, 1.0f, 0u, 0 },          // a plugin form: not taken
+        { 0xFF000900u, 0.75, 0.1, 2.0f, 5u, 0 },                              // taken
+        { 0xFF000901u, std::numeric_limits<double>::quiet_NaN(), 0.1, 1.0f, 0u, 0 },   // not finite
+        { 0xFF000902u, 0.5, 0.0, 1.0f, 0u, 0 } };                             // var <= 0
+    // The bit set by hand over full records: what a kept reload does with
+    // what it holds (a real reset leaves them empty, the case above).
+    bool resetHolds = true;
+    const auto carry = CC::CarryLoaded(CC::LoadDecision::Reload, theta, bias, resetHolds, savedTheta, savedBias);
+    CHECK(carry.keptCarried);
+    CHECK(theta->entries == SampleTheta().entries);
+    CHECK(carry.dynamicDropped == 1);   // the carried 0xFF000801
+    CHECK(carry.dynamicTaken == 1);
+    REQUIRE(bias->entries.size() == 2);
+    CHECK(bias->entries[0] == SampleBias().entries[0]);
+    CHECK(bias->entries[1] == savedBias.entries[1]);
+
+    // No BIAS in the save keeps the carried b; none carried stays none (the
+    // next load seeds b under sBootstrapBias, as before the reload).
+    std::optional<CC::BiasRecord> kept = SampleBias();
+    resetHolds = true;
+    CC::CarryLoaded(CC::LoadDecision::Reload, theta, kept, resetHolds, std::nullopt, std::nullopt);
+    CHECK(kept->entries == SampleBias().entries);
+    std::optional<CC::BiasRecord> none;
+    resetHolds = true;
+    CC::CarryLoaded(CC::LoadDecision::Reload, theta, none, resetHolds, std::nullopt, savedBias);
+    CHECK_FALSE(none.has_value());
+}
+
+TEST_CASE("cosave carry with the model off: a load takes the save's records, a new game none, a failed load nothing")
+{
+    std::optional<CC::ThetaRecord> theta;
+    std::optional<CC::BiasRecord> bias;
+    bool resetHolds = false;
+    CC::ResetCarried(theta, bias, resetHolds);
+
+    CC::CarryLoaded(CC::LoadDecision::Replace, theta, bias, resetHolds, SampleTheta(), SampleBias());
+    REQUIRE(theta.has_value());
+    CHECK(theta->entries == SampleTheta().entries);
+    REQUIRE(bias.has_value());
+    CHECK(bias->entries == SampleBias().entries);
+
+    CC::CarryLoaded(CC::LoadDecision::Failed, theta, bias, resetHolds, std::nullopt, std::nullopt);
+    CHECK(theta->entries == SampleTheta().entries);
+    CHECK(bias->entries == SampleBias().entries);
+
+    CC::CarryLoaded(CC::LoadDecision::Replace, theta, bias, resetHolds, std::nullopt, std::nullopt);   // an older save
+    CHECK_FALSE(theta.has_value());
+    CHECK_FALSE(bias.has_value());
+
+    theta = SampleTheta();
+    bias = SampleBias();
+    CC::CarryLoaded(CC::LoadDecision::NewGame, theta, bias, resetHolds, SampleTheta(), SampleBias());
+    CHECK_FALSE(theta.has_value());
+    CHECK_FALSE(bias.has_value());
+}
+
+// ---------------------------------------------------------------------------
+// The need signature (the skip gate's key)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("need signature: kNever inputs read their settled curve value, and the hash is stable across calls")
+{
+    // Every seconds-ago timer at kNever (the default snapshot): the decays sit
+    // at 0, so nothing time-driven is left and the signature has settled.
+    Needs::NeedSnapshot s;
+    const auto curves = Needs::DefaultCurves();
+    const auto v = Needs::EvaluateNeeds(s, curves);
+    const auto sig = Needs::Signature(v.value);
+    CHECK(sig[static_cast<std::size_t>(Needs::NeedId::enemy_casting_fire)] == 0);
+    CHECK(sig[static_cast<std::size_t>(Needs::NeedId::combat_onset)] == 0);
+    CHECK_FALSE(Needs::TimeDriven(s, curves));
+    // Advance a kNever snapshot by kNever again: the same signature.
+    const auto later = Needs::Signature(Needs::EvaluateNeeds(Needs::Advance(s, Needs::kNever), curves).value);
+    CHECK(Needs::SignatureHash(later) == Needs::SignatureHash(sig));
+    CHECK(Needs::SignatureHash(sig) == Needs::SignatureHash(Needs::Signature(v.value)));
+}
+
+TEST_CASE("need signature: one 0.05 step on one need changes the hash; a wobble inside a step does not")
+{
+    Needs::NeedArray a{};
+    a[kHD] = 0.0249f;   // level 0
+    Needs::NeedArray b = a;
+    b[kHD] = 0.0251f;   // level 1: the step boundary at 0.025
+    CHECK(Needs::SignatureLevel(0.0249f) == 0);
+    CHECK(Needs::SignatureLevel(0.0251f) == 1);
+    CHECK(Needs::SignatureHash(Needs::Signature(a)) != Needs::SignatureHash(Needs::Signature(b)));
+
+    Needs::NeedArray c = a;
+    c[kHD] = 0.01f;     // still level 0
+    CHECK(Needs::SignatureHash(Needs::Signature(a)) == Needs::SignatureHash(Needs::Signature(c)));
+
+    // the same step on a different need is a different key
+    Needs::NeedArray d = a;
+    d[kMD] = 0.0251f;
+    CHECK(Needs::SignatureHash(Needs::Signature(b)) != Needs::SignatureHash(Needs::Signature(d)));
+
+    // NaN and negatives read level 0 (no step, no fault)
+    Needs::NeedArray e = a;
+    e[kHD] = std::numeric_limits<float>::quiet_NaN();
+    CHECK(Needs::SignatureHash(Needs::Signature(e)) == Needs::SignatureHash(Needs::Signature(a)));
+}
+
+// ---------------------------------------------------------------------------
+// The ranking's order (ScoredCandidate::operator<)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("rank order: higher score first, any sign; exact ties keep generation order under stable_sort")
+{
+    struct Row
+    {
+        double score;
+        float dps;
+        int gen;
+    };
+    std::vector<Row> rows{
+        { -2.0, 0.0f, 0 }, { 0.5, 0.0f, 1 }, { -2.0, 0.0f, 2 }, { -0.1, 0.0f, 3 },
+        { 0.5, 0.0f, 4 }, { -2.0, 0.0f, 5 }, { -kInf, 0.0f, 6 }, { 0.5, 12.0f, 7 },
+    };
+    std::stable_sort(rows.begin(), rows.end(),
+                     [](const Row& a, const Row& b) { return RanksBefore(a.score, a.dps, b.score, b.dps); });
+    std::vector<int> order;
+    for (const auto& r : rows) order.push_back(r.gen);
+    // 0.5 with the weapon DPS first, then the 0.5 ties in generation order,
+    // -0.1, the -2 ties in generation order, -inf last
+    CHECK(order == std::vector<int>{ 7, 1, 4, 3, 0, 2, 5, 6 });
+}
+
+TEST_CASE("rank order: a NaN score ranks as -inf, so the comparator stays a strict weak order")
+{
+    CHECK(RanksBefore(-5.0, 0.0f, kNaN, 0.0f));
+    CHECK_FALSE(RanksBefore(kNaN, 0.0f, -5.0, 0.0f));
+    CHECK_FALSE(RanksBefore(kNaN, 0.0f, kNaN, 0.0f));          // irreflexive
+    CHECK_FALSE(RanksBefore(kNaN, 0.0f, -kInf, 0.0f));         // NaN == -inf: a tie
+    CHECK_FALSE(RanksBefore(-kInf, 0.0f, kNaN, 0.0f));
+    CHECK(RanksBefore(kNaN, 1.0f, -kInf, 0.0f));               // ... broken by the DPS
+}
+
+// ---------------------------------------------------------------------------
+// The legacy switch and the ranking pass
+// ---------------------------------------------------------------------------
+
+TEST_CASE("legacy switch: on, a kept row reads its ln learn mult and util missing 0; off, every row reads 0 and 1")
+{
+    CHECK(C::LegacyFeature(true, true, 0.75).lnLearnMult == 0.75);
+    CHECK(C::LegacyFeature(true, true, 0.75).utilMissing == 0.0);
+    CHECK(C::LegacyFeature(true, false, 0.75).lnLearnMult == 0.0);   // under the floors: no feature
+    CHECK(C::LegacyFeature(true, false, 0.75).utilMissing == 1.0);
+    for (const bool scored : { true, false }) {
+        for (const double lm : { -3.0, 0.0, 0.4, 2.5 }) {
+            const auto v = C::LegacyFeature(false, scored, lm);
+            CHECK(v.lnLearnMult == 0.0);
+            CHECK(v.utilMissing == 1.0);
+        }
+    }
+}
+
+TEST_CASE("legacy switch off: the ranking ignores the old learner -- rows that differ only in it score alike")
+{
+    C::Model m = Blank();
+    m.w[static_cast<std::size_t>(C::Feature::ln_learn_mult)] = 1.36;
+    m.w[static_cast<std::size_t>(C::Feature::util_missing)] = 0.107;
+    m.Th(kHD, kRH) = { 2.0, 0.5 };
+    std::array<double, C::K> n{};
+    n[kHD] = 0.7;
+    const C::Tick t = C::MakeTick(m, n, {});
+    const std::vector<C::Attr> attrs{ C::MakeAttr(m.grading, std::vector<C::SparseCol>{ { kRH, 0.5 } }, {}),
+                                      C::MakeAttr(m.grading, std::vector<C::SparseCol>{ { kRH, 0.5 } }, {}),
+                                      C::MakeAttr(m.grading, std::vector<C::SparseCol>{ { kRH, 0.5 } }, {}) };
+    const struct { bool scored; double lm; } legacy[] = { { true, 1.2 }, { true, -0.4 }, { false, 0.0 } };
+    for (const bool on : { true, false }) {
+        std::vector<C::RowExtra> x(3);
+        for (std::size_t i = 0; i < 3; ++i) C::SetLegacy(x[i].feat, C::LegacyFeature(on, legacy[i].scored, legacy[i].lm));
+        std::vector<C::LiveScore> out;
+        C::ScoreForRanking(m, t, attrs, x, std::vector<C::GateRow>(3), SIZE_MAX, 1.0, 3, out);
+        REQUIRE(out.size() == 3);
+        const double need = 0.7 * 2.0 * 0.5;
+        if (on) {
+            CHECK(out[0].s.mu == doctest::Approx(need + 1.36 * 1.2));
+            CHECK(out[1].s.mu == doctest::Approx(need + 1.36 * -0.4));
+            CHECK(out[2].s.mu == doctest::Approx(need + 0.107));
+        }
+        else {
+            CHECK(out[0].s.mu == doctest::Approx(need + 0.107));
+            CHECK(out[1].s.mu == out[0].s.mu);
+            CHECK(out[2].s.mu == out[0].s.mu);
+        }
+    }
+}
+
+TEST_CASE("ranking pass: the top three terms descend, the first is Explain's pair, and needMu is the need part")
+{
+    C::Model m = Blank();
+    m.Th(kHD, kRH) = { 2.0, 0.5 };
+    m.Th(kMD, kRM) = { 3.0, 0.5 };
+    m.Th(kHD, kRM) = { 0.5, 0.5 };
+    m.Th(kMD, kRH) = { -1.0, 0.5 };   // a negative term is never listed
+    std::array<double, C::K> n{};
+    n[kHD] = 0.8;
+    n[kMD] = 0.5;
+    const C::Tick t = C::MakeTick(m, n, {});
+    const C::Attr at = C::MakeAttr(m.grading, std::vector<C::SparseCol>{ { kRH, 0.6 }, { kRM, 0.4 } }, {});
+    const auto top = C::Top3(m, t, at);
+    // terms: HD x RH 0.96, MD x RM 0.6, HD x RM 0.16, MD x RH -0.3
+    REQUIRE(top[0].Valid());
+    CHECK(top[0].need == static_cast<std::int16_t>(kHD));
+    CHECK(top[0].col == static_cast<std::int16_t>(kRH));
+    CHECK(top[0].value == doctest::Approx(0.96));
+    CHECK(top[1].value == doctest::Approx(0.6));
+    CHECK(top[2].value == doctest::Approx(0.16));
+    C::RowScore ex;
+    C::Explain(m, t, at, ex);
+    CHECK(ex.exNeed == top[0].need);
+    CHECK(ex.exCol == top[0].col);
+
+    std::vector<C::RowExtra> x(1);
+    std::vector<C::LiveScore> out;
+    C::ScoreForRanking(m, t, std::vector<C::Attr>{ at }, x, std::vector<C::GateRow>(1), SIZE_MAX, 1.0, 1, out);
+    CHECK(out[0].needMu == doctest::Approx(0.96 + 0.6 + 0.16 - 0.3));
+    CHECK(out[0].s.exNeed == top[0].need);
+}
+
+TEST_CASE("ranking pass: tied terms keep the lower (need, column), as Explain; no positive term is 'learned'")
+{
+    C::Model m = Blank();
+    m.Th(kHD, kRH) = { 1.0, 0.5 };
+    m.Th(kMD, kRH) = { 1.0, 0.5 };
+    std::array<double, C::K> n{};
+    n[kHD] = 0.5;
+    n[kMD] = 0.5;
+    const C::Tick t = C::MakeTick(m, n, {});
+    const C::Attr at = C::MakeAttr(m.grading, std::vector<C::SparseCol>{ { kRH, 1.0 } }, {});
+    const auto top = C::Top3(m, t, at);
+    CHECK(top[0].need == static_cast<std::int16_t>(std::min(kHD, kMD)));
+    CHECK(top[1].need == static_cast<std::int16_t>(std::max(kHD, kMD)));
+    CHECK_FALSE(top[2].Valid());
+
+    const C::Attr none = C::MakeAttr(m.grading, std::vector<C::SparseCol>{ { kRM, 1.0 } }, {});
+    CHECK_FALSE(C::Top3(m, t, none)[0].Valid());
+}
+
+TEST_CASE("ranking pass: positions and kappa enter only after the allocation; a NaN mu ranks as -inf")
+{
+    C::Model m = Blank();
+    m.kappa = 2.5;
+    m.w[static_cast<std::size_t>(C::Feature::slot0) + 3] = 0.4;
+    CHECK(C::WeighsSlots(m));
+    const auto onKey3 = C::AfterAllocation(m, 1.0, false, 3);
+    CHECK(onKey3.mu == doctest::Approx(1.4));
+    CHECK(onKey3.logit == doctest::Approx(1.4));
+    const auto offPage = C::AfterAllocation(m, 1.0, true, 3);   // off the page: no slot feature, kappa
+    CHECK(offPage.mu == doctest::Approx(1.0));
+    CHECK(offPage.logit == doctest::Approx(1.0 - 2.5));
+    CHECK(C::AfterAllocation(m, 1.0, false, 9).mu == doctest::Approx(1.0));   // past key 7
+
+    C::Model nanModel = Blank();
+    nanModel.w[static_cast<std::size_t>(C::Feature::ln_learn_mult)] = 1.0;
+    std::vector<C::RowExtra> x(1);
+    x[0].feat[static_cast<std::size_t>(C::Feature::ln_learn_mult)] = kNaN;
+    std::vector<C::LiveScore> out;
+    const C::Tick t = C::MakeTick(nanModel, {}, {});
+    C::ScoreForRanking(nanModel, t, std::vector<C::Attr>(1), x, std::vector<C::GateRow>(1), SIZE_MAX, 1.0, 1, out);
+    CHECK(out[0].s.mu == -kInf);
+}
+
+TEST_CASE("need reason: health_deficit names LowHealth while on and CriticalHealth from kCriticalHealthNeed")
+{
+    using R = Huginn::Context::ContextReason;
+    const auto hd = static_cast<std::int16_t>(Needs::Index(Needs::NeedId::health_deficit));
+    CHECK(Huginn::Display::ExplainedReason(hd, 0.49) == R::None);
+    CHECK(Huginn::Display::ExplainedReason(hd, 0.5) == R::LowHealth);
+    CHECK(Huginn::Display::ExplainedReason(hd, 0.969) == R::LowHealth);
+    CHECK(Huginn::Display::ExplainedReason(hd, Huginn::Display::kCriticalHealthNeed) == R::CriticalHealth);
+    CHECK(Huginn::Display::ExplainedReason(hd, 1.0) == R::CriticalHealth);
+    // The default curve puts the old 15% health line just past the threshold.
+    const auto atCritical = Needs::Evaluate(Needs::Info(Needs::NeedId::health_deficit).curve, 0.85f);
+    CHECK(atCritical >= Huginn::Display::kCriticalHealthNeed);
+    CHECK(Needs::Evaluate(Needs::Info(Needs::NeedId::health_deficit).curve, 0.8f) < Huginn::Display::kCriticalHealthNeed);
+    // Only the deficit: a fast drop or a drain stays LowHealth however high.
+    const auto hf = static_cast<std::int16_t>(Needs::Index(Needs::NeedId::health_falling));
+    CHECK(Huginn::Display::ExplainedReason(hf, 1.0) == R::LowHealth);
+    CHECK(Huginn::Display::ExplainedReason(-1, 1.0) == R::None);
+}

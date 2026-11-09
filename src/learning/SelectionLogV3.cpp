@@ -9,11 +9,17 @@
 #include "SelectionTracker.h"
 #include "TestHarness.h"
 #include "UtilityScorer.h"
+#include "ChoiceLearner.h"
+#include "ChoiceShadow.h"
+#include "ChoiceSubscriber.h"
 #include "core/Coverage.h"
 #include "core/CrossFeatures.h"
 #include "core/FilterReason.h"
 #include "core/LapHoldInputs.h"
 #include "core/NeedEpisodes.h"
+#include "core/ReachLog.h"        // IsMenuVia: the [Soak] shadow tally's reach-ins (0.24.17)
+#include "core/ShadowCompare.h"   // the [Soak] shadow tally (0.24.17)
+#include "telemetry/SoakMetrics.h"
 #include "effect/CrossFeatures.h"
 #include "effect/EffectCatalog.h"
 #include "needs/NeedMonitor.h"
@@ -110,7 +116,7 @@ namespace Huginn::Learning::SelectionLogV3
         }
 
         void Annotate(Row& r, const Core::Coverage::Active* coverage, const std::vector<Core::Filter::Dropped>& filtered,
-                      const std::vector<PipelineStateCache::EligibleRow>& dropped)
+                      const std::vector<PipelineStateCache::EligibleRow>& dropped, float refreshPriorSec)
         {
             if (!(r.flags & Flag::Eligible)) {
                 if (const auto reason = Core::Filter::Find(filtered, r.form, r.uid)) {
@@ -125,7 +131,10 @@ namespace Huginn::Learning::SelectionLogV3
                 }
             }
             if (coverage && r.cap) {
-                const auto c = Core::Coverage::Covered(*r.cap, *coverage);
+                // R8.1: left(r) centred at [Scoring] fRefreshPriorSec, the
+                // window the active-buff filters' refresh pass uses -- the
+                // context's snapshot of it (Context::refreshPriorSec).
+                const auto c = Core::Coverage::Covered(*r.cap, *coverage, refreshPriorSec);
                 r.cross[static_cast<size_t>(Cross::covered)] = c.value;
                 r.coveredSec = c.value > 0.0f ? c.remaining : kNone;
             }
@@ -444,6 +453,22 @@ namespace Huginn::Learning::SelectionLogV3
             r.wildcardP = e.wildcardPropensity;
             r.old = e.old;   // 0.23.53: the run's score parts
             if (e.old.favorite) r.flags |= Flag::Favorite;
+            // 0.23.56 (R8.2): the new model (in shadow at 0.23.56; the live
+            // ranking since 0.24.0), and the D2 legacy feature, as the run
+            // computed them (PipelineCoordinator::RankOnChoice / LogChoiceRows).
+            r.mu = e.shadowMu;
+            r.sd = e.shadowSd;
+            r.lm = e.lnLearnMult;
+            r.um = e.utilMissing;
+            r.exNeed = e.exNeed;
+            r.exCol = e.exCol;
+            // 0.24.17: the D2 engine in shadow (PipelineCoordinator::
+            // ShadowLegacyPages), logged only.
+            r.legacyShadowMu = e.legacyShadowMu;
+            r.legacyShadowRankA = e.legacyShadowRankA;
+            r.legacyShadowRankB = e.legacyShadowRankB;
+            r.legacyShadowKeyA = e.legacyShadowKeyA;
+            r.legacyShadowKeyB0 = e.legacyShadowKeyB0;
             if (entry) {
                 r.kind = static_cast<uint8_t>(entry->kind);
                 r.cap = &entry->cap;
@@ -729,7 +754,9 @@ namespace Huginn::Learning::SelectionLogV3
             // the player's summons, their limit and their sources (steps 3-4).
             {
                 const auto coverage = State::StateManager::GetSingleton().GetCoverage();
-                for (auto& r : ctx->rows) Annotate(r, coverage.valid ? &coverage.active : nullptr, filtered, old.dropped);
+                ctx->refreshPriorSec = State::StateManager::GetSingleton().GetRefreshPriorSec();
+                for (auto& r : ctx->rows)
+                    Annotate(r, coverage.valid ? &coverage.active : nullptr, filtered, old.dropped, ctx->refreshPriorSec);
                 ctx->summon.valid = true;
                 ctx->summon.count = player.buffs.summonCount;
                 ctx->summon.limit = player.buffs.summonLimit;
@@ -772,6 +799,13 @@ namespace Huginn::Learning::SelectionLogV3
             if (gate.IsCurrent(page.generation) && old.run.valid) {
                 FillLearner(ctx->rows, old);
                 ctx->old = old.run;
+            }
+            // 0.23.56 (R8.2): the held rows the run never gathered, scored by
+            // the new model with the run's own tick (learning/ChoiceShadow.h).
+            if (gate.IsCurrent(page.generation) && old.shadow) {
+                for (auto& r : ctx->rows) {
+                    if ((r.flags & Flag::Held) && !std::isfinite(r.mu)) ScoreLoggedRow(*old.shadow, r);
+                }
             }
 
             const double ms = std::chrono::duration<double, std::milli>(Clock::now() - now).count();
@@ -828,7 +862,11 @@ namespace Huginn::Learning::SelectionLogV3
                     old = g_tick.old;
                 }
                 const auto coverage = State::StateManager::GetSingleton().GetCoverage();
-                Annotate(r, coverage.valid ? &coverage.active : nullptr, filtered, old.dropped);
+                // The context's centre, so the added row and the context's
+                // rows sit under one head.
+                Annotate(r, coverage.valid ? &coverage.active : nullptr, filtered, old.dropped,
+                    d.ctx->refreshPriorSec);
+                if (old.shadow) ScoreLoggedRow(*old.shadow, r);   // R8.2
                 d.added.push_back(std::move(r));
                 if (d.ctx->old.valid) {
                     // The state features the context's rows were read against
@@ -981,7 +1019,8 @@ namespace Huginn::Learning::SelectionLogV3
                     logger::warn("[SelectionV3] {} ended in a torn record; starting on a new line"sv,
                         path.filename().string());
                 }
-                const size_t headBytes = WriteHead(CurrentCurves());
+                const size_t headBytes =
+                    WriteHead(CurrentCurves(), State::StateManager::GetSingleton().GetRefreshPriorSec());
                 logger::info("[SelectionV3] writing {} ({} bytes before this launch's segment)"sv, path.string(),
                     m_fileBytes - headBytes);
                 return true;
@@ -996,7 +1035,7 @@ namespace Huginn::Learning::SelectionLogV3
 
             /// Start a segment: a head line with the curves in force. Returns
             /// its size in bytes.
-            size_t WriteHead(std::vector<Core::Needs::Curve> curves)
+            size_t WriteHead(std::vector<Core::Needs::Curve> curves, float refreshPriorSec)
             {
                 Head head;
                 head.launch = g_launchStamp;
@@ -1016,6 +1055,13 @@ namespace Huginn::Learning::SelectionLogV3
                 head.lapIdleSec = p.lapIdleSec;
                 head.curves = std::move(curves);
                 m_headCurves = head.curves;
+                head.refreshPriorSec = refreshPriorSec;
+                m_headRefreshPriorSec = head.refreshPriorSec;
+                if (g_choiceLearner && g_choiceLearner->Ready()) {   // 0.23.56 (R8.2)
+                    auto [created, sha] = g_choiceLearner->FileIdentity();
+                    head.bootstrapCreatedUtc = std::move(created);
+                    head.bootstrapSha256 = std::move(sha);
+                }
                 const std::string line = m_encoder.BeginSegment(head);
                 m_ctxSeen.clear();
                 m_out << line;
@@ -1069,9 +1115,20 @@ namespace Huginn::Learning::SelectionLogV3
                 // names the curves its values came from. A context taken
                 // before the reload but written after it is the one record
                 // that can carry the old curves' values.
+                // R8.1 (0.23.55): the same for [Scoring] fRefreshPriorSec,
+                // covered(i)'s left(r) centre, which the head records. The
+                // centre is the one the record's rows were computed with (the
+                // context's snapshot), not the live value, so a reload between
+                // capture and write cannot split them.
+                const float centre = d.ctx ? d.ctx->refreshPriorSec
+                                           : State::StateManager::GetSingleton().GetRefreshPriorSec();
                 if (auto curves = CurrentCurves(); curves != m_headCurves) {
-                    WriteHead(std::move(curves));
+                    WriteHead(std::move(curves), centre);
                     logger::info("[SelectionV3] [Needs] curves changed: new segment (head line written)"sv);
+                }
+                else if (centre != m_headRefreshPriorSec) {
+                    WriteHead(std::move(curves), centre);
+                    logger::info("[SelectionV3] [Scoring] fRefreshPriorSec changed: new segment (head line written)"sv);
                 }
                 d.seq = ++m_seq;
                 const bool ctxNew = d.ctx && !m_ctxSeen.contains(d.ctx->id);
@@ -1129,6 +1186,7 @@ namespace Huginn::Learning::SelectionLogV3
             std::uintmax_t m_fileBytes = 0;
             std::unordered_set<uint64_t> m_ctxSeen;   // for the debug line (the encoder decides)
             std::vector<Core::Needs::Curve> m_headCurves;   // the curves the current segment's head names
+            float m_headRefreshPriorSec = Core::Refresh::kDefaultRefreshSec;   // the left(r) centre the head names (R8.1)
             uint64_t m_seq = 0;
             bool m_truncatedTest = false;
             bool m_rotationFailed = false;
@@ -1136,8 +1194,37 @@ namespace Huginn::Learning::SelectionLogV3
             bool m_warnedWrite = false;
         };
 
+        /// 0.24.17: one pick into the [Soak] heartbeat's D2 shadow tally
+        /// (core/ShadowCompare.h): a key or wheel pick, or a menu reach-in,
+        /// with whether A's and the live ranking's stateless pages held the
+        /// chosen item in the run behind its context. Reads the logged rows.
+        void TallyShadowPick(const Decision& d)
+        {
+            const Row* chosen = nullptr;
+            bool shadowRan = false;
+            if (d.ctx) {
+                const auto& rows = d.ctx->rows;
+                for (const auto& r : rows) {
+                    if (r.legacyShadowKeyA != Core::DecisionLog::kNoShadowKey) {
+                        shadowRan = true;
+                        break;
+                    }
+                }
+                if (d.row >= 0 && static_cast<size_t>(d.row) < rows.size()) chosen = &rows[static_cast<size_t>(d.row)];
+                else if (d.row >= 0 && static_cast<size_t>(d.row) - rows.size() < d.added.size())
+                    chosen = &d.added[static_cast<size_t>(d.row) - rows.size()];
+            }
+            const std::int8_t legacyShadowChosenA = chosen ? chosen->legacyShadowKeyA : Core::DecisionLog::kNoShadowKey;
+            const std::int8_t legacyShadowChosenB0 = chosen ? chosen->legacyShadowKeyB0 : Core::DecisionLog::kNoShadowKey;
+            const auto legacyShadowPick = Core::ShadowCompare::ClassifyPick(d.outcome == Outcome::Nothing, d.repeat,
+                d.outcome == Outcome::Key || d.outcome == Outcome::Wheel, Core::Reach::IsMenuVia(d.via), shadowRan,
+                chosen != nullptr, legacyShadowChosenA, legacyShadowChosenB0);
+            Telemetry::SoakMetrics::GetSingleton().RecordShadowPick(legacyShadowPick);
+        }
+
         void Queue(Decision d)
         {
+            TallyShadowPick(d);
             {
                 std::lock_guard lock(g_statsMutex);
                 switch (d.outcome) {
@@ -1198,6 +1285,10 @@ namespace Huginn::Learning::SelectionLogV3
             logger::info("[SelectionV3] {:08X} '{}' via {}: kept in the v3 log only (the learner skips it: {})"sv,
                 d.form, d.name, d.via, d.skip);
             AnswerEpisodes(p.capture.pressSec);
+            // R8.2: the frozen learner skips it, the new one does not (the fit
+            // reads every pick): it never reaches the equip bus, so the
+            // ChoiceSubscriber takes it here.
+            ChoiceSubscriber::Ingest(d);
             Queue(std::move(d));
         }
 
@@ -1305,8 +1396,10 @@ namespace Huginn::Learning::SelectionLogV3
 
         // The open menus that block gameplay input, by the game's own flags,
         // their names sorted and joined; empty when none does. Update tick
-        // only (the main thread, where the UI mutates its menu map; the same
-        // thread the IsMenuOpen calls of this tick rely on).
+        // only, which in gameplay runs on a game job thread, not the main
+        // thread where the UI mutates its menu map (THREADS in UpdateLoop.cpp:
+        // no job tick overlapped a main-thread zone in the traces); the same
+        // read the IsMenuOpen calls of this tick already make.
         std::string BlockingMenus(RE::UI* ui)
         {
             if (!ui) return {};
@@ -1604,7 +1697,8 @@ namespace Huginn::Learning::SelectionLogV3
         return cap;
     }
 
-    void OnConfirmed(const EquipEvent& event, Clock::time_point selectedAt, std::string_view how, uint64_t rid)
+    std::shared_ptr<const Decision> OnConfirmed(const EquipEvent& event, Clock::time_point selectedAt,
+                                                std::string_view how, uint64_t rid)
     {
         const Outcome outcome = event.source == EquipSource::Hotkey  ? Outcome::Key
                               : event.source == EquipSource::Wheeler ? Outcome::Wheel
@@ -1628,7 +1722,9 @@ namespace Huginn::Learning::SelectionLogV3
         if (!d.ctx) d.ctx = BuildContext("press", {});
         ResolveChosen(d, outcome != Outcome::Menu);
         AnswerEpisodes(event.v3.ctx ? event.v3.pressSec : Sec(selectedAt));
+        auto logged = std::make_shared<const Decision>(d);   // R8.2: the ChoiceSubscriber's copy
         Queue(std::move(d));
+        return logged;
     }
 
     void OnUnlearnedPick(RE::FormID formID, std::string via, std::string_view skip, std::string caseLabel)

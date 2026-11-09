@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.25)  # add_subdirectory(... SYSTEM)
 
 # Version can be overridden via -DPROJECT_VERSION=x.y.z
 if(NOT DEFINED PROJECT_VERSION)
-   set(PROJECT_VERSION "0.23.55")
+   set(PROJECT_VERSION "0.24.28")
 endif()
 
 project(
@@ -65,6 +65,23 @@ if(Huginn_TRACY)
 else()
    message(STATUS "Tracy profiler: disabled (use -DHuginn_TRACY=ON to enable)")
 endif()
+
+# The shipped settings files, compiled in (cmake/EmbedShipped.cmake): the one
+# source of every setting's default, and what dMenu's Reset to Defaults writes
+# back. Both Huginn and huginn_core_tests include the header and depend on the
+# target, so an edit to either file regenerates it before they compile.
+set(HUGINN_GENERATED_DIR "${PROJECT_BINARY_DIR}/generated")
+set(HUGINN_SHIPPED_HEADER "${HUGINN_GENERATED_DIR}/huginn/ShippedFiles.h")
+set(HUGINN_SHIPPED_MAIN_INI "${PROJECT_SOURCE_DIR}/configs/Huginn.ini")
+set(HUGINN_SHIPPED_DMENU_JSON "${PROJECT_SOURCE_DIR}/Data/SKSE/Plugins/dmenu/customSettings/Huginn.json")
+add_custom_command(
+   OUTPUT "${HUGINN_SHIPPED_HEADER}"
+   COMMAND "${CMAKE_COMMAND}" "-DMAIN_INI=${HUGINN_SHIPPED_MAIN_INI}" "-DDMENU_JSON=${HUGINN_SHIPPED_DMENU_JSON}"
+           "-DOUT=${HUGINN_SHIPPED_HEADER}" -P "${PROJECT_SOURCE_DIR}/cmake/EmbedShipped.cmake"
+   DEPENDS "${HUGINN_SHIPPED_MAIN_INI}" "${HUGINN_SHIPPED_DMENU_JSON}" "${PROJECT_SOURCE_DIR}/cmake/EmbedShipped.cmake"
+   COMMENT "Embedding the shipped Huginn.ini and dMenu descriptor"
+   VERBATIM)
+add_custom_target(huginn_shipped_files DEPENDS "${HUGINN_SHIPPED_HEADER}")
 
 add_subdirectory(src)
 

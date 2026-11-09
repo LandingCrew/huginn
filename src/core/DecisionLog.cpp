@@ -225,8 +225,10 @@ namespace Huginn::Core::DecisionLog
         // 0.23.53: est..hk appended (the old engine's score parts, the
         // favourites hotkey); a row may end before them (trailing nulls are
         // not written).
+        // 0.24.17: amu, ar, br, ak, bk appended (the D2 engine in shadow).
         out += R"(,"row":["form","uid","kind","src","cap","flags","slot","util","x","wp","fb","cr",)"
-               R"("est","a","n","ucb","rec","prior","cw","fl","wu","hk"])";
+               R"("est","a","n","ucb","rec","prior","cw","fl","wu","hk","mu","sd","lm","um","ex",)"
+               R"("amu","ar","br","ak","bk"])";
         out += R"(,"flags":{"eligible":1,"scored":2,"held":4,"equipped":8,"shown":16,"wildcard":32,)"
                R"("override":64,"remembered":128,"addedAtPick":256,"favorite":512})";
         out += R"(,"filters":)";   // 0.23.46: a row's "fb" indexes this
@@ -253,6 +255,15 @@ namespace Huginn::Core::DecisionLog
             AppendSeconds(out, head.lapIdleSec);
         }
         out += '}';
+        out += R"(,"refreshPriorSec":)";   // 0.23.55: covered(i)'s left(r) centre
+        AppendSeconds(out, head.refreshPriorSec);
+        if (!head.bootstrapSha256.empty()) {   // 0.23.56 (R8.2): the shadow model's seed
+            out += R"(,"bootstrap":{"created_utc":)";
+            out += JsonString(head.bootstrapCreatedUtc);
+            out += R"(,"sha256":)";
+            out += JsonString(head.bootstrapSha256);
+            out += '}';
+        }
         if (!head.curves.empty()) {
             out += R"(,"curves":[)";
             for (std::size_t i = 0; i < head.curves.size(); ++i) {
@@ -345,6 +356,19 @@ namespace Huginn::Core::DecisionLog
         if (o.floor != kNoFloor) last = 7;
         if (std::isfinite(o.wouldUtil)) last = 8;
         if (r.hotkey != kNoHotkey) last = 9;
+        // 0.23.56 (R8.2): mu, sd, lm, um, ex -- the new model (in shadow at
+        // 0.23.56; the live ranking's values since 0.24.0).
+        if (std::isfinite(r.mu)) last = 10;
+        if (std::isfinite(r.sd)) last = 11;
+        if (std::isfinite(r.lm)) last = 12;
+        if (r.um >= 0) last = 13;
+        if (r.exNeed != kExNone) last = 14;
+        // 0.24.17: amu, ar, br, ak, bk -- the D2 engine in shadow.
+        if (std::isfinite(r.legacyShadowMu)) last = 15;
+        if (r.legacyShadowRankA > 0) last = 16;
+        if (r.legacyShadowRankB > 0) last = 17;
+        if (r.legacyShadowKeyA != kNoShadowKey) last = 18;
+        if (r.legacyShadowKeyB0 != kNoShadowKey) last = 19;
         for (int i = 0; i <= last; ++i) {
             out += ',';
             if (i < 7) AppendNum(out, lead[static_cast<std::size_t>(i)]);
@@ -353,7 +377,39 @@ namespace Huginn::Core::DecisionLog
                 else AppendInt(out, o.floor);
             }
             else if (i == 8) AppendNum(out, o.wouldUtil);
-            else AppendInt(out, r.hotkey);
+            else if (i == 9) {
+                if (r.hotkey == kNoHotkey) out += "null";
+                else AppendInt(out, r.hotkey);
+            }
+            else if (i == 10) AppendNum(out, r.mu);
+            else if (i == 11) AppendNum(out, r.sd);
+            else if (i == 12) AppendNum(out, r.lm);
+            else if (i == 13) {
+                if (r.um < 0) out += "null";
+                else AppendInt(out, r.um);
+            }
+            else if (i == 15) AppendNum(out, r.legacyShadowMu);
+            else if (i == 16 || i == 17) {
+                const std::int16_t rank = i == 16 ? r.legacyShadowRankA : r.legacyShadowRankB;
+                if (rank <= 0) out += "null";
+                else AppendInt(out, rank);
+            }
+            else if (i == 18 || i == 19) {
+                const std::int8_t key = i == 18 ? r.legacyShadowKeyA : r.legacyShadowKeyB0;
+                if (key == kNoShadowKey) out += "null";
+                else AppendInt(out, key);
+            }
+            else {
+                if (r.exNeed == kExNone) out += "null";
+                else if (r.exNeed == kExLearned) out += "\"learned\"";
+                else {
+                    out += '[';
+                    AppendInt(out, r.exNeed);
+                    out += ',';
+                    AppendInt(out, r.exCol);
+                    out += ']';
+                }
+            }
         }
         out += ']';
     }

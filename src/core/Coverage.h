@@ -5,7 +5,8 @@
 // =============================================================================
 // Doc 11 (section 2.3, step 3): one runtime cross-feature, logged on every
 // selection log v3 row, saying how much of item i's effect is already running
-// on the player. LOGGING ONLY until R8 gives it a weight (theta_covered).
+// on the player. Logged from 0.23.46; since R8.3 (0.24.0) the choice score
+// weighs it with theta_covered (core/ChoiceScore.h).
 //
 //   covered(i) = max over the specific columns j of cap(i) of
 //                min(1, active_j / cap_j(i)) * left(r_j)
@@ -21,7 +22,8 @@
 //              (duration - elapsed); kNoTimer for a constant effect (worn
 //              gear, an ability-free permanent buff), which never runs out.
 //   left(r)    the refresh prior of doc 11's decision 4: a logistic centred at
-//              kRefreshPriorSec = 5 s with scale kRefreshPriorScaleSec = 2 s,
+//              [Scoring] fRefreshPriorSec (R8.1, 0.23.55; default
+//              kRefreshPriorSec = 5 s) with scale kRefreshPriorScaleSec = 2 s,
 //              1 with no timer. A buff with a few seconds left reads partly
 //              uncovered. A PRIOR, labelled as one: R8 fits the curve from the
 //              player's refresh picks; the logged `cr` (r of the arg max) lets
@@ -64,16 +66,18 @@ namespace Huginn::Core::Coverage
     inline constexpr float kNoTimer = -1.0f;
 
     /// Doc 11 decision 4's refresh prior: the remaining seconds at which a buff
-    /// reads half uncovered, and the logistic's scale. R8 makes the centre the
-    /// INI key [Scoring] fRefreshPriorSec and fits both from refresh picks.
+    /// reads half uncovered (the default of [Scoring] fRefreshPriorSec since
+    /// R8.1, 0.23.55, which the callers pass as `centreSec`), and the
+    /// logistic's scale. R8 fits both from refresh picks.
     inline constexpr float kRefreshPriorSec = 5.0f;
     inline constexpr float kRefreshPriorScaleSec = 2.0f;
 
-    /// left(r): 1 with no timer; ~0.08 at 0 s, 0.5 at 5 s, 0.99 at 15 s.
-    [[nodiscard]] inline float LeftPrior(float remainingSec) noexcept
+    /// left(r): 1 with no timer; at the default centre ~0.08 at 0 s, 0.5 at
+    /// 5 s, 0.99 at 15 s. `centreSec` is [Scoring] fRefreshPriorSec.
+    [[nodiscard]] inline float LeftPrior(float remainingSec, float centreSec) noexcept
     {
         if (remainingSec < 0.0f) return 1.0f;
-        return 1.0f / (1.0f + std::exp(-(remainingSec - kRefreshPriorSec) / kRefreshPriorScaleSec));
+        return 1.0f / (1.0f + std::exp(-(remainingSec - centreSec) / kRefreshPriorScaleSec));
     }
 
     /// The summon columns covered by the count, not by a graded strength.
@@ -159,7 +163,8 @@ namespace Huginn::Core::Coverage
         float remaining = kNoTimer;  // r of the column that gave it (kNoTimer: no timer, or no factor)
     };
 
-    [[nodiscard]] inline Result Covered(const Effect::Cap& cap, const Active& a) noexcept
+    /// covered(i), its left(r) centred at `refreshCentreSec` ([Scoring] fRefreshPriorSec).
+    [[nodiscard]] inline Result Covered(const Effect::Cap& cap, const Active& a, float refreshCentreSec) noexcept
     {
         Result best;
         for (const auto& v : cap) {
@@ -180,9 +185,65 @@ namespace Huginn::Core::Coverage
                 share = std::min(1.0f, act / v.v);
                 r = a.remaining[i];
             }
-            const float value = share * LeftPrior(r);
+            const float value = share * LeftPrior(r, refreshCentreSec);
             if (value > best.value) best = Result{ value, r };
         }
         return best;
+    }
+
+    /// covered(i) in two parts, for doc 11's greedy upgrade gate (R8.2,
+    /// core/ChoiceScore.h): the best value over the non-summon specific
+    /// columns, and the summon count's own term, which the gate replaces at
+    /// the limit. max(other, summonValue) equals Covered(...).value.
+    struct Parts
+    {
+        float other = 0.0f;             // the best non-summon column's value (share * left)
+        bool summon = false;            // the cap has a summon count column (summons up or not)
+        bool atLimit = false;           // ... and the summon count has reached the limit
+        float summonValue = 0.0f;       // min(1, n / L), times left(r_out) at the limit
+        float summonLeft = 1.0f;        // left(r_out) at the limit, else 1
+    };
+
+    [[nodiscard]] inline Parts CoveredParts(const Effect::Cap& cap, const Active& a, float refreshCentreSec) noexcept
+    {
+        Parts p;
+        for (const auto& v : cap) {
+            const auto i = static_cast<std::size_t>(v.col);
+            if (i >= Effect::kColumnCount || !(v.v > 0.0f)) continue;
+            if (Effect::kColumns[i].level != Effect::Level::Specific) continue;
+            if (IsSummonCountColumn(v.col)) {
+                p.summon = true;
+                if (a.summons <= 0) continue;
+                const int limit = SummonLimitCount(a.summonLimit);
+                const float share = std::min(1.0f, static_cast<float>(a.summons) / static_cast<float>(limit));
+                float left = 1.0f;
+                if (a.summons >= limit) {
+                    p.atLimit = true;
+                    left = LeftPrior(a.summonRemaining, refreshCentreSec);
+                }
+                p.summonLeft = left;
+                p.summonValue = std::max(p.summonValue, share * left);
+                continue;
+            }
+            const float act = a.strength[i];
+            if (!(act > 0.0f)) continue;
+            const float value = std::min(1.0f, act / v.v) * LeftPrior(a.remaining[i], refreshCentreSec);
+            p.other = std::max(p.other, value);
+        }
+        return p;
+    }
+
+    /// The source of a_out, the summon a new cast would dismiss (the oldest
+    /// summon or thrall, whose timer is Covered's r_out); 0 when there is none
+    /// or its source is unknown.
+    template <class Range>
+    [[nodiscard]] std::uint32_t OldestSource(const Range& commanded) noexcept
+    {
+        const CommandedActor* oldest = nullptr;
+        for (const auto& c : commanded) {
+            if (c.kind == CommandedActor::Kind::Other) continue;
+            if (!oldest || c.elapsed > oldest->elapsed) oldest = &c;
+        }
+        return oldest ? oldest->source : 0;
     }
 }

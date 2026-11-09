@@ -165,7 +165,6 @@ namespace Huginn::State
       // which is what the game's own HUD reads. ExtraCharge inventory data is lazily
       // created and doesn't reliably reflect current charge for base-enchanted weapons.
       float newWeaponChargePercent = DefaultState::FULL_CHARGE;
-      float newWeaponChargeMax = 0.0f;
       if (newHasEnchantedWeapon && rightHand) {
       auto* weapon = rightHand->As<RE::TESObjectWEAP>();
       auto* enchantable = weapon ? weapon->As<RE::TESEnchantableForm>() : nullptr;
@@ -180,7 +179,6 @@ namespace Huginn::State
            float currentCharge = player->AsActorValueOwner()->GetActorValue(
             RE::ActorValue::kRightItemCharge);
            newWeaponChargePercent = std::clamp(currentCharge / maxCharge, 0.0f, 1.0f);
-           newWeaponChargeMax = maxCharge;
         }
       }
       }
@@ -219,7 +217,7 @@ namespace Huginn::State
       // beside the bow, OverrideManager clamped the negative to 0 and could
       // announce an empty quiver to a player holding thirteen arrows, and
       // PlayerActorState::IsOutOfArrows -- which is `== 0` -- made
-      // ContextRuleEngine weight ammo up for a full one that had no changes entry
+      // the old context rules weight ammo up for a full one that had no changes entry
       // at all. Same bug the WeaponRegistry fast path had, fixed in #131; that
       // fix could not cover these, because it lives on InventoryAmmo::baseCount
       // and StateManager has no registry.
@@ -320,10 +318,6 @@ namespace Huginn::State
       // Weapon charge and ammo tracking (Phase 5 fix)
       if (std::abs(m_playerState.weaponChargePercent - newWeaponChargePercent) >= Epsilon::WEAPON_CHARGE) {
         m_playerState.weaponChargePercent = newWeaponChargePercent;
-        changed = true;
-      }
-      if (std::abs(m_playerState.weaponChargeMax - newWeaponChargeMax) >= Epsilon::WEAPON_CHARGE) {
-        m_playerState.weaponChargeMax = newWeaponChargeMax;
         changed = true;
       }
       if (m_playerState.arrowCount != newArrowCount) {

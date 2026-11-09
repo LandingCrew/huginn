@@ -86,9 +86,10 @@ namespace Huginn::Item
       // Last resort: a potion the game itself marks beneficial but whose
       // effect no tag rule knows -- Apothecary's Potion of the Defender
       // (armor rating, AV 39) and Potion of the Barbarian (power attacks,
-      // AV 114). Unknown gets no context weight and matches no potion slot,
-      // so these were invisible; as untagged buffs they take the buff
-      // baseline like Fortify Jump does (ContextWeightForCandidate).
+      // AV 114). Unknown matches no potion slot, and gets no legacy context
+      // weight (so the old floors drop it: no D2 feature), so these were
+      // invisible; as untagged buffs they take the buff baseline like
+      // Fortify Jump does (ContextWeightForCandidate).
       if (data.type == ItemType::Unknown && !item->IsPoison()) {
         const bool beneficial = std::any_of(item->effects.begin(), item->effects.end(),
           [](const auto* effect) {
@@ -764,38 +765,19 @@ namespace Huginn::Item
             break;
            }
         } else {
-           // Damage effects (hostile). A Ravage is a damage to the vital
-           // that recovers when it ends (the kRecover flag), so it keeps the
-           // Damage* tag and gains its Ravage* one. The regen cases and the
-           // weakness one below are what let HasHarmfulSideEffects() see an
-           // impure potion (Restore Health + Damage Magicka Regen) -- before,
-           // they fell to default and the potion read as pure.
-           const bool recovers = effect->baseEffect->data.flags.all(
-               RE::EffectSetting::EffectSettingData::Flag::kRecover);
+           // Damage effects (hostile). A Ravage (a damage that recovers when
+           // it ends) keeps its Damage* tag. (0.24.5: the Ravage, regen-drain
+           // and weakness ext bits had no reader and are gone; R11: the
+           // override finders ask the catalog's self_harm facet.)
            switch (primaryAV) {
            case RE::ActorValue::kHealth:
             data.tags |= ItemTag::DamageHealth;
-            if (recovers) data.tagsExt |= ItemTagExt::RavageHealth;
             break;
            case RE::ActorValue::kMagicka:
             data.tags |= ItemTag::DamageMagicka;
-            if (recovers) data.tagsExt |= ItemTagExt::RavageMagicka;
             break;
            case RE::ActorValue::kStamina:
             data.tags |= ItemTag::DamageStamina;
-            if (recovers) data.tagsExt |= ItemTagExt::RavageStamina;
-            break;
-           case RE::ActorValue::kHealRate:
-           case RE::ActorValue::kHealRateMult:
-            data.tagsExt |= ItemTagExt::DamageHealthRegen;
-            break;
-           case RE::ActorValue::kMagickaRate:
-           case RE::ActorValue::kMagickaRateMult:
-            data.tagsExt |= ItemTagExt::DamageMagickaRegen;
-            break;
-           case RE::ActorValue::kStaminaRate:
-           case RE::ActorValue::kStaminaRateMult:
-            data.tagsExt |= ItemTagExt::DamageStaminaRegen;
             break;
            case RE::ActorValue::kSpeedMult:
             data.tags |= ItemTag::Slow;
@@ -817,7 +799,6 @@ namespace Huginn::Item
                primaryAV == RE::ActorValue::kResistShock || primaryAV == RE::ActorValue::kResistMagic ||
                primaryAV == RE::ActorValue::kPoisonResist;
            if (isWeakness) {
-            data.tagsExt |= ItemTagExt::WeaknessElement;
             switch (weaknessAV) {
             case RE::ActorValue::kResistFire:
               data.element = ElementType::Fire;

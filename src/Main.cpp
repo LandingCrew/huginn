@@ -17,14 +17,19 @@
 #include "weapon/WeaponRegistry.h"
 #include "util/ExtraListStability.h"
 #include "scroll/ScrollRegistry.h"
+#include "learning/DiscoveryListener.h"
 #include "learning/FeatureBanditLearner.h"
 #include "learning/StateFeatures.h"
 #include "learning/UtilityScorer.h"
+#include "learning/legacy/LegacyScorer.h"   // g_legacyScorer (R8.4)
 #include "update/UpdateHandler.h"
 #include "input/InputHandler.h"
 #include "input/KeybindingSettings.h"
+#include "input/EquipSettings.h"
+#include "input/HandEquipGate.h"
 #include "input/EquipManager.h"
 #include "ui/ImGuiRenderer.h"
+#include "util/AbortTrace.h"
 #include "ui/WelcomeBanner.h"
 #include "ui/D3D11Hook.h"
 #include "ui/IntuitionMenu.h"
@@ -57,14 +62,17 @@
 #include "context/ContextWeightSettings.h"
 #include "context/ContextWeightConfig.h"
 #include "settings/SettingsReloader.h"
+#include "settings/ShippedDefaults.h"
 #include "console/ConsoleCommands.h"
 #include "effect/EffectCatalog.h"
 #include "persist/BanditSerializer.h"
+#include "persist/CharacterRecord.h"
 #include "learning/EquipEventBus.h"
 #include "learning/EquipSourceTracker.h"  // MarkHuginnEquip (Wheeler environment)
 #include "learning/SelectionTracker.h"
 #include "learning/PlayerInputGate.h"
 #include "learning/EquipSubscribers.h"
+#include "learning/ChoiceSubscriber.h"
 #include "needs/NeedSettings.h"
 #include "state/DropAheadProbe.h"
 #include "state/HandModelProbe.h"
@@ -118,34 +126,24 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
     logger::info("Game load timestamp recorded ({}, load generation {})"sv,
         isNewGame ? "kNewGame" : "kPostLoadGame", loadGeneration);
 
-    // ── Clear the hotkey hide latch ─────────────────────────────────────
-    // A hotkey hide belongs to the session that set it. Carrying it into a
-    // freshly loaded game would present as "the widget is broken", with no
-    // on-screen affordance to discover the key that brings it back.
-    //
-    // This must hang off the load message, NOT off markPageDirty: that
-    // callback is driven by Wheeler closing a wheel, so resetting there
-    // cleared the latch mid-session while the widget stayed visually
-    // hidden — desyncing the two so the next keypress did nothing.
-    UI::IntuitionMenu::ResetUserHidden();
-
     // ── 0. Parse the main INI ONCE, distribute to every settings loader ──
     // Each settings class used to re-open and re-parse Huginn.ini independently
     // (9+ full parses per game load). Parse it a single time here and hand the
-    // parsed CSimpleIniA to each loader via LoadFromIni. When the file is
-    // missing, haveMainIni is false and every loader keeps its current values —
-    // matching the old per-call "not found, using defaults" early-return.
+    // parsed CSimpleIniA to each loader via LoadFromIni. Parsed over the
+    // shipped Huginn.ini (settings/ShippedDefaults.h): a key the player's file
+    // leaves out, or a missing file, reads the shipped value, so every loader
+    // always loads.
     CSimpleIniA mainIni;
-    const bool haveMainIni = LoadIniFile(mainIni, GetMainIniPath(), "InitMain"sv);
+    Settings::LoadMainIni(mainIni, "InitMain"sv);
 
     // ── 1. INI settings (before anything that depends on them) ──────────
     {
         auto& wheelerSettings = Wheeler::WheelerSettings::GetSingleton();
-        if (haveMainIni) wheelerSettings.LoadFromIni(mainIni);
+        wheelerSettings.LoadFromIni(mainIni);
     }
     {
         auto& slotSettings = Slot::SlotSettings::GetSingleton();
-        if (haveMainIni) slotSettings.LoadFromIni(mainIni);
+        slotSettings.LoadFromIni(mainIni);
     }
 
     // ── 2. Wheeler setup ────────────────────────────────────────────────
@@ -262,7 +260,7 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
     g_apparelRegistry->RebuildRegistry();
 
     // ── 4. CandidateConfig + CandidateGenerator ────────────────────────
-    if (haveMainIni) LoadCandidateConfigFromINI(mainIni);
+    LoadCandidateConfigFromINI(mainIni);
     {
         auto& candidateGen = Candidate::CandidateGenerator::GetSingleton();
         if (!candidateGen.IsInitialized()) {
@@ -292,13 +290,21 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
 
     // ── 5. FeatureBanditLearner + UtilityScorer + ScorerSettings ──────────────
     if (!g_featureBanditLearner) {
-        g_featureBanditLearner = std::make_unique<Huginn::Learning::FeatureBanditLearner>();
+        g_featureBanditLearner = std::make_unique<Huginn::Learning::FeatureBanditLearner>(&g_learningClock);
         logger::info("FeatureBanditLearner initialized"sv);
     }
 
-    // What the learner holds now: fresh for a new game, the in-memory learning
-    // for a reload of the same character, the save's for anything else.
-    Persist::ResolveLoadedLearner(*g_featureBanditLearner, isNewGame, loadSucceeded);
+    // What the learning becomes: fresh for a new game, the in-memory learning
+    // for a reload of the same character, the save's for anything else, by
+    // the save's character ID and learning clock (persist/CharacterRecord.h;
+    // core/LearningClock.h DecideLoad, which names no learner). The old
+    // learner follows it here, the choice learner at step 6c. CommitLoad sets
+    // the clock after the old learner's Clear (which ticks); nothing at step
+    // 6c ticks.
+    const auto characterLoad = Persist::DecideCharacterLoad(isNewGame, loadSucceeded);
+    const auto loadDecision = characterLoad.verdict.decision;
+    Persist::ResolveLoadedLearner(*g_featureBanditLearner, loadDecision);
+    Persist::CommitLoad(characterLoad);
 
     if (!g_usageMemory) {
         g_usageMemory = std::make_unique<Huginn::Learning::UsageMemory>();
@@ -323,25 +329,34 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
     }
 
     if (!g_utilityScorer) {
-        g_utilityScorer = std::make_unique<Huginn::Scoring::UtilityScorer>(*g_featureBanditLearner, *g_usageMemory);
+        g_utilityScorer = std::make_unique<Huginn::Scoring::UtilityScorer>();
         logger::info("UtilityScorer initialized"sv);
+    }
+    // R8.4: the legacy scorer (D2's input), split out of UtilityScorer. It
+    // holds references to the old learner and UsageMemory, which are built
+    // once above and never replaced.
+    if (!g_legacyScorer) {
+        g_legacyScorer = std::make_unique<Huginn::Scoring::Legacy::LegacyScorer>(*g_featureBanditLearner, *g_usageMemory);
     }
 
     {
         auto& scorerSettings = Scoring::ScorerSettings::GetSingleton();
-        if (haveMainIni) scorerSettings.LoadFromIni(mainIni);
-        g_utilityScorer->SetConfig(scorerSettings.BuildConfig());
+        scorerSettings.LoadFromIni(mainIni);
+        const auto scorerConfig = scorerSettings.BuildConfig();
+        g_utilityScorer->SetConfig(scorerConfig);
+        g_legacyScorer->SetConfig(scorerConfig);
     }
 
     // ── 6. ContextWeightSettings + WildcardConfig ──────────────────────
-    if (haveMainIni) State::ContextWeightSettings::GetSingleton().LoadFromIni(mainIni);
-    g_utilityScorer->SetContextWeightConfig(State::ContextWeightSettings::GetSingleton().BuildConfig());
+    State::ContextWeightSettings::GetSingleton().LoadFromIni(mainIni);
+    g_legacyScorer->SetContextWeightConfig(State::ContextWeightSettings::GetSingleton().BuildConfig());
 
-    // ── 6a. NeedSettings (R3: the [Needs] response curves; logged only) ─
-    if (haveMainIni) Needs::NeedSettings::GetSingleton().LoadFromIni(mainIni);
+    // ── 6a. NeedSettings (the [Needs] response curves; the choice score reads
+    //    the need vector; the bootstrap's curves replace their lines at step 6c)
+    Needs::NeedSettings::GetSingleton().LoadFromIni(mainIni);
 
     // ── 6b. LearningSettings ────────────────────────────────────────────
-    if (haveMainIni) Learning::LearningSettings::GetSingleton().LoadFromIni(mainIni);
+    Learning::LearningSettings::GetSingleton().LoadFromIni(mainIni);
     Learning::ExternalEquipLearner::GetSingleton().SetConfig(
         Learning::LearningSettings::GetSingleton().BuildConfig());
     g_featureBanditLearner->SetMemoryLife(Learning::LearningSettings::GetSingleton().BuildConfig().memory);
@@ -366,12 +381,55 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
     });
     Learning::PlayerInputGate::GetSingleton().SetWheelOpenQuery(
         [] { return Wheeler::WheelerClient::GetSingleton().IsWheelOpen(); });
-    if (haveMainIni) LoadWildcardConfigFromINI(g_utilityScorer->GetWildcardManager(), mainIni);
+    LoadWildcardConfigFromINI(g_utilityScorer->GetWildcardManager(), mainIni);
+
+    // ── 6c. ChoiceLearner (R8.3: the ranking's model) ─────────────────
+    // Created, and the bootstrap file read, once (the first load): its
+    // items resolve through TESDataHandler::LookupForm. A missing or invalid
+    // file logs one error and the pipeline ranks on the old utility (the
+    // fallback; `hg status` says so). Then the load's cosave (THTA / BIAS)
+    // under the decision step 5 made (persist/ChoiceSerializer.h); not in
+    // ResetPipelineSubsystems, which would wipe what the save restored.
+    {
+        const auto choiceSettings = Learning::ChoiceSettings::FromIni(mainIni);
+        Scoring::Legacy::SetEnabled(choiceSettings.legacyLearnFeature);
+        Scoring::Legacy::SetShadowEnabled(choiceSettings.shadowLegacy);
+        const bool firstTime = !g_choiceLearner;
+        if (firstTime) g_choiceLearner = std::make_unique<Learning::ChoiceLearner>(&g_learningClock);
+        g_choiceLearner->SetSettings(choiceSettings);
+        g_choiceLearner->SetMemoryLife(Learning::LearningSettings::GetSingleton().BuildConfig().memory);
+        g_choiceLearner->SetFavoritesBoost(g_utilityScorer->GetConfig().favoritesMode == Scoring::FavoritesMode::Boost);
+        if (firstTime) {
+            g_choiceLearner->LoadBootstrap(std::filesystem::path("Data/SKSE/Plugins") / Learning::ChoiceLearner::kFileName);
+            static std::optional<Learning::ChoiceSubscriber> s_choiceSub;
+            s_choiceSub.emplace(*g_choiceLearner);
+            Learning::EquipEventBus::GetSingleton().Subscribe(&*s_choiceSub);
+            logger::info("[Choice] bLegacyLearnFeature = {} ({}), bShadowLegacy = {}, "
+                         "fCoveredPrior = {:.3g}, fThetaProcessNoise = {:.3g}, fFavoriteLifeMult = {:.3g}, sBootstrapBias = {}, "
+                         "bDiscoveryBoost = {} (x{:.3g}, half-life {:.0f} s)"sv,
+                choiceSettings.legacyLearnFeature,
+                choiceSettings.legacyLearnFeature ? "D2 live, engine A" : "engine B live, no D2 feature",
+                choiceSettings.shadowLegacy, choiceSettings.coveredPrior, choiceSettings.thetaProcessNoise,
+                choiceSettings.favoriteLifeMult, Core::Bootstrap::BiasModeName(choiceSettings.biasMode),
+                choiceSettings.discovery.enabled, choiceSettings.discovery.varMult, choiceSettings.discovery.halfLifeSec);
+            // R8.3: the bootstrap's curves replace the [Needs] lines of the
+            // needs they name (theta was fitted with them).
+            Needs::NeedSettings::GetSingleton().SetBootstrapCurves(g_choiceLearner->Curves());
+        }
+        Persist::ResolveLoadedChoice(*g_choiceLearner, loadDecision, g_activeCharacterID.load(std::memory_order_relaxed));
+
+        // 0.24.14: the discovery boost (core/DiscoveryBoost.h). After the
+        // cosave's DISC is applied (ResolveLoadedChoice): what this load holds
+        // -- the inventory and the spells, read at step 3 -- is seen, never
+        // boosted, and gains count from here (SKSE's revert suspended them).
+        Learning::Discovery::Register();
+        g_choiceLearner->PrimeDiscovery(Learning::Discovery::PresentForms());
+    }
 
     // ── 7. OverrideManager ─────────────────────────────────────────────
     {
         auto& settings = Override::Settings::GetSingleton();
-        if (haveMainIni) settings.LoadFromIni(mainIni);
+        settings.LoadFromIni(mainIni);
 
         auto& overrideMgr = Override::OverrideManager::GetSingleton();
         overrideMgr.Initialize(*g_itemRegistry, *g_weaponRegistry);
@@ -387,7 +445,10 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
 
     // ── 8. Reset all stateful pipeline subsystems ────────────────────
     // Shared with Cmd_ResetAll — single source of truth for pipeline resets.
+    // The [SlotLocker] config from the INI parsed at step 0 (the reset keeps
+    // the config; `hg reset all` keeps the one in force).
     ResetPipelineSubsystems();
+    Slot::SlotLocker::GetSingleton().SetConfig(LoadSlotLockerConfigFromINI(mainIni));
 
     // ── 9. Timer reset ─────────────────────────────────────────────────
     // (g_lastGameLoad is stamped at the top of this function — the step 3
@@ -424,11 +485,12 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
 #endif
 
     // ── 11. IntuitionMenu settings + show ──────────────────────────────
-    // [Widget] and [Debug] belong to dMenu and are read ONLY from its INI; the
-    // main Huginn.ini does not define them. See GetDMenuIniPath in Globals.h.
+    // [Widget] and [Debug] belong to dMenu and are read ONLY from its INI (over
+    // the dMenu descriptor's defaults, Settings::LoadDMenuIni); the main
+    // Huginn.ini does not define them. See GetDMenuIniPath in Globals.h.
     CSimpleIniA dmenuIni;
-    const bool haveDMenuIni = LoadIniFile(dmenuIni, GetDMenuIniPath(), "InitDMenu"sv);
-    if (haveDMenuIni) UI::IntuitionSettings::GetSingleton().LoadFromIni(dmenuIni);
+    Settings::LoadDMenuIni(dmenuIni, GetDMenuIniPath(), "InitDMenu"sv);
+    UI::IntuitionSettings::GetSingleton().LoadFromIni(dmenuIni);
     UI::IntuitionMenu::Show();
 
     // Push [Widget] to an already-open menu, for the same reason SetReadOnly is
@@ -456,14 +518,13 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
     // game load, so a value edited between sessions lands before play. Pushing
     // only at kDataLoaded once gave a player who set bReadOnly=true working
     // hotkeys and a log line claiming ReadOnly: true.
-    // Unconditional rather than inside haveDMenuIni:
-    // with no dMenu file the settings hold their defaults, and pushing those is
-    // still correct.
+    // With no dMenu file the settings hold the descriptor's defaults, and
+    // pushing those is still correct.
     Input::InputHandler::GetSingleton().SetReadOnly(
         UI::IntuitionSettings::GetSingleton().IsReadOnly());
 
     // ── 11b. Debug widget visibility (debug builds only) ───────────────
-    if (haveDMenuIni) {
+    {
         auto& debugSettings = UI::DebugSettings::GetSingleton();
         debugSettings.LoadFromIni(dmenuIni);
         debugSettings.ApplyToWidgets();  // Phase-2 apply (LoadFromIni is now a pure loader)
@@ -473,6 +534,8 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
 #ifndef NDEBUG
     if (!isNewGame) {
         g_spellRegistry->LogAllSpells();
+        // R11: the made-up candidates' facets (Tests.cpp), for the suites only.
+        InstallSyntheticFacetResolver();
         HUGINN_RUN_SUITE(RunSpellRegistryTests);
         HUGINN_RUN_SUITE(RunItemClassifierTests);
         HUGINN_RUN_SUITE(RunItemRegistryTests);
@@ -493,7 +556,8 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
         HUGINN_RUN_SUITE(RunHomeKeyTest);                 // [SlotLocker] home keys
         HUGINN_RUN_SUITE(RunBuffElementResistTest);       // THROWAWAY (0.20.63): buff element != resist
         HUGINN_RUN_SUITE(RunNeedVectorTests);             // R3: the need vector on the live game
-        logger::info("Debug build ready. Console command functions available for hotkey integration"sv);
+        RemoveSyntheticFacetResolver();
+        logger::info("Debug load suites done"sv);
         // One RESULT line for the batch; in test mode this ends the run.
         TestHarness::EndPhase(TestHarness::Phase::Load, loadSucceeded);
     }
@@ -536,7 +600,7 @@ static void OnDataLoaded()
 
 #ifdef _DEBUG
         // Debug widget visibility is now controlled by DebugSettings (loaded from INI)
-        // See InitializeGameSystems() -> DebugSettings::LoadFromFile()
+        // See InitializeGameSystems() step 11b (DebugSettings::LoadFromIni)
         logger::info("Debug widgets will be initialized from INI settings (debug build)"sv);
 #endif
     } else {
@@ -552,12 +616,12 @@ static void OnDataLoaded()
     // build waits for the main menu to open (after every plugin's kDataLoaded
     // handler and the tasks they queued), reads the forms then on the main
     // thread -- in slices of a few ms, one a frame (0.23.47) -- and maps them
-    // on a worker thread. Nothing reads it for scoring yet.
+    // on a worker thread. Since R8.3 (0.24.0) cap(i) is the choice score's
+    // attributes (PipelineCoordinator::AttrOf).
     Effect::EffectCatalog::GetSingleton().ScheduleBuild();
 
     // Initialize StateEvaluator
     g_stateEvaluator = std::make_unique<Huginn::State::StateEvaluator>();
-    g_lastStateLog = std::chrono::steady_clock::now();
     logger::info("StateEvaluator initialized"sv);
 
     // Register DamageEventSink for instant damage type classification (v0.6.8)
@@ -578,10 +642,11 @@ static void OnDataLoaded()
     // place for the whole load sequence. Both are plain file reads with no
     // game-data dependency, so they are safe this early.
     // Parsed once and handed to both loaders, matching the pattern the rest of
-    // this file uses — two LoadFromFile calls would parse the same file twice and
+    // this file uses — two separate reads would parse the same file twice and
     // log "not found" twice for a player without dMenu.
     CSimpleIniA earlyDMenuIni;
-    if (LoadIniFile(earlyDMenuIni, GetDMenuIniPath(), "InitDMenuEarly"sv)) {
+    Settings::LoadDMenuIni(earlyDMenuIni, GetDMenuIniPath(), "InitDMenuEarly"sv);
+    {
         UI::DebugSettings::GetSingleton().LoadFromIni(earlyDMenuIni);
         // Apply here too, not only at step 11b. The widgets now default to
         // hidden, so without this a player who ASKED for one in dMenu would
@@ -719,7 +784,9 @@ static void OnDataLoaded()
     // ever leaves NDEBUG undefined while still excluding Tests.cpp, this call becomes
     // an unresolved symbol. Standard MSVC Debug/Release presets keep them aligned.
 #ifndef NDEBUG
+    InstallSyntheticFacetResolver();   // R11: the made-up candidates' facets (Tests.cpp)
     HUGINN_RUN_SUITE(RunUnitTests);
+    RemoveSyntheticFacetResolver();
     // One RESULT line; in test mode, arms the auto-load (or ends the run when
     // no save is named).
     TestHarness::EndPhase(TestHarness::Phase::Menu);
@@ -757,13 +824,18 @@ static void OnDataLoaded()
         auto& equipManager = Input::EquipManager::GetSingleton();
 
         // Keybindings come from the main Huginn.ini only — dMenu does not
-        // declare them, so there is no second file to consult.
+        // declare them, so there is no second file to consult. Over the
+        // shipped file, like every main-INI read (Settings::LoadMainIni).
+        CSimpleIniA keyIni;
+        Settings::LoadMainIni(keyIni, "InitKeybindings"sv);
         Input::KeybindingSettings keybindings;
-        keybindings.LoadFromFile(GetMainIniPath());
+        keybindings.LoadFromIni(keyIni);
         inputHandler.SetKeyCodes(keybindings);
+        // [Equip] (0.24.26), from the same parse; reloaded with the rest.
+        Input::EquipSettings::GetSingleton().LoadFromIni(keyIni);
 
         // NOTE: read-only is not pushed here. [Widget] IS now read at
-        // kDataLoaded (see the LoadFromFile pair above), so pushing here would
+        // kDataLoaded (see the earlyDMenuIni block above), so pushing here would
         // no longer mask the real value — but InitializeGameSystems re-reads the
         // same file at kNewGame/kPostLoadGame and pushes there, which is the
         // point that matters: nothing can act on the flag before a game loads.
@@ -776,8 +848,10 @@ static void OnDataLoaded()
         });
 
         // Cycle key callback: cycle pages (v0.12.0 multi-page support)
-        inputHandler.SetToggleCallback([]() {
-            UI::IntuitionMenu::ToggleUserHidden();
+        // Reset key (0.24.28; was a hide toggle): the widget back to a known
+        // state. Hiding follows the HUD (IntuitionMenu::FollowHudAlpha).
+        inputHandler.SetResetCallback([]() {
+            UI::IntuitionMenu::ResetWidget();
         });
 
         inputHandler.SetCycleCallback([](bool isPrevious, bool isHold) {
@@ -810,8 +884,10 @@ static void OnDataLoaded()
         // once it confirms (SelectionTracker). MarkHuginnEquip is already
         // called in EquipManager.cpp before this callback, so the
         // TESEquipEvent the press causes is not counted a second time.
+        // Returns whether the press opened a new pending selection (the hand
+        // equip gate withdraws only such a record).
         equipManager.SetEquipCallback([](RE::FormID formID, size_t slotIndex) {
-            Learning::SelectionTracker::GetSingleton().Select(
+            return Learning::SelectionTracker::GetSingleton().Select(
                 formID, Learning::EquipSource::Hotkey,
                 std::format("key {} (s{})", slotIndex + 1, slotIndex));
         });
@@ -833,6 +909,8 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
         Effect::EffectCatalog::GetSingleton().FinishPendingRead("kPreLoadGame"sv);
         State::DropAheadProbe::SetGameLoaded(false);  // R3: off through the load
         State::HandModelProbe::SetGameLoaded(false);
+        Input::HandEquipGate::GetSingleton().Drop("a save is loading", /*force=*/true);  // 0.24.26
+        Input::HandEquipGate::GetSingleton().ClearMenus();  // the hook does not run through the load
         Learning::SelectionLogV3::OnLoadStarting();   // R4: no extra-list reads through the load
         break;
     case SKSE::MessagingInterface::kNewGame:
@@ -1049,11 +1127,14 @@ static void InstallHooks()
     // R3: drop_ahead casts its rays from PlayerCharacter::Update, on the
     // main thread (a vtable hook, no trampoline). Inert until a game loads.
     // The hand model probe (0.23.44) rides the same hook.
+    // The hand equip gate (0.24.26) too: without the hook it is not driven
+    // and the slot keys equip inline, as before it.
     if (State::DropAheadProbe::InstallPlayerUpdateHook()) {
-        logger::info("PlayerCharacter::Update hook installed (drop ahead, hand model probe)"sv);
+        Input::HandEquipGate::GetSingleton().SetDriven(true);
+        logger::info("PlayerCharacter::Update hook installed (drop ahead, hand model probe, hand equip gate)"sv);
     } else {
         logger::error("Failed to install the PlayerCharacter::Update hook (drop ahead stays unmeasured, "
-                      "the hand model probe inactive)"sv);
+                      "the hand model probe inactive, slot keys equip into a casting hand)"sv);
     }
 
 #ifdef _DEBUG
@@ -1084,6 +1165,10 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
     // Tells this client apart from SwingSight's in the profiler's client list.
     Huginn_PROGRAM_NAME("Huginn");
 
+#ifdef _DEBUG
+    // A failed assert's Abort logs its stack (ImGui's IM_ASSERT included).
+    Util::AbortTrace::Install();
+#endif
     SKSE::Init(a_skse);
     InstallHooks();                // before the engine's threads exist; see above
     TestHarness::ReadTestMode();   // Debug only: the unattended-run flag

@@ -13,11 +13,34 @@
 // [Hold] give-ways in 200 s at margins of 0.4-0.9), and following that would
 // bring the churn back.
 //
-// The rule, in the [Hold] log-score space s: a challenger takes the key when
+// The rule (0.24.13: R9's Bayesian challenger rule, core/ChallengerRule.h, at
+// a stricter confidence). When the scorer's beliefs cover the pair (the choice
+// ranking, both rows of this run's table), a challenger takes the key when
+//   P(challenger better) > fCombatChallengerConfidence
+//   <=>  s(challenger) - s(frozen item) > ln m + z_combat sigma_Delta,
+// z_combat = Phi^-1(fCombatChallengerConfidence) (0.995: z 2.576), ln m =
+// fChallengerMinGap -- the hold's own rule, with the combat confidence. The
+// shipped 0.995 keeps the old ratio: the fixed-margin upsert's barrier was 3x
+// the calm hold's margin (3 x ln 1.5 against ln 1.5), and 3 x z(0.8) = 2.525 =
+// z(0.9942); 0.995 is the nearest round value (z 3.06x the calm one).
+// Where no belief covers the pair -- the FALLBACK ranking (no bootstrap, no
+// sigma), or a frozen item this run did not score (its row is an older run's)
+// -- the fixed barrier, as the hold falls back to the fixed margin:
 //   s(challenger) - s(frozen item) > fCombatUpsertMarginMult * ln(1 + fChallengerMargin)
 // (3 x ln 1.5 = 1.216 shipped: about 3.4x the utility under the R7 bridge).
 // Both scores must be finite. With fChallengerMargin = 0 the barrier is 0 and
-// any better challenger wins; fCombatUpsertMarginMult = 0 turns it off.
+// any better challenger wins; fCombatUpsertMarginMult = 0 turns the upsert off
+// in both rankings (the barrier is infinite and the planner plans nothing).
+//
+// No swap-back on fixed beliefs, as for the hold: both lines are >= 0 and the
+// belief line is symmetric in the pair, so the item an upsert displaced could
+// not take the key back even without CombatUpsertMemory, which bars it anyway.
+//
+// Which challengers are asked (bTestAllChallengers, shared with the hold):
+// 0 (default) asks each key's BEST fitting challenger only; 1 asks them in
+// rank order and the first that clears the line takes the key. Under the
+// fixed barrier the two are the same (a lower score cannot clear a line the
+// best one missed), which is why the fallback path is unchanged either way.
 //
 // Never on a key that
 //   - is not combat-locked;
@@ -46,8 +69,10 @@
 // press floor) after the Wheeler wheel closes (WheelClosedRecently): the
 // widget comes back then and the player reaches for a key.
 //
-// Pure: standard library only, host-tested in tests/core/CombatUpsertTests.cpp.
+// Pure (the standard library and core/ChallengerRule.h), host-tested in
+// tests/core/CombatUpsertTests.cpp.
 
+#include "core/ChallengerRule.h"
 #include "core/SlotScoreMath.h"
 
 #include <algorithm>
@@ -163,48 +188,114 @@ namespace Huginn::Core
         return sinceCloseMs >= 0.0 && sinceCloseMs < holdMs;
     }
 
+    /// The combat upsert's line (0.24.13). `barrier`: the fixed barrier
+    /// (CombatUpsertBarrier), for a pair no belief covers; infinite or NaN =
+    /// the upsert is off (fCombatUpsertMarginMult = 0), whatever the beliefs.
+    /// `minGap` = ln m (fChallengerMinGap, clamped by Challenger::ClampMinGap),
+    /// `z` = Phi^-1(fCombatChallengerConfidence) (Challenger::ZForConfidence),
+    /// both >= 0. `testAll` = bTestAllChallengers.
+    struct CombatUpsertRule
+    {
+        double barrier = std::numeric_limits<double>::infinity();
+        double minGap = 0.0;
+        double z = 0.0;
+        bool testAll = false;
+    };
+
+    /// One pair under the rule. `sigmaDelta`: the pair's sigma_Delta; NaN or
+    /// negative = no belief covers the pair, and the fixed barrier decides
+    /// (`*sdOut` = -1); else the challenger rule at the combat confidence
+    /// (`*sdOut` = sigma_Delta). Never for a non-finite score on either side.
+    [[nodiscard]] inline bool CombatUpsertTakes(SlotScore challenger, SlotScore frozen, double sigmaDelta,
+        const CombatUpsertRule& rule, double* sdOut = nullptr) noexcept
+    {
+        if (sdOut) *sdOut = -1.0;
+        if (!std::isfinite(challenger) || !std::isfinite(frozen)) return false;
+        if (!(sigmaDelta >= 0.0)) {   // NaN or negative: no belief
+            return CombatUpsertBeats(challenger, frozen, rule.barrier);
+        }
+        if (sdOut) *sdOut = sigmaDelta;
+        return Challenger::Exceeds(challenger, frozen, sigmaDelta, rule.minGap, rule.z);
+    }
+
     struct CombatUpsertPick
     {
         std::size_t key = 0;          ///< index into `frozen`
         std::size_t challenger = 0;   ///< index into `challengers`
         double margin = 0.0;          ///< s(challenger) - s(frozen item)
+        double sd = -1.0;             ///< sigma_Delta when the challenger rule decided; < 0 = the fixed barrier
+        std::size_t passedOver = 0;   ///< higher-ranked challengers for the key that missed the line (testAll)
     };
 
     /// Which challenger takes which key this run. `frozen[k]`: the score of the
     /// item on key k, nullopt when the key is not open to an upsert.
     /// `challengers[c]`: challenger scores. `fits[k][c]`: challenger c may go on
-    /// key k (missing entries = no). Greedy on the margin, largest first (ties:
-    /// lower key, then lower challenger index): one challenger per key and one
-    /// key per challenger, at most `maxPicks` in all (the game passes 1: one
-    /// upsert per page per run).
+    /// key k (missing entries = no). `sigma[k][c]`: the pair's sigma_Delta
+    /// (missing or NaN = no belief: the fixed barrier).
+    ///
+    /// For each open key, its challengers in rank order (score, highest first;
+    /// ties: lower index), skipping those that do not fit or are already
+    /// placed: with rule.testAll off only the first is asked; on, the first
+    /// that clears the line is the key's pick. Greedy over the keys' picks on
+    /// the margin, largest first (ties: lower key): one challenger per key and
+    /// one key per challenger, at most `maxPicks` in all (the game passes 1:
+    /// one upsert per page per run). Under the fixed barrier alone this is the
+    /// pre-0.24.13 planner (every passing pair, greedy on the margin): a key's
+    /// best challenger has its widest margin, and a lower one cannot clear a
+    /// barrier the best one missed.
+    [[nodiscard]] inline std::vector<CombatUpsertPick> PlanCombatUpserts(
+        const std::vector<std::optional<SlotScore>>& frozen, const std::vector<SlotScore>& challengers,
+        const std::vector<std::vector<bool>>& fits, const std::vector<std::vector<double>>& sigma,
+        const CombatUpsertRule& rule, std::size_t maxPicks = std::numeric_limits<std::size_t>::max())
+    {
+        std::vector<CombatUpsertPick> picks;
+        if (!std::isfinite(rule.barrier)) return picks;   // off
+        std::vector<std::size_t> order;
+        for (std::size_t c = 0; c < challengers.size(); ++c) {
+            if (std::isfinite(challengers[c])) order.push_back(c);
+        }
+        std::stable_sort(order.begin(), order.end(),
+            [&challengers](std::size_t a, std::size_t b) { return challengers[a] > challengers[b]; });
+        auto sigmaOf = [&sigma](std::size_t k, std::size_t c) {
+            return k < sigma.size() && c < sigma[k].size() ? sigma[k][c] : std::numeric_limits<double>::quiet_NaN();
+        };
+        std::vector<bool> keyTaken(frozen.size(), false);
+        std::vector<bool> challengerTaken(challengers.size(), false);
+        while (picks.size() < maxPicks) {
+            std::optional<CombatUpsertPick> best;
+            for (std::size_t k = 0; k < frozen.size(); ++k) {
+                if (keyTaken[k] || !frozen[k] || k >= fits.size()) continue;
+                std::size_t passed = 0;
+                for (const std::size_t c : order) {
+                    if (challengerTaken[c] || c >= fits[k].size() || !fits[k][c]) continue;
+                    double sd = -1.0;
+                    if (CombatUpsertTakes(challengers[c], *frozen[k], sigmaOf(k, c), rule, &sd)) {
+                        const double margin = challengers[c] - *frozen[k];
+                        if (!best || margin > best->margin) best = CombatUpsertPick{ k, c, margin, sd, passed };
+                        break;
+                    }
+                    if (!rule.testAll) break;   // the best challenger only
+                    ++passed;
+                }
+            }
+            if (!best) break;
+            keyTaken[best->key] = true;
+            challengerTaken[best->challenger] = true;
+            picks.push_back(*best);
+        }
+        return picks;
+    }
+
+    /// The fixed barrier alone (no beliefs, best challenger only): the
+    /// fallback ranking's planner, and the pre-0.24.13 one.
     [[nodiscard]] inline std::vector<CombatUpsertPick> PlanCombatUpserts(
         const std::vector<std::optional<SlotScore>>& frozen, const std::vector<SlotScore>& challengers,
         const std::vector<std::vector<bool>>& fits, double barrier,
         std::size_t maxPicks = std::numeric_limits<std::size_t>::max())
     {
-        std::vector<CombatUpsertPick> pairs;
-        for (std::size_t k = 0; k < frozen.size(); ++k) {
-            if (!frozen[k] || k >= fits.size()) continue;
-            for (std::size_t c = 0; c < challengers.size(); ++c) {
-                if (c >= fits[k].size() || !fits[k][c]) continue;
-                if (!CombatUpsertBeats(challengers[c], *frozen[k], barrier)) continue;
-                pairs.push_back({ k, c, challengers[c] - *frozen[k] });
-            }
-        }
-        std::stable_sort(pairs.begin(), pairs.end(), [](const CombatUpsertPick& a, const CombatUpsertPick& b) {
-            return a.margin > b.margin;
-        });
-        std::vector<CombatUpsertPick> picks;
-        std::vector<bool> keyTaken(frozen.size(), false);
-        std::vector<bool> challengerTaken(challengers.size(), false);
-        for (const auto& p : pairs) {
-            if (picks.size() >= maxPicks) break;
-            if (keyTaken[p.key] || challengerTaken[p.challenger]) continue;
-            keyTaken[p.key] = true;
-            challengerTaken[p.challenger] = true;
-            picks.push_back(p);
-        }
-        return picks;
+        CombatUpsertRule rule;
+        rule.barrier = barrier;
+        return PlanCombatUpserts(frozen, challengers, fits, {}, rule, maxPicks);
     }
 
     /// An item as the upsert compares them: the same form and stack, or the

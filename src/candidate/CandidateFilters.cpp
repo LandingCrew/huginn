@@ -1,6 +1,7 @@
 #include "CandidateFilters.h"
-#include "spell/SpellData.h"  // For Spell::HasTag (ScrollTag is alias)
+#include "effect/Facets.h"     // R11: the facets the filters read (core/CapFacets.h)
 #include "core/Coverage.h"     // SummonLimitReached (0.23.46)
+#include "core/RefreshPass.h"  // the refresh pass (R8.1)
 #include <algorithm>
 
 namespace Huginn::Candidate
@@ -14,23 +15,96 @@ namespace Huginn::Candidate
     }
 
     // =========================================================================
+    // HARD GATES (R8.1, 0.23.55) -- the old engine's context zeros
+    // =========================================================================
+    // Map Phase 6 item 1. Each test is a Core::Gate predicate (core/HardGates.h)
+    // on facts Context::HardGateInputs read from the state, the same facts
+    // the legacy context rules raise the old weights by, so a gate drops what
+    // the old context weight zeroed (its 0 arms; no_follower since R11 on the
+    // catalog's TargetsOthers facet, not the classifier tag the weight reads:
+    // core/HardGates.h) and what the Suppress skip in UtilityScorer used to
+    // skip. Run in the visitor after full vitals and before the active-buff
+    // filters.
+    // =========================================================================
+    namespace
+    {
+        using R = Core::Filter::Reason;
+
+        [[nodiscard]] Core::Gate::Crafts CraftsOf(const Apparel::CraftMagnitudes& m) noexcept
+        {
+            return Core::Gate::Crafts{
+                .smithing = m.Fortifies(Apparel::CraftSkill::Smithing),
+                .enchanting = m.Fortifies(Apparel::CraftSkill::Enchanting),
+                .alchemy = m.Fortifies(Apparel::CraftSkill::Alchemy),
+            };
+        }
+
+        // R11: `targetsOthers` is the effect catalog's TargetsOthers facet
+        // (core/CapFacets.h), read once per candidate by RunVisitorFilters.
+        template <class T>
+        [[nodiscard]] std::optional<R> HardGate(const T& c, const Core::Gate::Inputs& g, bool targetsOthers) noexcept
+        {
+            // A favourite under Suppress (IsFavoritedCandidate: the one test
+            // Candidate::IsFavorited and the scorer read too).
+            if (Core::Gate::FavoriteSuppressed(IsFavoritedCandidate(c), g.suppressFavorites))
+                return R::favorite_suppressed;
+            if constexpr (std::is_same_v<T, SpellCandidate> || std::is_same_v<T, ScrollCandidate>) {
+                if (Core::Gate::NoFollower(targetsOthers, g.followerNear))
+                    return R::no_follower;
+            }
+            else if constexpr (std::is_same_v<T, ApparelCandidate>) {
+                if (Core::Gate::NoWorkstation(CraftsOf(c.magnitudes), g.station))
+                    return R::no_workstation;
+            }
+            else if constexpr (std::is_same_v<T, TorchCandidate>) {
+                if (Core::Gate::NotDark(g.darknessApplies))
+                    return R::not_dark;
+            }
+            return std::nullopt;
+        }
+
+        // R8.1 refresh pass: the block is in its last fRefreshPriorSec seconds.
+        [[nodiscard]] bool Due(const State::PlayerActorState& player, Core::Refresh::Block b) noexcept
+        {
+            return Core::Refresh::IsDue(player.buffs.refreshDue, b);
+        }
+    }
+
+    // =========================================================================
     // CONSOLIDATED VISITOR — single std::visit dispatch per candidate
-    // Runs affordability, equipped, full vitals, and active buff checks.
-    // Returns early on first failure (cheapest filters first).
+    // Runs affordability, equipped, full vitals, the hard gates and active buff
+    // checks. Returns early on the first failure.
     // =========================================================================
     std::optional<Core::Filter::Reason> CandidateFilters::RunVisitorFilters(
         const CandidateVariant& candidate,
         const State::PlayerActorState& player,
-        float currentMagicka) const
+        float currentMagicka,
+        const Core::Gate::Inputs& gates,
+        Core::Facets::Subject& subject) const
     {
         const auto policy = m_config.uncastableSpellPolicy;
         const bool checkBuffs = m_config.filterActiveBuffs;
         const bool checkResists = m_config.filterRedundantResists;
+        using B = Core::Refresh::Block;
+        // R11: what the effect catalog says the candidate does (core/CapFacets.h),
+        // in place of the old classifiers' tags and types. No catalog entry: no
+        // facet, so no effect filter drops it (the affordability, equipped and
+        // hard-gate tests still run). Looked up only for the arms that read
+        // it (spell, item, scroll); the caller hands it on with the survivor.
+        if (std::holds_alternative<SpellCandidate>(candidate) || std::holds_alternative<ItemCandidate>(candidate) ||
+            std::holds_alternative<ScrollCandidate>(candidate)) {
+            subject = Effect::SubjectOf(candidate);
+        }
+        const auto f = subject.facets;
+        using F = Core::Facets::F;
+        const bool isFood = subject.kind == Core::Effect::Kind::Food;
 
         // 0.23.46: each drop names its filter (Core::Filter::Reason) for the
         // selection log v3's `filtered_by`; which candidates are dropped is
         // unchanged except the summon test, which counts against the limit.
-        using R = Core::Filter::Reason;
+        // R8.1 (0.23.55): the hard gates drop what the old context weight
+        // zeroed, and each active-buff filter lets its item through while the
+        // buff that blocks it is due for its refresh (ActorBuffs::refreshDue).
         return std::visit([&](const auto& c) -> std::optional<R> {
             using T = std::decay_t<decltype(c)>;
 
@@ -55,39 +129,49 @@ namespace Huginn::Candidate
                 // someone else, nor one that works over time (an aura is cast
                 // ahead of the hit).
                 if (m_config.filterHealingWhenFull &&
-                    Spell::HasTag(c.tags, Spell::SpellTag::RestoreHealth) &&
-                    !Spell::HasTagExt(c.tagsExt, Spell::SpellTagExt::TargetsOthers) &&
-                    !Spell::HasTagExt(c.tagsExt, Spell::SpellTagExt::HealsOverTime) &&
+                    f.Has(F::RestoreHealth) && !f.Has(F::TargetsOthers) && !f.Has(F::HealsOverTime) &&
                     player.vitals.health >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
                     return R::full_health;
                 if (m_config.filterMagickaWhenFull &&
-                    Spell::HasTag(c.tags, Spell::SpellTag::RestoreMagicka) &&
+                    f.Has(F::RestoreMagicka) &&
                     player.vitals.magicka >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
                     return R::full_magicka;
 
-                // 4. Active Buff
+                // 4. Hard gates (R8.1): a suppressed favourite, a spell for
+                // someone else with no follower near.
+                if (const auto gate = HardGate(c, gates, f.Has(F::TargetsOthers))) return gate;
+
+                // 5. Active Buff (R8.1: each passes in its buff's last seconds)
                 if (checkBuffs) {
-                    if (Spell::HasTag(c.tags, Spell::SpellTag::Invisibility) && player.buffs.isInvisible)
+                    if (f.Has(F::Invisibility) && player.buffs.isInvisible &&
+                        !Due(player, B::invisibility))
                         return R::invisibility;
-                    if (Spell::HasTag(c.tags, Spell::SpellTag::Muffle) && player.buffs.hasMuffle)
+                    if (f.Has(F::Muffle) && player.buffs.hasMuffle &&
+                        !Due(player, B::muffle))
                         return R::muffle;
-                    if (Spell::HasTag(c.tags, Spell::SpellTag::Armor) && player.buffs.hasArmorBuff)
+                    // An armour spell, not a ward: a ward's cap carries
+                    // defense_armor too, and an Oakflesh running does not make
+                    // a spell ward redundant.
+                    if (f.Has(F::ArmorBuff) && !f.Has(F::Ward) && player.buffs.hasArmorBuff &&
+                        !Due(player, B::armor))
                         return R::armor;
                     // A summon only once the player's summon LIMIT is reached
                     // (0.23.46). It hid every summon spell while any one was
                     // up, so under Twin Souls (limit 2) the second summon was
                     // never offered (doc 11, step 4). With the vanilla limit
-                    // of 1 this is the old test exactly.
-                    if (c.type == Spell::SpellType::Summon &&
-                        Core::Coverage::SummonLimitReached(player.buffs.summonCount, player.buffs.summonLimit))
+                    // of 1 this is the old test exactly. R8.1: offered again
+                    // once a summon is about to time out and free a place.
+                    if (f.Has(F::Summon) &&
+                        Core::Coverage::SummonLimitReached(player.buffs.summonCount, player.buffs.summonLimit) &&
+                        !Due(player, B::summon_limit))
                         return R::summon_limit;
                     // Warming aura already running: do not offer it again.
                     // Warm FOOD stays: it restores cold outright.
-                    if (Spell::HasTagExt(c.tagsExt, Spell::SpellTagExt::Warming) &&
-                        player.buffs.hasWarmingEffect)
+                    if (f.Has(F::Warming) &&
+                        player.buffs.hasWarmingEffect && !Due(player, B::warming))
                         return R::warming;
                 }
-                if (checkResists && IsResistSpellRedundant(c, player.resistances))
+                if (checkResists && IsResistRedundant(f, player.resistances, player.buffs.refreshDue))
                     return R::resist;
 
                 return std::nullopt;
@@ -100,33 +184,37 @@ namespace Huginn::Candidate
                 if (c.count <= 0)
                     return R::affordability;
 
-                // 3. Full Vitals (skip for food/alcohol)
-                if (c.type != Item::ItemType::Food && c.type != Item::ItemType::Alcohol) {
+                // 3. Full Vitals (skip for food and drink: the catalog's Food
+                // kind, alcohol included)
+                if (!isFood) {
                     if (m_config.filterHealingWhenFull &&
-                        Item::HasTag(c.tags, Item::ItemTag::RestoreHealth) &&
+                        f.Has(F::RestoreHealth) &&
                         player.vitals.health >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
                         return R::full_health;
                     if (m_config.filterMagickaWhenFull &&
-                        Item::HasTag(c.tags, Item::ItemTag::RestoreMagicka) &&
+                        f.Has(F::RestoreMagicka) &&
                         player.vitals.magicka >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
                         return R::full_magicka;
                     if (m_config.filterStaminaWhenFull &&
-                        Item::HasTag(c.tags, Item::ItemTag::RestoreStamina) &&
+                        f.Has(F::RestoreStamina) &&
                         player.vitals.stamina >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
                         return R::full_stamina;
                 }
 
-                // 4. Active Buff. Not the resist check for food/alcohol: it
+                // 4. Hard gates: none applies to an item.
+
+                // 5. Active Buff. Not the resist check for food/alcohol: it
                 // is eaten for hunger, and a stew's side resist (LoreRim) let
                 // a poison-immunity necklace strip every stew from the list.
-                if (checkResists &&
-                    c.type != Item::ItemType::Food && c.type != Item::ItemType::Alcohol &&
-                    IsResistPotionRedundant(c, player.resistances))
+                if (checkResists && !isFood &&
+                    IsResistRedundant(f, player.resistances, player.buffs.refreshDue))
                     return R::resist;
                 if (checkBuffs) {
-                    if (Item::HasTag(c.tags, Item::ItemTag::Waterbreathing) && player.buffs.hasWaterBreathing)
+                    if (f.Has(F::Waterbreathing) && player.buffs.hasWaterBreathing &&
+                        !Due(player, B::waterbreathing))
                         return R::waterbreathing;
-                    if (Item::HasTag(c.tags, Item::ItemTag::Invisibility) && player.buffs.isInvisible)
+                    if (f.Has(F::Invisibility) && player.buffs.isInvisible &&
+                        !Due(player, B::invisibility))
                         return R::invisibility;
                 }
 
@@ -142,17 +230,20 @@ namespace Huginn::Candidate
 
                 // 3. Full Vitals (as for spells: not for others, not over time)
                 if (m_config.filterHealingWhenFull &&
-                    Spell::HasTag(c.tags, Spell::SpellTag::RestoreHealth) &&
-                    !Spell::HasTagExt(c.tagsExt, Spell::SpellTagExt::TargetsOthers) &&
-                    !Spell::HasTagExt(c.tagsExt, Spell::SpellTagExt::HealsOverTime) &&
+                    f.Has(F::RestoreHealth) && !f.Has(F::TargetsOthers) && !f.Has(F::HealsOverTime) &&
                     player.vitals.health >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
                     return R::full_health;
 
-                // 4. Active Buff
+                // 4. Hard gates (R8.1): a scroll for someone else, no follower near.
+                if (const auto gate = HardGate(c, gates, f.Has(F::TargetsOthers))) return gate;
+
+                // 5. Active Buff
                 if (checkBuffs) {
-                    if (Spell::HasTag(c.tags, Spell::SpellTag::Invisibility) && player.buffs.isInvisible)
+                    if (f.Has(F::Invisibility) && player.buffs.isInvisible &&
+                        !Due(player, B::invisibility))
                         return R::invisibility;
-                    if (Spell::HasTag(c.tags, Spell::SpellTag::Muffle) && player.buffs.hasMuffle)
+                    if (f.Has(F::Muffle) && player.buffs.hasMuffle &&
+                        !Due(player, B::muffle))
                         return R::muffle;
                 }
 
@@ -170,8 +261,9 @@ namespace Huginn::Candidate
             // WEAPON
             // =================================================================
             else if constexpr (std::is_same_v<T, WeaponCandidate>) {
-                // Weapons pass all visitor filters (equipped-skip is per-slot in SlotAllocator)
-                return std::nullopt;
+                // Weapons pass the other visitor filters (equipped-skip is
+                // per-slot in SlotAllocator); a suppressed favourite is gated.
+                return HardGate(c, gates, false);
             }
             // =================================================================
             // TORCH
@@ -179,70 +271,20 @@ namespace Huginn::Candidate
             else if constexpr (std::is_same_v<T, TorchCandidate>) {
                 if (c.count <= 0) return R::affordability;
                 if (c.isEquipped) return R::equipped;
-                return std::nullopt;
+                // R8.1: no torch while darkness does not apply.
+                return HardGate(c, gates, false);
+            }
+            // =================================================================
+            // APPAREL (R8.1: no arm before; the gather skips worn pieces)
+            // =================================================================
+            else if constexpr (std::is_same_v<T, ApparelCandidate>) {
+                // No station up for any craft the piece fortifies.
+                return HardGate(c, gates, false);
             }
             else {
-                return std::nullopt;
+                static_assert(always_false_v<T>, "Unhandled CandidateVariant alternative in RunVisitorFilters");
             }
         }, candidate);
-    }
-
-    // Keep individual filters as public API for external callers
-    bool CandidateFilters::PassesAffordabilityFilter(
-        const CandidateVariant& candidate, float currentMagicka) const
-    {
-        // Simplified — delegates to consolidated visitor for spell logic,
-        // but external callers may use this standalone
-        return std::visit([currentMagicka, policy = m_config.uncastableSpellPolicy](const auto& c) -> bool {
-            using T = std::decay_t<decltype(c)>;
-            if constexpr (std::is_same_v<T, SpellCandidate>) {
-                if (currentMagicka >= c.effectiveCost) return true;
-                return policy != UncastableSpellPolicy::Disallow;
-            }
-            else if constexpr (std::is_same_v<T, ItemCandidate>) { return c.count > 0; }
-            else if constexpr (std::is_same_v<T, ScrollCandidate>) { return c.count > 0; }
-            else if constexpr (std::is_same_v<T, AmmoCandidate>) { return c.count > 0; }
-            else if constexpr (std::is_same_v<T, TorchCandidate>) { return c.count > 0; }
-            else { return true; }
-        }, candidate);
-    }
-
-    bool CandidateFilters::PassesEquippedFilter(
-        const CandidateVariant& candidate, const State::PlayerActorState& player) const
-    {
-        return std::visit([&player](const auto& c) -> bool {
-            using T = std::decay_t<decltype(c)>;
-            if constexpr (std::is_same_v<T, SpellCandidate>) { return !player.IsSpellEquipped(c.formID); }
-            else if constexpr (std::is_same_v<T, AmmoCandidate>) { return !c.isEquipped; }
-            else if constexpr (std::is_same_v<T, TorchCandidate>) { return !c.isEquipped; }
-            else { return true; }
-        }, candidate);
-    }
-
-    bool CandidateFilters::PassesCooldownFilter(const CandidateVariant& candidate) const
-    {
-        const auto& base = GetBase(candidate);
-        return !m_cooldownMgr.IsOnCooldown(base.formID, base.sourceType);
-    }
-
-    // NOTE: These standalone shims delegate to the consolidated RunVisitorFilters,
-    // which returns the *first* failing filter (early-exit). If a candidate fails an
-    // earlier filter (e.g. Equipped), the specific check here is never reached and the
-    // shim returns true. This is acceptable: such candidates would be removed by the
-    // earlier filter anyway in the main ApplyAllFilters pipeline.
-    bool CandidateFilters::PassesActiveBuffFilter(
-        const CandidateVariant& candidate, const State::PlayerActorState& player) const
-    {
-        if (!m_config.filterActiveBuffs && !m_config.filterRedundantResists) return true;
-        const auto result = RunVisitorFilters(candidate, player, 999999.0f);
-        return !result || !Core::Filter::IsActiveBuff(*result);
-    }
-
-    bool CandidateFilters::PassesFullVitalsFilter(
-        const CandidateVariant& candidate, const State::PlayerActorState& player) const
-    {
-        const auto result = RunVisitorFilters(candidate, player, 999999.0f);
-        return !result || !Core::Filter::IsFullVital(*result);
     }
 
     // =========================================================================
@@ -253,13 +295,16 @@ namespace Huginn::Candidate
         std::vector<CandidateVariant>& output,
         const State::PlayerActorState& player,
         float currentMagicka,
+        const Core::Gate::Inputs& gates,
         FilterStats& stats,
         std::span<const RE::FormID> heldIDs,
-        std::vector<CandidateVariant>* heldUnaffordable,
-        std::vector<Core::Filter::Dropped>* dropped)
+        std::vector<CandidateVariant>* heldAside,
+        std::vector<Core::Filter::Dropped>* dropped,
+        std::vector<Core::Facets::Subject>* subjects)
     {
         stats.Reset();
         if (dropped) dropped->clear();
+        if (subjects) subjects->clear();
         // 0.23.46: every drop, with its reason, for the selection log v3 only.
         const auto recordDrop = [dropped](const CandidateVariant& c, Core::Filter::Reason reason) {
             if (!dropped) return;
@@ -297,6 +342,7 @@ namespace Huginn::Candidate
         size_t weaponsFilteredByCooldown = 0;
         size_t weaponsFilteredByFullVitals = 0;
         size_t weaponsFilteredByActiveBuff = 0;
+        size_t weaponsFilteredByHardGate = 0;
         size_t weaponsDeduplicated = 0;
         size_t weaponsPassed = 0;
 
@@ -304,26 +350,49 @@ namespace Huginn::Candidate
             const bool isWeapon = std::holds_alternative<WeaponCandidate>(c);
             if (isWeapon) ++weaponsBefore;
 
-            // 1-4. Consolidated visitor: affordability, equipped, full vitals, active buff
-            //       Single std::visit dispatch instead of 4 separate ones.
+            // 1-5. Consolidated visitor: affordability, equipped, full vitals,
+            //       the hard gates, active buff. One std::visit dispatch.
+            Core::Facets::Subject subject;   // the visitor's catalog lookup, kept with a survivor
             {
                 using R = Core::Filter::Reason;
-                const auto result = RunVisitorFilters(c, player, currentMagicka);
+                const auto result = RunVisitorFilters(c, player, currentMagicka, gates, subject);
                 if (result) {
                     recordDrop(c, *result);   // before the hold's aside list may move it
+                    // A Remembrance hold's own item, set aside rather than
+                    // dropped: the hold shows what the player took off even
+                    // at 13 magicka, where the key otherwise blinked to a
+                    // potion until magicka ticked back (2026-09-30). Aside, not
+                    // passed, so the ranking can never put it on ANOTHER key.
+                    // R8.1: a hard gate's item too -- a torch taken off in
+                    // daylight, a ring away from the forge. Until 0.23.55 those
+                    // passed the filters (the context weight dropped them in
+                    // the scorer), so the hold could still find them.
+                    const auto setAsideForHold = [&] {
+                        if (heldAside && std::ranges::find(heldIDs, GetBase(c).formID) != heldIDs.end()) {
+                            heldAside->push_back(std::move(c));
+                        }
+                    };
                     switch (*result) {
                         case R::affordability:
                             ++stats.filteredByAffordability;
                             if (isWeapon) ++weaponsFilteredByAffordability;
-                            // A Remembrance hold's own item, set aside rather
-                            // than dropped: the hold shows what the player took
-                            // off even at 13 magicka, where the key otherwise
-                            // blinked to a potion until magicka ticked back
-                            // (2026-09-30). Aside, not passed, so the ranking
-                            // can never put an unaffordable spell on ANOTHER key.
-                            if (heldUnaffordable &&
-                                std::ranges::find(heldIDs, GetBase(c).formID) != heldIDs.end()) {
-                                heldUnaffordable->push_back(std::move(c));
+                            setAsideForHold();
+                            break;
+                        case R::no_follower:
+                        case R::no_workstation:
+                        case R::not_dark:
+                        case R::favorite_suppressed:
+                            ++stats.filteredByHardGate;
+                            if (isWeapon) ++weaponsFilteredByHardGate;
+                            // Not while on cooldown: 0.23.54 dropped such an
+                            // item at the cooldown stage, so the hold never saw
+                            // it. A torch taken off in daylight within its
+                            // cooldown now reads as in the dark, where the
+                            // same torch drops at the cooldown stage below.
+                            {
+                                const auto& gated = GetBase(c);
+                                if (!activeCooldowns.contains(CooldownManager::MakeKey(gated.formID, gated.sourceType)))
+                                    setAsideForHold();
                             }
                             break;
                         case R::equipped:
@@ -336,7 +405,7 @@ namespace Huginn::Candidate
                             ++stats.filteredByFullVitals;
                             if (isWeapon) ++weaponsFilteredByFullVitals;
                             break;
-                        default:   // the active-buff filters (Core::Filter::IsActiveBuff)
+                        default:   // the active-buff filters (Reason::invisibility..Reason::resist)
                             ++stats.filteredByActiveBuff;
                             if (isWeapon) ++weaponsFilteredByActiveBuff;
                             break;
@@ -376,6 +445,7 @@ namespace Huginn::Candidate
             // Passed all filters — move into output (single move per survivor)
             if (isWeapon) ++weaponsPassed;
             output.push_back(std::move(c));
+            if (subjects) subjects->push_back(subject);
         }
 
         // Limit output size if configured
@@ -386,6 +456,7 @@ namespace Huginn::Candidate
                 recordDrop(output[i], Core::Filter::Reason::truncated);
             }
             output.resize(m_config.maxCandidatesAfterFilter);
+            if (subjects) subjects->resize(output.size());
             // Recount weapons only if truncation happened (rare path)
             size_t weaponsAfter = 0;
             for (const auto& c : output) {
@@ -420,84 +491,50 @@ namespace Huginn::Candidate
         static size_t lastWpnBefore = 0, lastWpnAfter = 0;
         if (weaponsBefore != lastWpnBefore || weaponsPassed != lastWpnAfter) {
             logger::info("[CandidateFilters] Weapons: {} in -> {} out "
-                "(afford={}, equip={}, cool={}, vital={}, buff={}, dedup={})",
+                "(afford={}, equip={}, cool={}, vital={}, buff={}, gate={}, dedup={})",
                 weaponsBefore, weaponsPassed,
                 weaponsFilteredByAffordability, weaponsFilteredByEquipped,
                 weaponsFilteredByCooldown, weaponsFilteredByFullVitals,
-                weaponsFilteredByActiveBuff, weaponsDeduplicated);
+                weaponsFilteredByActiveBuff, weaponsFilteredByHardGate, weaponsDeduplicated);
             lastWpnBefore = weaponsBefore;
             lastWpnAfter = weaponsPassed;
         }
     }
 
     // =========================================================================
-    // HELPER: RESIST POTION REDUNDANCY CHECK
+    // HELPER: RESIST REDUNDANCY CHECK (a potion or a spell)
     // =========================================================================
-    bool CandidateFilters::IsResistPotionRedundant(
-        const ItemCandidate& item,
-        const State::ActorResistances& resistances) const
+    // R11: one check over the effect catalog's resist facets (core/CapFacets.h)
+    // for potions and spells alike. An item that resists an element the player
+    // already resists above the threshold is redundant -- unless that element's
+    // resistance block is due for its refresh (R8.1: it falls to the threshold
+    // within fRefreshPriorSec, ActorBuffs::refreshDue). Any one blocked element
+    // makes it redundant, as the potion check always did. Before R11 the spell
+    // check read the old classifier's type (Defensive) and element (the first
+    // of fire, frost, shock, poison); resist_* columns are set only by a
+    // resistance the item GIVES, so a poison aura (Strider's Shroud: damage,
+    // not resist_poison) still passes, and Resist Magic now counts for spells
+    // as it did for potions. A hostile or damaging item is never judged by
+    // its resistance (Core::Facets::ResistJudgeable): LoreRim's elemental
+    // cloaks carry a resist rider for the opposite element, and before R11
+    // only a Defensive spell reached this check, so a cloak never did.
+    bool CandidateFilters::IsResistRedundant(
+        Core::Facets::Set facets,
+        const State::ActorResistances& resistances,
+        Core::Refresh::DueBits refreshDue) const
     {
+        if (!Core::Facets::ResistJudgeable(facets)) return false;
         const float threshold = m_config.resistThresholdToFilter;
-
-        if (Item::HasTag(item.tags, Item::ItemTag::ResistFire) &&
-            resistances.fire > threshold) {
-            return true;
-        }
-        if (Item::HasTag(item.tags, Item::ItemTag::ResistFrost) &&
-            resistances.frost > threshold) {
-            return true;
-        }
-        if (Item::HasTag(item.tags, Item::ItemTag::ResistShock) &&
-            resistances.shock > threshold) {
-            return true;
-        }
-        if (Item::HasTag(item.tags, Item::ItemTag::ResistPoison) &&
-            resistances.poison > threshold) {
-            return true;
-        }
-        if (Item::HasTag(item.tags, Item::ItemTag::ResistMagic) &&
-            resistances.magic > threshold) {
-            return true;
-        }
-
-        return false;
-    }
-
-    // =========================================================================
-    // HELPER: RESIST SPELL REDUNDANCY CHECK
-    // =========================================================================
-    bool CandidateFilters::IsResistSpellRedundant(
-        const SpellCandidate& spell,
-        const State::ActorResistances& resistances) const
-    {
-        const float threshold = m_config.resistThresholdToFilter;
-
-        // Defensive only. A Defensive spell's element is what it protects
-        // against, so already having that resistance makes it redundant.
-        //
-        // Buff was accepted here too, for the same stale reason as in
-        // ContextWeightForCandidate: before #128 an elemental resist spell was
-        // typed Buff. It is Defensive now, and the Buffs that carry an element
-        // carry it to describe damage they DEAL. Suppressing Strider's Shroud
-        // because the player already resists poison withheld a poison aura on
-        // the grounds that they did not need protection it was not offering.
-        if (spell.type == Spell::SpellType::Defensive) {
-            // Use element to determine resist type
-            switch (spell.element) {
-                case Spell::ElementType::Fire:
-                    return resistances.fire > threshold;
-                case Spell::ElementType::Frost:
-                    return resistances.frost > threshold;
-                case Spell::ElementType::Shock:
-                    return resistances.shock > threshold;
-                case Spell::ElementType::Poison:
-                    return resistances.poison > threshold;
-                default:
-                    break;
-            }
-        }
-
-        return false;
+        using E = Core::Refresh::Element;
+        using F = Core::Facets::F;
+        const auto blocked = [&](float resist, E e) {
+            return resist > threshold && !Core::Refresh::IsDue(refreshDue, Core::Refresh::ResistBlock(e));
+        };
+        return (facets.Has(F::ResistFire) && blocked(resistances.fire, E::fire)) ||
+               (facets.Has(F::ResistFrost) && blocked(resistances.frost, E::frost)) ||
+               (facets.Has(F::ResistShock) && blocked(resistances.shock, E::shock)) ||
+               (facets.Has(F::ResistPoison) && blocked(resistances.poison, E::poison)) ||
+               (facets.Has(F::ResistMagic) && blocked(resistances.magic, E::magic));
     }
 
 }  // namespace Huginn::Candidate

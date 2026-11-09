@@ -1,8 +1,8 @@
 #pragma once
 
 #include "context/ContextReason.h"
-#include "context/ContextReasonAttribution.h"
 #include "slot/SlotAssignment.h"
+#include "slot/SlotClassifier.h"
 
 #include <string>
 #include <string_view>
@@ -14,21 +14,23 @@ namespace Huginn::Display
     // =========================================================================
     // The short "why is this here" subtext under a Wheeler entry.
     //
-    // Wording lives here, in the display layer — the context layer decides WHICH
-    // reason applies (Context::ContextRuleEngine::DominantReason, derived from
-    // the same weight curves that drive scoring) and WHICH SLOTS it may speak
-    // for (Context::ReasonAppliesTo, #64); this file decides how to say it.
-    // Adding a reason means adding a case below.
+    // Wording lives here, in the display layer. R8.3: WHICH reason applies is
+    // the most urgent explanation among the page's items (the largest
+    // theta n cap term of each one's choice score, display/NeedReason.h;
+    // PipelineCoordinator::UpdateContextReason), and it speaks only for a slot
+    // whose OWN explanation is that reason (ScoredCandidate::explainedReason,
+    // #64; R8.4 deleted the per-slot attribution off the context weights it
+    // replaced). This file decides how to say it. Adding a reason means adding a case below.
     // =========================================================================
 
     /// Human-readable text for a context reason, or "" for None.
     /// Returns a view into static storage — no allocation.
     [[nodiscard]] inline constexpr std::string_view ReasonLabel(Context::ContextReason reason) noexcept
     {
-        // Tripwire: a new ContextReason needs wording here and a threshold in
-        // ContextRuleEngine::DominantReason.
+        // Tripwire: a new ContextReason needs wording here and a need in
+        // display/NeedReason.h.
         static_assert(Context::CONTEXT_REASON_COUNT == 29,
-            "ContextReason changed — review ReasonLabel and DominantReason");
+            "ContextReason changed — review ReasonLabel and NeedReason");
 
         using R = Context::ContextReason;
         switch (reason) {
@@ -72,10 +74,10 @@ namespace Huginn::Display
 
     /// Derive the subtext explanation for one slot assignment.
     /// Priority: a Remembrance hold ("Swap Back") > the override's own reason >
-    /// this tick's context reason, IF it ranked this item > "Ally Support" (a
-    /// spell for someone else) > "Favorite" > no label.
+    /// this tick's context reason, IF it is this item's own explanation >
+    /// "Ally Support" (a spell for someone else) > "Favorite" > no label.
     /// @param contextReason Reason for THIS tick (DisplayContext::contextReason),
-    ///        derived once by the pipeline from the tick's context weights.
+    ///        derived once by the pipeline from the page's explanations.
     [[nodiscard]] inline std::string DeriveExplanationLabel(
         const Slot::SlotAssignment& assignment,
         Context::ContextReason contextReason)
@@ -96,16 +98,17 @@ namespace Huginn::Display
         // An override's reason was stamped on THIS candidate by OverrideManager,
         // which surfaced it for exactly that reason — attributed by construction.
         //
-        // The tick's reason was not: it is one global fact about the situation,
-        // and the page it labels may contain nothing it ranked. It gets to speak
-        // for a slot only where the candidate actually draws weight from the
-        // field the reason is read off; otherwise the ladder falls through, the
+        // The tick's reason was not: it is one fact about the page (the most
+        // urgent explanation on it, held). It gets to speak for a slot only
+        // where it is that item's own explanation (R8.3: the need behind the
+        // largest term of its score); otherwise the ladder falls through, the
         // way it already does when no reason is active at all.
         if (base.overrideReason != Context::ContextReason::None) {
             if (const auto label = ReasonLabel(base.overrideReason); !label.empty()) {
                 return std::string(label);
             }
-        } else if (Context::ReasonAppliesTo(candidate, contextReason)) {
+        } else if (contextReason != Context::ContextReason::None &&
+                   assignment.candidate->explainedReason == contextReason) {
             if (const auto label = ReasonLabel(contextReason); !label.empty()) {
                 return std::string(label);
             }
@@ -114,13 +117,12 @@ namespace Huginn::Display
         // A spell or scroll for someone else (Healing Touch, Oakflesh on
         // Target) is on the page only with a follower near, so it says who it
         // is for -- on the widget and on the Wheeler entry alike (the user,
-        // 2026-10-04).
-        if (const auto* spell = std::get_if<Candidate::SpellCandidate>(&candidate);
-            spell && Spell::HasTagExt(spell->tagsExt, Spell::SpellTagExt::TargetsOthers)) {
-            return "Ally Support";
-        }
-        if (const auto* scroll = std::get_if<Candidate::ScrollCandidate>(&candidate);
-            scroll && Spell::HasTagExt(scroll->tagsExt, Spell::SpellTagExt::TargetsOthers)) {
+        // 2026-10-04). R11: "for someone else" is the effect catalog's
+        // TargetsOthers facet (core/CapFacets.h), the same one the no_follower
+        // filter reads.
+        if ((std::holds_alternative<Candidate::SpellCandidate>(candidate) ||
+             std::holds_alternative<Candidate::ScrollCandidate>(candidate)) &&
+            Slot::SlotClassifier::SubjectOf(*assignment.candidate).facets.Has(Core::Facets::F::TargetsOthers)) {
             return "Ally Support";
         }
 

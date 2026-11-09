@@ -1,7 +1,7 @@
 #pragma once
 
 // =============================================================================
-// EFFECT MAPPER -- plain item records -> cap(i), the 243 effect columns
+// EFFECT MAPPER -- plain item records -> cap(i), the 244 effect columns
 // =============================================================================
 // Doc 9's extractor rules (effects.csv `how`), in three steps:
 //
@@ -31,8 +31,17 @@
 //     defense ...) grade magnitude x min(duration, 3600)/3600 for timed effects
 //     and the magnitude for constant ones; presence columns are 1, times
 //     D(duration) = log1p(min(d,3600))/log1p(3600) where effects.csv says
-//     "P x D", times a graded magnitude where it says "P x G". A graded column
-//     with no magnitude has an unknown strength: through a script route
+//     "P x D", times a graded magnitude where it says "P x G". A timed Level
+//     row grades within its column's timed population, apart from the
+//     constant ones (enchanted gear, constant abilities; 0.24.27): weighed by
+//     duration/3600 against a ring's constant magnitude, a 60 s Resist Fire
+//     potion read about 0.08 and never outranked anything, so a timed effect
+//     is ranked among timed effects (potions, spells, scrolls, food). A row
+//     of an hour or more already reads its magnitude, gear's scale, so it
+//     stays with gear; a column with fewer than kMinTimedGroup timed items
+//     grades its timed rows against gear, as before (a crafted potion or a
+//     perk row is graded against a population it is not in). A graded
+//     column with no magnitude has an unknown strength: through a script route
 //     (keyword, name, description, override) it is kNeutralStrength = 0.5
 //     (times D where the rule has one), never the top; through the engine's
 //     own data it is resolved per ResolveZeroMagnitudes below (a stated
@@ -125,6 +134,20 @@ namespace Huginn::Core::Effect
     /// for a light, being a light.
     [[nodiscard]] bool DescribesItem(const Cap& cap, Kind kind) noexcept;
 
+    /// The `narcotic` item feature (effects.csv; 0.24.9 as `alcohol`, 0.24.16
+    /// renamed): a potion or food that is an alcoholic drink or a drug, one
+    /// group (the user, 2026-10-30). Never a poison. Marks, any one of them: an
+    /// alcohol or drug item keyword (OCF, LoreRim - Food Tweaks' Alcohol*,
+    /// Simonrim's MAG_FoodTypeDrugs, CACO's), an effect whose MGEF carries an
+    /// alcohol or drug keyword (Requiem's Feat_KW_Alcohol, BOOB's
+    /// BOOB_AlcoholBadEffect, Simonrim's MAG_ ones), or an effect that is a
+    /// drink or drug MGEF by plugin and local id: the drink drawback
+    /// Skyrim.esm 10C645, vanilla's Drugged (0E3CBB) and Redwater Skooma
+    /// effect, Requiem's two Skooma effects, WindhelmSSE's moonshine.
+    /// MagicAlchHarmful is not one: poisoned food and Rendil's Screaming
+    /// Cheese carry it too.
+    [[nodiscard]] bool IsNarcotic(const ItemRecord& item, const EffectTable& effects);
+
     /// The column's value rule from effects.csv's `how`: "Amount", "Level",
     /// "P", "PD", "PG", "PGD", "PArea", "Hunger" or "Thirst" (graded ones grade
     /// a magnitude). For the report tool and tests.
@@ -181,6 +204,7 @@ namespace Huginn::Core::Effect
         bool visible = true;
         bool cureByArchetype = false;
         bool unknown = false;   // strength unknown (kNeutralStrength): yields to a known row on the column
+        bool timed = false;     // a Level row graded on magnitude x duration share: its own population (0.24.27)
         bool hostile = false;
         int delivery = 0;
         std::uint32_t duration = 0;  // as recorded (sentinels included)
@@ -209,6 +233,14 @@ namespace Huginn::Core::Effect
     /// percentile moves in steps of more than 5%, so the sub-type is graded
     /// within its vanilla type instead (whose population holds it too).
     inline constexpr std::size_t kMinSubtypeGroup = 20;
+
+    /// The smallest timed population a timed Level row grades in. Under it
+    /// the row grades against the column's constant population (gear), as
+    /// it did before 0.24.27: an empty or one-item population would read 1.0
+    /// for any row graded against it but not in it (a crafted potion, a perk
+    /// row). LoreRim's resist columns hold about 20 timed items and the
+    /// skill fortifies 4, so the bar is low on purpose.
+    inline constexpr std::size_t kMinTimedGroup = 3;
 
     /// A kept row that fires only with a perk (core/EffectConditions.h):
     /// carried beside cap(i), not in it, so the catalog -- built at the main
@@ -317,9 +349,27 @@ namespace Huginn::Core::Effect
         [[nodiscard]] float Median(Col col, std::uint32_t group) const;
         [[nodiscard]] std::size_t Size(Col col, std::uint32_t group) const;
 
-        /// The values one item contributes to a column's population (its max
-        /// graded raw over the rows it keeps for that column).
-        [[nodiscard]] static std::vector<std::pair<Col, float>> ColumnRaws(const ItemMapping& m);
+        /// One value an item contributes to a column's population: its max
+        /// graded raw over the rows it keeps for that column, per population
+        /// (group 0, or the column's timed population for timed Level rows).
+        struct ColumnRaw
+        {
+            Col col = Col::_Count;
+            std::uint32_t group = 0;
+            float raw = 0.0f;
+        };
+        [[nodiscard]] static std::vector<ColumnRaw> ColumnRaws(const ItemMapping& m);
+
+        /// The population a kept row belongs to: the timed one for a timed
+        /// Level row (KeptRow::timed, 0.24.27), group 0 otherwise.
+        [[nodiscard]] static std::uint32_t RowGroup(const KeptRow& r) noexcept;
+        /// The population a kept row grades in on column `c`: its RowGroup,
+        /// except a timed row on a column whose timed population is under
+        /// kMinTimedGroup, which grades in group 0.
+        [[nodiscard]] std::uint32_t GradeGroup(Col c, const KeptRow& r) const;
+        /// Must not collide with the grouped populations' ids in
+        /// EffectMapper.cpp (static_assert there).
+        static constexpr std::uint32_t kGroupTimed = 0x20000000u;
 
     private:
         static std::uint64_t Key(Col c, std::uint32_t g) noexcept

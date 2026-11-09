@@ -15,6 +15,9 @@
 #include "wheeler/WheelerSettings.h"
 #include "wheeler/WheelSync.h"   // RequiresUniqueID - what Wheeler will refuse
 #include "WheelUidFilter.h"
+#include "telemetry/SoakMetrics.h"   // R8.3: wheeler pushes/s
+#include "Globals.h"                    // R10: g_utilityScorer's wildcard manager (each page's own wildcard)
+#include "learning/UtilityScorer.h"
 
 namespace Huginn::Display
 {
@@ -35,6 +38,7 @@ namespace Huginn::Display
     void WheelerBackend::Push(const DisplayContext& ctx)
     {
         Huginn_ZONE_NAMED("Display::Wheeler");
+        Telemetry::SoakMetrics::GetSingleton().RecordWheelerPush();   // R8.3: the heartbeat's wheeler/s
         auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();
         auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
         auto& slotLocker = Slot::SlotLocker::GetSingleton();
@@ -170,7 +174,7 @@ namespace Huginn::Display
             == Wheeler::PostActivationPolicy::Empty;
 
         // #14: one lock snapshot for the whole push. The lock-timer branch below
-        // used to call IsSlotLocked() then GetRemainingLockTime() per slot, each
+        // used to call IsSlotLocked() then a remaining-time getter per slot, each
         // taking m_mutex — up to 2 round-trips x slots x pages every push, which
         // is exactly what GetLockSnapshot() was added to avoid (SlotLocker.h:147).
         // Hoisted above the page loop rather than per-page because only the
@@ -202,10 +206,28 @@ namespace Huginn::Display
                 // Without the weapons and armour this page's wheel cannot
                 // show (display/WheelUidFilter.h), like the current page.
                 Huginn_ZONE_NAMED("Wheeler::AllocateOtherPage");
-                const auto& pageCandidates = CandidatesForWheelPage(page, HidesUidlessGear(page),
+                const bool hides = HidesUidlessGear(page);
+                const auto& pageCandidates = CandidatesForWheelPage(page, hides,
                     ctx.scoredCandidates, m_pageCandidates);
+                // R10: this page's OWN wildcard (map Phase 8, the Wheeler
+                // leak): its cached one pinned on its own key, never a roll
+                // (only the displayed page rolls) and never the displayed
+                // page's -- the ranked list carries no wildcard flag since R10.
+                auto& wildcards = g_utilityScorer->GetWildcardManager();
+                const Scoring::WildcardPage wildcardPage{
+                    .index = page,
+                    .slotCount = slotAllocator.GetSlotCount(page),
+                    .seat = slotAllocator.GetWildcardSeat(page),
+                    .inCombat = slotLocker.IsInCombat(),
+                    .hideUidlessGear = hides,
+                    .display = false,
+                };
+                const auto wildcardRequest = wildcards.Plan(wildcardPage, ctx.scoredCandidates);
+                Slot::WildcardResult wildcardResult;
                 pageAssignments = slotAllocator.AllocateSlotsForPage(
-                    page, pageCandidates, ctx.overrides, ctx.playerState, ctx.worldState);
+                    page, pageCandidates, ctx.overrides, ctx.playerState, ctx.worldState,
+                    &wildcardRequest, &wildcardResult);
+                wildcards.Commit(wildcardPage, wildcardResult);
             }
 
             // Populate subtext labels using priority order:

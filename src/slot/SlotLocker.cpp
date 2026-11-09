@@ -2,6 +2,8 @@
 #include "override/OverrideConditions.h"
 #include "SlotClassifier.h"
 #include "core/CombatLock.h"
+#include "core/ChallengerRule.h"
+#include "core/ChoiceBeliefs.h"
 #include "core/CombatUpsert.h"
 #include "core/DedupRules.h"
 #include "core/HeldRefresh.h"
@@ -9,6 +11,7 @@
 #include "core/StackIdentity.h"
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <set>
 #include <span>
@@ -76,9 +79,9 @@ namespace Huginn::Slot
                 held.candidate->candidate = *overrideCurrent;
             } else if (plan.scoredIndex && *plan.scoredIndex < scored.size()) {
                 const auto& sc = scored[*plan.scoredIndex];
-                if (plan.refreshUtility) {
-                    held.candidate = sc;
-                    held.utility = sc.utility;
+                if (plan.refreshRow) {
+                    held.candidate = sc;   // the whole row: data, parts and explanation (R8.4: the
+                                           // assignment no longer copies the old utility out)
                 } else {
                     held.candidate->candidate = sc.candidate;   // data only (a Remembrance-only row)
                 }
@@ -93,6 +96,14 @@ namespace Huginn::Slot
             auto& base = Candidate::GetBase(held.candidate->candidate);
             if (plan.keepOverrideReason && base.overrideReason == Context::ContextReason::None) {
                 base.overrideReason = storedReason;
+            }
+            // The explanation's reason (R8.3) is this run's, like the score:
+            // a key not refreshed from a ranked row this run (a Remembrance-only
+            // row, the pre-filter data, an override's candidate, or nothing)
+            // has none, so the label and UpdateContextReason cannot read the
+            // situation of the tick it was locked on.
+            if (!plan.refreshRow) {
+                held.candidate->explainedReason = Context::ContextReason::None;
             }
         }
 
@@ -136,7 +147,9 @@ namespace Huginn::Slot
                 : m_config.combatLockDurationMs == 0.0f ? std::string("normal lock")
                 : std::format("{:.0f}ms", m_config.combatLockDurationMs),
             m_config.combatUpsertMarginMult > 0.0f
-                ? std::format("x{:.1f} ln m, {:.0f}s per key", m_config.combatUpsertMarginMult, m_config.combatUpsertCooldownSec)
+                ? std::format("P(better) > {:.3f} (fallback: x{:.1f} ln m), {:.0f}s per key",
+                      m_config.combatChallengerConfidence, m_config.combatUpsertMarginMult,
+                      m_config.combatUpsertCooldownSec)
                 : std::string("off"));
     }
 
@@ -655,23 +668,49 @@ namespace Huginn::Slot
                 // On scores (any sign): the incumbent's is empty when it is
                 // no longer a candidate -- no score value stands for "gone".
                 auto ratio = Telemetry::ChallengerRatio::NotApplicable;
+                auto dsd = Core::Challenger::DeltaSdBucket::Count;
+                bool underLine = false;
                 std::optional<Core::SlotScore> incumbentScore;
+                std::optional<double> sigmaDelta;
                 if (!scored.empty() &&
                     (cause == Telemetry::SlotChange::Expired || cause == Telemetry::SlotChange::Unheld)) {
+                    const Scoring::ScoredCandidate* incumbentRow = nullptr;
+                    const Scoring::ScoredCandidate* shownRow = nullptr;
                     for (const auto& sc : scored) {
-                        if (sc.GetFormID() == slot.shownFormID && sc.GetUniqueID() == slot.shownUniqueID) {
-                            incumbentScore = sc.SlotScore();
-                            break;
+                        if (!incumbentRow && sc.GetFormID() == slot.shownFormID && sc.GetUniqueID() == slot.shownUniqueID) {
+                            incumbentRow = &sc;
+                        }
+                        if (!shownRow && sc.GetFormID() == shown.formID && sc.GetUniqueID() == shown.uniqueID) {
+                            shownRow = &sc;
                         }
                     }
+                    if (incumbentRow) {
+                        incumbentScore = incumbentRow->SlotScore();
+                    }
                     ratio = Telemetry::BucketChallengerRatio(shown.score, incumbentScore);
+                    // R9: sigma_Delta of the pair, read from this run's
+                    // beliefs (both rows of one table, as the hold read it).
+                    if (incumbentRow && shownRow && incumbentRow->choice.beliefs &&
+                        incumbentRow->choice.beliefs == shownRow->choice.beliefs) {
+                        const double sd = Core::Challenger::SigmaDelta(incumbentRow->choice.beliefs->DeltaVar(
+                            shownRow->choice.beliefRow, incumbentRow->choice.beliefRow));
+                        if (sd == sd) sigmaDelta = sd;
+                    }
+                    dsd = Core::Challenger::BucketDeltaSd(shown.score, incumbentScore, sigmaDelta);
+                    underLine = Core::Challenger::UnderLine(shown.score, incumbentScore, sigmaDelta,
+                        run.challengerMinGap, run.challengerZ);
                 }
                 // Tenure: how long the item being replaced was on the slot.
                 float tenureSec = -1.0f;
                 if (!slot.shownEmpty && slot.shownSince != std::chrono::steady_clock::time_point{}) {
                     tenureSec = std::chrono::duration<float>(runNow - slot.shownSince).count();
                 }
-                changes[changeCount++] = { i, cause, ratio, tenureSec };
+                // R9: a bounce -- the slot goes back to what it showed before
+                // the item now leaving, which had been there under 10 s.
+                const bool bounce = cause != Telemetry::SlotChange::Page && !nowEmpty && !slot.prevName.empty() &&
+                                    shown.name == slot.prevName && tenureSec >= 0.0f &&
+                                    tenureSec < Telemetry::SLOT_BOUNCE_SEC;
+                changes[changeCount++] = { i, cause, ratio, tenureSec, dsd, underLine, bounce };
 
                 const std::string_view from = slot.shownEmpty ? std::string_view{} : std::string_view{ slot.shownName };
                 const std::string_view to = nowEmpty ? std::string_view{} : std::string_view{ shown.name };
@@ -683,11 +722,15 @@ namespace Huginn::Slot
                         i, from, to, Telemetry::SlotChangeName(cause), shown.score);
                 } else {
                     // The difference is the log of the old ratio: exp() of it
-                    // is always positive, whatever the scores' signs.
+                    // is always positive, whatever the scores' signs. R9: and
+                    // in sigma_Delta units, with the rule's verdict.
                     const double delta = shown.score - *incumbentScore;
-                    spdlog::debug("[SlotChurn] Slot {}: '{}' -> '{}' ({}, s={:+.3f} vs {:+.3f}, {:+.3f} = x{:.2f})",
+                    spdlog::debug("[SlotChurn] Slot {}: '{}' -> '{}' ({}, s={:+.3f} vs {:+.3f}, {:+.3f} = x{:.2f}{})",
                         i, from, to, Telemetry::SlotChangeName(cause), shown.score, *incumbentScore, delta,
-                        std::exp(delta));
+                        std::exp(delta),
+                        sigmaDelta ? std::format(", sd {:.3f} = {:.2f} sd{}", *sigmaDelta,
+                                         *sigmaDelta > 0.0 ? delta / *sigmaDelta : 0.0, underLine ? ", under the line" : "")
+                                   : std::string{});
                 }
             }
             // The key's age restarts on what the player can SEE change -- a
@@ -743,29 +786,6 @@ namespace Huginn::Slot
     // =========================================================================
     // MANUAL LOCK CONTROL
     // =========================================================================
-
-    void SlotLocker::LockSlot(size_t slotIndex, float durationMs)
-    {
-        if (slotIndex >= MAX_SLOTS) {
-            spdlog::warn("[SlotLocker] LockSlot: index {} out of range", slotIndex);
-            return;
-        }
-
-        std::lock_guard<std::mutex> lock(m_mutex);
-        auto& slot = m_lockedSlots[slotIndex];
-        slot.remainingMs = durationMs;
-        slot.totalDurationMs = durationMs;
-        slot.isLocked = true;
-        slot.isActivationLock = false;
-        slot.combatLock = false;
-        slot.frozen = false;
-        slot.lockedAt = std::chrono::steady_clock::now();
-        slot.minAgeWakeDone = false;
-        slot.settling = false;
-        slot.lockNextFill = false;
-
-        spdlog::debug("[SlotLocker] Slot {} manually locked for {:.0f}ms", slotIndex, durationMs);
-    }
 
     void SlotLocker::LockSlotForActivation(size_t slotIndex)
     {
@@ -1052,25 +1072,56 @@ namespace Huginn::Slot
             return;
         }
         std::vector<std::vector<bool>> fits(n, std::vector<bool>(source.size(), false));
+        // R9 (0.24.13): the pair's sigma_Delta, when this run's beliefs cover
+        // both rows -- the frozen item's row is this run's only when
+        // RefreshHeld put the scored row on the key (else it carries an older
+        // run's table, and the pair falls back to the fixed barrier, as the
+        // hold does for rows of different runs). NaN = no belief. The
+        // fallback ranking carries no table: every pair is NaN.
+        constexpr double kNoBelief = std::numeric_limits<double>::quiet_NaN();
+        std::vector<std::vector<double>> sigma(n, std::vector<double>(source.size(), kNoBelief));
         for (size_t k = 0; k < n; ++k) {
             if (!frozen[k]) continue;
+            const auto* held = result[k].candidate ? &*result[k].candidate : nullptr;
             for (size_t c = 0; c < source.size(); ++c) {
                 const auto& cand = wanted[source[c]];
                 fits[k][c] = source[c] == k || SlotClassifier::Matches(*cand.candidate, result[k].classification);
+                if (held && held->choice.beliefs && held->choice.beliefs == cand.candidate->choice.beliefs) {
+                    sigma[k][c] = Core::Challenger::SigmaDelta(held->choice.beliefs->DeltaVar(
+                        cand.candidate->choice.beliefRow, held->choice.beliefRow));
+                }
             }
         }
 
+        Core::CombatUpsertRule rule;
+        rule.barrier = barrier;
+        rule.minGap = run.challengerMinGap;
+        rule.z = Core::Challenger::ZForConfidence(static_cast<double>(m_config.combatChallengerConfidence));
+        rule.testAll = run.testAllChallengers;
         const double logMargin = Core::LogHoldMargin(run.challengerMargin);
-        for (const auto& pick : Core::PlanCombatUpserts(frozen, scores, fits, barrier, /*maxPicks=*/1)) {
+        for (const auto& pick : Core::PlanCombatUpserts(frozen, scores, fits, sigma, rule, /*maxPicks=*/1)) {
             const size_t k = pick.key;
             auto& slot = m_lockedSlots[k];
             SlotAssignment next = wanted[source[pick.challenger]];
             next.slotIndex = k;
             next.classification = result[k].classification;
             next.seatMoved = false;
-            spdlog::info("[SlotLocker] Slot {} combat upsert: '{}' -> '{}' (s={:+.3f} vs {:+.3f}, {:+.3f} > {:.1f} x ln m {:.3f})",
-                k, result[k].name, next.name, next.score, result[k].score, pick.margin,
-                m_config.combatUpsertMarginMult, logMargin);
+            const std::string passed = pick.passedOver > 0
+                ? std::format("; {} higher challenger(s) missed the line", pick.passedOver) : std::string{};
+            if (pick.sd >= 0.0) {
+                // The challenger rule decided: the gap against ln m + z sd and
+                // P(better), as the [Hold] lines print them.
+                const double p = pick.sd > 0.0
+                    ? Core::Challenger::NormalCdf((pick.margin - rule.minGap) / pick.sd) : 1.0;
+                spdlog::info("[SlotLocker] Slot {} combat upsert: '{}' -> '{}' (s={:+.3f} vs {:+.3f}, "
+                             "{:+.3f} > ln m {:.3f} + z {:.2f} x sd {:.3f}, P {:.3f}{})",
+                    k, result[k].name, next.name, next.score, result[k].score, pick.margin,
+                    rule.minGap, rule.z, pick.sd, p, passed);
+            } else {
+                spdlog::info("[SlotLocker] Slot {} combat upsert: '{}' -> '{}' (s={:+.3f} vs {:+.3f}, {:+.3f} > {:.1f} x ln m {:.3f}, no belief{})",
+                    k, result[k].name, next.name, next.score, result[k].score, pick.margin,
+                    m_config.combatUpsertMarginMult, logMargin, passed);
+            }
             m_upsertMemory.NoteLeft({ result[k].formID, result[k].uniqueID, result[k].name }, nowMs, /*byUpsert=*/true);
             m_upsertMemory.NoteUpsert(nowMs);
             result[k] = next;
@@ -1100,6 +1151,7 @@ namespace Huginn::Slot
                 .previousFormID = slot.previousFormID,
                 .hadContent = slot.hadContent,
                 .frozen = slot.isLocked && slot.frozen,
+                .name = slot.assignment.name,
             };
         }
         return snapshot;
@@ -1112,16 +1164,6 @@ namespace Huginn::Slot
         }
         std::lock_guard<std::mutex> lock(m_mutex);
         return m_lockedSlots[slotIndex].isLocked;
-    }
-
-    float SlotLocker::GetRemainingLockTime(size_t slotIndex) const
-    {
-        if (slotIndex >= MAX_SLOTS) {
-            return 0.0f;
-        }
-        std::lock_guard<std::mutex> lock(m_mutex);
-        const auto& slot = m_lockedSlots[slotIndex];
-        return slot.isLocked ? slot.remainingMs : 0.0f;
     }
 
     bool SlotLocker::WasConfirmed(size_t slotIndex, RE::FormID currentFormID) const

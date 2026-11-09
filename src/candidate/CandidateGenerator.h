@@ -61,13 +61,13 @@ namespace Huginn::Candidate
      * ```
      * Registries → Gather → Filter → Deduplicate → Output
      *                                                  ↓
-     *                               (Scored by UtilityScorer + ContextRuleEngine)
+     *                               (Ranked on the choice score, R8.3)
      * ```
      *
-     * NOTE: CandidateGenerator computes neither relevance scores nor display
-     * explanations. Both come from ContextRuleEngine (via UtilityScorer): the
-     * weight map ranks candidates, and DominantReason names the reason the
-     * pipeline hands to the display each tick (critique #10).
+     * NOTE: CandidateGenerator computes neither scores nor display
+     * explanations. Both come from the choice score (core/ChoiceScore.h via
+     * PipelineCoordinator::RankOnChoice): mu ranks candidates, and each row's
+     * largest theta n cap term is its explanation (R8.3).
      *
      * USAGE:
      * ```cpp
@@ -76,7 +76,8 @@ namespace Huginn::Candidate
      *
      * // In update loop
      * generator.Update(deltaSeconds);
-     * auto candidates = generator.GenerateCandidates(player, magicka);
+     * auto candidates = generator.GenerateCandidates(player, magicka,
+     *     Context::HardGateInputs(player, targets, world, suppressFavorites));
      * ```
      *
      * PERFORMANCE TARGET: <2ms per generation
@@ -108,17 +109,23 @@ namespace Huginn::Candidate
          *
          * @param player Current player state (vitals, buffs, equipment)
          * @param currentMagicka Player's current magicka (for affordability check)
+         * @param gates R8.1: the hard gates' facts, Context::HardGateInputs of
+         *        the same state (follower near, station, darkness, Suppress)
+         * @param heldAside A Remembrance hold's own item that affordability or
+         *        a hard gate dropped, set aside for the hold only
          * @return Vector of filtered candidates, ready for scoring
-         * @note The per-tick display reason is no longer produced here — the
-         *       pipeline derives it once from the scorer's context weights
-         *       (ContextRuleEngine::DominantReason, critique #10).
+         * @note The per-tick display reason is not produced here — the
+         *       pipeline derives it from the explanations of what the page
+         *       shows (R8.3, PipelineCoordinator::UpdateContextReason).
          */
         [[nodiscard]] std::vector<CandidateVariant> GenerateCandidates(
             const State::PlayerActorState& player,
             float currentMagicka,
+            const Core::Gate::Inputs& gates,
             std::span<const RE::FormID> heldIDs = {},
-            std::vector<CandidateVariant>* heldUnaffordable = nullptr,
-            std::vector<Core::Filter::Dropped>* dropped = nullptr   // 0.23.46: what the filters dropped, and why (v3 log)
+            std::vector<CandidateVariant>* heldAside = nullptr,
+            std::vector<Core::Filter::Dropped>* dropped = nullptr,  // 0.23.46: what the filters dropped, and why (v3 log)
+            std::vector<Core::Facets::Subject>* subjects = nullptr  // index-aligned with the result (ApplyAllFilters)
         );
 
         /**
@@ -169,16 +176,6 @@ namespace Huginn::Candidate
          * @note THREAD-SAFE: Call only when update loop is paused.
          */
         void RefreshConfigFromGlobal() noexcept;
-
-        /**
-         * @brief Get the cooldown manager (for external cooldown queries).
-         */
-        [[nodiscard]] CooldownManager& GetCooldownManager() noexcept { return m_cooldownMgr; }
-
-        /**
-         * @brief Log candidates to debug log.
-         */
-        void LogCandidates(const std::vector<CandidateVariant>& candidates) const;
 
         /**
          * @brief Reset generator state (clear cooldowns, reset stats).
@@ -278,7 +275,7 @@ namespace Huginn::Candidate
         );
 
         /// #65: craft-relevant apparel. Only fires at a workstation — see
-        /// WeightForCandidate, which gives apparel no baseline weight.
+        /// the legacy context weight, which gives apparel no baseline.
         void GatherApparelCandidates(
             std::vector<CandidateVariant>& out,
             const State::PlayerActorState& player);
@@ -290,9 +287,9 @@ namespace Huginn::Candidate
         // =========================================================================
         // RELEVANCE SCORING HELPERS - REMOVED (Stage 1g)
         // =========================================================================
-        // All relevance scoring has been moved to ContextRuleEngine.
+        // No relevance scoring here: candidates are ranked on the choice score (R8.3).
         // The Compute*Relevance() methods have been removed.
-        // Context weight is computed by Context::WeightForCandidate().
+        // (The legacy context weight, the D2 feature's floor input, lives in context/.)
     };
 
 }  // namespace Huginn::Candidate

@@ -83,8 +83,9 @@ namespace Huginn::Core::DecisionLog
         ammo_matches_launcher,
         school_fortified,
         /// 0.23.46: how much of the item's effect is already active on the
-        /// player (core/Coverage.h; doc 11 step 3). Logged only, and not an
-        /// effects.csv column: R8 gives it one shared weight, not a pair.
+        /// player (core/Coverage.h; doc 11 step 3). Not an effects.csv column:
+        /// scored with one shared weight, theta_covered, since R8.3 (0.24.0;
+        /// core/ChoiceScore.h).
         covered,
         _Count
     };
@@ -119,6 +120,9 @@ namespace Huginn::Core::DecisionLog
     inline constexpr std::uint8_t kNoFilter = 255;  // not dropped by a candidate filter
     inline constexpr float kNone = std::numeric_limits<float>::quiet_NaN();
     inline constexpr std::int8_t kNoHotkey = -1;
+    inline constexpr std::int16_t kExNone = -2;     // no shadow score on the row
+    inline constexpr std::int16_t kExLearned = -1;  // a shadow score with no positive need term
+    inline constexpr std::int8_t kNoShadowKey = -2; // 0.24.17: no D2 shadow page key on the row (-1 = off that page)
 
     /// One item the player could have chosen.
     struct Row
@@ -145,6 +149,32 @@ namespace Huginn::Core::DecisionLog
         /// 0.23.53, row column "hk": the vanilla favourites hotkey bound to
         /// the item (0-7 = keys 1-8), kNoHotkey when none.
         std::int8_t hotkey = kNoHotkey;
+        /// 0.23.56 (R8.2), row columns "mu", "sd", "lm", "um", "ex": the new
+        /// model (core/ChoiceScore.h), in shadow at 0.23.56; from 0.24.0
+        /// (R8.3) the live ranking's values.
+        /// mu and sd the row's score and its sd under the diagonal posterior
+        /// (no kappa); lm the D2 legacy feature ln learn mult (0 off the
+        /// floors) and um util missing (0/1), for a candidate of the run;
+        /// ex the explanation: the (need, column) of the largest
+        /// theta n cap term, kExLearned when none is positive ("learned").
+        float mu = kNone;
+        float sd = kNone;
+        float lm = kNone;
+        std::int8_t um = -1;                 // -1 = none
+        std::int16_t exNeed = kExNone;
+        std::int16_t exCol = -1;
+        /// 0.24.17, row columns "amu", "ar", "br", "ak", "bk": the D2 engine
+        /// in shadow beside the live one (core/ShadowCompare.h), on a
+        /// candidate of a run the shadow ran on: engine A's mu; the row's
+        /// rank under A and under the live ranking (1 = first, 0 = none); its
+        /// key on A's stateless page and on the live ranking's stateless page
+        /// (core/SlotAllocStateless.h; -1 off, kNoShadowKey none). Logged
+        /// only: the live learner does not read them (tools/prune/r8_check.py).
+        float legacyShadowMu = kNone;
+        std::int16_t legacyShadowRankA = 0;
+        std::int16_t legacyShadowRankB = 0;
+        std::int8_t legacyShadowKeyA = kNoShadowKey;
+        std::int8_t legacyShadowKeyB0 = kNoShadowKey;
         /// cap(i): the catalog's static entry (immutable, process lifetime) or
         /// a per-instance entry owned by capOwner. nullptr = not in the catalog.
         const Effect::Cap* cap = nullptr;
@@ -166,7 +196,7 @@ namespace Huginn::Core::DecisionLog
         int pageSlots = 0;          // keys on that page
         float pipeAgeMs = 0.0f;     // how old that page was when the context was taken
         std::string race;           // the hostile primary target's race editor ID, if any
-        float wildcardBase = 0.0f;  // the wildcard settings (base, max probability per slot)
+        float wildcardBase = 0.0f;  // the roll's chance, base and max (per-slot probability before 0.24.3)
         float wildcardMax = 0.0f;
         /// The held rows were read in full: per-stack unique IDs, per-instance
         /// caps, charges and worn armour. False inside the post-load window in
@@ -198,6 +228,12 @@ namespace Huginn::Core::DecisionLog
         /// The old engine's run behind the eligible rows (0.23.53, OldScore.h);
         /// written as "old" when valid.
         OldRun old;
+        /// 0.23.55 (R8.1): the left(r) centre ([Scoring] fRefreshPriorSec)
+        /// the rows' covered(i) was computed with, read when the context was
+        /// taken. Not written: the writer starts a new segment when it differs
+        /// from the head's, so a hot reload between capture and write cannot
+        /// put a row under a head naming another centre.
+        float refreshPriorSec = 5.0f;
         std::vector<Row> rows;
     };
 
@@ -272,6 +308,18 @@ namespace Huginn::Core::DecisionLog
         /// curve made each logged value. A change of curves mid-launch (a hot
         /// reload) starts a new segment.
         std::vector<Needs::Curve> curves;
+        /// 0.23.55 (R8.1): [Scoring] fRefreshPriorSec, the centre of
+        /// covered(i)'s left(r) prior (and the refresh pass's window), written
+        /// as "refreshPriorSec". A change mid-launch (a hot reload) starts a
+        /// new segment, as the curves do. A head without it (before 0.23.55)
+        /// centred left(r) at 5 s.
+        float refreshPriorSec = 5.0f;
+        /// 0.23.56 (R8.2): the bootstrap file the choice model was seeded from
+        /// (its created_utc and SHA-256; the shadow model at 0.23.56, the
+        /// ranking one since 0.24.0), written as "bootstrap" when the file was
+        /// read; absent when the new model is off or before 0.23.56.
+        std::string bootstrapCreatedUtc;
+        std::string bootstrapSha256;
     };
 
     // --- JSON helpers ---------------------------------------------------------

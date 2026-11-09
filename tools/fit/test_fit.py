@@ -236,6 +236,67 @@ class NewAndUnknownKeys(TempWork):
         self.assertNotIn('char', decs[0])
 
 
+class NarcoticColumn(TempWork):
+    """0.24.9 added a column after kind_light (named alcohol; 0.24.16 renamed it narcotic):
+    every later column's index moved by one. The C++ encoder's golden session as 0.24.8
+    wrote it (243 columns) and as this build writes it (244) hold the same caps; v3load maps
+    both by the head's names, alone and in one load (a rotated file across the update)."""
+    DEC = HERE.parents[1] / 'tests' / 'core' / 'fixtures' / 'decisions'
+
+    @staticmethod
+    def named_caps(D):
+        out = []
+        for key in sorted(D['ctxs']):
+            for row in D['ctxs'][key]['rows']:
+                c = row[common.CAP]
+                out.append(None if c is None or c < 0 else sorted((D['cols'][j], v) for j, v in D['caps'][c]))
+        return out
+
+    def test_old_and_new_golden_read_the_same(self):
+        old = v3load.load([self.DEC / 'synthetic_v3_0.24.8.jsonl'])
+        new = v3load.load([self.DEC / 'synthetic_v3.jsonl'])
+        self.assertEqual(old['heads'][0]['ncols'], 243)
+        self.assertEqual(new['heads'][0]['ncols'], 244)
+        self.assertNotIn('narcotic', old['cols'])
+        self.assertNotIn('alcohol', new['cols'])
+        self.assertEqual(new['cols'].index('narcotic'), new['cols'].index('kind_light') + 1)
+        caps = self.named_caps(old)
+        self.assertEqual(caps, self.named_caps(new))
+        # the session's caps reach past the inserted column (school_*, weapon and armour stats)
+        moved = {n for c in caps if c for n, _ in c} & set(new['cols'][new['cols'].index('narcotic') + 1:])
+        self.assertTrue(moved)
+
+    def test_one_load_across_the_update(self):
+        old = (self.DEC / 'synthetic_v3_0.24.8.jsonl').read_text(encoding='utf-8')
+
+        def relaunch(r):             # the older launch, so the two are not one launch twice
+            if 'launch' in r:
+                r['launch'] = '20261009-110000'
+        D = v3load.load([self.write('old.jsonl', edit_lines(old, relaunch)), self.DEC / 'synthetic_v3.jsonl'])
+        self.assertEqual(len(D['cols']), 244)          # the union by name: narcotic appended once
+        self.assertEqual(D['stats']['dup_ctx'], 2)      # each file's own second segment, nothing across
+        by_launch = {}
+        for (launch, cid), ctx in D['ctxs'].items():
+            for row in ctx['rows']:
+                c = row[common.CAP]
+                by_launch.setdefault(launch, []).append(
+                    None if c is None or c < 0 else sorted((D['cols'][j], v) for j, v in D['caps'][c]))
+        self.assertEqual(by_launch['20261009-110000'], by_launch['20261009-120000'])
+
+    def test_rename_is_a_new_name(self):
+        """0.24.16 renamed alcohol to narcotic at the same index. v3load keys columns by name
+        and has no alias (no backward-compatibility path): a 0.24.9 file reads its column as
+        alcohol, this build's as narcotic, every other column the same."""
+        old = v3load.load([self.DEC / 'synthetic_v3_0.24.9.jsonl'])
+        new = v3load.load([self.DEC / 'synthetic_v3.jsonl'])
+        self.assertEqual(old['heads'][0]['ncols'], 244)
+        at = old['cols'].index('alcohol')
+        self.assertNotIn('narcotic', old['cols'])
+        self.assertEqual(new['cols'].index('narcotic'), at)
+        self.assertEqual(old['cols'][:at] + old['cols'][at + 1:], new['cols'][:at] + new['cols'][at + 1:])
+        self.assertEqual(self.named_caps(old), self.named_caps(new))   # the session sets neither column
+
+
 class OldEngineColumns(TempWork):
     """0.23.53: the old engine's score parts and the favourites hotkey (row columns est..hk),
     the favorite bit, ctx.old and dec.rid. A row that carries none of the columns -- every row
@@ -275,8 +336,8 @@ class OldEngineColumns(TempWork):
         self.assertIsNone(rows[2][common.OLD])        # a row with none of the columns
         self.assertEqual(rows[3][common.FB], 'cooldown')   # the earlier columns unchanged
         self.assertTrue(all(r[common.OLD] is None for r in old['rows']))
-        self.assertEqual(len(rows[0]), 13)
-        self.assertEqual(len(old['rows'][0]), 13)
+        self.assertEqual(len(rows[0]), 15)          # 0.23.56: SHADOW appended; 0.24.17: SHADOW_A
+        self.assertEqual(len(old['rows'][0]), 15)
         self.assertEqual(new['old']['topN'], 10)       # kept as written
         self.assertIsNone(old['old'])
         rids = {(d['launch'], d['out']): d['rid'] for d in D['decs']}
@@ -308,10 +369,178 @@ class OldEngineColumns(TempWork):
         self.assertTrue(all(r['est'] is None and r['hk'] is None for d in old for r in d['rows']))
 
 
+class ShadowAColumns(TempWork):
+    """0.24.17: the D2 engine in shadow (row columns amu, ar, br, ak, bk). v3load keeps them as
+    the row tuple's SHADOW_A element (None on older rows and on rows with none of them); the fit
+    builds the same thing with or without them."""
+
+    def text(self):
+        def older(r):                # a 0.24.16 writer: no D2 shadow columns
+            if r['t'] == 'head':
+                r['row'] = r['row'][:27]
+            elif r['t'] == 'ctx':
+                r['rows'] = [row[:27] for row in r['rows']]
+            elif r['t'] == 'dec':
+                r['add'] = [row[:27] for row in r['add']]
+        old = edit_lines(session('20261028-100000', CHAR_A, '0.24.16 (abc1234)', minute=1), older)
+        new = session('20261029-100000', CHAR_A, '0.24.17 (abc1234)', minute=2)
+        return old + new
+
+    def test_v3load(self):
+        D = v3load.load([self.write('v3.jsonl', self.text())])
+        new = D['ctxs'][('20261029-100000', 10)]['rows']
+        old = D['ctxs'][('20261028-100000', 10)]['rows']
+        self.assertEqual(new[0][common.SHADOW_A], (1.125, 1, 3, 0, -1))
+        self.assertEqual(new[0][common.SHADOW_A][common.A_AK], 0)
+        self.assertIsNone(new[1][common.SHADOW_A])
+        self.assertTrue(all(r[common.SHADOW_A] is None for r in old))
+        self.assertEqual(new[0][common.SHADOW][:4], (0.875, 0.25, 0.125, 0))   # the columns before, unchanged
+
+    def test_build_ignores_them(self):
+        self.quiet(v3load.main, [str(self.write('v3.jsonl', self.text()))])
+        S = fitlib.build(common.load(), include_nothing=True)
+        new = np.array([m['launch'] == '20261029-100000' for m in S['meta']])
+        self.assertGreater(new.sum(), 0)
+        for key in ('N', 'Y'):
+            if key in S and isinstance(S[key], np.ndarray) and len(S[key]) == len(new):
+                self.assertTrue(np.array_equal(S[key][new], S[key][~new]), key)
+
+
+class ShadowColumns(TempWork):
+    """0.23.56 (R8.2): the choice model's columns (mu, sd, lm, um, ex; the head's bootstrap;
+    in shadow at 0.23.56, the live ranking from R8.3). v3load keeps them as the row tuple's
+    SHADOW element (None on older rows), ex as (need id, column id) by the loader's global names
+    or "learned"; of them the fit reads only lm / um, and only in the 'learn_live' feature
+    (LiveLearnFeature), so the other specs build the same thing with or without them."""
+
+    def text(self):
+        def older(r):                # a 0.23.55 writer: no shadow columns, no bootstrap
+            if r['t'] == 'head':
+                r['row'] = r['row'][:22]
+                r.pop('bootstrap', None)
+            elif r['t'] == 'ctx':
+                r['rows'] = [row[:22] for row in r['rows']]
+            elif r['t'] == 'dec':
+                r['add'] = [row[:22] for row in r['add']]
+        old = edit_lines(session('20261028-100000', CHAR_A, '0.23.55 (abc1234)', minute=1), older)
+        new = session('20261029-100000', CHAR_A, '0.23.56 (abc1234)', minute=2)
+        return old + new
+
+    def test_v3load(self):
+        D = v3load.load([self.write('v3.jsonl', self.text())])
+        new = D['ctxs'][('20261029-100000', 10)]['rows']
+        old = D['ctxs'][('20261028-100000', 10)]['rows']
+        sh = new[0][common.SHADOW]
+        self.assertEqual(sh[:4], (0.875, 0.25, 0.125, 0))
+        k, j = sh[common.S_EX]
+        self.assertEqual((D['needs'][k], D['cols'][j]), ('magicka_deficit', 'restore_magicka'))
+        self.assertEqual(new[2][common.SHADOW][common.S_EX], 'learned')
+        self.assertIsNone(new[1][common.SHADOW])
+        self.assertTrue(all(r[common.SHADOW] is None for r in old))
+        self.assertEqual(D['heads'][-1]['bootstrap']['created_utc'], '2026-10-29 12:29:59')
+        self.assertNotIn('bootstrap', D['heads'][0])
+
+    def test_build_ignores_them(self):
+        self.quiet(v3load.main, [str(self.write('v3.jsonl', self.text()))])
+        S = fitlib.build(common.load(), include_nothing=True)
+        new = np.array([m['launch'] == '20261029-100000' for m in S['meta']])
+        for key in ('N', 'Y', 'CAPID', 'INHA', 'UTIL'):
+            a, b = S[key][new], S[key][~new]
+            self.assertTrue(np.array_equal(a, b, equal_nan=a.dtype.kind == 'f'), key)
+
+
+class ReplayEquivalence(unittest.TestCase):
+    """R8.2: export_scores.py writes the fixture the C++ replay test reads (fitlib's logits under
+    the shipped bootstrap). The checked-in fixture is what --synthetic --write-fixture writes now:
+    a change to fitlib's model, the synthetic log or the bootstrap must regenerate it."""
+
+    def test_fixture_is_current(self):
+        import export_scores
+        with tempfile.TemporaryDirectory() as tmp:
+            env = os.environ.get('HUGINN_FIT_WORK')
+            os.environ['HUGINN_FIT_WORK'] = tmp
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    path = export_scores.main(['--synthetic', '--out', 'replay.jsonl'])
+            finally:
+                if env is None:
+                    os.environ.pop('HUGINN_FIT_WORK', None)
+                else:
+                    os.environ['HUGINN_FIT_WORK'] = env
+            got = Path(path).read_text(encoding='utf-8')
+        want = export_scores.FIXTURE.read_text(encoding='utf-8')
+        self.assertEqual(got, want, 'regenerate: python tools/fit/export_scores.py --synthetic --write-fixture')
+
+    def test_fixture_exercises_the_terms(self):
+        rows = [json.loads(l) for l in open(common.REPO / 'tests' / 'core' / 'fixtures' / 'choice' / 'replay_synthetic.jsonl',
+                                            encoding='utf-8')]
+        decs = [r for r in rows if r['t'] == 'dec']
+        self.assertGreater(len(decs), 40)
+        self.assertTrue(any(d['rec'] for d in decs))                       # recent_<family>
+        self.assertTrue(any(d['in'] for d in decs))                        # a curve need
+        self.assertTrue(any(r[4] != 0 for d in decs for r in d['rows']))   # ln learn mult
+        self.assertTrue(any(r[3] in rows[0]['items'] for d in decs for r in d['rows']))   # b
+        self.assertTrue(any(r[2] == 1 for d in decs for r in d['rows']))   # kappa
+
+
+class HardGateDrops(TempWork):
+    """0.23.55 (R8.1): a row dropped by each of the four hard gates reads its reason by the
+    head's own filter list, in v3load and in tools/replay; the older reasons read the same."""
+    NEW = ('no_follower', 'no_workstation', 'not_dark', 'favorite_suppressed')
+    SWORD = {"weapon_damage": 0.75, "weapon_type_sword": 1}
+
+    def text(self):
+        head, seg1, seg2 = trv3.make_session()
+        self.assertEqual(head['filters'][-4:], list(self.NEW))     # the golden head (0.23.55)
+        r = seg1[0]['ctx']['rows'][0]
+        extra = [dict(r, form='000A000' + str(i), uid=0, kind=kind, src=None, cap=cap, flags=4, slot=-1,
+                      util=None, x={}, wp=None, fb=fb, cr=None, **{k: None for k in trv3.OLD_KEYS})
+                 for i, (fb, kind, cap) in enumerate([
+                     ('no_follower', 'Spell', {"restore": 0.5, "restore_health_other": 0.5}),
+                     ('no_workstation', 'Armor', None),
+                     ('not_dark', 'Light', None),
+                     ('favorite_suppressed', 'Weapon', self.SWORD)])]
+        seg1[0]['ctx']['rows'] = seg1[0]['ctx']['rows'] + extra
+        head = dict(head, launch='20261029-120000')
+        for d in seg1 + seg2:
+            d['launch'], d['char'] = '20261029-120000', CHAR_A
+        return trv3.encode([(head, seg1), (head, seg2)])
+
+    def test_v3load(self):
+        D = v3load.load([self.write('v3.jsonl', self.text())])
+        rows = D['ctxs'][('20261029-120000', 10)]['rows']
+        self.assertEqual([row[common.FB] for row in rows[-4:]], list(self.NEW))
+        self.assertEqual([row[common.FORM] for row in rows[-4:]], [f'000A000{i}' for i in range(4)])
+        self.assertTrue(all(not row[common.FLAGS] & common.F['eligible'] for row in rows[-4:]))
+        self.assertEqual(rows[3][common.FB], 'cooldown')          # an older reason, unchanged
+        self.assertIsNone(rows[0][common.FB])                      # an eligible row: none
+        self.assertEqual(len(D['heads'][0]['filters']), 19)
+
+    def test_replay_reader(self):
+        decs = replay.load_v3([self.write('v3.jsonl', self.text())])
+        rows = decs[0]['ctx']['rows']
+        self.assertEqual([r['fb'] for r in rows[-4:]], list(self.NEW))
+        self.assertEqual(rows[3]['fb'], 'cooldown')
+
+    def test_older_head_reads_the_same(self):
+        # The same rows under a 0.23.54 head (15 names): the older reasons keep their
+        # indices, so a file written before 0.23.55 decodes exactly as before.
+        def older(r):
+            if r['t'] == 'head':
+                r['filters'] = r['filters'][:15]
+            elif r['t'] == 'ctx':
+                r['rows'] = [row for row in r['rows'] if not str(row[0]).startswith('000A000')]
+        text = edit_lines(self.text(), older)
+        D = v3load.load([self.write('v3.jsonl', text)])
+        rows = D['ctxs'][('20261029-120000', 10)]['rows']
+        self.assertEqual(rows[3][common.FB], 'cooldown')
+        self.assertEqual(len(D['heads'][0]['filters']), 15)
+
+
 class FloorCheck(TempWork):
-    """v3load.floor_check: each row's old-engine floor (fl) against the tests the scorer
-    applies. The C++ encoder's golden session (whose floors CaptureEligible's rules give)
-    passes; rows edited to break each rule are caught, and a value logged equal to its
+    """v3load.floor_check: each row's old-engine floor (fl) against the tests the floor pass
+    applies. The C++ encoder's golden session (whose floors the legacy module's capture
+    gives) passes; rows edited to break each rule are caught, and a value logged equal to its
     floor is not judged."""
     GOLDEN = HERE.parents[1] / 'tests' / 'core' / 'fixtures' / 'decisions' / 'synthetic_v3.jsonl'
     # row columns of the 0.23.53 head (DecisionLog.cpp): flags 5, cw 18, fl 19, wu 20
@@ -997,6 +1226,7 @@ class BootstrapFormat(unittest.TestCase):
                                                                 plugin='SKYRIM.ESM'))))       # plugin names ignore case
         self.assertTrue(broken(lambda d: d['recent']['features'][0].update(family='nope')))
         self.assertTrue(broken(lambda d: d['recent']['features'][0].pop('u0')))
+        self.assertTrue(broken(lambda d: d['recent'].update(window_s=20.0)))   # window = max(taus_s)
         self.assertTrue(broken(lambda d: d['features'].append({'name': 'ln ctx', 'w': 1})))
         self.assertTrue(broken(lambda d: d['curves'].update(encumbrance=['logistic', 0.9, 0])))
         self.assertTrue(broken(lambda d: d['needs'].append('hunger')))
@@ -1238,7 +1468,7 @@ class Export(unittest.TestCase):
     def test_features_and_refusals(self):
         *_, d, _ = self.doc({'outside': False, 'feat_spec': ['astar']})
         self.assertEqual([f['name'] for f in d['features']], ['ln util', 'util missing'])
-        for ok in (['learn'], ['learn', 'mults'], ['learner'], ['astar', 'pos']):
+        for ok in (['learn'], ['learn', 'mults'], ['learn_live'], ['learner'], ['astar', 'pos']):
             export.check_spec({'outside': False, 'feat_spec': ok})
         for bad in ({'feat_spec': ['ctx']}, {'feat_spec': ['cheap']}, {'_with': ['split']}, {'_latest': True},
                     {'bias_need': True, '_with': ['presence+strength']},
@@ -1342,6 +1572,12 @@ def v2_record(utc, form, char, cands, launch='20261011-100000', gen=2):
                        'cols': cols, 'cands': rows})
 
 
+# A row the old floors dropped, as a 0.24.0..0.24.18 writer logged it: ScoreBreakdown's defaults
+# (src/learning/ScoredCandidate.h), util 0 (fitlib.v2_unscored skips it).
+V2_DROPPED = dict(util=0, ctx=0, est=0, prior=0, ucb=0, alpha=0, learn=0, rec=0, corr=0, potion=1, fav=1,
+                  **{'lambda': 0})
+
+
 class LearnerFeatures(TempWork):
     """The old score's components (fitlib.row_features 'learn', 'mults', 'learner'; the R8
     component test): read from the v2 log, joined per pick, carried forward per item."""
@@ -1355,10 +1591,18 @@ class LearnerFeatures(TempWork):
             os.environ['HUGINN_FIT_V2'] = self._v2env
         super().tearDown()
 
-    def dataset(self, launches=1):
+    def dataset(self, launches=1, edit=None, dropped=False):
+        """edit: applied to every v3 record (edit_lines); dropped: the key pick's v2 record also
+        holds the sword as a 0.24.0..0.24.18 writer logged a row the old floors dropped."""
         # launch 1: key 0003EAE3 at 15:01:01 (its v2 record joins), menu 00099999, wheel 00012EB7 at 15:01:04
         text = ''.join(session(f'2026101{i}-100000', CHAR_A, '0.23.50 (abc)', minute=i) for i in range(1, launches + 1))
+        if edit:
+            text = edit_lines(text, edit)
         self.quiet(v3load.main, [str(self.write('v3.jsonl', text))])
+        key_cands = {'0003EAE3': {'lambda': 2.0, 'learn': 0.5, 'alpha': 0.5, 'est': 0.6, 'rec': 0.1, 'fav': 2.5,
+                                  'corr': 1.3, 'potion': 0.8}}
+        if dropped:
+            key_cands['00012EB7'] = V2_DROPPED
         lines = [
             # an earlier record of this character holds the sword (not a candidate of the key pick's record)
             v2_record('2026-10-09 14:59:00.000', 'AAAAAAAA', CHAR_A,
@@ -1367,9 +1611,7 @@ class LearnerFeatures(TempWork):
             v2_record('2026-10-09 15:00:59.000', 'BBBBBBBB', CHAR_B,
                       {'00012EB7': {'lambda': 9.0, 'alpha': 1.0, 'est': 5.0}}),
             # the key pick's own record, 0.5 s after it
-            v2_record('2026-10-09 15:01:01.500', '0003EAE3', CHAR_A,
-                      {'0003EAE3': {'lambda': 2.0, 'learn': 0.5, 'alpha': 0.5, 'est': 0.6, 'rec': 0.1, 'fav': 2.5,
-                                    'corr': 1.3, 'potion': 0.8}}),
+            v2_record('2026-10-09 15:01:01.500', '0003EAE3', CHAR_A, key_cands),
         ]
         self.write('Huginn_Selections.jsonl', '\n'.join(lines) + '\n')     # beside the v3 file: v2_path finds it
         D = common.load()
@@ -1442,12 +1684,74 @@ class LearnerFeatures(TempWork):
         self.assertNotEqual(fitlib.data_key(dict(S, LRN=S['LRN'] + 1)), k)
         self.assertNotEqual(fitlib.data_key(dict(S, ELIG=1 - S['ELIG'])), k)
 
+    def test_dropped_rows_of_a_0_24_v2_record_are_not_scored(self):
+        """0.24.0..0.24.18 wrote every ranked candidate into the v2 record, the ones the old floors
+        dropped with an all-zero breakdown: load_v2 skips them, so the dataset is the one a record
+        holding only the scored rows gives (no context weight, the learner carried forward)."""
+        S, v2 = self.dataset(dropped=True)
+        self.assertTrue(fitlib.v2_unscored(V2_DROPPED))
+        self.assertFalse(fitlib.v2_unscored(dict(V2_DROPPED, corr=1.0)))    # a scored row never has corr 0
+        self.assertEqual([list(c) for _, c in v2['0003EAE3']], [['0003EAE3']])
+        self.assertEqual(len(v2.appear['00012EB7']), 2)                     # the two earlier records only
+        S0, _ = self.dataset()
+        for k in ('V2', 'LRN', 'CLS', 'v2ok'):
+            np.testing.assert_array_equal(S[k], S0[k], err_msg=k)
+        key = [d for d in range(len(S['Y'])) if S['OUT'][d] == 'key'][0]
+        sword = self.row(S, key, '00012EB7')
+        self.assertTrue(np.isnan(S['V2'][key, sword]).all())
+        self.assertAlmostEqual(S['LRN'][key, sword, 1], math.log(1 + 1.0 * (0.5 * 0.4)))
+
+    def test_learn_live_reads_what_the_live_score_read(self):
+        """'learn_live' reads the v3 row's lm / um (what the live score read), 'learn' derives the
+        same two columns from util and the v2 record; a row with no lm / um reads as 'learn'."""
+        S, _ = self.dataset()
+        key = [d for d in range(len(S['Y'])) if S['OUT'][d] == 'key'][0]
+        pot, sword, ammo = (self.row(S, key, f) for f in ('0003EAE3', '00012EB7', '0001397D'))
+        L, names = fitlib.row_features(S, ['learn'])
+        Fm, live_names = fitlib.row_features(S, ['learn_live'])
+        self.assertEqual(live_names, names)          # the same bootstrap weights (export.py)
+        np.testing.assert_allclose(L[key, pot], [math.log(2.0), 0.0])
+        np.testing.assert_allclose(Fm[key, pot], [0.125, 0.0])        # the synthetic row's lm, um
+        np.testing.assert_allclose(Fm[key, ammo], [0.0, 1.0])
+        np.testing.assert_allclose(Fm[key, sword], L[key, sword])     # no lm / um logged
+
+    def test_learn_live_under_engine_b(self):
+        """Engine B live with the D2 shadow on (0.24.17): the old floors kept the potion (util
+        set) but the live score read 0 / 1. 'learn' reads A's values, 'learn_live' B's."""
+        head = {}
+
+        def b_live(r):
+            if r['t'] == 'head':
+                head['lm'], head['um'] = r['row'].index('lm'), r['row'].index('um')
+            for row in r.get('rows', []) + r.get('add', []):
+                if row[0] == '0003EAE3' and len(row) > head['um']:
+                    row[head['lm']], row[head['um']] = 0, 1
+        S, _ = self.dataset(edit=b_live)
+        key = [d for d in range(len(S['Y'])) if S['OUT'][d] == 'key'][0]
+        pot = self.row(S, key, '0003EAE3')
+        self.assertFalse(np.isnan(S['UTIL'][key, pot]))
+        np.testing.assert_allclose(fitlib.row_features(S, ['learn'])[0][key, pot], [math.log(2.0), 0.0])
+        np.testing.assert_allclose(fitlib.row_features(S, ['learn_live'])[0][key, pot], [0.0, 1.0])
+
+    def test_learn_live_before_0_23_56_reads_as_learn(self):
+        def older(r):                # a 0.23.55 writer: no lm / um
+            if r['t'] == 'head':
+                r['row'] = r['row'][:22]
+            elif r['t'] == 'ctx':
+                r['rows'] = [row[:22] for row in r['rows']]
+            elif r['t'] == 'dec':
+                r['add'] = [row[:22] for row in r['add']]
+        S, _ = self.dataset(edit=older)
+        self.assertTrue(np.isnan(S['LMUM']).all())
+        np.testing.assert_array_equal(fitlib.row_features(S, ['learn_live'])[0], fitlib.row_features(S, ['learn'])[0])
+
     def test_component_specs_fit(self):
         S, _ = self.dataset(launches=3)
         obv = fitlib.obvious_pairs(S['needs'], S['cols'])
         FOLD = np.zeros(len(S['Y']), dtype=int)
         for name in ('theta + b + recent + learn mult (D2)', 'theta + b + recent + learn mult + fav/corr/potion (D5)',
-                     'theta + b + recent + old learner state (L1)'):
+                     'theta + b + recent + old learner state (L1)',
+                     'theta + b + recent + learn mult as the live score read it (lm/um, B)'):
             spec = cv.PICKS[name]
             res, fits = fitlib.online_results(S, obv, spec, every=1, min_train=1, maxiter=10)
             self.assertGreater(fits, 0, name)

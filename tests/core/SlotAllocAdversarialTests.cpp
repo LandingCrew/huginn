@@ -144,20 +144,21 @@ TEST_CASE("slot adversarial: a remembered-only row is shown only by its hold, an
     CHECK(SA::PageOf(in, out2)[1].key == ranked.dedupKey);
 }
 
-TEST_CASE("slot adversarial: the job-key pull never takes a wildcard off a Regular key")
+TEST_CASE("slot adversarial: the job-key pull never takes the wildcard off its key")
 {
-    // A wildcard keeps its position semantics (WildcardManager put it in a
-    // rank position): the pull moves only ordinary picks. The job key's only
-    // match is a wildcard standing on the Regular key, so the job key stays
-    // empty -- with seating on and with seating off (pass 2b).
+    // R10: the wildcard is pinned on its own key (SeatOf: the last key in fill
+    // order, here the Regular key), and the pull moves only ordinary picks.
+    // The job key's only match is the wildcard, so the job key stays empty --
+    // with seating on and with seating off (pass 2b).
     for (const bool keep : { true, false }) {
-        auto wild = Cand(1, 0.9f, 0, 1u << 3);
-        wild.isWildcard = true;
-        auto in = Page({ Job(3, 0), Regular(1) }, { wild, Cand(2, 0.5f) });
+        auto in = Page({ Job(3, 1), Regular(0) }, { Cand(1, 0.9f, 0, 1u << 3), Cand(2, 0.5f) });
+        in.wildcard.pinned = 0;
         in.settings.fillJobKeysFromRegular = true;
         in.settings.keepSlotPositions = keep;
         const auto out = Allocate(in);
         const auto page = SA::PageOf(in, out);
+        CHECK(out.wildcard.seat == 1u);
+        CHECK(out.wildcard.pin == SA::PinFate::Placed);
         CHECK_MESSAGE(page[0].kind == SA::Kind::Empty, "keep=", keep);
         CHECK_MESSAGE(page[1].kind == SA::Kind::Wildcard, "keep=", keep);
         CHECK(page[1].formID == 1u);
@@ -165,11 +166,15 @@ TEST_CASE("slot adversarial: the job-key pull never takes a wildcard off a Regul
             [](const SA::Event& e) { return e.kind == SA::EventKind::PulledToJobKey; }));
         CHECK(DiffOutputs(in, Allocate(in, LegacySlotPolicy::From(in.settings)), out).empty());
     }
-    // The same page with an ordinary pick there: it is pulled.
+    // An ordinary pick on the Regular key, filled first, is pulled to the
+    // job key (no wildcard: the Regular key is filled before the job key).
     auto in = Page({ Job(3, 0), Regular(1) }, { Cand(1, 0.9f, 0, 1u << 3), Cand(2, 0.5f) });
     in.settings.fillJobKeysFromRegular = true;
-    const auto page = SA::PageOf(in, Allocate(in));
+    const auto out = Allocate(in);
+    const auto page = SA::PageOf(in, out);
     CHECK(page[0].formID == 1u);
+    CHECK(std::any_of(out.events.begin(), out.events.end(),
+        [](const SA::Event& e) { return e.kind == SA::EventKind::PulledToJobKey; }));
 }
 
 TEST_CASE("slot adversarial: past the sorted prefix the fill takes list order, so the scorer must sort")
@@ -193,8 +198,8 @@ TEST_CASE("slot adversarial: a challenger ON the hold's margin holds, in both ar
 {
     // The old hold asked u_c > u_i * 1.5f in float, so a challenger exactly on
     // the margin was decided by rounding. Not measure zero: the old potion
-    // tier preference divides a family's next tier by POTION_TIER_STEP = 1.5,
-    // the hold's own 1.5, and a recorded play snapshot had Potion of
+    // tier preference (pruned in R8.4) divided a family's next tier by a fixed
+    // 1.5, the hold's own 1.5, and a recorded play snapshot had Potion of
     // Plentiful Magicka (0.207614) against Minor (0.13840933 = 0.207614 / 1.5)
     // on exactly that boundary. The new test has a tie band of about four
     // float ulps (kHoldTieEpsilon): on the margin, the holder holds.
@@ -320,4 +325,185 @@ TEST_CASE("slot adversarial: negative scores (past the bridge) rank the way thei
     CHECK(Shown(hold, Allocate(hold)) == std::vector<std::uint32_t>{ 1 });
     hold.candidates[0].score = -1.5;
     CHECK(Shown(hold, Allocate(hold)) == std::vector<std::uint32_t>{ 2 });
+}
+
+// =============================================================================
+// 0.24.6: one owner per dedup key, one name per page
+// =============================================================================
+
+TEST_CASE("slot adversarial: two rows with one dedup key -- the first ranked one is the key's only row")
+{
+    // Row A and row A2 share a key (the game never hands the allocation that:
+    // CandidateFilters drops the second as a duplicate; a test or a future
+    // caller might). A2 is shadowed: never placed, never the seat's owner,
+    // never drawn -- whatever its own fields say. Here A is equipped under
+    // skip-equipped, so without the shadow the fill placed A2 on the key while
+    // the hold read the key's owner as A (first match) and refused it, every
+    // pass: the key's item was decided by a row the seat never knew.
+    auto a = Cand(1, 1.0f);
+    a.isEquipped = true;
+    auto a2 = Cand(1, 0.5f);
+    a2.name = "C1 (copy)";
+    auto in = Page({ Regular(1), Regular(0) }, { a, Cand(2, 0.8f), a2, Cand(3, 0.4f) });
+    in.slots[0].skipEquipped = true;
+    in.slots[1].skipEquipped = true;
+    for (int pass = 0; pass < 4; ++pass) {
+        const auto out = Allocate(in);
+        CHECK(DiffOutputs(in, Allocate(in, LegacySlotPolicy::From(in.settings)), out).empty());
+        for (const auto& s : out.slots) {
+            CHECK_MESSAGE(!(s.kind != SA::Kind::Empty && s.src == 2u), "pass ", pass, ": the shadowed row was placed");
+        }
+        CHECK(Shown(in, out) == std::vector<std::uint32_t>{ 2, 3 });
+        in.memory = out.memory;
+    }
+    // A pinned wildcard that names the shadowed row stands for the key's row.
+    auto pin = Page({ Regular(1), Regular(0) }, { Cand(1, 1.0f), Cand(2, 0.8f), a2 });
+    pin.candidates[2].isEquipped = false;
+    pin.wildcard.pinned = 2;
+    const auto out = Allocate(pin);
+    REQUIRE(out.wildcard.pin == SA::PinFate::Placed);
+    CHECK(out.slots[1].kind == SA::Kind::Wildcard);
+    CHECK(out.slots[1].src == 0u);
+}
+
+TEST_CASE("slot adversarial: two seat owners with one name -- only one is held, the page shows the name once")
+{
+    // R10's synthetic seeds 409 and 459: two forms named "Twin" each owned a
+    // seat, the slot hold kept both (it checked its owners only against what
+    // the overrides and holds placed), and the page showed two Normal rows of
+    // one name. The player cannot tell them apart, and SlotLocker's post-lock
+    // dedup clears one by name. The owner the fill serves first keeps its
+    // seat; the other is an ordinary row, which the fill's name dedup keeps
+    // off the page.
+    auto t1 = Cand(1, 0.9f);
+    t1.name = "Twin";
+    auto t2 = Cand(2, 0.8f);
+    t2.name = "Twin";
+    // C3 is too close to C4 to take its key (0.35 / 0.3 < 1 + fChallengerMargin).
+    auto in = Page({ Regular(2), Regular(1), Regular(0) }, { t1, t2, Cand(3, 0.35f), Cand(4, 0.3f) });
+    in.memory.seats = { 4, 1, 2 };
+    in.memory.lastPlaced = { 4, 1, 2 };
+    const auto page = Both(in);
+    CHECK(page == std::vector<std::uint32_t>{ 4, 1, 3 });
+    // Same with the twins swapped in priority: key 0 (filled first) keeps its owner.
+    in.memory.seats = { 2, 4, 1 };
+    in.memory.lastPlaced = { 2, 4, 1 };
+    CHECK(Both(in) == std::vector<std::uint32_t>{ 2, 4, 3 });
+    // Two stacks of one form seated on two keys: one form, one key.
+    auto s1 = Cand(5, 0.9f);
+    auto s2 = Cand(5, 0.8f);
+    s2.uniqueID = 1;
+    s2.dedupKey = (1ull << 32) | 5;
+    auto st = Page({ Regular(1), Regular(0) }, { s1, s2, Cand(6, 0.5f) });
+    st.memory.seats = { 5, s2.dedupKey };
+    st.memory.lastPlaced = { 5, s2.dedupKey };
+    CHECK(Both(st) == std::vector<std::uint32_t>{ 5, 6 });
+}
+
+TEST_CASE("slot adversarial: an override or a Remembrance hold never shows a name the page already shows")
+{
+    // Two holds on keys 0 and 1 for two forms of one name: the first placed
+    // wins, the second waits (as a hold whose form is shown does).
+    auto t1 = Cand(1, 0.9f);
+    t1.name = "Twin";
+    auto t2 = Cand(2, 0.8f);
+    t2.name = "Twin";
+    auto in = Page({ Regular(2), Regular(1), Regular(0) }, { t1, t2, Cand(3, 0.5f), Cand(4, 0.3f) });
+    in.holds[0] = { true, 1 };
+    in.holds[1] = { true, 2 };
+    auto out = Allocate(in);
+    auto page = SA::PageOf(in, out);
+    CHECK(page[0].kind == SA::Kind::Remembered);
+    CHECK(page[0].formID == 1u);
+    CHECK(page[1].name != "Twin");
+    CHECK(page[2].name != "Twin");
+    // An override of one form, a hold of another with the override's name:
+    // the override is placed first, the hold waits.
+    in.holds[0] = {};
+    in.holds[1] = { true, 2 };
+    SA::OverrideRec o;
+    o.formID = 9;
+    o.dedupKey = 9;
+    o.name = "Twin";
+    o.category = 0;
+    o.matchMask = 1u << kRegular;
+    in.slots[0].overrideAccept = 1;
+    in.overridesActive = true;
+    in.overrides = { o };
+    out = Allocate(in);
+    page = SA::PageOf(in, out);
+    CHECK(page[0].kind == SA::Kind::Override);
+    int twins = 0;
+    for (const auto& p : page) twins += p.name == "Twin" ? 1 : 0;
+    CHECK(twins == 1);
+    // Two overrides of one name: the second waits.
+    SA::OverrideRec o2 = o;
+    o2.formID = 10;
+    o2.dedupKey = 10;
+    in.slots[1].overrideAccept = 1;
+    in.holds[1] = {};
+    in.overrides = { o, o2 };
+    out = Allocate(in);
+    page = SA::PageOf(in, out);
+    twins = 0;
+    for (const auto& p : page) twins += p.name == "Twin" ? 1 : 0;
+    CHECK(twins == 1);
+    CHECK(std::any_of(out.events.begin(), out.events.end(), [](const SA::Event& e) {
+        return e.kind == SA::EventKind::OverridePlaced || e.kind == SA::EventKind::OverrideFallback;
+    }));
+}
+
+TEST_CASE("slot adversarial: a displaced owner standing as a guest never shares a name or form with a held owner")
+{
+    // Keys 0, 1, 2 (priority 2, 1, 0). A seated on key 0, B on key 1, and a
+    // pinned override (accepted on key 1 only) sits in B's seat, so B stood
+    // as a guest on key 2. A and B share a display name: until 0.24.6 the
+    // guest was checked only against what the override placed, and the page
+    // read [Twin] [Pot] [Twin]. Variant 1: B is a second stack of A's form,
+    // and the page showed one form on two keys. Now A keeps its seat, B waits
+    // off the page, and key 2 goes to the next row (C3).
+    for (int variant = 0; variant < 2; ++variant) {
+        CAPTURE(variant);
+        auto a = Cand(1, 0.9f);
+        a.name = "Twin";
+        auto b = Cand(2, 0.8f);
+        b.name = "Twin";
+        if (variant == 1) {
+            b.formID = 1;
+            b.uniqueID = 1;
+            b.dedupKey = (1ull << 32) | 1;
+        }
+        auto in = Page({ Regular(2), Regular(1), Regular(0) }, { a, b, Cand(3, 0.5f) });
+        SA::OverrideRec o;
+        o.formID = 9;
+        o.dedupKey = 9;
+        o.name = "Pot";
+        o.category = 0;
+        o.pinnedToSlot = true;
+        o.matchMask = 1u << kRegular;
+        in.slots[1].overrideAccept = 1;
+        in.overridesActive = true;
+        in.overrides = { o };
+        in.memory.seats = { a.dedupKey, b.dedupKey, 0 };
+        in.memory.lastPlaced = { 3, 9, b.dedupKey };
+        CHECK(Both(in) == std::vector<std::uint32_t>{ 1, 9, 3 });
+        const auto page = SA::PageOf(in, Allocate(in));
+        CHECK(page[0].uniqueID == 0);
+        CHECK(page[1].kind == SA::Kind::Override);
+        int twins = 0;
+        for (const auto& p : page) twins += p.name == "Twin" ? 1 : 0;
+        CHECK(twins == 1);
+        // A guest sharing nothing with the held owners still stands where it
+        // is (the guest hold itself is unchanged).
+        auto c = in;
+        c.candidates[1].name = "Other";
+        if (variant == 1) {
+            c.candidates[1].formID = 2;
+            c.candidates[1].uniqueID = 0;
+            c.candidates[1].dedupKey = 2;
+            c.memory.seats[1] = 2;
+            c.memory.lastPlaced[2] = 2;
+        }
+        CHECK(Both(c) == std::vector<std::uint32_t>{ 1, 9, 2 });
+    }
 }

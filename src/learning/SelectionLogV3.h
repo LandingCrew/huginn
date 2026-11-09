@@ -9,10 +9,14 @@
 // shown and an explicit outcome -- key, wheel, menu or nothing. Format:
 // core/DecisionLog.h; schema: docs/architecture/9-selection-log-v3.md.
 //
-// LOGGING ONLY. Nothing here is read by scoring, the candidates, the slots,
-// the frozen learner or the soak telemetry, and nothing here opens either
-// pipeline skip gate. The old Huginn_Selections.jsonl (v2) is written as
-// before.
+// Not only logging since R8.3: each confirmed decision goes to the live
+// learner (ChoiceSubscriber::Ingest -> ChoiceLearner::OnPick), and a wildcard
+// pick to the soak counter (SoakMetrics::RecordWildcardPicked). The log's own
+// records are not read by scoring, the candidates or the slots. The learner
+// update it hands on is: it moves theta and b, which the score reads, and it
+// opens both pipeline skip gates (ChoiceLearner::WeightsChanged, read by
+// PipelineCoordinator::LearnerWeightsChanged in NeedsForcedRun). The old
+// Huginn_Selections.jsonl (v2) is written as before.
 //
 // Where the parts come from:
 //   - every update tick (Tick): the latest need vector (needs/NeedMonitor),
@@ -84,8 +88,11 @@ namespace Huginn::Learning::SelectionLogV3
     /// SelectionTracker confirmed `event` (the press was at `selectedAt`).
     /// `rid` (0.23.53): the id SelectionLog::Write gave the same pick's v2
     /// record (0: none was written), logged as the decision's "rid".
-    void OnConfirmed(const EquipEvent& event, std::chrono::steady_clock::time_point selectedAt, std::string_view how,
-                     uint64_t rid);
+    /// R8.2: returns the decision as logged (the context, the rows, the chosen
+    /// row), which the event carries to the ChoiceSubscriber, so the new
+    /// learner's choice set is the log's (and the fit's) row for row.
+    [[nodiscard]] std::shared_ptr<const Core::DecisionLog::Decision> OnConfirmed(
+        const EquipEvent& event, std::chrono::steady_clock::time_point selectedAt, std::string_view how, uint64_t rid);
 
     /// A pick with player input behind it that the frozen learner does not
     /// take (`skip`: "stale", "disabled", "armour"). Held here until it

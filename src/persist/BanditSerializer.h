@@ -1,6 +1,7 @@
 #pragma once
 
 #include "learning/FeatureBanditLearner.h"
+#include "persist/ChoiceSerializer.h"   // LoadDecision (R8.3)
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -12,66 +13,54 @@ namespace Huginn::Persist
    // SKSE Cosave Serialization — FeatureBanditLearner weights
    // =========================================================================
    // Persists FeatureBanditLearner weights alongside Skyrim saves via BNDW records.
+   // R8.3: the same callbacks carry the choice learner's THTA and BIAS
+   // (persist/ChoiceSerializer.h). BNDW STAYS: R6's D2 reads the old learner's
+   // per-item state; THTA/BIAS replace it only once D2 is retired.
    // =========================================================================
 
    // Record type (packed 4CC — SKSE interprets as little-endian uint32_t)
    inline constexpr uint32_t kRecordType_BanditWeights  = 'WDNB';  // 'BNDW' on disk
-   // v3 (0.23.0): the choice target -- learning on 0-1. Same wire format as
-   // v2. A v1/v2 record holds learning on the old 8 (equip) / 5 (consume)
-   // target and is SKIPPED on load (an unsupported version): those scores came from rules the
-   // rework replaced, so the character starts learning fresh (decided with
-   // the user, 2026-10-04 -- reset, not rescale).
-   // v4 (0.23.6): memory with a useful life. Same stride as v3; the count is
-   // a float (the evidence n, fractional after a fade) and the minutes are
-   // PLAY minutes since the item was last chosen. A v3 record CONVERTS: n =
-   // its train count, and every item's life starts at the load (v3's minutes
-   // counted since the last decay stamp, not the last pick).
+   // v4 (0.23.6): memory with a useful life. Fixed stride (SerializedEntry's
+   // memory layout); the count is a float (the evidence n, fractional after a
+   // fade) and the minutes are PLAY minutes since the item was last chosen.
+   // Only v4 with NUM_FEATURES weights per entry loads: any other version or
+   // feature count is skipped with a warning and the old learner starts empty
+   // (v4 has been written since 2026-10-07 and NUM_FEATURES has always been
+   // 18; one tester, no older saves to carry).
    inline constexpr uint32_t kBanditSerializationVersion = 4;
    inline constexpr uint32_t kUniqueID                = 'QCNO';  // 'ONCQ' on disk
 
-   // Which character a save belongs to, and how far its learning had got:
-   //   v2: [characterID: uint64] [learning clock: uint64]
-   // The ID is random at new game; a save without the record is treated as a
-   // different character and given a new one. Lets a load tell "the
-   // same character, reloaded" from "a different character", and "this save
-   // is behind what is in memory" from "this save is ahead" -- see
-   // ResolveLoadedLearner. Older Huginn versions skip the record with one
-   // warning.
-   inline constexpr uint32_t kRecordType_CharacterID = 'DICH';  // 'HCID' on disk
-   inline constexpr uint32_t kCharacterIDVersion     = 2;
+   // HCID (the character and its learning clock) is persist/CharacterRecord.h
+   // since 0.24.22: it outlives this record.
 
-   // Safety caps — prevent corrupted data from causing huge allocations
+   // Safety cap — prevents corrupted data from causing huge allocations
    inline constexpr uint32_t kMaxBanditItems        = 50'000;
-   inline constexpr uint32_t kMaxBanditFeatures     = 256;
 
-   // The uint32_t byte-length math in LoadCallback/DecodeV2EntryBlob relies on
-   // the worst-case v2 blob staying below UINT32_MAX.
-   static_assert(uint64_t{kMaxBanditItems}
-         * (sizeof(RE::FormID) + sizeof(float) * uint64_t{kMaxBanditFeatures} + 2 * sizeof(uint32_t))
+   // The uint32_t byte-length math in LoadCallback/DecodeEntryBlob relies on
+   // the largest accepted blob staying below UINT32_MAX.
+   static_assert(uint64_t{kMaxBanditItems} * sizeof(Learning::FeatureBanditLearner::SerializedEntry)
       <= UINT32_MAX,
-      "kMaxBanditItems x max entry stride must fit uint32_t byte lengths");
+      "kMaxBanditItems x entry stride must fit uint32_t byte lengths");
 
-   // Feature-count migration: BNDW records store the feature count they were
-   // written with. When it differs from the compiled NUM_FEATURES, entries are
-   // migrated positionally at load — a smaller on-disk count zero-pads the
-   // tail (new features start untrained), a larger one truncates it — instead
-   // of discarding the whole learned table. This is only sound because the
-   // feature vector is APPEND-ONLY (see StateFeatures.h): features may be
-   // added at the end, never reordered or removed.
+   // Whether a BNDW record's header (its in-data version and feature count)
+   // is one LoadCallback reads. Anything but the current version with
+   // NUM_FEATURES weights per entry is skipped (no migration).
+   enum class BndwHeader : uint8_t { Accept, WrongVersion, WrongFeatureCount };
+   [[nodiscard]] constexpr BndwHeader CheckBndwHeader(uint32_t recordVersion, uint32_t numFeatures) noexcept
+   {
+      if (recordVersion != kBanditSerializationVersion) return BndwHeader::WrongVersion;
+      if (numFeatures != Learning::StateFeatures::NUM_FEATURES) return BndwHeader::WrongFeatureCount;
+      return BndwHeader::Accept;
+   }
 
-   // Decode a v2+ BNDW entry blob written with diskFeatureCount weights per
-   // entry into compiled-layout entries (positional pad/truncate migration).
-   // data/byteLen must hold exactly numItems entries of on-disk stride
-   //   sizeof(RE::FormID) + sizeof(float) * diskFeatureCount + 2 * sizeof(uint32_t);
-   // returns empty if byteLen does not match. Exposed for tests.
-   // `recordVersion` 4 reads the count as a float; 2 and 3 as an integer,
-   // converted. The minutes are copied as stored either way.
+   // Decode a v4 BNDW entry blob: exactly numItems entries of
+   // sizeof(SerializedEntry) bytes each (the on-disk layout IS the struct's,
+   // see the static_asserts in BanditSerializer.cpp). Returns empty if byteLen
+   // does not match. Exposed for tests.
    // `unitTest` marks a call from the unit tests' negative case: the rejection
    // is then logged at info as a test, not at error as a save fault.
    [[nodiscard]] std::vector<Learning::FeatureBanditLearner::SerializedEntry>
-   DecodeV2EntryBlob(const std::byte* data, size_t byteLen,
-      uint32_t numItems, uint32_t diskFeatureCount, uint32_t recordVersion,
-      bool unitTest = false);
+   DecodeEntryBlob(const std::byte* data, size_t byteLen, uint32_t numItems, bool unitTest = false);
 
    // Buffered learner data from cosave Load callback
    struct LoadedBanditData {
@@ -89,17 +78,17 @@ namespace Huginn::Persist
    // Returns true on success. Clears the buffer regardless.
    bool ApplyPendingBanditData(Learning::FeatureBanditLearner& learner);
 
-   // Decide what the learner holds after a new game or a load (kNewGame /
-   // kPostLoadGame), and apply it. Learning survives a reload (decided with
-   // the user, 2026-10-02): the fight that killed you is not forgotten.
-   //   - New game: a fresh learner and a new character ID.
-   //   - Failed load (`loadSucceeded` false): change nothing.
-   //   - Load of the character already in memory, whose learning clock is NOT
-   //     ahead of memory (a reload): keep the in-memory learner, except
-   //     dynamic-form (0xFF) entries, which are taken from the save.
-   //   - Anything else -- a different character, the first load since launch,
-   //     or a later save of the same character (its clock is ahead): the
-   //     save's learner, as before.
-   void ResolveLoadedLearner(Learning::FeatureBanditLearner& learner, bool isNewGame,
-      bool loadSucceeded = true);
+   // The old learner follows the load's decision (persist/CharacterRecord.h
+   // DecideCharacterLoad; core/LearningClock.h DecideLoad), at kPostLoadGame /
+   // kNewGame, before CommitLoad sets the learning clock (its Clear ticks it).
+   //   - New game: cleared.
+   //   - Failed load: unchanged.
+   //   - Reload (the character in memory, the save not ahead): the in-memory
+   //     learner kept, except dynamic-form (0xFF) entries, taken from the save.
+   //   - Replace: the save's learner (cleared if the save has none).
+   // R12 deletes this with the old learner; the decision stays. R12 must also
+   // move the save/load callback registration (RegisterSerialization, unique
+   // ID 'QCNO', whose callbacks call SaveCharacterRecord, LoadCharacterRecord
+   // and ResetPendingCharacter beside THTA / BIAS / DISC) out of this file.
+   void ResolveLoadedLearner(Learning::FeatureBanditLearner& learner, LoadDecision decision);
 }
