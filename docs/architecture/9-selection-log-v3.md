@@ -110,7 +110,7 @@ contexts per segment and clears both at a head.
 | `src` | string[10] | the old engine's candidate source types (`row.src`) |
 | `row` | string[32] | the row columns, in order (below). 27 before 0.24.17 (no `amu`..`bk`), 22 before 0.23.56 (no `mu`..`ex`), 12 before 0.23.53 (no `est`..`hk`), 10 before 0.23.46 (no `fb`, `cr`) |
 | `flags` | object | row flag bits by name (`favorite` since 0.23.53) |
-| `filters` | string[20] | (0.23.46) the candidate filters' reasons, in order (`row.fb` indexes it; `core/FilterReason.h`). 19 before 0.24.30 (no `lock_out_of_reach`); 15 before 0.23.55 (no `no_follower` .. `favorite_suppressed`); absent before 0.23.46 |
+| `filters` | string[20] | (0.23.46) the candidate filters' reasons, in order (`row.fb` indexes it; `core/FilterReason.h`). 19 before 0.24.29 (no `lock_out_of_reach`); 15 before 0.23.55 (no `no_follower` .. `favorite_suppressed`); absent before 0.23.46 |
 | `floors` | string[5] | (0.23.53) how the old engine's floors treated an eligible row, in order: `pass`, `cold`, `ctx`, `util`, `suppressed` (`row.fl` indexes it; `core/OldScore.h`, [below](#the-old-engines-score-parts-02353)). `suppressed` is not written from 0.23.55 (a suppressed favourite is a filter drop, `favorite_suppressed`); the name stays so older rows read. Absent before 0.23.53 |
 | `episode` | object | the episode definition in force: `onset`, `expiry`, `minSec`, `graceSec`, `answerSlackSec`, and `deathDrops: 1` (0.23.16: a death drops the open episodes and those in their grace; absent = 0.23.15, where a death could leave `nothing` records), and `lapSec`, `lapMaxStepSec`, `lapIdleSec` (0.23.51: the lap grid and the idle hold of its clock, [Laps](#laps); absent = every episode judged whole, no lap records). `replay.head_lap_sec(head)` reads it. The lap clock's holds (a menu that blocks gameplay, the stick deadzone; engine-rewrite 0.23.55, #224) add no field: they change which seconds the clock counts, not the record; a reader tells them apart by `head.build`. Two builds carry 0.23.55: engine-rewrite's (the lap clock holds, the one played) and rewrite-r8's R8.1, which was never played; every 0.23.55 log on disk is the lap clock build, and rewrite-r8 has the holds from 0.24.7 |
 | `refreshPriorSec` | float | (0.23.55) `[Scoring] fRefreshPriorSec` in force: the centre of `covered`'s left(r) prior, and the active-buff filters' refresh window. The centre is read when a context is taken; a record whose context was taken under a different centre than the current head's starts a new segment naming that centre, so every record's `covered` values sit under the head that names their centre (a hot reload that changes it starts a new segment at the first record taken after it). Absent before 0.23.55: the centre was 5 s |
@@ -249,7 +249,7 @@ into the filters ([3-candidate-filtering.md §2.7](3-candidate-filtering.md#27-h
 `no_workstation` (fortify apparel, no station up for a craft it fortifies),
 `not_dark` (a torch while darkness does not apply: daylight, or a light already
 up) and `favorite_suppressed` (a favourite under `sFavoritesMode = Suppress`).
-0.24.30 appends `lock_out_of_reach` (an unlock spell, scroll or staff that cannot open
+0.24.29 appends `lock_out_of_reach` (an unlock spell, scroll or staff that cannot open
 the lock in the crosshair; `core/LockReach.h`).
 In the visitor they run before the active-buff filters, so an item both gated
 and covered reads the gate. Appended, so the indices above do not move; a row's

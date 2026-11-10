@@ -109,13 +109,13 @@ namespace
             if constexpr (std::is_same_v<T, Candidate::SpellCandidate>) {
                 ff.kind = K::Spell;
                 spellLike(c.type, c.tags, c.tagsExt);
-                if (f.Has(F::Unlock)) ff.unlockReach = Core::Lock::ReachFromText(c.name);   // 0.24.30
+                if (f.Has(F::Unlock)) ff.unlockReach = Core::Lock::ReachFromText(c.name);   // 0.24.29
                 return true;
             }
             else if constexpr (std::is_same_v<T, Candidate::ScrollCandidate>) {
                 ff.kind = K::Scroll;
                 spellLike(c.type, c.tags, c.tagsExt);
-                if (f.Has(F::Unlock)) ff.unlockReach = Core::Lock::ReachFromText(c.name);   // 0.24.30
+                if (f.Has(F::Unlock)) ff.unlockReach = Core::Lock::ReachFromText(c.name);   // 0.24.29
                 return true;
             }
             else if constexpr (std::is_same_v<T, Candidate::ItemCandidate>) {
@@ -3253,7 +3253,7 @@ void RunUnitTests()
                 }
             }
 
-            // 0.24.30: an unlock spell short of the lock in the crosshair is
+            // 0.24.29: an unlock spell short of the lock in the crosshair is
             // dropped (lock_out_of_reach); one that reaches it stays, and with
             // no lock in the crosshair none is dropped. A key-only lock drops all.
             {
@@ -6329,12 +6329,12 @@ void RunSlotLockerOverrideScopeTest()
         }
         (void)locker.SetInCombat(false);
 
-        // 5s (0.24.31). Stale keys: key 0 frozen on A, key 1 on C, both 0.0,
+        // 5s (0.24.29). Stale keys: key 0 frozen on A, key 1 on C, both 0.0,
         //     and the allocator still wants both (its own hold). The memoryless
-        //     page shows A and G (+0.6), which the allocator's page does not:
-        //     before 0.24.31 G was no challenger at all. Now key 1 (C, off the
-        //     memoryless page) is stale, and G takes it past the calm barrier
-        //     (ln 1.5 = 0.405; the combat one is 1.216); key 0 (A, still on that
+        //     page shows A and G (+1.0), which the allocator's page does not:
+        //     before 0.24.29 G was no challenger at all. Now key 1 (C, off the
+        //     memoryless page) is stale, and G takes it past the stale barrier
+        //     (2 x ln 1.5 = 0.81; the combat one is 1.216); key 0 (A, still on that
         //     page) keeps A. Nothing changes with bCombatUpsertStaleKeys = 0,
         //     nor when C scores above the rank floor (iCombatStaleRank's score).
         constexpr RE::FormID G = 0x0BAD0A08;
@@ -6350,7 +6350,7 @@ void RunSlotLockerOverrideScopeTest()
             (void)locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, 0.0 } }), none, {}, at(t2, 0));
             auto run = at(t2, 4000);
             run.haveMemorylessPage = true;
-            run.memorylessPage = scoredPage({ { A, 0.0 }, { G, 0.6 } });
+            run.memorylessPage = scoredPage({ { A, 0.0 }, { G, 1.0 } });
             run.staleBelowScore = floorScore;
             shown = locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, 0.0 } }), none, {}, run);
             const bool want = shows(shown, 0, A) && shows(shown, 1, takes ? G : C);
@@ -6358,6 +6358,53 @@ void RunSlotLockerOverrideScopeTest()
                 logger::error("TEST FAIL: stale keys {}, floor {:+.1f} (key0={:08X}, key1={:08X}; want A on 0, {} on 1)"sv,
                     staleOn ? "on" : "off", floorScore, shown.size() > 0 ? shown[0].formID : 0,
                     shown.size() > 1 ? shown[1].formID : 0, takes ? "G" : "C");
+                passed = false;
+            }
+            (void)locker.SetInCombat(false);
+        }
+
+        // 5t. One stale upsert per key per fight: G, brought in by one, is off
+        //     the next memoryless page (H is on it) and past the floor, but key
+        //     1 does not change again this fight -- past the page spacing and
+        //     the key's cooldown. 5u: a key pressed this fight on the item it
+        //     shows is never stale.
+        {
+            constexpr RE::FormID H = 0x0BAD0A09;
+            locker.SetConfig(cfg);
+            locker.Reset();
+            (void)locker.SetInCombat(true);
+            const auto t3 = std::chrono::steady_clock::now();
+            (void)locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, 0.0 } }), none, {}, at(t3, 0));
+            auto firstStale = at(t3, 4000);
+            firstStale.haveMemorylessPage = true;
+            firstStale.memorylessPage = scoredPage({ { A, 0.0 }, { G, 1.0 } });
+            firstStale.staleBelowScore = 2.0;
+            shown = locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, 0.0 } }), none, {}, firstStale);
+            auto again = at(t3, 20000);
+            again.haveMemorylessPage = true;
+            again.memorylessPage = scoredPage({ { A, 0.0 }, { H, 3.0 } });
+            again.staleBelowScore = 2.0;
+            shown = locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, 0.0 } }), none, {}, again);
+            if (!shows(shown, 1, G)) {
+                logger::error("TEST FAIL: a key took a second stale upsert in one fight (key1={:08X}, want G)"sv,
+                    shown.size() > 1 ? shown[1].formID : 0);
+                passed = false;
+            }
+            (void)locker.SetInCombat(false);
+
+            locker.Reset();
+            (void)locker.SetInCombat(true);
+            const auto t4 = std::chrono::steady_clock::now();
+            (void)locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, 0.0 } }), none, {}, at(t4, 0));
+            locker.NoteKeyPress(1);   // C pressed this fight
+            auto pressedRun = at(t4, 4000);
+            pressedRun.haveMemorylessPage = true;
+            pressedRun.memorylessPage = scoredPage({ { A, 0.0 }, { G, 1.0 } });
+            pressedRun.staleBelowScore = 2.0;
+            shown = locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, 0.0 } }), none, {}, pressedRun);
+            if (!shows(shown, 1, C)) {
+                logger::error("TEST FAIL: a key pressed this fight went stale (key1={:08X}, want C)"sv,
+                    shown.size() > 1 ? shown[1].formID : 0);
                 passed = false;
             }
             (void)locker.SetInCombat(false);

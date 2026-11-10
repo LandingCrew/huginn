@@ -58,7 +58,7 @@ namespace Huginn::Core::Filter
         no_workstation,       // fortify apparel, no station up for any craft it fortifies
         not_dark,             // a torch while darkness does not apply
         favorite_suppressed,  // a favourite under [Favorites] sFavoritesMode = Suppress
-        // 0.24.30 (core/LockReach.h), appended like the gates above
+        // 0.24.29 (core/LockReach.h), appended like the gates above
         lock_out_of_reach,    // an unlock spell, scroll or staff that cannot open the lock in the crosshair
         _Count
     };

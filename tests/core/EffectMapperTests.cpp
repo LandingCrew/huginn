@@ -583,7 +583,7 @@ TEST_CASE("effect mapper: tempering adds damage (the codebase's model), it does 
     CHECK(Get(cap, Col::weapon_damage) == doctest::Approx(2.0 / 3.0));  // 26: above 25, below 30
 }
 
-TEST_CASE("effect mapper: an unlock item's reach from its kept unlock rows' text (0.24.30)")
+TEST_CASE("effect mapper: an unlock item's reach from its kept unlock rows' text (0.24.29)")
 {
     World w;
     auto open = Mgef(kArchScript, "", "Open Apprentice Lock");

@@ -41,7 +41,7 @@ namespace Huginn::Candidate
 
         // R11: `targetsOthers` is the effect catalog's TargetsOthers facet
         // (core/CapFacets.h), read once per candidate by RunVisitorFilters.
-        // 0.24.30: `unlocks` and `unlockReach` are the catalog's Unlock facet
+        // 0.24.29: `unlocks` and `unlockReach` are the catalog's Unlock facet
         // and reach (core/LockReach.h), read with the facets.
         template <class T>
         [[nodiscard]] std::optional<R> HardGate(const T& c, const Core::Gate::Inputs& g, bool targetsOthers,
@@ -143,7 +143,7 @@ namespace Huginn::Candidate
                     return R::full_magicka;
 
                 // 4. Hard gates (R8.1): a suppressed favourite, a spell for
-                // someone else with no follower near; 0.24.30: an unlock spell
+                // someone else with no follower near; 0.24.29: an unlock spell
                 // that cannot open the lock in the crosshair.
                 if (const auto gate = HardGate(c, gates, f.Has(F::TargetsOthers), f.Has(F::Unlock), subject.unlockReach)) return gate;
 
@@ -241,7 +241,7 @@ namespace Huginn::Candidate
                     return R::full_health;
 
                 // 4. Hard gates (R8.1): a scroll for someone else, no follower near;
-                // 0.24.30: an unlock scroll that cannot open the lock in the crosshair.
+                // 0.24.29: an unlock scroll that cannot open the lock in the crosshair.
                 if (const auto gate = HardGate(c, gates, f.Has(F::TargetsOthers), f.Has(F::Unlock), subject.unlockReach)) return gate;
 
                 // 5. Active Buff
@@ -271,7 +271,7 @@ namespace Huginn::Candidate
                 // Weapons pass the other visitor filters (equipped-skip is
                 // per-slot in SlotAllocator); a suppressed favourite is gated.
                 if (const auto gate = HardGate(c, gates, false)) return gate;
-                // 0.24.30: an Open Lock staff or wand short of the lock in the
+                // 0.24.29: an Open Lock staff or wand short of the lock in the
                 // crosshair (LoreRim has them at all five levels). The catalog
                 // is asked only while a lock is in the crosshair.
                 if (gates.lockLevel != Core::Lock::kNoLock && c.type == Weapon::WeaponType::Staff) {
@@ -413,7 +413,7 @@ namespace Huginn::Candidate
                             }
                             break;
                         case R::lock_out_of_reach:
-                            // 0.24.30: a hard gate, but never set aside for the
+                            // 0.24.29: a hard gate, but never set aside for the
                             // hold: a held key showing an Open Lock spell that
                             // cannot open the lock in the crosshair is the bug
                             // this gate fixes.

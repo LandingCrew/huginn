@@ -4,7 +4,7 @@
 #include "override/OverrideConditions.h"
 #include "override/OverrideConfig.h"
 #include "telemetry/SoakMetrics.h"
-#include "core/SlotAllocStateless.h"   // 0.24.31: the memoryless page for the combat upsert
+#include "core/SlotAllocStateless.h"   // 0.24.29: the memoryless page for the combat upsert
 #include "core/StackIdentity.h"
 #include <algorithm>
 #include <format>
@@ -514,7 +514,7 @@ namespace Huginn::Slot
             }
         }
 
-        // The page, from the game's candidates. `order` (0.24.31): a
+        // The page, from the game's candidates. `order` (0.24.29): a
         // stateless input's re-ordering (candidate k of it is candidates[order[k]]).
         const auto toAssignments = [&](const SA::Output& o, const std::vector<uint32_t>* order, SlotAssignments& dst) {
             for (size_t i = 0; i < o.slots.size(); ++i) {
@@ -549,7 +549,7 @@ namespace Huginn::Slot
         };
         toAssignments(out, nullptr, assignments);
 
-        // 0.24.31: the memoryless page, for the combat upsert's stale keys
+        // 0.24.29: the memoryless page, for the combat upsert's stale keys
         // (core/CombatUpsert.h): the same input with the memory taken out,
         // ranked on the live scores. Pure and on a copy: no seating, events
         // or capture, and the live page above is unchanged.

@@ -322,7 +322,7 @@ namespace Huginn::State
       // comes from, so the apparel/potion gate can be read straight off this.
       // rawLight is the game's value before scaling (-1 = unavailable, clock
       // estimate used): read it here to calibrate GAME_LIGHT_SCALE.
-      // 0.24.30: the lock in the crosshair and its level (0 Novice .. 4 Master,
+      // 0.24.29: the lock in the crosshair and its level (0 Novice .. 4 Master,
       // 5 Requires Key; -1 none), which lock_out_of_reach reads: it was in the
       // bucket but not on the line.
       logger::debug("[StateManager] WorldState changed - time:{:.1f} interior:{} light:{:.2f} (raw {:.1f}) dark:{} workstation:{} lock:{}"sv,

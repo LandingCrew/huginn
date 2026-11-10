@@ -709,7 +709,7 @@ TEST_CASE("combat upsert (0.24.13): the displaced item cannot take its key back,
     }
 }
 
-TEST_CASE("combat upsert (0.24.31): a stale key is asked at the calm line, every other key at the combat one")
+TEST_CASE("combat upsert (0.24.29): a stale key is asked at the calm line, every other key at the combat one")
 {
     // 2026-11-09 01:43:04, rounded: a Resist Fire potion at +1.55 against
     // Drop Zone at -0.44 (ranked 124th), sigma_Delta about 2.4. The combat
@@ -735,7 +735,7 @@ TEST_CASE("combat upsert (0.24.31): a stale key is asked at the calm line, every
     CHECK(PlanCombatUpserts(frozen, weak, fits, sigma, rule).empty());
 }
 
-TEST_CASE("combat upsert (0.24.31): a stale key's line is never above the combat line, and off stays off")
+TEST_CASE("combat upsert (0.24.29): a stale key's line is never above the combat line, and off stays off")
 {
     auto rule = Shipped();
     rule.staleKeys = { true };

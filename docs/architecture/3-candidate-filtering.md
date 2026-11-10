@@ -200,7 +200,7 @@ active-buff filters, and each drop is a `Core::Filter::Dropped` with its reason:
 | `no_workstation` | apparel when no craft it fortifies (Smithing, Enchanting, Alchemy) has its station in the crosshair; a ring that fortifies two crafts passes at either | the apparel arm (no baseline; only the station's fortify weight) |
 | `not_dark` | a torch while darkness does not apply: daylight (`WorldState::isDark` false, `fDarkLightLevel` with its hysteresis), or Night Eye, a light spell or a torch already up | the torch arm (`darknessWeight` only) |
 | `favorite_suppressed` | a favourite (spells and weapons carry the flag) under `[Favorites] sFavoritesMode = Suppress` | the two Suppress skips in `UtilityScorer::ScoreCandidates`, deleted |
-| `lock_out_of_reach` (0.24.30) | an unlock spell, scroll or staff (the catalog's `Unlock` facet, `utility_unlock`) whose reach is below the level of the lock in the crosshair, and every one at a lock that requires a key | none: new. The old `unlockWeight` raised every unlock spell alike, and so did `lock_in_crosshair x utility_unlock` |
+| `lock_out_of_reach` (0.24.29) | an unlock spell, scroll or staff (the catalog's `Unlock` facet, `utility_unlock`) whose reach is below the level of the lock in the crosshair, and every one at a lock that requires a key | none: new. The old `unlockWeight` raised every unlock spell alike, and so did `lock_in_crosshair x utility_unlock` |
 
 `lock_out_of_reach`'s reach is read when the catalog maps the item (`core/LockReach.h`,
 `ItemMapping::unlockReach`): the highest of "novice" .. "master" its kept unlock rows' text names,

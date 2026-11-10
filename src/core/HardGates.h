@@ -112,7 +112,7 @@ namespace Huginn::Core::Gate
         Craft station = Craft::None;     // StationCraft of the crosshair bench
         bool darknessApplies = false;    // DarknessApplies
         bool suppressFavorites = false;  // [Favorites] sFavoritesMode = Suppress
-        int lockLevel = Lock::kNoLock;   // 0.24.30: the crosshair lock's level (core/LockReach.h), kNoLock for none
+        int lockLevel = Lock::kNoLock;   // 0.24.29: the crosshair lock's level (core/LockReach.h), kNoLock for none
     };
 
     /// no_follower: a spell or scroll for someone else, with no one near to take it.
@@ -133,7 +133,7 @@ namespace Huginn::Core::Gate
         return !darknessApplies;
     }
 
-    /// lock_out_of_reach (0.24.30): an unlock spell or scroll that cannot open
+    /// lock_out_of_reach (0.24.29): an unlock spell or scroll that cannot open
     /// the lock in the crosshair (core/LockReach.h).
     [[nodiscard]] constexpr bool LockOutOfReach(bool unlocks, int reach, int lockLevel) noexcept
     {

@@ -1066,7 +1066,7 @@ namespace Huginn::Core::Effect
             fix(Col::light_radius,
                 std::min(1.0f, static_cast<float>(std::log1p(it.lightRadius) / std::log1p(1024.0))));
         }
-        // 0.24.30: how far its unlock rows reach (core/LockReach.h). Direct
+        // 0.24.29: how far its unlock rows reach (core/LockReach.h). Direct
         // rows only (m.outcomes is one per row of it.effects); an unlock that
         // comes through a wrapper's payload leaves the reach unknown.
         Lock::ItemReach reach;

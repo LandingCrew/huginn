@@ -205,7 +205,7 @@ TEST_CASE("filter reasons: names, groups and lookup")
     CHECK(Filter::ReasonName(Reason::no_workstation) == "no_workstation");
     CHECK(Filter::ReasonName(Reason::not_dark) == "not_dark");
     CHECK(Filter::ReasonName(Reason::favorite_suppressed) == "favorite_suppressed");
-    // 0.24.30: lock_out_of_reach, appended after them (the head lists 20).
+    // 0.24.29: lock_out_of_reach, appended after them (the head lists 20).
     CHECK(static_cast<int>(Reason::lock_out_of_reach) == 19);
     CHECK(Filter::ReasonName(Reason::lock_out_of_reach) == "lock_out_of_reach");
     CHECK(Filter::ReasonName(Reason::_Count) == "?");

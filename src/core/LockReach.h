@@ -1,12 +1,12 @@
 #pragma once
 
 // =============================================================================
-// LOCK REACH (0.24.30) -- can this unlock item open the lock in the crosshair?
+// LOCK REACH (0.24.29) -- can this unlock item open the lock in the crosshair?
 // =============================================================================
 // The lock in the crosshair has a level the activate prompt shows (Novice ..
 // Master, or "Requires Key"), so the player knows it (needs.csv,
 // lock_in_crosshair). An unlock spell or scroll opens locks up to a level of
-// its own. Until 0.24.30 nothing compared the two: the catalog gave every
+// its own. Until 0.24.29 nothing compared the two: the catalog gave every
 // Open Lock spell the same utility_unlock value (LoreRim's are scripted, their
 // magnitude 0), and lock_in_crosshair is a 0/1 need, so Open Novice Lock was
 // offered at an Expert chest (the user, 2026-11-09).

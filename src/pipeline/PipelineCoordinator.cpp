@@ -282,7 +282,7 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
     const bool signatureChanged = ctx.needSignature != m_lastNeedSignature.load(std::memory_order_relaxed) ||
                                 ctx.overrideSignature != m_lastOverrideSignature ||
                                 ctx.refreshDue != m_lastRefreshDue ||
-                                ctx.lockLevel != m_lastLockLevel;   // 0.24.30: lock_out_of_reach
+                                ctx.lockLevel != m_lastLockLevel;   // 0.24.29: lock_out_of_reach
 
     if (ctx.stateHash == m_lastPipelineHash && !pageChanged &&
         !unhashedStateActive && !signatureChanged && !NeedsForcedRun()) {
@@ -1052,7 +1052,7 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
         ctx.pageRunRows.clear();
         for (const auto& sc : pageCandidates) ctx.pageRunRows.push_back(sc.isRememberedOnly ? UINT32_MAX : sc.runRow);
     }
-    // 0.24.31: in combat, the page the ranking alone builds, for the combat
+    // 0.24.29: in combat, the page the ranking alone builds, for the combat
     // upsert's stale keys (core/CombatUpsert.h). Out of combat no key is
     // combat-locked, so it is not built.
     const bool wantMemoryless = ctx.playerState.isInCombat;

@@ -121,7 +121,7 @@ TEST_CASE("hard gates: the default inputs gate everything a gate can")
     CHECK_FALSE(Gate::LockOutOfReach(true, Lock::kNovice, in.lockLevel));
 }
 
-TEST_CASE("lock reach: the highest level word an unlock row's text names (0.24.30)")
+TEST_CASE("lock reach: the highest level word an unlock row's text names (0.24.29)")
 {
     // Requiem / LoreRim: name and description agree.
     CHECK(Lock::ReachFromText("Open Novice Lock") == Lock::kNovice);
@@ -156,7 +156,7 @@ TEST_CASE("lock reach: an item's reach over its unlock rows")
     CHECK(mixed.Value() == Lock::kUnknownReach);   // one row of unknown reach: never dropped for a lock
 }
 
-TEST_CASE("hard gates: lock_out_of_reach (0.24.30)")
+TEST_CASE("hard gates: lock_out_of_reach (0.24.29)")
 {
     // A lock above the item's reach drops it; at or below keeps it.
     CHECK(Gate::LockOutOfReach(true, Lock::kNovice, Lock::kExpert));

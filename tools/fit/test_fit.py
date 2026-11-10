@@ -486,13 +486,13 @@ class ReplayEquivalence(unittest.TestCase):
 class HardGateDrops(TempWork):
     """0.23.55 (R8.1): a row dropped by each of the four hard gates reads its reason by the
     head's own filter list, in v3load and in tools/replay; the older reasons read the same.
-    0.24.30: lock_out_of_reach, appended after them, the same way."""
+    0.24.29: lock_out_of_reach, appended after them, the same way."""
     NEW = ('no_follower', 'no_workstation', 'not_dark', 'favorite_suppressed', 'lock_out_of_reach')
     SWORD = {"weapon_damage": 0.75, "weapon_type_sword": 1}
 
     def text(self):
         head, seg1, seg2 = trv3.make_session()
-        self.assertEqual(head['filters'][15:], list(self.NEW))     # the golden head (0.23.55, 0.24.30)
+        self.assertEqual(head['filters'][15:], list(self.NEW))     # the golden head (0.23.55, 0.24.29)
         r = seg1[0]['ctx']['rows'][0]
         extra = [dict(r, form='000A000' + str(i), uid=0, kind=kind, src=None, cap=cap, flags=4, slot=-1,
                       util=None, x={}, wp=None, fb=fb, cr=None, **{k: None for k in trv3.OLD_KEYS})

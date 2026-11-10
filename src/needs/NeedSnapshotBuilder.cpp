@@ -160,7 +160,7 @@ namespace Huginn::Needs
       s.edgeDistance = n.edgeDistance;
       s.edgeSpeed = n.edgeSpeed;
       s.edgeApproach = n.edgeApproach;
-      // 0.24.30: a lock that requires a key reads 0 (needs.csv): no spell,
+      // 0.24.29: a lock that requires a key reads 0 (needs.csv): no spell,
       // scroll or lockpicking potion answers it. It read 1 before, which
       // raised every Open Lock spell at a door only a key opens.
       s.lock = src.world.isLookingAtLock && src.world.lockLevel < Core::Lock::kRequiresKey;

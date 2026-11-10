@@ -257,8 +257,12 @@ Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {
     config.combatChallengerConfidence = !std::isfinite(upsertConfidence) ? 0.995f
       : static_cast<float>(std::clamp(upsertConfidence, Core::Challenger::kMinConfidence,
           Core::Challenger::kMaxConfidence));
-    // 0.24.31: stale keys take a challenger at the calm line (core/CombatUpsert.h).
+    // 0.24.29: stale keys take a challenger at the calm line (core/CombatUpsert.h).
     config.combatUpsertStaleKeys = ini.GetBoolValue(section, "bCombatUpsertStaleKeys", true);
+    const double staleConfidence = ini.GetDoubleValue(section, "fCombatStaleConfidence", 0.95);
+    config.combatStaleConfidence = !std::isfinite(staleConfidence) ? 0.95f
+      : static_cast<float>(std::clamp(staleConfidence, Core::Challenger::kMinConfidence,
+          Core::Challenger::kMaxConfidence));
     config.combatStaleRank = static_cast<int>(std::clamp<long>(ini.GetLongValue(section, "iCombatStaleRank", 16), 0, 500));
   }
 
@@ -275,8 +279,8 @@ Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {
       Core::Challenger::ZForConfidence(static_cast<double>(config.combatChallengerConfidence)),
       config.combatUpsertMarginMult, config.combatUpsertCooldownSec);
     logger::info("[SlotLockerConfig] combat upsert stale keys: {} (a key off the memoryless page, its item "
-      "ranked past {}, takes a challenger at fChallengerConfidence)", config.combatUpsertStaleKeys ? "on" : "off",
-      config.combatStaleRank);
+      "ranked past {} and not pressed this fight, takes one challenger per fight at P > {:.3f})",
+      config.combatUpsertStaleKeys ? "on" : "off", config.combatStaleRank, config.combatStaleConfidence);
   } else {
     logger::info("[SlotLockerConfig] combat upsert: off");
   }

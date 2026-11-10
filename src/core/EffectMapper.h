@@ -284,7 +284,7 @@ namespace Huginn::Core::Effect
         // school, area, duration and hostility.
         std::vector<PerkRow> perkRows;
         std::vector<KeptRow> factRows;
-        // 0.24.30 (core/LockReach.h): the highest lock level the item's kept
+        // 0.24.29 (core/LockReach.h): the highest lock level the item's kept
         // unlock rows open, read from their text; Lock::kUnknownReach when it
         // keeps none or one of them names no level (never dropped for a lock).
         int unlockReach = -1;

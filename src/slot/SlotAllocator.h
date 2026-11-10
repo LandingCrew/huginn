@@ -137,7 +137,7 @@ namespace Huginn::Slot
         ///                       pages (core/SlotAllocStateless.h). A copy out:
         ///                       the allocation is the same with or without it.
         ///                       Left untouched when the page has no slots.
-        /// @param memorylessOut  0.24.31: when set, the page this run's ranking
+        /// @param memorylessOut  0.24.29: when set, the page this run's ranking
         ///                       alone builds (core/SlotAllocStateless.h: no
         ///                       hold, seating, Remembrance or wildcard), as
         ///                       assignments of the same candidates, for the
