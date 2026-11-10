@@ -257,6 +257,9 @@ Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {
     config.combatChallengerConfidence = !std::isfinite(upsertConfidence) ? 0.995f
       : static_cast<float>(std::clamp(upsertConfidence, Core::Challenger::kMinConfidence,
           Core::Challenger::kMaxConfidence));
+    // 0.24.31: stale keys take a challenger at the calm line (core/CombatUpsert.h).
+    config.combatUpsertStaleKeys = ini.GetBoolValue(section, "bCombatUpsertStaleKeys", true);
+    config.combatStaleRank = static_cast<int>(std::clamp<long>(ini.GetLongValue(section, "iCombatStaleRank", 16), 0, 500));
   }
 
   logger::info("[SlotLockerConfig] duration={:.0f}ms, min={:.0f}ms, lockOnFill={}, overridesBreak={}, breakPri={}, combat={}",
@@ -271,6 +274,9 @@ Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {
       config.combatChallengerConfidence,
       Core::Challenger::ZForConfidence(static_cast<double>(config.combatChallengerConfidence)),
       config.combatUpsertMarginMult, config.combatUpsertCooldownSec);
+    logger::info("[SlotLockerConfig] combat upsert stale keys: {} (a key off the memoryless page, its item "
+      "ranked past {}, takes a challenger at fChallengerConfidence)", config.combatUpsertStaleKeys ? "on" : "off",
+      config.combatStaleRank);
   } else {
     logger::info("[SlotLockerConfig] combat upsert: off");
   }

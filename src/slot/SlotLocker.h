@@ -47,6 +47,15 @@ namespace Huginn::Slot
         float combatChallengerConfidence = 0.995f;
         // At most one upsert per key per this many seconds. 0 = no limit.
         float combatUpsertCooldownSec = 10.0f;
+        // 0.24.31, bCombatUpsertStaleKeys: a combat-locked key whose item the
+        // memoryless page no longer shows is asked at the calm hold's line
+        // (fChallengerConfidence), and that page's items challenge it
+        // (core/CombatUpsert.h, stale keys).
+        bool combatUpsertStaleKeys = true;
+        // ... and only when its item ranks worse than this (iCombatStaleRank):
+        // an attack spell the memoryless page leaves out while you heal is
+        // still one you reach for. 0 = the memoryless page alone decides.
+        int combatStaleRank = 16;
     };
 
     // =============================================================================
@@ -229,6 +238,17 @@ namespace Huginn::Slot
             bool testAllChallengers = false;
             /// Key i has an active Remembrance hold of its own, or shows one.
             std::array<bool, MAX_SLOTS_PER_PAGE> remembranceHoldOnKey{};
+            /// 0.24.31: the page this run's ranking alone builds (no hold,
+            /// seating, Remembrance or wildcard; SlotAllocator's memorylessOut),
+            /// read only with haveMemorylessPage. A combat-locked key whose item
+            /// it does not show is stale (core/CombatUpsert.h); its items are
+            /// challengers for stale keys.
+            bool haveMemorylessPage = false;
+            SlotAssignments memorylessPage;
+            /// 0.24.31: the score of the iCombatStaleRank-th best ranked row
+            /// this run; a key's item must score under it to be stale.
+            /// -inf (the default) = no item is stale by rank.
+            double staleBelowScore = -std::numeric_limits<double>::infinity();
             /// This run's clock for the upsert and the churn record. Epoch (the
             /// default) = steady_clock::now(); the in-game test passes later
             /// times to step past the page spacing without sleeping.

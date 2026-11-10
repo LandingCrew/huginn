@@ -6329,6 +6329,41 @@ void RunSlotLockerOverrideScopeTest()
         }
         (void)locker.SetInCombat(false);
 
+        // 5s (0.24.31). Stale keys: key 0 frozen on A, key 1 on C, both 0.0,
+        //     and the allocator still wants both (its own hold). The memoryless
+        //     page shows A and G (+0.6), which the allocator's page does not:
+        //     before 0.24.31 G was no challenger at all. Now key 1 (C, off the
+        //     memoryless page) is stale, and G takes it past the calm barrier
+        //     (ln 1.5 = 0.405; the combat one is 1.216); key 0 (A, still on that
+        //     page) keeps A. Nothing changes with bCombatUpsertStaleKeys = 0,
+        //     nor when C scores above the rank floor (iCombatStaleRank's score).
+        constexpr RE::FormID G = 0x0BAD0A08;
+        struct StaleCase { bool on; double floor; bool takes; };
+        for (const auto [staleOn, floorScore, takes] : { StaleCase{ true, 1.0, true }, StaleCase{ true, -1.0, false },
+                                                         StaleCase{ false, 1.0, false } }) {
+            auto staleCfg = cfg;
+            staleCfg.combatUpsertStaleKeys = staleOn;
+            locker.SetConfig(staleCfg);
+            locker.Reset();
+            (void)locker.SetInCombat(true);
+            const auto t2 = std::chrono::steady_clock::now();
+            (void)locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, 0.0 } }), none, {}, at(t2, 0));
+            auto run = at(t2, 4000);
+            run.haveMemorylessPage = true;
+            run.memorylessPage = scoredPage({ { A, 0.0 }, { G, 0.6 } });
+            run.staleBelowScore = floorScore;
+            shown = locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, 0.0 } }), none, {}, run);
+            const bool want = shows(shown, 0, A) && shows(shown, 1, takes ? G : C);
+            if (!want) {
+                logger::error("TEST FAIL: stale keys {}, floor {:+.1f} (key0={:08X}, key1={:08X}; want A on 0, {} on 1)"sv,
+                    staleOn ? "on" : "off", floorScore, shown.size() > 0 ? shown[0].formID : 0,
+                    shown.size() > 1 ? shown[1].formID : 0, takes ? "G" : "C");
+                passed = false;
+            }
+            (void)locker.SetInCombat(false);
+        }
+        locker.SetConfig(cfg);
+
         // 5h. Same-run cascade: an urgent override breaks key 1 and the item it
         //     displaces (C, +1.0) is the allocator's pick for key 0 (A, -1.0):
         //     no upsert in a run where another key changes. 5i: on later runs C

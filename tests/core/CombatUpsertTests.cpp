@@ -708,3 +708,60 @@ TEST_CASE("combat upsert (0.24.13): the displaced item cannot take its key back,
         }
     }
 }
+
+TEST_CASE("combat upsert (0.24.31): a stale key is asked at the calm line, every other key at the combat one")
+{
+    // 2026-11-09 01:43:04, rounded: a Resist Fire potion at +1.55 against
+    // Drop Zone at -0.44 (ranked 124th), sigma_Delta about 2.4. The combat
+    // line (z 2.576) asks 6.2; the calm one (z 0.84) 2.0.
+    const std::vector<std::optional<SlotScore>> frozen{ -0.44, -0.44 };
+    const std::vector<SlotScore> challengers{ 1.55 };
+    const std::vector<std::vector<bool>> fits{ { true }, { true } };
+    const std::vector<std::vector<double>> sigma{ { 2.35 }, { 2.35 } };
+    auto rule = Shipped();
+    CHECK(PlanCombatUpserts(frozen, challengers, fits, sigma, rule).empty());   // no stale key: frozen
+
+    rule.staleKeys = { false, true };
+    rule.zStale = Challenger::ZForConfidence(0.8);
+    rule.barrierStale = CombatUpsertBarrier(1.0f, 0.5f);
+    const auto picks = PlanCombatUpserts(frozen, challengers, fits, sigma, rule);
+    REQUIRE(picks.size() == 1);
+    CHECK(picks[0].key == 1);   // the stale key, not key 0 the ranking still wants
+    CHECK(picks[0].stale);
+    CHECK(picks[0].sd == doctest::Approx(2.35));
+
+    // A lead the calm line still misses holds the stale key too.
+    const std::vector<SlotScore> weak{ 0.9 };   // lead 1.34 < 0.84 x 2.35 = 1.98
+    CHECK(PlanCombatUpserts(frozen, weak, fits, sigma, rule).empty());
+}
+
+TEST_CASE("combat upsert (0.24.31): a stale key's line is never above the combat line, and off stays off")
+{
+    auto rule = Shipped();
+    rule.staleKeys = { true };
+    rule.zStale = 4.0;                      // a calm confidence set above the combat one
+    rule.barrierStale = rule.barrier * 2.0;
+    CHECK(rule.ForKey(0).z == doctest::Approx(rule.z));
+    CHECK(rule.ForKey(0).barrier == doctest::Approx(rule.barrier));
+    rule.zStale = 0.5;
+    rule.barrierStale = 0.1;
+    CHECK(rule.ForKey(0).z == doctest::Approx(0.5));
+    CHECK(rule.ForKey(0).barrier == doctest::Approx(0.1));
+    CHECK(rule.ForKey(1).z == doctest::Approx(rule.z));   // past staleKeys: not stale
+    CHECK_FALSE(rule.Stale(1));
+
+    // No belief for the pair: a stale key takes the calm fixed barrier.
+    const std::vector<std::optional<SlotScore>> frozen{ 0.0 };
+    const std::vector<SlotScore> challengers{ 0.6 };   // past ln 1.5 = 0.405, under 3 x 0.405
+    const std::vector<std::vector<bool>> fits{ { true } };
+    auto calm = Shipped();
+    CHECK(PlanCombatUpserts(frozen, challengers, fits, {}, calm).empty());
+    calm.staleKeys = { true };
+    calm.zStale = Challenger::ZForConfidence(0.8);
+    calm.barrierStale = CombatUpsertBarrier(1.0f, 0.5f);
+    CHECK(PlanCombatUpserts(frozen, challengers, fits, {}, calm).size() == 1);
+
+    // The upsert off (fCombatUpsertMarginMult = 0): stale keys change nothing.
+    calm.barrier = CombatUpsertBarrier(0.0f, 0.5f);
+    CHECK(PlanCombatUpserts(frozen, challengers, fits, {}, calm).empty());
+}

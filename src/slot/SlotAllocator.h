@@ -137,6 +137,12 @@ namespace Huginn::Slot
         ///                       pages (core/SlotAllocStateless.h). A copy out:
         ///                       the allocation is the same with or without it.
         ///                       Left untouched when the page has no slots.
+        /// @param memorylessOut  0.24.31: when set, the page this run's ranking
+        ///                       alone builds (core/SlotAllocStateless.h: no
+        ///                       hold, seating, Remembrance or wildcard), as
+        ///                       assignments of the same candidates, for the
+        ///                       combat upsert's stale keys (core/CombatUpsert.h).
+        ///                       The live allocation is the same with or without it.
         [[nodiscard]] SlotAssignments AllocateSlotsForPage(
             size_t pageIndex,
             const Scoring::ScoredCandidateList& candidates,
@@ -145,7 +151,8 @@ namespace Huginn::Slot
             const State::WorldState& world,
             const WildcardRequest* wildcard = nullptr,
             WildcardResult* wildcardOut = nullptr,
-            Core::SlotAlloc::Input* inputOut = nullptr) const;
+            Core::SlotAlloc::Input* inputOut = nullptr,
+            SlotAssignments* memorylessOut = nullptr) const;
 
         /// Simplified allocation without overrides (for testing/legacy)
         [[nodiscard]] SlotAssignments AllocateSlots(
@@ -322,7 +329,8 @@ namespace Huginn::Slot
             bool forTest = false,
             const WildcardRequest* wildcard = nullptr,
             WildcardResult* wildcardOut = nullptr,
-            Core::SlotAlloc::Input* inputOut = nullptr) const;
+            Core::SlotAlloc::Input* inputOut = nullptr,
+            SlotAssignments* memorylessOut = nullptr) const;
 
         /// True if any slot on ANY configured page accepts this override
         /// category. Overrides are global; a page without an accepting slot is

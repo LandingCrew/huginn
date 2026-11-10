@@ -481,7 +481,8 @@ BUDGET = {
         r'&ctx\.legacyShadowAllocInput : nullptr;$',
         r'^\s*if \(legacyShadowInput\) \{$',
         r'^\s*\*legacyShadowInput = \{\};\s+// ',
-        r'^\s*&wildcardRequest, &wildcardResult, legacyShadowInput\);$',
+        # 0.24.31: or ',' -- the memoryless page's out-parameter follows on its own line.
+        r'^\s*&wildcardRequest, &wildcardResult, legacyShadowInput(\);|,)$',
         r'^\s*ctx\.haveAllocInput = legacyShadowInput != nullptr && !ctx\.legacyShadowAllocInput\.slots\.empty\(\) &&$',
         r'^\s*ctx\.legacyShadowAllocInput\.candidates\.size\(\) == ctx\.pageRunRows\.size\(\);$',
         r'^\s*Core::SlotAlloc::Input\* const legacyShadowPageInput = ctx\.haveAllocInput \? '
