@@ -1039,6 +1039,29 @@ namespace Huginn::Slot
             return;
         }
 
+        // 0.24.31: stale keys (core/CombatUpsert.h): an open key whose item the
+        // memoryless page does not show, by item as dedup compares (form and
+        // stack, a stack-less side matching any, or the name).
+        const auto sameItem = [](const SlotAssignment& a, const SlotAssignment& b) {
+            if (a.IsEmpty() || b.IsEmpty()) return false;
+            if (a.formID == b.formID && (a.uniqueID == b.uniqueID || a.uniqueID == 0 || b.uniqueID == 0)) return true;
+            return !a.name.empty() && a.name == b.name;
+        };
+        const bool staleOn = m_config.combatUpsertStaleKeys && run.haveMemorylessPage;
+        std::vector<bool> stale(n, false);
+        bool anyStale = false;
+        if (staleOn) {
+            for (size_t i = 0; i < n; ++i) {
+                if (!frozen[i]) continue;
+                // Off the memoryless page, and (iCombatStaleRank) ranked past
+                // the rank floor: frozen[i] is the score of the item on the key.
+                const bool belowFloor = m_config.combatStaleRank <= 0 || *frozen[i] < run.staleBelowScore;
+                stale[i] = belowFloor && std::none_of(run.memorylessPage.begin(), run.memorylessPage.end(),
+                    [&](const SlotAssignment& m) { return sameItem(m, result[i]); });
+                anyStale = anyStale || stale[i];
+            }
+        }
+
         // Challengers: the allocator's ordinary picks for this page that no
         // key shows (by item or by name, as dedup compares). Its seats behind
         // the locks reshuffle; the set of items it puts on the page is what
@@ -1051,22 +1074,36 @@ namespace Huginn::Slot
             }
             return false;
         };
-        std::vector<size_t> source;
+        // 0.24.31: with a stale key, the memoryless page's items too, after
+        // the allocator's, for the stale keys only (staleOnly below): behind
+        // the allocator's own hold its page can keep the very item that went
+        // stale, and never name the answer the ranking moved up.
+        std::vector<const SlotAssignment*> source;
+        std::vector<bool> staleOnly;
         std::vector<Core::SlotScore> scores;
         const double recentMs = UpsertRecentMs();
-        for (size_t j = 0; j < std::min(wanted.size(), MAX_SLOTS); ++j) {
-            const auto& c = wanted[j];
-            if (c.type != AssignmentType::Normal || !c.candidate || !std::isfinite(c.score)) continue;
+        const auto offer = [&](const SlotAssignment& c, bool forStaleOnly) {
+            if (c.type != AssignmentType::Normal || !c.candidate || !std::isfinite(c.score)) return;
             // The locker cannot see bSkipEquipped (as the dedup refill): an
             // equipped item would show on a key configured to exclude it.
-            if (Candidate::GetBase(c.candidate->candidate).isEquipped) continue;
-            if (isShown(c)) continue;
+            if (Candidate::GetBase(c.candidate->candidate).isEquipped) return;
+            if (isShown(c)) return;
             // An item an upsert displaced this fight, or one that left a key
             // recently, never comes back through an upsert: that would be the
             // home-key move the combat lock defers, as a second change.
-            if (m_upsertMemory.Excluded(c.formID, c.uniqueID, c.name, nowMs, recentMs)) continue;
-            source.push_back(j);
+            if (m_upsertMemory.Excluded(c.formID, c.uniqueID, c.name, nowMs, recentMs)) return;
+            for (const auto* s : source) {
+                if (sameItem(*s, c)) return;   // already offered
+            }
+            source.push_back(&c);
+            staleOnly.push_back(forStaleOnly);
             scores.push_back(c.score);
+        };
+        for (size_t j = 0; j < std::min(wanted.size(), MAX_SLOTS); ++j) offer(wanted[j], false);
+        if (anyStale) {
+            for (size_t j = 0; j < std::min(run.memorylessPage.size(), MAX_SLOTS); ++j) {
+                offer(run.memorylessPage[j], true);
+            }
         }
         if (source.empty()) {
             return;
@@ -1084,8 +1121,10 @@ namespace Huginn::Slot
             if (!frozen[k]) continue;
             const auto* held = result[k].candidate ? &*result[k].candidate : nullptr;
             for (size_t c = 0; c < source.size(); ++c) {
-                const auto& cand = wanted[source[c]];
-                fits[k][c] = source[c] == k || SlotClassifier::Matches(*cand.candidate, result[k].classification);
+                const auto& cand = *source[c];
+                fits[k][c] = (!staleOnly[c] || stale[k]) &&
+                             ((!staleOnly[c] && cand.slotIndex == k) ||
+                              SlotClassifier::Matches(*cand.candidate, result[k].classification));
                 if (held && held->choice.beliefs && held->choice.beliefs == cand.candidate->choice.beliefs) {
                     sigma[k][c] = Core::Challenger::SigmaDelta(held->choice.beliefs->DeltaVar(
                         cand.candidate->choice.beliefRow, held->choice.beliefRow));
@@ -1098,16 +1137,25 @@ namespace Huginn::Slot
         rule.minGap = run.challengerMinGap;
         rule.z = Core::Challenger::ZForConfidence(static_cast<double>(m_config.combatChallengerConfidence));
         rule.testAll = run.testAllChallengers;
+        if (anyStale) {
+            // The calm hold's line (fChallengerConfidence; the fixed barrier
+            // at 1 x ln(1 + fChallengerMargin)), never above the combat one.
+            rule.staleKeys = stale;
+            rule.zStale = run.challengerZ;
+            rule.barrierStale = Core::CombatUpsertBarrier(1.0f, run.challengerMargin);
+        }
         const double logMargin = Core::LogHoldMargin(run.challengerMargin);
         for (const auto& pick : Core::PlanCombatUpserts(frozen, scores, fits, sigma, rule, /*maxPicks=*/1)) {
             const size_t k = pick.key;
             auto& slot = m_lockedSlots[k];
-            SlotAssignment next = wanted[source[pick.challenger]];
+            SlotAssignment next = *source[pick.challenger];
             next.slotIndex = k;
             next.classification = result[k].classification;
             next.seatMoved = false;
-            const std::string passed = pick.passedOver > 0
-                ? std::format("; {} higher challenger(s) missed the line", pick.passedOver) : std::string{};
+            const std::string passed = (pick.passedOver > 0
+                ? std::format("; {} higher challenger(s) missed the line", pick.passedOver) : std::string{}) +
+                (pick.stale ? "; stale key, the calm line" : "");
+            const double zUsed = pick.stale ? std::min(rule.z, rule.zStale) : rule.z;
             if (pick.sd >= 0.0) {
                 // The challenger rule decided: the gap against ln m + z sd and
                 // P(better), as the [Hold] lines print them.
@@ -1116,11 +1164,12 @@ namespace Huginn::Slot
                 spdlog::info("[SlotLocker] Slot {} combat upsert: '{}' -> '{}' (s={:+.3f} vs {:+.3f}, "
                              "{:+.3f} > ln m {:.3f} + z {:.2f} x sd {:.3f}, P {:.3f}{})",
                     k, result[k].name, next.name, next.score, result[k].score, pick.margin,
-                    rule.minGap, rule.z, pick.sd, p, passed);
+                    rule.minGap, zUsed, pick.sd, p, passed);
             } else {
                 spdlog::info("[SlotLocker] Slot {} combat upsert: '{}' -> '{}' (s={:+.3f} vs {:+.3f}, {:+.3f} > {:.1f} x ln m {:.3f}, no belief{})",
                     k, result[k].name, next.name, next.score, result[k].score, pick.margin,
-                    m_config.combatUpsertMarginMult, logMargin, passed);
+                    pick.stale ? std::min(1.0f, m_config.combatUpsertMarginMult) : m_config.combatUpsertMarginMult,
+                    logMargin, passed);
             }
             m_upsertMemory.NoteLeft({ result[k].formID, result[k].uniqueID, result[k].name }, nowMs, /*byUpsert=*/true);
             m_upsertMemory.NoteUpsert(nowMs);

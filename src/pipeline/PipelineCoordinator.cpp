@@ -1049,9 +1049,15 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
         ctx.pageRunRows.clear();
         for (const auto& sc : pageCandidates) ctx.pageRunRows.push_back(sc.isRememberedOnly ? UINT32_MAX : sc.runRow);
     }
+    // 0.24.31: in combat, the page the ranking alone builds, for the combat
+    // upsert's stale keys (core/CombatUpsert.h). Out of combat no key is
+    // combat-locked, so it is not built.
+    const bool wantMemoryless = ctx.playerState.isInCombat;
+    Slot::SlotAssignments memorylessPage;
     ctx.rawAssignments = slotAllocator.AllocateSlotsForPage(
         ctx.displayPageIndex, pageCandidates, ctx.overrides, ctx.playerState, ctx.worldState,
-        &wildcardRequest, &wildcardResult, legacyShadowInput);
+        &wildcardRequest, &wildcardResult, legacyShadowInput,
+        wantMemoryless ? &memorylessPage : nullptr);
     ctx.haveAllocInput = legacyShadowInput != nullptr && !ctx.legacyShadowAllocInput.slots.empty() &&
                          ctx.legacyShadowAllocInput.candidates.size() == ctx.pageRunRows.size();
     // If an off-thread page mutation landed since the snapshot (Wheeler callback,
@@ -1113,6 +1119,22 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
     lockRun.challengerZ = Core::Challenger::ZForConfidence(Slot::SlotSettings::GetSingleton().ChallengerConfidence());
     lockRun.challengerMinGap = Core::Challenger::ClampMinGap(Slot::SlotSettings::GetSingleton().ChallengerMinGap());
     lockRun.testAllChallengers = Slot::SlotSettings::GetSingleton().TestAllChallengers();
+    lockRun.haveMemorylessPage = wantMemoryless && !memorylessPage.empty();
+    lockRun.memorylessPage = std::move(memorylessPage);
+    if (lockRun.haveMemorylessPage) {
+        // The rank floor (iCombatStaleRank): the score of that rank's row.
+        // With fewer ranked rows than the floor, nothing is stale by rank.
+        const int floorRank = slotLocker.GetConfig().combatStaleRank;
+        std::vector<double> ranked;
+        ranked.reserve(pageCandidates.size());
+        for (const auto& sc : pageCandidates) {
+            if (!sc.isRememberedOnly && std::isfinite(sc.score)) ranked.push_back(sc.score);
+        }
+        if (floorRank > 0 && ranked.size() >= static_cast<size_t>(floorRank)) {
+            std::nth_element(ranked.begin(), ranked.begin() + (floorRank - 1), ranked.end(), std::greater<>());
+            lockRun.staleBelowScore = ranked[static_cast<size_t>(floorRank - 1)];
+        }
+    }
     // A combat-locked key's item, checked against the game every run: a spell
     // or shout the player no longer knows, or an item now equipped / worn.
     // The worn stack's uniqueID in one hand (the list carrying ExtraWorn, else

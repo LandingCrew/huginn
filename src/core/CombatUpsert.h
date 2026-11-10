@@ -36,6 +36,18 @@
 // belief line is symmetric in the pair, so the item an upsert displaced could
 // not take the key back even without CombatUpsertMemory, which bars it anyway.
 //
+// Stale keys (0.24.31, bCombatUpsertStaleKeys). The freeze keeps every key on
+// what it held when the fight began, and with sd ~2 on both sides the combat
+// line asks a lead of about 7: on 2026-11-09 Drop Zone (ranked 124th) and a
+// weapon ranked 167th sat on keys through a fire fight while the page the
+// ranking alone builds (core/SlotAllocStateless.h, the memoryless page) put a
+// Resist Fire potion on key 7. A key whose item that page no longer shows is
+// stale: the player is not reaching for it, so a change there costs less than
+// on a key the ranking still wants. A stale key is asked at the calm hold's
+// line instead -- z = Phi^-1(fChallengerConfidence), the fixed barrier
+// 1 x ln(1 + fChallengerMargin) -- never above the combat line. Every other
+// rule here (the gate, the page spacing, the cooldown, no swap-back) holds.
+//
 // Which challengers are asked (bTestAllChallengers, shared with the hold):
 // 0 (default) asks each key's BEST fitting challenger only; 1 asks them in
 // rank order and the first that clears the line takes the key. Under the
@@ -200,6 +212,24 @@ namespace Huginn::Core
         double minGap = 0.0;
         double z = 0.0;
         bool testAll = false;
+        /// 0.24.31: staleKeys[k] = key k's item is not on the memoryless page
+        /// (missing entries = not stale); such a key is asked at zStale and
+        /// barrierStale, each capped at the combat line's.
+        std::vector<bool> staleKeys;
+        double zStale = 0.0;
+        double barrierStale = std::numeric_limits<double>::infinity();
+
+        /// The line key k is asked at: the combat line, or the calm one for a stale key.
+        [[nodiscard]] CombatUpsertRule ForKey(std::size_t k) const
+        {
+            CombatUpsertRule r{ barrier, minGap, z, testAll, {}, 0.0, std::numeric_limits<double>::infinity() };
+            if (k < staleKeys.size() && staleKeys[k]) {
+                if (zStale >= 0.0 && zStale < r.z) r.z = zStale;
+                if (barrierStale >= 0.0 && barrierStale < r.barrier) r.barrier = barrierStale;
+            }
+            return r;
+        }
+        [[nodiscard]] bool Stale(std::size_t k) const noexcept { return k < staleKeys.size() && staleKeys[k]; }
     };
 
     /// One pair under the rule. `sigmaDelta`: the pair's sigma_Delta; NaN or
@@ -225,6 +255,7 @@ namespace Huginn::Core
         double margin = 0.0;          ///< s(challenger) - s(frozen item)
         double sd = -1.0;             ///< sigma_Delta when the challenger rule decided; < 0 = the fixed barrier
         std::size_t passedOver = 0;   ///< higher-ranked challengers for the key that missed the line (testAll)
+        bool stale = false;           ///< 0.24.31: the key was stale, asked at the calm line
     };
 
     /// Which challenger takes which key this run. `frozen[k]`: the score of the
@@ -265,13 +296,16 @@ namespace Huginn::Core
             std::optional<CombatUpsertPick> best;
             for (std::size_t k = 0; k < frozen.size(); ++k) {
                 if (keyTaken[k] || !frozen[k] || k >= fits.size()) continue;
+                const CombatUpsertRule keyRule = rule.ForKey(k);
                 std::size_t passed = 0;
                 for (const std::size_t c : order) {
                     if (challengerTaken[c] || c >= fits[k].size() || !fits[k][c]) continue;
                     double sd = -1.0;
-                    if (CombatUpsertTakes(challengers[c], *frozen[k], sigmaOf(k, c), rule, &sd)) {
+                    if (CombatUpsertTakes(challengers[c], *frozen[k], sigmaOf(k, c), keyRule, &sd)) {
                         const double margin = challengers[c] - *frozen[k];
-                        if (!best || margin > best->margin) best = CombatUpsertPick{ k, c, margin, sd, passed };
+                        if (!best || margin > best->margin) {
+                            best = CombatUpsertPick{ k, c, margin, sd, passed, rule.Stale(k) };
+                        }
                         break;
                     }
                     if (!rule.testAll) break;   // the best challenger only
