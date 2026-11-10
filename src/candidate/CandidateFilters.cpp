@@ -399,7 +399,6 @@ namespace Huginn::Candidate
                         case R::no_workstation:
                         case R::not_dark:
                         case R::favorite_suppressed:
-                        case R::lock_out_of_reach:
                             ++stats.filteredByHardGate;
                             if (isWeapon) ++weaponsFilteredByHardGate;
                             // Not while on cooldown: 0.23.54 dropped such an
@@ -412,6 +411,14 @@ namespace Huginn::Candidate
                                 if (!activeCooldowns.contains(CooldownManager::MakeKey(gated.formID, gated.sourceType)))
                                     setAsideForHold();
                             }
+                            break;
+                        case R::lock_out_of_reach:
+                            // 0.24.30: a hard gate, but never set aside for the
+                            // hold: a held key showing an Open Lock spell that
+                            // cannot open the lock in the crosshair is the bug
+                            // this gate fixes.
+                            ++stats.filteredByHardGate;
+                            if (isWeapon) ++weaponsFilteredByHardGate;
                             break;
                         case R::equipped:
                             ++stats.filteredByEquipped;

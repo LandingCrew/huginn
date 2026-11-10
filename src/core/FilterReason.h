@@ -59,7 +59,7 @@ namespace Huginn::Core::Filter
         not_dark,             // a torch while darkness does not apply
         favorite_suppressed,  // a favourite under [Favorites] sFavoritesMode = Suppress
         // 0.24.30 (core/LockReach.h), appended like the gates above
-        lock_out_of_reach,    // an unlock spell or scroll that cannot open the lock in the crosshair
+        lock_out_of_reach,    // an unlock spell, scroll or staff that cannot open the lock in the crosshair
         _Count
     };
     inline constexpr std::size_t kReasonCount = static_cast<std::size_t>(Reason::_Count);

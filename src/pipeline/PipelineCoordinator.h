@@ -83,6 +83,11 @@ namespace Huginn::Pipeline
         // entering its last fRefreshPriorSec seconds moves no hashed bucket,
         // and the filters only let its item through on a run.
         Core::Refresh::DueBits refreshDue = 0;
+        // 0.24.30: the crosshair lock's level (Gate::Inputs::lockLevel,
+        // Lock::kNoLock for none). Compared like refreshDue: the need reads
+        // only 0/1, so a Novice door beside an Expert chest moves nothing
+        // hashed, and lock_out_of_reach only redraws on a run.
+        int lockLevel = -1;
         // R8.1: seconds since the current fight began, kNever out of combat
         // (core/CombatOnset.h): the combat_onset clock, read once per run for
         // the legacy pass's potion multiplier.
@@ -202,6 +207,7 @@ namespace Huginn::Pipeline
             underwaterActive = false;
             workstationActive = false;
             refreshDue = 0;
+            lockLevel = -1;
             combatOnsetAgo = 0.0f;
 
             scoredCandidates.clear();
@@ -425,6 +431,7 @@ namespace Huginn::Pipeline
         std::atomic<uint64_t> m_lastNeedSignature{ 0 };
         uint8_t m_lastOverrideSignature = 0xFF;   // never a real signature: first run always counts
         Core::Refresh::DueBits m_lastRefreshDue = 0;   // R8.1: refreshDue at the last run
+        int m_lastLockLevel = -1;                        // 0.24.30: lockLevel at the last run
 
         // Holds the displayed reason so a momentary one stays readable.
         // Label-only (R8.3: fed by the page's explanations, UpdateContextReason);

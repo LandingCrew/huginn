@@ -238,6 +238,7 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
 
     // R8.1: the refresh pass's bits, as the magic-effects poll left them.
     ctx.refreshDue = ctx.playerState.buffs.refreshDue;
+    ctx.lockLevel = ctx.worldState.isLookingAtLock ? ctx.worldState.lockLevel : Core::Lock::kNoLock;
 
     // R8.1: the one combat clock (combat_onset's), for the discriminator.
     ctx.combatOnsetAgo = Core::Needs::CombatOnsetAgo(ctx.playerState.isInCombat,
@@ -280,7 +281,8 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
     // window, so the active-buff filter lets its item through.
     const bool signatureChanged = ctx.needSignature != m_lastNeedSignature.load(std::memory_order_relaxed) ||
                                 ctx.overrideSignature != m_lastOverrideSignature ||
-                                ctx.refreshDue != m_lastRefreshDue;
+                                ctx.refreshDue != m_lastRefreshDue ||
+                                ctx.lockLevel != m_lastLockLevel;   // 0.24.30: lock_out_of_reach
 
     if (ctx.stateHash == m_lastPipelineHash && !pageChanged &&
         !unhashedStateActive && !signatureChanged && !NeedsForcedRun()) {
@@ -294,6 +296,7 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
     m_lastNeedSignature.store(ctx.needSignature, std::memory_order_relaxed);
     m_lastOverrideSignature = ctx.overrideSignature;
     m_lastRefreshDue = ctx.refreshDue;
+    m_lastLockLevel = ctx.lockLevel;
 
     // Commit point for the learner latch: everything below this line scores and
     // publishes, so whatever reward set the flag is about to reach the widget.

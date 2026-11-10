@@ -249,7 +249,7 @@ into the filters ([3-candidate-filtering.md §2.7](3-candidate-filtering.md#27-h
 `no_workstation` (fortify apparel, no station up for a craft it fortifies),
 `not_dark` (a torch while darkness does not apply: daylight, or a light already
 up) and `favorite_suppressed` (a favourite under `sFavoritesMode = Suppress`).
-0.24.30 appends `lock_out_of_reach` (an unlock spell or scroll that cannot open
+0.24.30 appends `lock_out_of_reach` (an unlock spell, scroll or staff that cannot open
 the lock in the crosshair; `core/LockReach.h`).
 In the visitor they run before the active-buff filters, so an item both gated
 and covered reads the gate. Appended, so the indices above do not move; a row's
