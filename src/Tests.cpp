@@ -3268,6 +3268,7 @@ void RunUnitTests()
                 noviceScroll.name = "Scroll of Open Novice Lock";
                 noviceScroll.formID = 0x0BADF10E;
                 noviceScroll.tagsExt = Spell::SpellTagExt::Unlock;
+                noviceScroll.count = 1;   // a scroll with none is dropped as unaffordable first
                 const State::PlayerActorState anyone{};
                 State::WorldState expertLock{};
                 expertLock.isLookingAtLock = true;
@@ -3277,14 +3278,24 @@ void RunUnitTests()
                 State::WorldState noLock{};
                 noLock.lockLevel = State::LockLevel::MASTER;   // stale level, no lock in the crosshair
                 const auto lockR = Core::Filter::Reason::lock_out_of_reach;
-                if (FilterReasonFor(novice, anyone, testTargets, expertLock) != lockR ||
-                    FilterReasonFor(noviceScroll, anyone, testTargets, expertLock) != lockR ||
-                    FilterReasonFor(master, anyone, testTargets, expertLock).has_value() ||
-                    FilterReasonFor(master, anyone, testTargets, keyLock) != lockR ||
-                    FilterReasonFor(novice, anyone, testTargets, noLock).has_value()) {
-                    logger::error("TEST FAIL (6k): lock_out_of_reach should drop an unlock spell or scroll below the "
-                        "crosshair lock (and every one at a key-only lock), and nothing without a lock");
-                    return;
+                const auto name = [](std::optional<Core::Filter::Reason> r) {
+                    return r ? std::string(Core::Filter::ReasonName(*r)) : std::string("kept");
+                };
+                struct LockCase { const char* what; Candidate::CandidateVariant c; const State::WorldState* w; bool drop; };
+                const LockCase cases[] = {
+                    { "Open Novice Lock at an Expert lock", novice, &expertLock, true },
+                    { "Scroll of Open Novice Lock at an Expert lock", noviceScroll, &expertLock, true },
+                    { "Open Master Lock at an Expert lock", master, &expertLock, false },
+                    { "Open Master Lock at a key-only lock", master, &keyLock, true },
+                    { "Open Novice Lock with no lock in the crosshair", novice, &noLock, false },
+                };
+                for (const auto& lc : cases) {
+                    const auto r = FilterReasonFor(lc.c, anyone, testTargets, *lc.w);
+                    if (lc.drop ? r != lockR : r.has_value()) {
+                        logger::error("TEST FAIL (6k): {}: got {}, want {}", lc.what, name(r),
+                            lc.drop ? "lock_out_of_reach" : "kept");
+                        return;
+                    }
                 }
             }
 
