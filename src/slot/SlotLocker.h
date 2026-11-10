@@ -52,9 +52,9 @@ namespace Huginn::Slot
         // (fChallengerConfidence), and that page's items challenge it
         // (core/CombatUpsert.h, stale keys).
         bool combatUpsertStaleKeys = true;
-        // ...asked at this confidence (fCombatStaleConfidence, 0.5-0.999):
-        // stricter than the calm hold, looser than the combat line.
-        float combatStaleConfidence = 0.95f;
+        // ...asked at this confidence (fCombatStaleConfidence, 0.5-0.999;
+        // 0.8, the calm hold's): looser than the combat line.
+        float combatStaleConfidence = 0.8f;
         // ... and only when its item ranks worse than this (iCombatStaleRank):
         // an attack spell the memoryless page leaves out while you heal is
         // still one you reach for. 0 = the memoryless page alone decides.

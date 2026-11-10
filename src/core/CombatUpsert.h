@@ -44,7 +44,7 @@
 // Resist Fire potion on key 7. A key whose item that page no longer shows is
 // stale: the player is not reaching for it, so a change there costs less than
 // on a key the ranking still wants. A stale key is asked at a looser line --
-// z = Phi^-1(fCombatStaleConfidence) (0.95: z 1.645), the fixed barrier
+// z = Phi^-1(fCombatStaleConfidence) (0.8: z 0.84), the fixed barrier
 // 2 x ln(1 + fChallengerMargin) -- never above the combat line. Every other
 // rule here (the gate, the page spacing, the cooldown, no swap-back) holds.
 // The caller (SlotLocker) also requires the item rank past iCombatStaleRank,
@@ -52,7 +52,9 @@
 // player pressed this fight on the item it shows: the first version (the
 // calm 0.8 line, no such limits) made 21 changes in 2 min 10 s in game, items
 // it brought in going stale and out again, and swapped out a Fireball the
-// player had just cast.
+// player had just cast. With the limits, 0.95 was tried next and proved too
+// strict: the line scales with the scores' sd, about 3 after a reset, so dead
+// keys held through a two-minute fight against leads of 3-5 (2026-11-09).
 //
 // Which challengers are asked (bTestAllChallengers, shared with the hold):
 // 0 (default) asks each key's BEST fitting challenger only; 1 asks them in

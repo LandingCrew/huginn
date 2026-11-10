@@ -1152,8 +1152,8 @@ namespace Huginn::Slot
             // The calm hold's line (fChallengerConfidence; the fixed barrier
             // at 1 x ln(1 + fChallengerMargin)), never above the combat one.
             rule.staleKeys = stale;
-            // fCombatStaleConfidence (0.95: z 1.645, about twice the calm
-            // z 0.84); the fixed barrier twice the calm one to match.
+            // fCombatStaleConfidence (0.8: z 0.84, the calm hold's); with no
+            // belief the fixed barrier is twice the calm one.
             rule.zStale = Core::Challenger::ZForConfidence(static_cast<double>(m_config.combatStaleConfidence));
             rule.barrierStale = Core::CombatUpsertBarrier(2.0f, run.challengerMargin);
         }

@@ -259,8 +259,8 @@ Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {
           Core::Challenger::kMaxConfidence));
     // 0.24.29: stale keys take a challenger at the calm line (core/CombatUpsert.h).
     config.combatUpsertStaleKeys = ini.GetBoolValue(section, "bCombatUpsertStaleKeys", true);
-    const double staleConfidence = ini.GetDoubleValue(section, "fCombatStaleConfidence", 0.95);
-    config.combatStaleConfidence = !std::isfinite(staleConfidence) ? 0.95f
+    const double staleConfidence = ini.GetDoubleValue(section, "fCombatStaleConfidence", 0.8);
+    config.combatStaleConfidence = !std::isfinite(staleConfidence) ? 0.8f
       : static_cast<float>(std::clamp(staleConfidence, Core::Challenger::kMinConfidence,
           Core::Challenger::kMaxConfidence));
     config.combatStaleRank = static_cast<int>(std::clamp<long>(ini.GetLongValue(section, "iCombatStaleRank", 16), 0, 500));
