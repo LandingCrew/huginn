@@ -105,11 +105,11 @@ table is the code, not an idealisation:
 
 | | Affordability | Equipped | Full vitals | Hard gates (§2.7) | Active buff |
 |---|---|---|---|---|---|
-| **Spell** | `currentMagicka < effectiveCost` → policy-dependent (§3) | `player.IsSpellEquipped(formID)` | RestoreHealth, RestoreMagicka | `favorite_suppressed`, `no_follower` (TargetsOthers) | Invisibility, Muffle, Armor, `SpellType::Summon` once `summonCount` reaches `summonLimit` (0.23.46; before, any summon up hid them all), plus resist redundancy |
+| **Spell** | `currentMagicka < effectiveCost` → policy-dependent (§3) | `player.IsSpellEquipped(formID)` | RestoreHealth, RestoreMagicka | `favorite_suppressed`, `no_follower` (TargetsOthers), `lock_out_of_reach` (Unlock) | Invisibility, Muffle, Armor, `SpellType::Summon` once `summonCount` reaches `summonLimit` (0.23.46; before, any summon up hid them all), plus resist redundancy |
 | **Item** (Potion/Food/SoulGem) | `count <= 0` | — (never filtered) | RestoreHealth, RestoreMagicka, RestoreStamina — **skipped entirely for `Food` and `Alcohol`** | — | resist redundancy, Waterbreathing, Invisibility |
-| **Scroll** | `count <= 0` | — | RestoreHealth only | `no_follower` (TargetsOthers) | Invisibility, Muffle |
+| **Scroll** | `count <= 0` | — | RestoreHealth only | `no_follower` (TargetsOthers), `lock_out_of_reach` (Unlock) | Invisibility, Muffle |
 | **Ammo** | `count <= 0` | `isEquipped` | — | — | — |
-| **Weapon / Staff** | always passes | always passes | — | `favorite_suppressed` | — |
+| **Weapon / Staff** | always passes | always passes | — | `favorite_suppressed`; a staff `lock_out_of_reach` (Unlock) | — |
 | **Torch** | `count <= 0` | `isEquipped` | — | `not_dark` | — |
 | **Apparel** | — (worn pieces are never gathered) | — | — | `no_workstation` | — |
 
@@ -200,6 +200,16 @@ active-buff filters, and each drop is a `Core::Filter::Dropped` with its reason:
 | `no_workstation` | apparel when no craft it fortifies (Smithing, Enchanting, Alchemy) has its station in the crosshair; a ring that fortifies two crafts passes at either | the apparel arm (no baseline; only the station's fortify weight) |
 | `not_dark` | a torch while darkness does not apply: daylight (`WorldState::isDark` false, `fDarkLightLevel` with its hysteresis), or Night Eye, a light spell or a torch already up | the torch arm (`darknessWeight` only) |
 | `favorite_suppressed` | a favourite (spells and weapons carry the flag) under `[Favorites] sFavoritesMode = Suppress` | the two Suppress skips in `UtilityScorer::ScoreCandidates`, deleted |
+| `lock_out_of_reach` (0.24.30) | an unlock spell, scroll or staff (the catalog's `Unlock` facet, `utility_unlock`) whose reach is below the level of the lock in the crosshair, and every one at a lock that requires a key | none: new. The old `unlockWeight` raised every unlock spell alike, and so did `lock_in_crosshair x utility_unlock` |
+
+`lock_out_of_reach`'s reach is read when the catalog maps the item (`core/LockReach.h`,
+`ItemMapping::unlockReach`): the highest of "novice" .. "master" its kept unlock rows' text names,
+description first, then name (Requiem / LoreRim "opening locks up to apprentice level", the Gray
+Cowl's "(novice and apprentice)"). A row that names none (Detonate Lock goes by Alteration skill)
+leaves the item's reach unknown, and it is never dropped for a level, only at a key-only lock. The
+lock's level is `WorldState::lockLevel` while `isLookingAtLock` (`Gate::Inputs::lockLevel`). Found
+2026-11-09: Open Novice Lock offered at an Expert chest; LoreRim's Open Lock spells are scripted
+(magnitude 0), so `utility_unlock` was 0.5 for all five.
 
 One predicate per gate, in `src/core/HardGates.h` (host-tested), on facts read from the
 state by `Context::HardGateInputs` (`context/ContextRuleEngine.h`): `FollowerNear(targets)`,

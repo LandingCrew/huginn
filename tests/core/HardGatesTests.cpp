@@ -116,6 +116,61 @@ TEST_CASE("hard gates: the default inputs gate everything a gate can")
     CHECK(Gate::NoWorkstation(Gate::Crafts{ .enchanting = true }, in.station));
     CHECK(Gate::NotDark(in.darknessApplies));
     CHECK_FALSE(Gate::FavoriteSuppressed(true, in.suppressFavorites));
+    // No lock in the crosshair: no unlock item is dropped for its reach.
+    CHECK(in.lockLevel == Lock::kNoLock);
+    CHECK_FALSE(Gate::LockOutOfReach(true, Lock::kNovice, in.lockLevel));
+}
+
+TEST_CASE("lock reach: the highest level word an unlock row's text names (0.24.30)")
+{
+    // Requiem / LoreRim: name and description agree.
+    CHECK(Lock::ReachFromText("Open Novice Lock") == Lock::kNovice);
+    CHECK(Lock::ReachFromText("The spell transmutes locked objects, opening locks up to apprentice level.") ==
+          Lock::kApprentice);
+    CHECK(Lock::ReachFromText("Open Master Lock") == Lock::kMaster);
+    // Gray Cowl's Unlock Container names two: the higher one is the reach.
+    CHECK(Lock::ReachFromText("Unlocks the nearest locked (novice and apprentice) container") == Lock::kApprentice);
+    CHECK(Lock::ReachFromText("can open locks with level Expert and below") == Lock::kExpert);
+    // No level word, or one inside another word: unknown.
+    CHECK(Lock::ReachFromText("Open a lock with a level <25> points or more below your Alteration skill") ==
+          Lock::kUnknownReach);
+    CHECK(Lock::ReachFromText("Unlock Container") == Lock::kUnknownReach);
+    CHECK(Lock::ReachFromText("Webmaster's key") == Lock::kUnknownReach);
+    CHECK(Lock::ReachFromText("") == Lock::kUnknownReach);
+    // A row: its description first, then its name.
+    CHECK(Lock::RowReach("Open Adept Lock", "") == Lock::kAdept);
+    CHECK(Lock::RowReach("Open Lock", "opening locks up to expert level") == Lock::kExpert);
+}
+
+TEST_CASE("lock reach: an item's reach over its unlock rows")
+{
+    Lock::ItemReach none;
+    CHECK(none.Value() == Lock::kUnknownReach);   // no unlock row
+    Lock::ItemReach two;
+    two.Add(Lock::kNovice);
+    two.Add(Lock::kAdept);
+    CHECK(two.Value() == Lock::kAdept);            // the best row
+    Lock::ItemReach mixed;
+    mixed.Add(Lock::kMaster);
+    mixed.Add(Lock::kUnknownReach);
+    CHECK(mixed.Value() == Lock::kUnknownReach);   // one row of unknown reach: never dropped for a lock
+}
+
+TEST_CASE("hard gates: lock_out_of_reach (0.24.30)")
+{
+    // A lock above the item's reach drops it; at or below keeps it.
+    CHECK(Gate::LockOutOfReach(true, Lock::kNovice, Lock::kExpert));
+    CHECK(Gate::LockOutOfReach(true, Lock::kApprentice, Lock::kAdept));
+    CHECK_FALSE(Gate::LockOutOfReach(true, Lock::kApprentice, Lock::kApprentice));
+    CHECK_FALSE(Gate::LockOutOfReach(true, Lock::kMaster, Lock::kNovice));
+    // A lock that requires a key: no unlock item opens it, known reach or not.
+    CHECK(Gate::LockOutOfReach(true, Lock::kMaster, Lock::kRequiresKey));
+    CHECK(Gate::LockOutOfReach(true, Lock::kUnknownReach, Lock::kRequiresKey));
+    // Unknown reach (Detonate Lock: by skill): kept for any pickable lock.
+    CHECK_FALSE(Gate::LockOutOfReach(true, Lock::kUnknownReach, Lock::kMaster));
+    // No lock in the crosshair, or not an unlock item: never.
+    CHECK_FALSE(Gate::LockOutOfReach(true, Lock::kNovice, Lock::kNoLock));
+    CHECK_FALSE(Gate::LockOutOfReach(false, Lock::kNovice, Lock::kMaster));
 }
 
 // =============================================================================

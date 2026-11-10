@@ -92,6 +92,7 @@ namespace Huginn::Context
             .station = StationCraft(world),
             .darknessApplies = DarknessApplies(player, world),
             .suppressFavorites = suppressFavorites,
+            .lockLevel = world.isLookingAtLock ? world.lockLevel : Core::Lock::kNoLock,
         };
     }
 

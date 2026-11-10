@@ -195,8 +195,8 @@ TEST_CASE("filter reasons: names, groups and lookup")
 
     // R8.1 (0.23.55): the four hard gates, appended. The values below stay
     // pinned (old files index their own head's list, but the plugin reads the
-    // reasons by value), and the head lists 19 names.
-    CHECK(Filter::kReasonCount == 19);
+    // reasons by value), and the head lists them in this order.
+    CHECK(Filter::kReasonCount == 20);
     CHECK(static_cast<int>(Reason::invisibility) == 5);
     CHECK(static_cast<int>(Reason::resist) == 11);
     CHECK(static_cast<int>(Reason::truncated) == 14);
@@ -205,6 +205,9 @@ TEST_CASE("filter reasons: names, groups and lookup")
     CHECK(Filter::ReasonName(Reason::no_workstation) == "no_workstation");
     CHECK(Filter::ReasonName(Reason::not_dark) == "not_dark");
     CHECK(Filter::ReasonName(Reason::favorite_suppressed) == "favorite_suppressed");
+    // 0.24.30: lock_out_of_reach, appended after them (the head lists 20).
+    CHECK(static_cast<int>(Reason::lock_out_of_reach) == 19);
+    CHECK(Filter::ReasonName(Reason::lock_out_of_reach) == "lock_out_of_reach");
     CHECK(Filter::ReasonName(Reason::_Count) == "?");
 
     const std::vector<Filter::Dropped> dropped{

@@ -92,6 +92,7 @@ namespace
                 f.Add(F::Summon);
             }
             if (type == ST::Utility || has(T::Telekinesis) || hasX(X::Unlock)) f.Add(F::Utility);
+            if (hasX(X::Unlock)) f.Add(F::Unlock);
             if (has(T::Light) || has(T::DetectLife) || hasX(X::DarkVision)) f.Add(F::Vision);
             if (has(T::Ward)) { f.Add(F::Ward); f.Add(F::Defense); }
             if (has(T::Armor)) { f.Add(F::ArmorBuff); f.Add(F::Defense); }
@@ -108,11 +109,13 @@ namespace
             if constexpr (std::is_same_v<T, Candidate::SpellCandidate>) {
                 ff.kind = K::Spell;
                 spellLike(c.type, c.tags, c.tagsExt);
+                if (f.Has(F::Unlock)) ff.unlockReach = Core::Lock::ReachFromText(c.name);   // 0.24.30
                 return true;
             }
             else if constexpr (std::is_same_v<T, Candidate::ScrollCandidate>) {
                 ff.kind = K::Scroll;
                 spellLike(c.type, c.tags, c.tagsExt);
+                if (f.Has(F::Unlock)) ff.unlockReach = Core::Lock::ReachFromText(c.name);   // 0.24.30
                 return true;
             }
             else if constexpr (std::is_same_v<T, Candidate::ItemCandidate>) {
@@ -3250,7 +3253,42 @@ void RunUnitTests()
                 }
             }
 
-            logger::info("  ✓ PASS: spells for others: 0 alone, {:.2f} with a hurt follower"sv, w);
+            // 0.24.30: an unlock spell short of the lock in the crosshair is
+            // dropped (lock_out_of_reach); one that reaches it stays, and with
+            // no lock in the crosshair none is dropped. A key-only lock drops all.
+            {
+                Candidate::SpellCandidate novice{};
+                novice.name = "Open Novice Lock";
+                novice.formID = 0x0BADF10C;
+                novice.tagsExt = Spell::SpellTagExt::Unlock;
+                Candidate::SpellCandidate master = novice;
+                master.name = "Open Master Lock";
+                master.formID = 0x0BADF10D;
+                Candidate::ScrollCandidate noviceScroll{};
+                noviceScroll.name = "Scroll of Open Novice Lock";
+                noviceScroll.formID = 0x0BADF10E;
+                noviceScroll.tagsExt = Spell::SpellTagExt::Unlock;
+                const State::PlayerActorState anyone{};
+                State::WorldState expertLock{};
+                expertLock.isLookingAtLock = true;
+                expertLock.lockLevel = State::LockLevel::EXPERT;
+                State::WorldState keyLock = expertLock;
+                keyLock.lockLevel = State::LockLevel::REQUIRES_KEY;
+                State::WorldState noLock{};
+                noLock.lockLevel = State::LockLevel::MASTER;   // stale level, no lock in the crosshair
+                const auto lockR = Core::Filter::Reason::lock_out_of_reach;
+                if (FilterReasonFor(novice, anyone, testTargets, expertLock) != lockR ||
+                    FilterReasonFor(noviceScroll, anyone, testTargets, expertLock) != lockR ||
+                    FilterReasonFor(master, anyone, testTargets, expertLock).has_value() ||
+                    FilterReasonFor(master, anyone, testTargets, keyLock) != lockR ||
+                    FilterReasonFor(novice, anyone, testTargets, noLock).has_value()) {
+                    logger::error("TEST FAIL (6k): lock_out_of_reach should drop an unlock spell or scroll below the "
+                        "crosshair lock (and every one at a key-only lock), and nothing without a lock");
+                    return;
+                }
+            }
+
+            logger::info("  ✓ PASS: spells for others: 0 alone, {:.2f} with a hurt follower; unlocks by lock level"sv, w);
         }
 
         // Test 6g: No environmental conditions → all weights zero

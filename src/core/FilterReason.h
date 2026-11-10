@@ -58,6 +58,8 @@ namespace Huginn::Core::Filter
         no_workstation,       // fortify apparel, no station up for any craft it fortifies
         not_dark,             // a torch while darkness does not apply
         favorite_suppressed,  // a favourite under [Favorites] sFavoritesMode = Suppress
+        // 0.24.30 (core/LockReach.h), appended like the gates above
+        lock_out_of_reach,    // an unlock spell or scroll that cannot open the lock in the crosshair
         _Count
     };
     inline constexpr std::size_t kReasonCount = static_cast<std::size_t>(Reason::_Count);
@@ -67,6 +69,7 @@ namespace Huginn::Core::Filter
         "invisibility",  "muffle",       "armor",       "summon_limit",   "warming",
         "waterbreathing", "resist",      "cooldown",    "duplicate",      "truncated",
         "no_follower",    "no_workstation", "not_dark", "favorite_suppressed",
+        "lock_out_of_reach",
     };
 
     [[nodiscard]] constexpr std::string_view ReasonName(Reason r) noexcept

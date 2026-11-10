@@ -41,8 +41,11 @@ namespace Huginn::Candidate
 
         // R11: `targetsOthers` is the effect catalog's TargetsOthers facet
         // (core/CapFacets.h), read once per candidate by RunVisitorFilters.
+        // 0.24.30: `unlocks` and `unlockReach` are the catalog's Unlock facet
+        // and reach (core/LockReach.h), read with the facets.
         template <class T>
-        [[nodiscard]] std::optional<R> HardGate(const T& c, const Core::Gate::Inputs& g, bool targetsOthers) noexcept
+        [[nodiscard]] std::optional<R> HardGate(const T& c, const Core::Gate::Inputs& g, bool targetsOthers,
+                                                bool unlocks = false, int unlockReach = Core::Lock::kUnknownReach) noexcept
         {
             // A favourite under Suppress (IsFavoritedCandidate: the one test
             // Candidate::IsFavorited and the scorer read too).
@@ -51,6 +54,8 @@ namespace Huginn::Candidate
             if constexpr (std::is_same_v<T, SpellCandidate> || std::is_same_v<T, ScrollCandidate>) {
                 if (Core::Gate::NoFollower(targetsOthers, g.followerNear))
                     return R::no_follower;
+                if (Core::Gate::LockOutOfReach(unlocks, unlockReach, g.lockLevel))
+                    return R::lock_out_of_reach;
             }
             else if constexpr (std::is_same_v<T, ApparelCandidate>) {
                 if (Core::Gate::NoWorkstation(CraftsOf(c.magnitudes), g.station))
@@ -138,8 +143,9 @@ namespace Huginn::Candidate
                     return R::full_magicka;
 
                 // 4. Hard gates (R8.1): a suppressed favourite, a spell for
-                // someone else with no follower near.
-                if (const auto gate = HardGate(c, gates, f.Has(F::TargetsOthers))) return gate;
+                // someone else with no follower near; 0.24.30: an unlock spell
+                // that cannot open the lock in the crosshair.
+                if (const auto gate = HardGate(c, gates, f.Has(F::TargetsOthers), f.Has(F::Unlock), subject.unlockReach)) return gate;
 
                 // 5. Active Buff (R8.1: each passes in its buff's last seconds)
                 if (checkBuffs) {
@@ -234,8 +240,9 @@ namespace Huginn::Candidate
                     player.vitals.health >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
                     return R::full_health;
 
-                // 4. Hard gates (R8.1): a scroll for someone else, no follower near.
-                if (const auto gate = HardGate(c, gates, f.Has(F::TargetsOthers))) return gate;
+                // 4. Hard gates (R8.1): a scroll for someone else, no follower near;
+                // 0.24.30: an unlock scroll that cannot open the lock in the crosshair.
+                if (const auto gate = HardGate(c, gates, f.Has(F::TargetsOthers), f.Has(F::Unlock), subject.unlockReach)) return gate;
 
                 // 5. Active Buff
                 if (checkBuffs) {
@@ -263,7 +270,17 @@ namespace Huginn::Candidate
             else if constexpr (std::is_same_v<T, WeaponCandidate>) {
                 // Weapons pass the other visitor filters (equipped-skip is
                 // per-slot in SlotAllocator); a suppressed favourite is gated.
-                return HardGate(c, gates, false);
+                if (const auto gate = HardGate(c, gates, false)) return gate;
+                // 0.24.30: an Open Lock staff or wand short of the lock in the
+                // crosshair (LoreRim has them at all five levels). The catalog
+                // is asked only while a lock is in the crosshair.
+                if (gates.lockLevel != Core::Lock::kNoLock && c.type == Weapon::WeaponType::Staff) {
+                    const auto staff = Effect::FacetsOfForm(c.formID);
+                    if (staff.known &&
+                        Core::Gate::LockOutOfReach(staff.facets.Has(F::Unlock), staff.unlockReach, gates.lockLevel))
+                        return R::lock_out_of_reach;
+                }
+                return std::nullopt;
             }
             // =================================================================
             // TORCH
@@ -382,6 +399,7 @@ namespace Huginn::Candidate
                         case R::no_workstation:
                         case R::not_dark:
                         case R::favorite_suppressed:
+                        case R::lock_out_of_reach:
                             ++stats.filteredByHardGate;
                             if (isWeapon) ++weaponsFilteredByHardGate;
                             // Not while on cooldown: 0.23.54 dropped such an
