@@ -28,6 +28,18 @@ namespace Huginn::State
         default:                 return -1;
       }
       }
+
+      // 0.24.29: when the player was last hurt by fire, frost or shock, for
+      // the element facets a fight holds (Core::Needs::ElementsShown).
+      void MarkElementHurt(NeedSensorState& n, DamageType type, double nowSec) noexcept
+      {
+      switch (type) {
+        case DamageType::Fire:  n.hurtFireAt = nowSec; break;
+        case DamageType::Frost: n.hurtFrostAt = nowSec; break;
+        case DamageType::Shock: n.hurtShockAt = nowSec; break;
+        default: break;
+      }
+      }
    }
 
    // =============================================================================
@@ -186,6 +198,7 @@ namespace Huginn::State
             case DamageType::Unknown:  n.dmgPhysical.Add(nowSec, damageAmount); break;
             default: break;
           }
+          MarkElementHurt(n, damageType, nowSec);
         });
       }
       }
@@ -198,6 +211,9 @@ namespace Huginn::State
         newState.damageHistory.push_back(DamageEvent(gameTime, 0.0f, latestEvent.type));
         logger::trace("[StateManager] Sub-threshold elemental hit recorded: {} (accumulated={:.1f}, threshold={:.1f})"sv,
            GetDamageTypeName(latestEvent.type), m_healthTracker.accumulated, VitalTracking::HEALTH_DAMAGE_THRESHOLD);
+        // 0.24.29: a typed hit under the threshold still showed its element.
+        const double nowSec = NeedClock::Now();
+        UpdateNeedSensors([&](NeedSensorState& n) { MarkElementHurt(n, latestEvent.type, nowSec); });
       }
       }
 

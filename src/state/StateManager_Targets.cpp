@@ -30,6 +30,23 @@ namespace Huginn::State
       // casting RIGHT NOW (its glow is on screen) -- never its spell list.
       // Bits: 1 fire, 2 frost, 4 shock, read off the casting spell's
       // harmful effects' resist actor value, the engine's own element.
+      std::uint8_t SpellElementBits(const RE::MagicItem* spell)
+      {
+         std::uint8_t bits = 0;
+         if (!spell) return bits;
+         for (const auto* effect : spell->effects) {
+            const auto* mgef = effect ? effect->baseEffect : nullptr;
+            if (!mgef || !mgef->IsDetrimental()) continue;
+            switch (mgef->data.resistVariable) {
+            case RE::ActorValue::kResistFire: bits |= 1; break;
+            case RE::ActorValue::kResistFrost: bits |= 2; break;
+            case RE::ActorValue::kResistShock: bits |= 4; break;
+            default: break;
+            }
+         }
+         return bits;
+      }
+
       std::uint8_t CastElementBits(RE::Actor* actor)
       {
          std::uint8_t bits = 0;
@@ -37,18 +54,22 @@ namespace Huginn::State
                               RE::MagicSystem::CastingSource::kOther }) {
             auto* caster = actor->GetMagicCaster(source);
             if (!caster || caster->state.get() == RE::MagicCaster::State::kNone) continue;
-            auto* spell = caster->currentSpell;
-            if (!spell) continue;
-            for (const auto* effect : spell->effects) {
-               const auto* mgef = effect ? effect->baseEffect : nullptr;
-               if (!mgef || !mgef->IsDetrimental()) continue;
-               switch (mgef->data.resistVariable) {
-               case RE::ActorValue::kResistFire: bits |= 1; break;
-               case RE::ActorValue::kResistFrost: bits |= 2; break;
-               case RE::ActorValue::kResistShock: bits |= 4; break;
-               default: break;
-               }
-            }
+            bits |= SpellElementBits(caster->currentSpell);
+         }
+         return bits;
+      }
+
+      // 0.24.29: the element of a spell an actor holds READY in either hand
+      // with its hands raised (the readied spell's hand art glows), same bits.
+      // The equipped hands only: what it holds, never what it knows.
+      std::uint8_t ReadyElementBits(RE::Actor* actor)
+      {
+         const auto* state = actor->AsActorState();
+         if (!state || !state->IsWeaponDrawn()) return 0;
+         std::uint8_t bits = 0;
+         for (bool left : { false, true }) {
+            auto* obj = actor->GetEquippedObject(left);
+            bits |= SpellElementBits(obj ? obj->As<RE::SpellItem>() : nullptr);
          }
          return bits;
       }
@@ -84,6 +105,7 @@ namespace Huginn::State
          std::uint32_t families = 0;
          bool summoned = false;
          std::uint8_t castBits = 0;
+         std::uint8_t readyBits = 0;   // 0.24.29: ReadyElementBits
       };
    }
 
@@ -450,6 +472,7 @@ namespace Huginn::State
               if (actor->IsCasting(nullptr)) {
                 hostileNeeds.castBits |= CastElementBits(actor);
               }
+              hostileNeeds.readyBits |= ReadyElementBits(actor);
             }
 
             // Skip building secondary state if this is the crosshair target
@@ -978,18 +1001,37 @@ namespace Huginn::State
       // union over every poll while the published combat flag is up, cleared
       // when it drops (a hostile dying mid-fight does not unset its family).
       // Not part of `changed`: the need sensors never open a skip gate.
+      // 0.24.29: the element facets also take what the fight has shown the
+      // player (Core::Needs::ElementsShown): a hostile seen casting fire,
+      // frost or shock or holding it ready, or health lost to it, held the
+      // same way.
       const bool fighting = m_combatDebounce.Value();
+      std::uint32_t shownNew = 0;
       UpdateNeedSensors([&](NeedSensorState& n) {
-        n.families = fighting ? (n.families | hostileNeeds.families) : 0u;
+        if (hostileNeeds.castBits & 1) n.castFireAt = nowSec;
+        if (hostileNeeds.castBits & 2) n.castFrostAt = nowSec;
+        if (hostileNeeds.castBits & 4) n.castShockAt = nowSec;
+        const std::uint32_t shown = fighting
+            ? Core::Needs::ElementsShown(nowSec, { n.castFireAt, n.castFrostAt, n.castShockAt },
+                                         { n.hurtFireAt, n.hurtFrostAt, n.hurtShockAt }, hostileNeeds.readyBits)
+            : 0u;
+        const std::uint32_t before = n.families;
+        n.families = fighting ? (n.families | hostileNeeds.families | shown) : 0u;
+        shownNew = shown & ~(before | hostileNeeds.families);
         n.hostileSummoned = hostileNeeds.summoned;
         n.targetArcher = scoringArcher;
         n.followerBleedout = followerBleedout;
         n.playerSummonNear = playerSummonNear;
         n.soleHostileTtk = soleTtk;
-        if (hostileNeeds.castBits & 1) n.castFireAt = nowSec;
-        if (hostileNeeds.castBits & 2) n.castFrostAt = nowSec;
-        if (hostileNeeds.castBits & 4) n.castShockAt = nowSec;
       });
+      if (shownNew != 0) {
+        using Core::Needs::Family;
+        using Core::Needs::FamilyBit;
+        logger::info("[Needs] Fight element held until combat ends:{}{}{} (seen ready, cast or hurt)"sv,
+            (shownNew & FamilyBit(Family::ElementFire)) ? " fire" : "",
+            (shownNew & FamilyBit(Family::ElementFrost)) ? " frost" : "",
+            (shownNew & FamilyBit(Family::ElementShock)) ? " shock" : "");
+      }
 
       LogTargetsAndActors(nowSec, fighting, scoringPick);
 

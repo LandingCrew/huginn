@@ -82,6 +82,11 @@ namespace Huginn::State
       Core::Needs::DecayingSum dmgShock;
       Core::Needs::DecayingSum dmgMagic;
       Core::Needs::DecayingSum dmgPhysical;
+      // 0.24.29: the last health lost to the element, or a typed hit by it
+      // under the damage threshold (-1 = none): Core::Needs::ElementsShown
+      double hurtFireAt = -1.0;
+      double hurtFrostAt = -1.0;
+      double hurtShockAt = -1.0;
 
       // PollTargets
       double castFireAt = -1.0;          // last seen a living hostile casting the element
