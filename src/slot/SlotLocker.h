@@ -36,29 +36,16 @@ namespace Huginn::Slot
         // as if combat had ended (core::CombatPresence). 0 = follow the game's
         // combat flag alone. Seconds, 0-60.
         float combatNoEnemyReleaseSec = 5.0f;
-        // Combat upsert (core/CombatUpsert.h). Under the choice ranking a
-        // challenger takes a combat-locked key when the challenger rule says
-        // it is better with probability above combatChallengerConfidence
-        // (0.24.13; 0.5-0.999). Where no belief covers the pair (the fallback
-        // ranking) its score must beat the key's item by
-        // combatUpsertMarginMult x ln(1 + fChallengerMargin). A multiplier of
-        // 0 turns the upsert off in both rankings (the freeze is absolute).
-        float combatUpsertMarginMult = 3.0f;
-        float combatChallengerConfidence = 0.995f;
+        // Combat upsert (core/CombatUpsert.h; 0.24.29): a key holds its item
+        // through a fight, and a challenger takes it only when its score beats
+        // the key's item by combatChallengerMargin (fCombatChallengerMargin,
+        // score units, 0-20; below 0 = off: the freeze is absolute) and it has
+        // been on the memoryless page for combatWantedSec (fCombatWantedSec,
+        // 0-30 s): a want that flickers for a second never moves a key.
+        float combatChallengerMargin = 1.0f;
+        float combatWantedSec = 1.5f;
         // At most one upsert per key per this many seconds. 0 = no limit.
-        float combatUpsertCooldownSec = 10.0f;
-        // 0.24.29, bCombatUpsertStaleKeys: a combat-locked key whose item the
-        // memoryless page no longer shows is asked at the calm hold's line
-        // (fChallengerConfidence), and that page's items challenge it
-        // (core/CombatUpsert.h, stale keys).
-        bool combatUpsertStaleKeys = true;
-        // ...asked at this confidence (fCombatStaleConfidence, 0.5-0.999;
-        // 0.8, the calm hold's): looser than the combat line.
-        float combatStaleConfidence = 0.8f;
-        // ... and only when its item ranks worse than this (iCombatStaleRank):
-        // an attack spell the memoryless page leaves out while you heal is
-        // still one you reach for. 0 = the memoryless page alone decides.
-        int combatStaleRank = 16;
+        float combatUpsertCooldownSec = 0.0f;
     };
 
     // =============================================================================
@@ -117,10 +104,7 @@ namespace Huginn::Slot
         // and when the player last pressed it (NoteKeyPress). Epoch = never.
         std::chrono::steady_clock::time_point lastUpsertAt{};
         std::chrono::steady_clock::time_point lastPressAt{};
-        float pressHoldMs = 0.0f;
-        // 0.24.29: this key took a stale-key upsert this fight (one per key
-        // per fight; cleared when combat ends).
-        bool staleUpsertThisFight = false;   // how long that press keeps the key from an upsert (at least the floor)
+        float pressHoldMs = 0.0f;   // how long that press keeps the key from an upsert (at least the floor)
 
         // Churn telemetry. What the player was SHOWN in this slot last run --
         // post-dedup, which `assignment` above is not: an unlocked slot stores
@@ -246,15 +230,11 @@ namespace Huginn::Slot
             std::array<bool, MAX_SLOTS_PER_PAGE> remembranceHoldOnKey{};
             /// 0.24.29: the page this run's ranking alone builds (no hold,
             /// seating, Remembrance or wildcard; SlotAllocator's memorylessOut),
-            /// read only with haveMemorylessPage. A combat-locked key whose item
-            /// it does not show is stale (core/CombatUpsert.h); its items are
-            /// challengers for stale keys.
+            /// read only with haveMemorylessPage: the combat upsert's
+            /// challengers and its fCombatWantedSec clock. Without it, the
+            /// allocator's page (`wanted`) stands in.
             bool haveMemorylessPage = false;
             SlotAssignments memorylessPage;
-            /// 0.24.29: the score of the iCombatStaleRank-th best ranked row
-            /// this run; a key's item must score under it to be stale.
-            /// -inf (the default) = no item is stale by rank.
-            double staleBelowScore = -std::numeric_limits<double>::infinity();
             /// This run's clock for the upsert and the churn record. Epoch (the
             /// default) = steady_clock::now(); the in-game test passes later
             /// times to step past the page spacing without sleeping.
@@ -460,9 +440,19 @@ namespace Huginn::Slot
 
         // The combat flag SetInCombat last saw. Guarded by m_mutex.
         bool m_inCombat = false;
-        // 0.24.29: when the current fight began (a key pressed since then, on
-        // the item it shows, is never stale). Epoch out of combat.
-        std::chrono::steady_clock::time_point m_fightStartAt{};
+        // 0.24.29: since when each item has been on the page the combat
+        // upsert challenges from (fCombatWantedSec), continuously; an item
+        // that leaves it starts over. Cleared when combat ends.
+        struct WantedSince
+        {
+            RE::FormID formID = 0;
+            uint16_t uniqueID = 0;
+            std::string name;
+            double sinceMs = 0.0;
+        };
+        std::vector<WantedSince> m_wantedSince;
+        void NoteWanted(const SlotAssignments& page, double nowMs);
+        [[nodiscard]] double WantedForMs(const SlotAssignment& a, double nowMs) const;
 
         // Combat upsert, page-wide (core::CombatUpsertMemory): items that
         // recently left a key or that an upsert displaced this fight (never
@@ -516,14 +506,12 @@ namespace Huginn::Slot
         void DedupePreferLocked(SlotAssignments& result, const SlotAssignments& wanted);
 
         /// Combat upsert (core/CombatUpsert.h), after dedup: a combat-locked
-        /// key open to it takes a challenger the challenger rule finds better
-        /// with probability above fCombatChallengerConfidence (both rows in
-        /// this run's beliefs), else one whose score beats the key's own item
-        /// by fCombatUpsertMarginMult x ln(1 + fChallengerMargin).
-        /// Challengers: what the allocator placed on this page this run
-        /// (`wanted`, ordinary picks only) that no key shows, not equipped, not
-        /// displaced by an upsert this fight nor gone from a key recently, on
-        /// a key the allocator placed it on or whose class it fits. At most one
+        /// key open to it takes a challenger whose score beats the key's own
+        /// item by fCombatChallengerMargin, once it has been on the memoryless
+        /// page for fCombatWantedSec. Challengers: that page's ordinary picks
+        /// (the allocator's page without it) that no key shows, not equipped,
+        /// nor gone from a key in the last few seconds, on a key whose class
+        /// they fit. At most one
         /// per run, kCombatUpsertPageSpacingMs apart. The new item is locked
         /// like any other. Caller holds m_mutex.
         void ApplyCombatUpserts(SlotAssignments& result, const SlotAssignments& wanted, const RunContext& run,

@@ -1124,20 +1124,6 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
     lockRun.testAllChallengers = Slot::SlotSettings::GetSingleton().TestAllChallengers();
     lockRun.haveMemorylessPage = wantMemoryless && !memorylessPage.empty();
     lockRun.memorylessPage = std::move(memorylessPage);
-    if (lockRun.haveMemorylessPage) {
-        // The rank floor (iCombatStaleRank): the score of that rank's row.
-        // With fewer ranked rows than the floor, nothing is stale by rank.
-        const int floorRank = slotLocker.GetConfig().combatStaleRank;
-        std::vector<double> ranked;
-        ranked.reserve(pageCandidates.size());
-        for (const auto& sc : pageCandidates) {
-            if (!sc.isRememberedOnly && std::isfinite(sc.score)) ranked.push_back(sc.score);
-        }
-        if (floorRank > 0 && ranked.size() >= static_cast<size_t>(floorRank)) {
-            std::nth_element(ranked.begin(), ranked.begin() + (floorRank - 1), ranked.end(), std::greater<>());
-            lockRun.staleBelowScore = ranked[static_cast<size_t>(floorRank - 1)];
-        }
-    }
     // A combat-locked key's item, checked against the game every run: a spell
     // or shout the player no longer knows, or an item now equipped / worn.
     // The worn stack's uniqueID in one hand (the list carrying ExtraWorn, else

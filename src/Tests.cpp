@@ -6239,7 +6239,10 @@ void RunSlotLockerOverrideScopeTest()
     const Override::OverrideCollection none{};
     {
         auto cfg = testConfig;
-        cfg.combatUpsertMarginMult = 3.0f;
+        // 0.24.29: the line is a lead of fCombatChallengerMargin; the wanted
+        // clock (fCombatWantedSec) has its own case below (5s), so 0 here.
+        cfg.combatChallengerMargin = 1.0f;
+        cfg.combatWantedSec = 0.0f;
         cfg.combatUpsertCooldownSec = 10.0f;
         locker.SetConfig(cfg);
         locker.Reset();
@@ -6248,15 +6251,15 @@ void RunSlotLockerOverrideScopeTest()
         // Key 0 frozen on A (s=0), key 1 on C (s=-1.5).
         (void)locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, -1.5 } }), none, {}, at(t0, 0));
 
-        // 5a. Off: the freeze is absolute.
-        cfg.combatUpsertMarginMult = 0.0f;
+        // 5a. Off (fCombatChallengerMargin below 0): the freeze is absolute.
+        cfg.combatChallengerMargin = -1.0f;
         locker.SetConfig(cfg);
         auto shown = locker.ApplyLocks(scoredPage({ { D, 1.5 }, { E, -1.4 } }), none, {}, at(t0, 1000));
         if (!shows(shown, 0, A) || !shows(shown, 1, C)) {
-            logger::error("TEST FAIL: fCombatUpsertMarginMult = 0 still upserted"sv);
+            logger::error("TEST FAIL: fCombatChallengerMargin < 0 still upserted"sv);
             passed = false;
         }
-        cfg.combatUpsertMarginMult = 3.0f;
+        cfg.combatChallengerMargin = 1.0f;
         locker.SetConfig(cfg);
 
         // 5b. The wheel open: none.
@@ -6281,7 +6284,7 @@ void RunSlotLockerOverrideScopeTest()
 
         // 5d. The allocator wants an override on key 1 (waiting out
         //     fMinLockDurationMs): key 1 is left to it. D (+1.5) takes key 0
-        //     (+1.5 > 1.216); one upsert, A displaced.
+        //     (+1.5 > 1.0); one upsert, A displaced.
         auto withHold = at(t0, 2000);
         auto waiting = scoredPage({ { D, 1.5 }, { E, -1.4 } });
         waiting[1].type = AssignmentType::Override;   // no active override: the lock holds, the gate must too
@@ -6329,82 +6332,68 @@ void RunSlotLockerOverrideScopeTest()
         }
         (void)locker.SetInCombat(false);
 
-        // 5s (0.24.29). Stale keys: key 0 frozen on A, key 1 on C, both 0.0,
-        //     and the allocator still wants both (its own hold). The memoryless
-        //     page shows A and G (+1.0), which the allocator's page does not:
-        //     before 0.24.29 G was no challenger at all. Now key 1 (C, off the
-        //     memoryless page) is stale, and G takes it past the stale barrier
-        //     (2 x ln 1.5 = 0.81; the combat one is 1.216); key 0 (A, still on that
-        //     page) keeps A. Nothing changes with bCombatUpsertStaleKeys = 0,
-        //     nor when C scores above the rank floor (iCombatStaleRank's score).
-        constexpr RE::FormID G = 0x0BAD0A08;
-        struct StaleCase { bool on; double floor; bool takes; };
-        for (const auto [staleOn, floorScore, takes] : { StaleCase{ true, 1.0, true }, StaleCase{ true, -1.0, false },
-                                                         StaleCase{ false, 1.0, false } }) {
-            auto staleCfg = cfg;
-            staleCfg.combatUpsertStaleKeys = staleOn;
-            locker.SetConfig(staleCfg);
+        // 5s (0.24.29). The wanted clock (fCombatWantedSec 1.5): key 0 on A
+        //     (0.0), key 1 on C (-2.0); the memoryless page shows A and G
+        //     (+1.0, a lead of 3.0 over C). G takes nothing while it is new
+        //     (4.0 s) or wanted for 1.0 s (5.0 s); at 1.6 s (5.6 s) it takes key
+        //     1, the key it leads by more. 5t: a run without G in between
+        //     restarts its clock. 5u: a lead at the margin (1.0 over A, with C
+        //     gone from the page's challengers) is not enough.
+        constexpr RE::FormID G = 0x0BAD0A08, H = 0x0BAD0A09;
+        {
+            auto wantCfg = cfg;
+            wantCfg.combatWantedSec = 1.5f;
+            wantCfg.combatUpsertCooldownSec = 0.0f;
+            locker.SetConfig(wantCfg);
+            const auto memoryless = [&](std::chrono::steady_clock::time_point t0w, int ms,
+                                        std::initializer_list<std::pair<RE::FormID, double>> rows) {
+                auto run = at(t0w, ms);
+                run.haveMemorylessPage = true;
+                run.memorylessPage = scoredPage(rows);
+                return run;
+            };
             locker.Reset();
             (void)locker.SetInCombat(true);
             const auto t2 = std::chrono::steady_clock::now();
-            (void)locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, 0.0 } }), none, {}, at(t2, 0));
-            auto run = at(t2, 4000);
-            run.haveMemorylessPage = true;
-            run.memorylessPage = scoredPage({ { A, 0.0 }, { G, 1.0 } });
-            run.staleBelowScore = floorScore;
-            shown = locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, 0.0 } }), none, {}, run);
-            const bool want = shows(shown, 0, A) && shows(shown, 1, takes ? G : C);
-            if (!want) {
-                logger::error("TEST FAIL: stale keys {}, floor {:+.1f} (key0={:08X}, key1={:08X}; want A on 0, {} on 1)"sv,
-                    staleOn ? "on" : "off", floorScore, shown.size() > 0 ? shown[0].formID : 0,
-                    shown.size() > 1 ? shown[1].formID : 0, takes ? "G" : "C");
+            (void)locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, -2.0 } }), none, {}, at(t2, 0));
+            shown = locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, -2.0 } }), none, {}, memoryless(t2, 4000, { { A, 0.0 }, { G, 1.0 } }));
+            const bool newHeld = shows(shown, 1, C);
+            shown = locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, -2.0 } }), none, {}, memoryless(t2, 5000, { { A, 0.0 }, { G, 1.0 } }));
+            const bool oneSecHeld = shows(shown, 1, C);
+            shown = locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, -2.0 } }), none, {}, memoryless(t2, 5600, { { A, 0.0 }, { G, 1.0 } }));
+            if (!newHeld || !oneSecHeld || !shows(shown, 1, G) || !shows(shown, 0, A)) {
+                logger::error("TEST FAIL: the wanted clock (new held {}, 1 s held {}; key0={:08X}, key1={:08X}, want A, G at 1.6 s)"sv,
+                    newHeld, oneSecHeld, shown.size() > 0 ? shown[0].formID : 0, shown.size() > 1 ? shown[1].formID : 0);
                 passed = false;
             }
             (void)locker.SetInCombat(false);
-        }
 
-        // 5t. One stale upsert per key per fight: G, brought in by one, is off
-        //     the next memoryless page (H is on it) and past the floor, but key
-        //     1 does not change again this fight -- past the page spacing and
-        //     the key's cooldown. 5u: a key pressed this fight on the item it
-        //     shows is never stale.
-        {
-            constexpr RE::FormID H = 0x0BAD0A09;
-            locker.SetConfig(cfg);
+            // 5t. G wanted at 4.0 s, gone at 5.0 s, back at 5.6 s: its clock
+            //     restarted, so key 1 holds C.
             locker.Reset();
             (void)locker.SetInCombat(true);
             const auto t3 = std::chrono::steady_clock::now();
-            (void)locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, 0.0 } }), none, {}, at(t3, 0));
-            auto firstStale = at(t3, 4000);
-            firstStale.haveMemorylessPage = true;
-            firstStale.memorylessPage = scoredPage({ { A, 0.0 }, { G, 1.0 } });
-            firstStale.staleBelowScore = 2.0;
-            shown = locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, 0.0 } }), none, {}, firstStale);
-            auto again = at(t3, 20000);
-            again.haveMemorylessPage = true;
-            again.memorylessPage = scoredPage({ { A, 0.0 }, { H, 3.0 } });
-            again.staleBelowScore = 2.0;
-            shown = locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, 0.0 } }), none, {}, again);
-            if (!shows(shown, 1, G)) {
-                logger::error("TEST FAIL: a key took a second stale upsert in one fight (key1={:08X}, want G)"sv,
+            (void)locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, -2.0 } }), none, {}, at(t3, 0));
+            (void)locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, -2.0 } }), none, {}, memoryless(t3, 4000, { { A, 0.0 }, { G, 1.0 } }));
+            (void)locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, -2.0 } }), none, {}, memoryless(t3, 5000, { { A, 0.0 } }));
+            shown = locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, -2.0 } }), none, {}, memoryless(t3, 5600, { { A, 0.0 }, { G, 1.0 } }));
+            if (!shows(shown, 1, C)) {
+                logger::error("TEST FAIL: a want that flickered kept its clock (key1={:08X}, want C)"sv,
                     shown.size() > 1 ? shown[1].formID : 0);
                 passed = false;
             }
             (void)locker.SetInCombat(false);
 
+            // 5u. H leads A by exactly the margin (1.0) for 3 s: no change.
             locker.Reset();
             (void)locker.SetInCombat(true);
             const auto t4 = std::chrono::steady_clock::now();
-            (void)locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, 0.0 } }), none, {}, at(t4, 0));
-            locker.NoteKeyPress(1);   // C pressed this fight
-            auto pressedRun = at(t4, 4000);
-            pressedRun.haveMemorylessPage = true;
-            pressedRun.memorylessPage = scoredPage({ { A, 0.0 }, { G, 1.0 } });
-            pressedRun.staleBelowScore = 2.0;
-            shown = locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, 0.0 } }), none, {}, pressedRun);
-            if (!shows(shown, 1, C)) {
-                logger::error("TEST FAIL: a key pressed this fight went stale (key1={:08X}, want C)"sv,
-                    shown.size() > 1 ? shown[1].formID : 0);
+            (void)locker.ApplyLocks(scoredPage({ { A, 0.0 } }), none, {}, at(t4, 0));
+            (void)locker.ApplyLocks(scoredPage({ { A, 0.0 } }), none, {}, memoryless(t4, 4000, { { H, 1.0 } }));
+            shown = locker.ApplyLocks(scoredPage({ { A, 0.0 } }), none, {}, memoryless(t4, 7000, { { H, 1.0 } }));
+            if (!shows(shown, 0, A)) {
+                logger::error("TEST FAIL: a lead at the margin took a key (key0={:08X}, want A)"sv,
+                    shown.size() > 0 ? shown[0].formID : 0);
                 passed = false;
             }
             (void)locker.SetInCombat(false);

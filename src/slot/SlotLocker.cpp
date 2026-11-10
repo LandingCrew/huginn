@@ -146,10 +146,9 @@ namespace Huginn::Slot
             m_config.combatLockDurationMs < 0.0f ? std::string("freeze")
                 : m_config.combatLockDurationMs == 0.0f ? std::string("normal lock")
                 : std::format("{:.0f}ms", m_config.combatLockDurationMs),
-            m_config.combatUpsertMarginMult > 0.0f
-                ? std::format("P(better) > {:.3f} (fallback: x{:.1f} ln m), {:.0f}s per key",
-                      m_config.combatChallengerConfidence, m_config.combatUpsertMarginMult,
-                      m_config.combatUpsertCooldownSec)
+            m_config.combatChallengerMargin >= 0.0f
+                ? std::format("a lead of {:.2f}, wanted {:.1f}s, {:.0f}s per key",
+                      m_config.combatChallengerMargin, m_config.combatWantedSec, m_config.combatUpsertCooldownSec)
                 : std::string("off"));
     }
 
@@ -208,7 +207,7 @@ namespace Huginn::Slot
             return false;
         }
         m_inCombat = inCombat;
-        m_fightStartAt = inCombat ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        m_wantedSince.clear();   // 0.24.29: the wanted clock is per fight
         if (inCombat) {
             // Every key on a normal lock becomes combat-locked on the item it
             // holds (core::ConvertsAtCombatOnset). Left on its timer, it ran
@@ -269,7 +268,6 @@ namespace Huginn::Slot
         // shorter), and is a normal lock from here on. What upserts displaced
         // this fight may be challengers again next fight.
         m_upsertMemory.EndFight();
-        for (auto& slot : m_lockedSlots) slot.staleUpsertThisFight = false;   // 0.24.29: one per key per fight
         bool released = false;
         size_t converted = 0;
         for (auto& slot : m_lockedSlots) {
@@ -875,7 +873,6 @@ namespace Huginn::Slot
             slot.lastUpsertAt = {};
             slot.lastPressAt = {};
             slot.pressHoldMs = 0.0f;
-            slot.staleUpsertThisFight = false;
             // Every slot, locked or not: the whole page's content is about to
             // be replaced, and the player asked for that. Only caller is
             // SlotAllocator::SetCurrentPage.
@@ -968,14 +965,51 @@ namespace Huginn::Slot
             Core::kCombatUpsertPageSpacingMs);
     }
 
+    void SlotLocker::NoteWanted(const SlotAssignments& page, double nowMs)
+    {
+        std::vector<WantedSince> next;
+        for (size_t j = 0; j < std::min(page.size(), MAX_SLOTS); ++j) {
+            const auto& c = page[j];
+            if (c.IsEmpty() || c.type != AssignmentType::Normal) continue;
+            double since = nowMs;
+            for (const auto& w : m_wantedSince) {
+                if ((w.formID == c.formID && w.uniqueID == c.uniqueID) || (!w.name.empty() && w.name == c.name)) {
+                    since = w.sinceMs;
+                    break;
+                }
+            }
+            next.push_back({ c.formID, c.uniqueID, c.name, since });
+        }
+        m_wantedSince = std::move(next);
+    }
+
+    double SlotLocker::WantedForMs(const SlotAssignment& a, double nowMs) const
+    {
+        for (const auto& w : m_wantedSince) {
+            if ((w.formID == a.formID && w.uniqueID == a.uniqueID) || (!w.name.empty() && w.name == a.name)) {
+                return nowMs - w.sinceMs;
+            }
+        }
+        return -1.0;
+    }
+
     void SlotLocker::ApplyCombatUpserts(SlotAssignments& result, const SlotAssignments& wanted, const RunContext& run,
         std::chrono::steady_clock::time_point now)
     {
-        const double barrier = Core::CombatUpsertBarrier(m_config.combatUpsertMarginMult, run.challengerMargin);
-        if (!std::isfinite(barrier)) {
+        const double nowMs = SteadyMs(now);
+        // 0.24.29: the page the challengers come from, and how long each has
+        // been on it (fCombatWantedSec), noted on every run in combat -- before
+        // any early return, so the clock does not skip the runs that change
+        // nothing.
+        const SlotAssignments& source = run.haveMemorylessPage ? run.memorylessPage : wanted;
+        NoteWanted(source, nowMs);
+
+        // 0.24.29: one line -- the challenger's score must beat the key's item
+        // by fCombatChallengerMargin; below 0 the upsert is off.
+        const double margin = static_cast<double>(m_config.combatChallengerMargin);
+        if (!(margin >= 0.0)) {
             return;
         }
-        const double nowMs = SteadyMs(now);
         // One upsert per page per run, kCombatUpsertPageSpacingMs apart.
         if (!m_upsertMemory.PageOpen(nowMs, Core::kCombatUpsertPageSpacingMs)) {
             return;
@@ -1042,41 +1076,8 @@ namespace Huginn::Slot
             return;
         }
 
-        // 0.24.29: stale keys (core/CombatUpsert.h): an open key whose item the
-        // memoryless page does not show, by item as dedup compares (form and
-        // stack, a stack-less side matching any, or the name).
-        const auto sameItem = [](const SlotAssignment& a, const SlotAssignment& b) {
-            if (a.IsEmpty() || b.IsEmpty()) return false;
-            if (a.formID == b.formID && (a.uniqueID == b.uniqueID || a.uniqueID == 0 || b.uniqueID == 0)) return true;
-            return !a.name.empty() && a.name == b.name;
-        };
-        const bool staleOn = m_config.combatUpsertStaleKeys && run.haveMemorylessPage;
-        std::vector<bool> stale(n, false);
-        bool anyStale = false;
-        if (staleOn) {
-            for (size_t i = 0; i < n; ++i) {
-                if (!frozen[i]) continue;
-                // Never twice on one key in a fight (the 0.24.29 test cascaded:
-                // an item a stale upsert brought in went stale and was replaced
-                // seconds later), and never a key the player pressed this fight
-                // on the item it shows (Fireball, pressed, then swapped out).
-                const auto& ls = m_lockedSlots[i];
-                if (ls.staleUpsertThisFight) continue;
-                if (ls.lastPressAt != std::chrono::steady_clock::time_point{} &&
-                    ls.lastPressAt >= m_fightStartAt && ls.lastPressAt >= ls.shownSince) continue;
-                // Off the memoryless page, and (iCombatStaleRank) ranked past
-                // the rank floor: frozen[i] is the score of the item on the key.
-                const bool belowFloor = m_config.combatStaleRank <= 0 || *frozen[i] < run.staleBelowScore;
-                stale[i] = belowFloor && std::none_of(run.memorylessPage.begin(), run.memorylessPage.end(),
-                    [&](const SlotAssignment& m) { return sameItem(m, result[i]); });
-                anyStale = anyStale || stale[i];
-            }
-        }
-
-        // Challengers: the allocator's ordinary picks for this page that no
-        // key shows (by item or by name, as dedup compares). Its seats behind
-        // the locks reshuffle; the set of items it puts on the page is what
-        // the class cap, the slot filters and the ranking agreed on.
+        // Challengers: the source page's ordinary picks that no key shows (by
+        // item or by name, as dedup compares), wanted for fCombatWantedSec.
         auto isShown = [&](const SlotAssignment& c) {
             for (size_t i = 0; i < n; ++i) {
                 const auto& r = result[i];
@@ -1085,106 +1086,59 @@ namespace Huginn::Slot
             }
             return false;
         };
-        // 0.24.29: with a stale key, the memoryless page's items too, after
-        // the allocator's, for the stale keys only (staleOnly below): behind
-        // the allocator's own hold its page can keep the very item that went
-        // stale, and never name the answer the ranking moved up.
-        std::vector<const SlotAssignment*> source;
-        std::vector<bool> staleOnly;
+        std::vector<const SlotAssignment*> pool;
         std::vector<Core::SlotScore> scores;
+        std::vector<double> wantedFor;
         const double recentMs = UpsertRecentMs();
-        const auto offer = [&](const SlotAssignment& c, bool forStaleOnly) {
-            if (c.type != AssignmentType::Normal || !c.candidate || !std::isfinite(c.score)) return;
+        const double wantMs = static_cast<double>(m_config.combatWantedSec) * 1000.0;
+        for (size_t j = 0; j < std::min(source.size(), MAX_SLOTS); ++j) {
+            const auto& c = source[j];
+            if (c.type != AssignmentType::Normal || !c.candidate || !std::isfinite(c.score)) continue;
             // The locker cannot see bSkipEquipped (as the dedup refill): an
             // equipped item would show on a key configured to exclude it.
-            if (Candidate::GetBase(c.candidate->candidate).isEquipped) return;
-            if (isShown(c)) return;
-            // An item an upsert displaced this fight, or one that left a key
-            // recently, never comes back through an upsert: that would be the
-            // home-key move the combat lock defers, as a second change.
-            if (m_upsertMemory.Excluded(c.formID, c.uniqueID, c.name, nowMs, recentMs)) return;
-            for (const auto* s : source) {
-                if (sameItem(*s, c)) return;   // already offered
-            }
-            source.push_back(&c);
-            staleOnly.push_back(forStaleOnly);
+            if (Candidate::GetBase(c.candidate->candidate).isEquipped) continue;
+            if (isShown(c)) continue;
+            // An item that left a key a moment ago does not come straight back
+            // (UpsertRecentMs): that would be two changes on one want.
+            if (m_upsertMemory.Excluded(c.formID, c.uniqueID, c.name, nowMs, recentMs)) continue;
+            const double forMs = WantedForMs(c, nowMs);
+            if (forMs < wantMs) continue;   // a flicker, or too new
+            pool.push_back(&c);
             scores.push_back(c.score);
-        };
-        for (size_t j = 0; j < std::min(wanted.size(), MAX_SLOTS); ++j) offer(wanted[j], false);
-        if (anyStale) {
-            for (size_t j = 0; j < std::min(run.memorylessPage.size(), MAX_SLOTS); ++j) {
-                offer(run.memorylessPage[j], true);
-            }
+            wantedFor.push_back(forMs);
         }
-        if (source.empty()) {
+        if (pool.empty()) {
             return;
         }
-        std::vector<std::vector<bool>> fits(n, std::vector<bool>(source.size(), false));
-        // R9 (0.24.13): the pair's sigma_Delta, when this run's beliefs cover
-        // both rows -- the frozen item's row is this run's only when
-        // RefreshHeld put the scored row on the key (else it carries an older
-        // run's table, and the pair falls back to the fixed barrier, as the
-        // hold does for rows of different runs). NaN = no belief. The
-        // fallback ranking carries no table: every pair is NaN.
-        constexpr double kNoBelief = std::numeric_limits<double>::quiet_NaN();
-        std::vector<std::vector<double>> sigma(n, std::vector<double>(source.size(), kNoBelief));
+        std::vector<std::vector<bool>> fits(n, std::vector<bool>(pool.size(), false));
         for (size_t k = 0; k < n; ++k) {
             if (!frozen[k]) continue;
-            const auto* held = result[k].candidate ? &*result[k].candidate : nullptr;
-            for (size_t c = 0; c < source.size(); ++c) {
-                const auto& cand = *source[c];
-                fits[k][c] = (!staleOnly[c] || stale[k]) &&
-                             ((!staleOnly[c] && cand.slotIndex == k) ||
-                              SlotClassifier::Matches(*cand.candidate, result[k].classification));
-                if (held && held->choice.beliefs && held->choice.beliefs == cand.candidate->choice.beliefs) {
-                    sigma[k][c] = Core::Challenger::SigmaDelta(held->choice.beliefs->DeltaVar(
-                        cand.candidate->choice.beliefRow, held->choice.beliefRow));
-                }
+            for (size_t c = 0; c < pool.size(); ++c) {
+                fits[k][c] = SlotClassifier::Matches(*pool[c]->candidate, result[k].classification);
             }
         }
 
+        // The line, belief or not: lead > fCombatChallengerMargin (z 0, ln m =
+        // the margin, the fixed barrier the margin; core/CombatUpsert.h).
         Core::CombatUpsertRule rule;
-        rule.barrier = barrier;
-        rule.minGap = run.challengerMinGap;
-        rule.z = Core::Challenger::ZForConfidence(static_cast<double>(m_config.combatChallengerConfidence));
+        rule.barrier = margin;
+        rule.minGap = margin;
+        rule.z = 0.0;
         rule.testAll = run.testAllChallengers;
-        if (anyStale) {
-            // The calm hold's line (fChallengerConfidence; the fixed barrier
-            // at 1 x ln(1 + fChallengerMargin)), never above the combat one.
-            rule.staleKeys = stale;
-            // fCombatStaleConfidence (0.8: z 0.84, the calm hold's); with no
-            // belief the fixed barrier is twice the calm one.
-            rule.zStale = Core::Challenger::ZForConfidence(static_cast<double>(m_config.combatStaleConfidence));
-            rule.barrierStale = Core::CombatUpsertBarrier(2.0f, run.challengerMargin);
-        }
-        const double logMargin = Core::LogHoldMargin(run.challengerMargin);
-        for (const auto& pick : Core::PlanCombatUpserts(frozen, scores, fits, sigma, rule, /*maxPicks=*/1)) {
+        for (const auto& pick : Core::PlanCombatUpserts(frozen, scores, fits, {}, rule, /*maxPicks=*/1)) {
             const size_t k = pick.key;
             auto& slot = m_lockedSlots[k];
-            SlotAssignment next = *source[pick.challenger];
+            SlotAssignment next = *pool[pick.challenger];
             next.slotIndex = k;
             next.classification = result[k].classification;
             next.seatMoved = false;
-            const std::string passed = (pick.passedOver > 0
-                ? std::format("; {} higher challenger(s) missed the line", pick.passedOver) : std::string{}) +
-                (pick.stale ? "; stale key, the stale line" : "");
-            const double zUsed = pick.stale ? std::min(rule.z, rule.zStale) : rule.z;
-            if (pick.sd >= 0.0) {
-                // The challenger rule decided: the gap against ln m + z sd and
-                // P(better), as the [Hold] lines print them.
-                const double p = pick.sd > 0.0
-                    ? Core::Challenger::NormalCdf((pick.margin - rule.minGap) / pick.sd) : 1.0;
-                spdlog::info("[SlotLocker] Slot {} combat upsert: '{}' -> '{}' (s={:+.3f} vs {:+.3f}, "
-                             "{:+.3f} > ln m {:.3f} + z {:.2f} x sd {:.3f}, P {:.3f}{})",
-                    k, result[k].name, next.name, next.score, result[k].score, pick.margin,
-                    rule.minGap, zUsed, pick.sd, p, passed);
-            } else {
-                spdlog::info("[SlotLocker] Slot {} combat upsert: '{}' -> '{}' (s={:+.3f} vs {:+.3f}, {:+.3f} > {:.1f} x ln m {:.3f}, no belief{})",
-                    k, result[k].name, next.name, next.score, result[k].score, pick.margin,
-                    pick.stale ? std::min(2.0f, m_config.combatUpsertMarginMult) : m_config.combatUpsertMarginMult,
-                    logMargin, passed);
-            }
-            m_upsertMemory.NoteLeft({ result[k].formID, result[k].uniqueID, result[k].name }, nowMs, /*byUpsert=*/true);
+            spdlog::info("[SlotLocker] Slot {} combat upsert: '{}' -> '{}' (s={:+.3f} vs {:+.3f}, lead {:+.3f} > {:.2f}, "
+                         "wanted {:.1f}s{})",
+                k, result[k].name, next.name, next.score, result[k].score, pick.margin, margin,
+                wantedFor[pick.challenger] / 1000.0,
+                pick.passedOver > 0 ? std::format("; {} higher challenger(s) missed the line", pick.passedOver)
+                                    : std::string{});
+            m_upsertMemory.NoteLeft({ result[k].formID, result[k].uniqueID, result[k].name }, nowMs, /*byUpsert=*/false);
             m_upsertMemory.NoteUpsert(nowMs);
             result[k] = next;
             // Combat-locked on the new item like any other key.
@@ -1192,7 +1146,6 @@ namespace Huginn::Slot
             slot.previousFormID = slot.assignment.formID;
             slot.hadContent = true;
             slot.lastUpsertAt = now;
-            slot.staleUpsertThisFight = slot.staleUpsertThisFight || pick.stale;
             slot.releaseCause = Telemetry::SlotChange::Upsert;
         }
     }
@@ -1359,7 +1312,7 @@ namespace Huginn::Slot
         }
         m_churnBaseline = true;
         m_inCombat = false;
-        m_fightStartAt = {};
+        m_wantedSince.clear();
         m_upsertMemory.Clear();
         m_wheelClosedAt = {};
         spdlog::info("[SlotLocker] Reset complete");

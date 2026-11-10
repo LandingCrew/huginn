@@ -1,6 +1,6 @@
 #pragma once
 
-// Combat upsert (fCombatUpsertMarginMult, fCombatUpsertCooldownSec): the one
+// Combat upsert (fCombatChallengerMargin, fCombatWantedSec, fCombatUpsertCooldownSec): the one
 // way a recommendation that merely scores better takes a combat-locked key.
 //
 // The combat freeze (0.23.37) cut page-0 changes in combat from 34-60 a minute
@@ -13,48 +13,30 @@
 // [Hold] give-ways in 200 s at margins of 0.4-0.9), and following that would
 // bring the churn back.
 //
-// The rule (0.24.13: R9's Bayesian challenger rule, core/ChallengerRule.h, at
-// a stricter confidence). When the scorer's beliefs cover the pair (the choice
-// ranking, both rows of this run's table), a challenger takes the key when
-//   P(challenger better) > fCombatChallengerConfidence
-//   <=>  s(challenger) - s(frozen item) > ln m + z_combat sigma_Delta,
-// z_combat = Phi^-1(fCombatChallengerConfidence) (0.995: z 2.576), ln m =
-// fChallengerMinGap -- the hold's own rule, with the combat confidence. The
-// shipped 0.995 keeps the old ratio: the fixed-margin upsert's barrier was 3x
-// the calm hold's margin (3 x ln 1.5 against ln 1.5), and 3 x z(0.8) = 2.525 =
-// z(0.9942); 0.995 is the nearest round value (z 3.06x the calm one).
-// Where no belief covers the pair -- the FALLBACK ranking (no bootstrap, no
-// sigma), or a frozen item this run did not score (its row is an older run's)
-// -- the fixed barrier, as the hold falls back to the fixed margin:
-//   s(challenger) - s(frozen item) > fCombatUpsertMarginMult * ln(1 + fChallengerMargin)
-// (3 x ln 1.5 = 1.216 shipped: about 3.4x the utility under the R7 bridge).
-// Both scores must be finite. With fChallengerMargin = 0 the barrier is 0 and
-// any better challenger wins; fCombatUpsertMarginMult = 0 turns the upsert off
-// in both rankings (the barrier is infinite and the planner plans nothing).
+// The rule (0.24.29; the game side is SlotLocker::ApplyCombatUpserts). One line,
+// whatever the beliefs:
+//   s(challenger) - s(item on the key) > fCombatChallengerMargin   (1.0)
+// and the challenger has been on the memoryless page (this run's ranking
+// alone, core/SlotAllocStateless.h) for fCombatWantedSec (1.5 s). The game
+// side passes it to the planner below as z = 0, ln m = the margin, and the
+// margin as the fixed barrier; below 0 the upsert is off.
 //
-// No swap-back on fixed beliefs, as for the hold: both lines are >= 0 and the
-// belief line is symmetric in the pair, so the item an upsert displaced could
-// not take the key back even without CombatUpsertMemory, which bars it anyway.
+// Why (2026-11-09, LoreRim): the line before it was the challenger rule at
+// fCombatChallengerConfidence 0.995, z 2.576 x sigma_Delta. With sd 2-3 on
+// both items it asked a lead of about 7, so the freeze held keys on items
+// ranked 45th-167th through whole fights (an answer such as Resist Fire got
+// no key until the fight ended), and every patch on it -- stale keys at 0.8,
+// then 0.95, once per key per fight -- either churned (21 changes in 2 min) or
+// held (all 8 swaps spent in 23 s, then nothing could take a key). A replay of
+// that evening's 31 fights put this rule at about 8.5 changes a minute (the
+// freeze was tuned to about 9), a median wait of 4.4 s from wanted to shown,
+// and no press on an item it had already moved. The wanted clock is what
+// keeps the churn down: half of the items the memoryless page names stop
+// being named within a second or two.
 //
-// Stale keys (0.24.29, bCombatUpsertStaleKeys). The freeze keeps every key on
-// what it held when the fight began, and with sd ~2 on both sides the combat
-// line asks a lead of about 7: on 2026-11-09 Drop Zone (ranked 124th) and a
-// weapon ranked 167th sat on keys through a fire fight while the page the
-// ranking alone builds (core/SlotAllocStateless.h, the memoryless page) put a
-// Resist Fire potion on key 7. A key whose item that page no longer shows is
-// stale: the player is not reaching for it, so a change there costs less than
-// on a key the ranking still wants. A stale key is asked at a looser line --
-// z = Phi^-1(fCombatStaleConfidence) (0.8: z 0.84), the fixed barrier
-// 2 x ln(1 + fChallengerMargin) -- never above the combat line. Every other
-// rule here (the gate, the page spacing, the cooldown, no swap-back) holds.
-// The caller (SlotLocker) also requires the item rank past iCombatStaleRank,
-// and never marks stale a key that took a stale upsert this fight or that the
-// player pressed this fight on the item it shows: the first version (the
-// calm 0.8 line, no such limits) made 21 changes in 2 min 10 s in game, items
-// it brought in going stale and out again, and swapped out a Fireball the
-// player had just cast. With the limits, 0.95 was tried next and proved too
-// strict: the line scales with the scores' sd, about 3 after a reset, so dead
-// keys held through a two-minute fight against leads of 3-5 (2026-11-09).
+// An item an upsert displaced may come back once it has been off its key for
+// UpsertRecentMs (and beats the key's item by the margin again): the fight's
+// context changed, not a flicker.
 //
 // Which challengers are asked (bTestAllChallengers, shared with the hold):
 // 0 (default) asks each key's BEST fitting challenger only; 1 asks them in
@@ -150,7 +132,7 @@ namespace Huginn::Core
     enum class CombatUpsertGate : uint8_t
     {
         Open,
-        Off,              ///< barrier infinite (fCombatUpsertMarginMult = 0)
+        Off,              ///< barrier infinite (the upsert off)
         NotCombatLocked,  ///< the key holds no combat lock
         WheelOpen,        ///< the Wheeler wheel is open
         Pinned,           ///< the key shows an override or Remembrance item
@@ -210,9 +192,10 @@ namespace Huginn::Core
 
     /// The combat upsert's line (0.24.13). `barrier`: the fixed barrier
     /// (CombatUpsertBarrier), for a pair no belief covers; infinite or NaN =
-    /// the upsert is off (fCombatUpsertMarginMult = 0), whatever the beliefs.
+    /// the upsert is off, whatever the beliefs.
     /// `minGap` = ln m (fChallengerMinGap, clamped by Challenger::ClampMinGap),
-    /// `z` = Phi^-1(fCombatChallengerConfidence) (Challenger::ZForConfidence),
+    /// `z` the multiple of sigma_Delta (0.24.29: 0 -- the game passes its fixed
+    /// fCombatChallengerMargin as ln m and as the barrier),
     /// both >= 0. `testAll` = bTestAllChallengers.
     struct CombatUpsertRule
     {
@@ -220,24 +203,6 @@ namespace Huginn::Core
         double minGap = 0.0;
         double z = 0.0;
         bool testAll = false;
-        /// 0.24.29: staleKeys[k] = key k's item is not on the memoryless page
-        /// (missing entries = not stale); such a key is asked at zStale and
-        /// barrierStale, each capped at the combat line's.
-        std::vector<bool> staleKeys;
-        double zStale = 0.0;
-        double barrierStale = std::numeric_limits<double>::infinity();
-
-        /// The line key k is asked at: the combat line, or the stale one for a stale key.
-        [[nodiscard]] CombatUpsertRule ForKey(std::size_t k) const
-        {
-            CombatUpsertRule r{ barrier, minGap, z, testAll, {}, 0.0, std::numeric_limits<double>::infinity() };
-            if (k < staleKeys.size() && staleKeys[k]) {
-                if (zStale >= 0.0 && zStale < r.z) r.z = zStale;
-                if (barrierStale >= 0.0 && barrierStale < r.barrier) r.barrier = barrierStale;
-            }
-            return r;
-        }
-        [[nodiscard]] bool Stale(std::size_t k) const noexcept { return k < staleKeys.size() && staleKeys[k]; }
     };
 
     /// One pair under the rule. `sigmaDelta`: the pair's sigma_Delta; NaN or
@@ -263,7 +228,6 @@ namespace Huginn::Core
         double margin = 0.0;          ///< s(challenger) - s(frozen item)
         double sd = -1.0;             ///< sigma_Delta when the challenger rule decided; < 0 = the fixed barrier
         std::size_t passedOver = 0;   ///< higher-ranked challengers for the key that missed the line (testAll)
-        bool stale = false;           ///< 0.24.29: the key was stale, asked at the stale line
     };
 
     /// Which challenger takes which key this run. `frozen[k]`: the score of the
@@ -304,16 +268,13 @@ namespace Huginn::Core
             std::optional<CombatUpsertPick> best;
             for (std::size_t k = 0; k < frozen.size(); ++k) {
                 if (keyTaken[k] || !frozen[k] || k >= fits.size()) continue;
-                const CombatUpsertRule keyRule = rule.ForKey(k);
                 std::size_t passed = 0;
                 for (const std::size_t c : order) {
                     if (challengerTaken[c] || c >= fits[k].size() || !fits[k][c]) continue;
                     double sd = -1.0;
-                    if (CombatUpsertTakes(challengers[c], *frozen[k], sigmaOf(k, c), keyRule, &sd)) {
+                    if (CombatUpsertTakes(challengers[c], *frozen[k], sigmaOf(k, c), rule, &sd)) {
                         const double margin = challengers[c] - *frozen[k];
-                        if (!best || margin > best->margin) {
-                            best = CombatUpsertPick{ k, c, margin, sd, passed, rule.Stale(k) };
-                        }
+                        if (!best || margin > best->margin) best = CombatUpsertPick{ k, c, margin, sd, passed };
                         break;
                     }
                     if (!rule.testAll) break;   // the best challenger only
