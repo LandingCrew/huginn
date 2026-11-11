@@ -125,7 +125,8 @@ them (percentiles within the load order, presence 1, see
 `core/EffectMapper.h`). Caps are **content-addressed**: two items with the
 same effects share one id, so a dynamic FormID that means something else after
 a reload cannot mislabel a cap. Per-instance caps (a tempered or
-player-enchanted weapon or armour piece; `EffectCatalog::InstanceEntry`) are
+player-enchanted weapon or armour piece; `EffectCatalog::InstanceEntry`; since 0.24.30 the
+player's spells, potions, food, weapons and armour as they have them now, `EffectCatalog::SetLive`) are
 caps like any other.
 
 ### `ctx`

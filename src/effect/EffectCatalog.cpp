@@ -373,8 +373,93 @@ namespace Huginn::Effect
     const CatalogEntry* EffectCatalog::Find(RE::FormID formID) const
     {
         if (!Ready()) return nullptr;
+        if (anyLive_.load(std::memory_order_acquire)) {
+            std::shared_lock lock(liveMutex_);
+            if (const auto it = live_.find(formID); it != live_.end()) return it->second;
+        }
         const auto it = entries_.find(formID);
         return it == entries_.end() ? nullptr : &it->second;
+    }
+
+    bool EffectCatalog::SetLive(const RE::TESBoundObject* form, const LiveNumbers& numbers)
+    {
+        if (!form || !Ready()) return false;
+        std::unique_ptr<CatalogEntry> entry;
+        {
+            std::lock_guard make(liveMakeMutex_);
+            // The same numbers seen before (a conditional perk flipping back):
+            // that entry again, no read.
+            const auto same = [&](const LiveNumbers& a) {
+                if (a.rows.size() != numbers.rows.size() || std::fabs(a.damage - numbers.damage) > 0.01f ||
+                    std::fabs(a.armorRating - numbers.armorRating) > 0.01f) {
+                    return false;
+                }
+                for (std::size_t i = 0; i < a.rows.size(); ++i) {
+                    if (a.rows[i].index != numbers.rows[i].index ||
+                        std::fabs(a.rows[i].magnitude - numbers.rows[i].magnitude) > 0.01f ||
+                        std::fabs(a.rows[i].duration - numbers.rows[i].duration) > 0.01f) {
+                        return false;
+                    }
+                }
+                return true;
+            };
+            auto& made = liveMade_[form->GetFormID()];
+            for (const auto& m : made) {
+                if (!same(m.numbers)) continue;
+                std::unique_lock lock(liveMutex_);
+                live_[form->GetFormID()] = m.entry;
+                anyLive_.store(true, std::memory_order_release);
+                return true;
+            }
+            if (!liveReader_) liveReader_ = std::make_unique<EffectReader>();
+            ReadResult rr;
+            if (!liveReader_->ReadForm(form, nullptr, rr) || rr.items.empty()) return false;
+            auto& item = rr.items.front();
+            MarkHeld(item);   // known or carried: rule 1's tome test does not apply
+            for (auto& row : item.effects) {
+                for (const auto& live : numbers.rows) {
+                    if (live.index != row.index) continue;
+                    row.magnitude = live.magnitude;
+                    row.duration = static_cast<std::uint32_t>(std::lround(std::max(0.0f, live.duration)));
+                    break;
+                }
+            }
+            if (numbers.damage >= 0.0f) item.damage = numbers.damage;
+            if (numbers.armorRating >= 0.0f) item.armorRating = numbers.armorRating;
+            auto classes = ClassifyAll(rr.effects, &overrides_);
+            ResolveZeroMagnitudes(rr.items, rr.effects, classes);
+            const ItemMapping m = MapItem(item, rr.effects, classes);
+            LogBudgetHits("a live entry"sv);
+            if (!m.inScope) return false;
+            entry = std::make_unique<CatalogEntry>(MakeEntry(m, Grade(m, pops_), pops_));
+            made.push_back(LiveMade{ numbers, entry.get() });
+        }
+        std::unique_lock lock(liveMutex_);
+        live_[form->GetFormID()] = entry.get();
+        liveStore_.push_back(std::move(entry));
+        anyLive_.store(true, std::memory_order_release);
+        return true;
+    }
+
+    void EffectCatalog::ClearLive()
+    {
+        {
+            std::lock_guard make(liveMakeMutex_);
+            liveMade_.clear();   // another character's numbers; the entries' memory stays in liveStore_
+        }
+        std::unique_lock lock(liveMutex_);
+        if (!live_.empty()) {
+            logger::info("[LiveValues] {} live entries cleared (a load; {} made since launch)"sv, live_.size(),
+                liveStore_.size());
+        }
+        live_.clear();
+        anyLive_.store(false, std::memory_order_release);
+    }
+
+    std::size_t EffectCatalog::LiveCount() const
+    {
+        std::shared_lock lock(liveMutex_);
+        return live_.size();
     }
 
     std::unique_ptr<CatalogEntry> EffectCatalog::MapLateForm(const RE::TESBoundObject* form)

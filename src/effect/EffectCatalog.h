@@ -62,8 +62,11 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <shared_mutex>
+#include <span>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 namespace Huginn::Effect
 {
@@ -83,6 +86,26 @@ namespace Huginn::Effect
         // perk the character has is added at runtime (CrossFeatures.h
         // PerkAdjustedCap; `hg cap` prints them).
         std::vector<Core::Effect::PerkValue> perkRows;
+    };
+
+    /// 0.24.30: one effect of a spell, potion or food as the player would
+    /// cast or take it now (effect/LiveValues.h): `index` is its place in the
+    /// item's effect list.
+    struct LiveRow
+    {
+        std::uint32_t index = 0;
+        float magnitude = 0.0f;
+        float duration = 0.0f;   // seconds
+    };
+
+    /// 0.24.30: an item's numbers as the player has them now: a spell's,
+    /// potion's or food's effect rows, or a weapon's damage or an armour
+    /// piece's rating (< 0: the record's).
+    struct LiveNumbers
+    {
+        std::vector<LiveRow> rows;
+        float damage = -1.0f;
+        float armorRating = -1.0f;
     };
 
     class EffectCatalog
@@ -127,8 +150,23 @@ namespace Huginn::Effect
         /// Block up to `timeout` for the worker (the console and test mode).
         bool WaitUntilReady(std::chrono::milliseconds timeout) const;
 
-        /// The static entry of an in-scope base form, or nullptr.
+        /// The entry of an in-scope base form, or nullptr: a live entry
+        /// (SetLive) in place of the record's while there is one.
         [[nodiscard]] const CatalogEntry* Find(RE::FormID formID) const;
+        /// 0.24.30: the item as the player has it now -- a spell's, potion's
+        /// or food's effect rows from the game (perks, skill, Fortify school),
+        /// a weapon's damage or an armour piece's rating with tempering
+        /// (effect/LiveValues.h) -- graded against the build's populations.
+        /// Find answers it in place of the record's entry until ClearLive. The
+        /// update loop's thread (it reads the form, as FindOrMap). Returns true
+        /// when the entry was made; the old one's memory is kept for the
+        /// process (a pipeline run may still hold its cap).
+        bool SetLive(const RE::TESBoundObject* form, const LiveNumbers& numbers);
+        /// A load: every live entry goes (the next character's perks are not
+        /// these); their memory is kept.
+        void ClearLive();
+        /// Live entries now.
+        [[nodiscard]] std::size_t LiveCount() const;
 
         /// Find, else -- for a form the player holds or knows that the build
         /// never saw or left out by the tome rule -- an entry mapped now
@@ -204,5 +242,25 @@ namespace Huginn::Effect
         mutable std::mutex lateMutex_;
         Core::Effect::LateEntries<CatalogEntry> late_;
         std::unique_ptr<EffectReader> lateReader_;
+
+        // Live entries (0.24.30): the map under liveMutex_ (Find takes it
+        // shared, and only while anyLive_); the store keeps every one made, so
+        // a pointer Find handed out stays valid. The reader under
+        // liveMakeMutex_.
+        mutable std::shared_mutex liveMutex_;
+        std::unordered_map<RE::FormID, const CatalogEntry*> live_;
+        std::vector<std::unique_ptr<CatalogEntry>> liveStore_;
+        // Per spell, the entries made and the numbers they were made from: a
+        // conditional perk flips a spell between a few states, and each state
+        // is mapped once (under liveMakeMutex_).
+        struct LiveMade
+        {
+            LiveNumbers numbers;
+            const CatalogEntry* entry = nullptr;
+        };
+        std::unordered_map<RE::FormID, std::vector<LiveMade>> liveMade_;
+        std::atomic<bool> anyLive_{ false };
+        std::mutex liveMakeMutex_;
+        std::unique_ptr<EffectReader> liveReader_;
     };
 }

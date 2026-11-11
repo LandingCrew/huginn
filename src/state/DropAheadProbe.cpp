@@ -1,6 +1,7 @@
 #include "DropAheadProbe.h"
 
 #include "HandModelProbe.h"
+#include "effect/LiveValues.h"   // 0.24.30: the spells read as cast, on this hook
 #include "input/HandEquipGate.h"  // the hand equip gate rides the hook (0.24.26)
 
 #include "NeedSensorState.h"  // NeedClock
@@ -683,6 +684,16 @@ namespace Huginn::State::DropAheadProbe
          // idle; and the open menus that take the controls are read here, on
          // the thread that owns them, for the slot keys' gate on the input
          // thread. After the probe, so a swap it makes is seen next frame.
+         // 0.24.30: the spells the player knows, read as they would cast them
+         // now (the perk entry points need the main thread).
+         try {
+            Effect::LiveValues::OnPlayerUpdate(a_this);
+         } catch (...) {
+            static std::atomic<bool> s_logged{ false };
+            if (!s_logged.exchange(true)) {
+               logger::error("[LiveValues] an exception reading the spells was caught (logged once)"sv);
+            }
+         }
          try {
             auto& gate = Input::HandEquipGate::GetSingleton();
             gate.ObserveMenus();

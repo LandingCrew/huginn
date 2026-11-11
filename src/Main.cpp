@@ -76,6 +76,7 @@
 #include "needs/NeedSettings.h"
 #include "state/DropAheadProbe.h"
 #include "state/HandModelProbe.h"
+#include "effect/LiveValues.h"   // 0.24.30
 
 using namespace Huginn;
 
@@ -909,6 +910,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
         Effect::EffectCatalog::GetSingleton().FinishPendingRead("kPreLoadGame"sv);
         State::DropAheadProbe::SetGameLoaded(false);  // R3: off through the load
         State::HandModelProbe::SetGameLoaded(false);
+        Effect::LiveValues::SetGameLoaded(false);  // 0.24.30: the next character's perks are not these
         Input::HandEquipGate::GetSingleton().Drop("a save is loading", /*force=*/true);  // 0.24.26
         Input::HandEquipGate::GetSingleton().ClearMenus();  // the hook does not run through the load
         Learning::SelectionLogV3::OnLoadStarting();   // R4: no extra-list reads through the load
@@ -921,6 +923,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
         Update::UpdateHandler::GetSingleton()->SyncStickDeadzones("kNewGame"sv);   // 0.23.55: the lap clock's stick rule
         State::DropAheadProbe::SetGameLoaded(true);  // R3: the probe hook may cast now
         State::HandModelProbe::SetGameLoaded(true);
+        Effect::LiveValues::SetGameLoaded(true);   // 0.24.30: read the spells as cast
         break;
     case SKSE::MessagingInterface::kPostLoadGame:
     {
@@ -936,6 +939,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
         if (loaded) {
             State::DropAheadProbe::SetGameLoaded(true);  // R3: the probe hook may cast now
             State::HandModelProbe::SetGameLoaded(true);
+            Effect::LiveValues::SetGameLoaded(true);   // 0.24.30: read the spells as cast
         }
         break;
     }
