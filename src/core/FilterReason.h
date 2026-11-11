@@ -60,6 +60,7 @@ namespace Huginn::Core::Filter
         favorite_suppressed,  // a favourite under [Favorites] sFavoritesMode = Suppress
         // 0.24.29 (core/LockReach.h), appended like the gates above
         lock_out_of_reach,    // an unlock spell, scroll or staff that cannot open the lock in the crosshair
+        resist_weaker,        // a resist potion weaker than another of its element on hand (core/ResistPotions.h)
         _Count
     };
     inline constexpr std::size_t kReasonCount = static_cast<std::size_t>(Reason::_Count);
@@ -69,13 +70,20 @@ namespace Huginn::Core::Filter
         "invisibility",  "muffle",       "armor",       "summon_limit",   "warming",
         "waterbreathing", "resist",      "cooldown",    "duplicate",      "truncated",
         "no_follower",    "no_workstation", "not_dark", "favorite_suppressed",
-        "lock_out_of_reach",
+        "lock_out_of_reach", "resist_weaker",
     };
 
     [[nodiscard]] constexpr std::string_view ReasonName(Reason r) noexcept
     {
         const auto i = static_cast<std::size_t>(r);
         return i < kReasonCount ? kReasonNames[i] : std::string_view("?");
+    }
+
+    /// An active-buff filter (doc 11's "covered" items): the need the item
+    /// answers is already met -- its buff, or one like it, is running.
+    [[nodiscard]] constexpr bool IsActiveBuff(Reason r) noexcept
+    {
+        return r >= Reason::invisibility && r <= Reason::resist;
     }
 
     /// One gathered candidate the filters dropped, and why.

@@ -163,7 +163,7 @@ namespace Huginn::Needs
       // 0.24.29: a lock that requires a key reads 0 (needs.csv): no spell,
       // scroll or lockpicking potion answers it. It read 1 before, which
       // raised every Open Lock spell at a door only a key opens.
-      s.lock = src.world.isLookingAtLock && src.world.lockLevel < Core::Lock::kRequiresKey;
+      s.lock = Core::Lock::Pickable(Core::Lock::CrosshairLock(src.world.isLookingAtLock, src.world.lockLevel));
       s.workstation = WorkstationOf(n);
       s.oreVein = src.world.isLookingAtOreVein;
       s.merchant = n.merchant;

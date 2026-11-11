@@ -261,6 +261,7 @@ namespace Huginn::Update
       if (deltaSeconds > MAX_DELTA_SECONDS) {
          logger::warn("[UpdateHandler] Clamped deltaSeconds {:.1f}s → {:.1f}s (alt-tab or pause)"sv,
             deltaSeconds, MAX_DELTA_SECONDS);
+         m_suspendedMs.fetch_add(std::llround((deltaSeconds - MAX_DELTA_SECONDS) * 1000.0f), std::memory_order_relaxed);
          deltaSeconds = MAX_DELTA_SECONDS;
       }
 

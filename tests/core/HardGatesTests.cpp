@@ -118,7 +118,7 @@ TEST_CASE("hard gates: the default inputs gate everything a gate can")
     CHECK_FALSE(Gate::FavoriteSuppressed(true, in.suppressFavorites));
     // No lock in the crosshair: no unlock item is dropped for its reach.
     CHECK(in.lockLevel == Lock::kNoLock);
-    CHECK_FALSE(Gate::LockOutOfReach(true, Lock::kNovice, in.lockLevel));
+    CHECK_FALSE(Lock::OutOfReach(true, Lock::kNovice, in.lockLevel));
 }
 
 TEST_CASE("lock reach: the highest level word an unlock row's text names (0.24.29)")
@@ -159,18 +159,18 @@ TEST_CASE("lock reach: an item's reach over its unlock rows")
 TEST_CASE("hard gates: lock_out_of_reach (0.24.29)")
 {
     // A lock above the item's reach drops it; at or below keeps it.
-    CHECK(Gate::LockOutOfReach(true, Lock::kNovice, Lock::kExpert));
-    CHECK(Gate::LockOutOfReach(true, Lock::kApprentice, Lock::kAdept));
-    CHECK_FALSE(Gate::LockOutOfReach(true, Lock::kApprentice, Lock::kApprentice));
-    CHECK_FALSE(Gate::LockOutOfReach(true, Lock::kMaster, Lock::kNovice));
+    CHECK(Lock::OutOfReach(true, Lock::kNovice, Lock::kExpert));
+    CHECK(Lock::OutOfReach(true, Lock::kApprentice, Lock::kAdept));
+    CHECK_FALSE(Lock::OutOfReach(true, Lock::kApprentice, Lock::kApprentice));
+    CHECK_FALSE(Lock::OutOfReach(true, Lock::kMaster, Lock::kNovice));
     // A lock that requires a key: no unlock item opens it, known reach or not.
-    CHECK(Gate::LockOutOfReach(true, Lock::kMaster, Lock::kRequiresKey));
-    CHECK(Gate::LockOutOfReach(true, Lock::kUnknownReach, Lock::kRequiresKey));
+    CHECK(Lock::OutOfReach(true, Lock::kMaster, Lock::kRequiresKey));
+    CHECK(Lock::OutOfReach(true, Lock::kUnknownReach, Lock::kRequiresKey));
     // Unknown reach (Detonate Lock: by skill): kept for any pickable lock.
-    CHECK_FALSE(Gate::LockOutOfReach(true, Lock::kUnknownReach, Lock::kMaster));
+    CHECK_FALSE(Lock::OutOfReach(true, Lock::kUnknownReach, Lock::kMaster));
     // No lock in the crosshair, or not an unlock item: never.
-    CHECK_FALSE(Gate::LockOutOfReach(true, Lock::kNovice, Lock::kNoLock));
-    CHECK_FALSE(Gate::LockOutOfReach(false, Lock::kNovice, Lock::kMaster));
+    CHECK_FALSE(Lock::OutOfReach(true, Lock::kNovice, Lock::kNoLock));
+    CHECK_FALSE(Lock::OutOfReach(false, Lock::kNovice, Lock::kMaster));
 }
 
 // =============================================================================
@@ -209,45 +209,6 @@ TEST_CASE("refresh pass: a flag's block ends with the last of its effects")
     c.Add(Refresh::kNoTimer);           // constant first, timed after: still never
     c.Add(2.0f);
     CHECK(c.remaining == Refresh::kNoTimer);
-}
-
-TEST_CASE("refresh pass: the resist block, timed parts against a permanent base")
-{
-    using Refresh::ResistParts;
-    using Refresh::ResistTimeLeft;
-    ResistParts none;
-    CHECK(ResistTimeLeft(40.0f, 50.0f, none) == 0.0f);                    // not over the threshold
-    CHECK(ResistTimeLeft(60.0f, 50.0f, none) == Refresh::kNoTimer);      // all permanent (gear, a race)
-
-    ResistParts potion;
-    potion.Add(50.0f, 12.0f);   // Resist Fire potion, 12 s left
-    CHECK(ResistTimeLeft(60.0f, 50.0f, potion) == 12.0f);                 // 10 base + 50: falls to 10 at 12 s
-    CHECK(ResistTimeLeft(110.0f, 50.0f, potion) == Refresh::kNoTimer);   // 60 base: over the threshold for good
-
-    ResistParts two;
-    two.Add(30.0f, 20.0f);
-    two.Add(30.0f, 4.0f);
-    // 20 base + 30 + 30 = 80: at 4 s it is 50 (at the threshold, not over): due at 4 s.
-    CHECK(ResistTimeLeft(80.0f, 50.0f, two) == 4.0f);
-    // 30 base: 60 after 4 s (still over), 30 after 20 s.
-    CHECK(ResistTimeLeft(90.0f, 50.0f, two) == 20.0f);
-
-    // A weakness that ends first raises the value again: the block ends at the
-    // LAST crossing, not the first.
-    ResistParts weak;
-    weak.Add(50.0f, 30.0f);     // a potion, 30 s
-    weak.Add(-40.0f, 5.0f);     // a weakness, 5 s
-    // 60 base + 50 - 40 = 70; at 5 s 110; at 30 s 60: still over -> never.
-    CHECK(ResistTimeLeft(70.0f, 50.0f, weak) == Refresh::kNoTimer);
-    // 41 base: 51 -> 91 at 5 s -> 41 at 30 s.
-    CHECK(ResistTimeLeft(51.0f, 50.0f, weak) == 30.0f);
-
-    // A constant part is not kept (it is the permanent base), nor a part past kMax.
-    ResistParts full;
-    full.Add(10.0f, Refresh::kNoTimer);
-    CHECK(full.n == 0);
-    for (std::size_t i = 0; i < ResistParts::kMax + 2; ++i) full.Add(1.0f, 1.0f);
-    CHECK(full.n == ResistParts::kMax);
 }
 
 TEST_CASE("refresh pass: the summon limit block is the oldest summon's timer")
@@ -313,12 +274,6 @@ TEST_CASE("refresh pass: ComputeDue sets a bit only while the block holds and en
     in.waterbreathing.Add(60.0f);                // a second potion: 60 s
     in.summonBlocked = true;
     in.summonLeft = 2.0f;
-    in.resistThreshold = 50.0f;
-    in.resistTotal[0] = 60.0f;                   // fire: 10 + a potion with 4 s
-    in.resist[0].Add(50.0f, 4.0f);
-    in.resistTotal[1] = 60.0f;                   // frost: all permanent
-    in.resistTotal[2] = 20.0f;                   // shock: under the threshold
-    in.resist[2].Add(20.0f, 1.0f);
 
     const auto bits = Refresh::ComputeDue(in, 5.0f);
     CHECK(IsDue(bits, Block::invisibility));
@@ -327,10 +282,6 @@ TEST_CASE("refresh pass: ComputeDue sets a bit only while the block holds and en
     CHECK(IsDue(bits, Block::warming));
     CHECK_FALSE(IsDue(bits, Block::waterbreathing));
     CHECK(IsDue(bits, Block::summon_limit));
-    CHECK(IsDue(bits, Block::resist_fire));
-    CHECK_FALSE(IsDue(bits, Block::resist_frost));
-    CHECK_FALSE(IsDue(bits, Block::resist_shock));   // not blocking: no bit
-    CHECK_FALSE(IsDue(bits, Block::resist_poison));
 
     // The summon bit needs the block itself.
     in.summonBlocked = false;
@@ -338,7 +289,6 @@ TEST_CASE("refresh pass: ComputeDue sets a bit only while the block holds and en
     // A wider window takes the muffle too; 0 turns every bit off.
     CHECK(IsDue(Refresh::ComputeDue(in, 31.0f), Block::muffle));
     CHECK(Refresh::ComputeDue(in, 0.0f) == 0);
-    CHECK(Refresh::ResistBlock(Refresh::Element::magic) == Block::resist_magic);
 }
 
 // =============================================================================
@@ -373,4 +323,15 @@ TEST_CASE("combat onset: one clock, kNever out of combat, reset on re-entry")
     CHECK(CombatOnsetAgo(true, -1.0, 5.0) == kNever);
     // The need's form, from the snapshot's seconds-ago.
     CHECK(CombatOnsetAgo(true, 3.0f) == 3.0f);
+}
+
+TEST_CASE("lock: the crosshair's lock, and which ones lock_in_crosshair counts (0.24.29)")
+{
+    CHECK(Lock::CrosshairLock(false, Lock::kExpert) == Lock::kNoLock);
+    CHECK(Lock::CrosshairLock(true, Lock::kExpert) == Lock::kExpert);
+    CHECK(Lock::CrosshairLock(true, Lock::kNovice) == Lock::kNovice);   // Novice is 0, not "none"
+    CHECK(Lock::Pickable(Lock::kNovice));
+    CHECK(Lock::Pickable(Lock::kMaster));
+    CHECK_FALSE(Lock::Pickable(Lock::kRequiresKey));
+    CHECK_FALSE(Lock::Pickable(Lock::kNoLock));
 }

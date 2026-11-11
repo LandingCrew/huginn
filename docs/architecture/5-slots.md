@@ -1047,11 +1047,21 @@ after dedup and before the combat sweep; 0.23.38, this rule since 0.24.29).
 In a fight every key holds its item until a challenger is clearly better: its
 score beats the item on the key by `fCombatChallengerMargin`
 (`s(challenger) - s(item on the key) > margin`, belief or not), and it has
-been on the memoryless page -- the page this run's ranking alone builds
-(`core/SlotAllocStateless.h`; `SlotAllocator` hands it over in combat as
-`memorylessOut`) -- for `fCombatWantedSec` without a break
-(`SlotLocker::NoteWanted`, cleared when combat ends). Without that page the
-allocator's page stands in. Why one fixed line (2026-11-09): the line before
+been wanted -- on the memoryless page and on no key -- for `fCombatWantedSec`
+without a break (`Core::CombatWantedClock`, cleared when combat ends; time the
+game spends suspended, alt-tab or the console, does not count). Time
+an item spends wanted while a key shows it does not count: an item knocked
+off a key starts its wait when it leaves. The memoryless page is the page
+this run's ranking alone builds (`core/SlotAllocStateless.h`; `SlotAllocator`
+builds it as `memorylessOut` while the lock is in combat, `SlotLocker::IsInCombat`,
+in place on the input it hands the D2 shadow, which then takes it as its page
+B). Without that page the allocator's page stands in. A key whose item an
+active-buff filter dropped this run (`Core::Filter::IsActiveBuff`: the Resist
+Fire just drunk, its buff running) is covered: it has no score this run, only
+the one it was locked on, so it takes any challenger past the wanted clock,
+ahead of the keys that need a lead. A key whose item another filter dropped
+(unaffordable, equipped, on cooldown just after use, a heal at full health)
+keeps the score it was locked on. Why one fixed line (2026-11-09): the line before
 it was R9's challenger rule at 0.995 (z 2.576 x sigma_Delta); with sd 2-3 on
 both items it asked a lead of about 7, so keys held items ranked 45th-167th
 through whole fights while an answer such as Resist Fire waited for the end,
@@ -1078,12 +1088,10 @@ changes (one visible change per run; checked for the whole page before the
 per-key gates); since an item only leaves a key that changes, that also stops
 an item an override displaced this run from upserting another key in the same
 run. A page switch clears each key's upsert cooldown and press record.
-Each open key asks its best fitting challenger (by score), or with
-`bTestAllChallengers = 1` its challengers in rank order until one clears the
-line; the keys' picks are paired greedy on the margin (`PlanCombatUpserts`).
-Under the fixed barrier alone the two settings, and the pre-0.24.13 planner
-(every passing pair, greedy on the margin), give the same picks: a lower score
-cannot clear a barrier the best one missed. Never on a key showing
+Each open key asks its best fitting challenger (by score): under one fixed
+line a lower score cannot clear what the best one missed. The keys' picks are
+paired greedy, covered keys first, then the widest lead (`PlanCombatUpserts`).
+Never on a key showing
 an override, a Remembrance item or a wildcard, that the allocator wants for an
 override or Remembrance item this run (a non-urgent override waiting out
 `fMinLockDurationMs`: an upsert first would be two changes and would restart
@@ -1096,11 +1104,9 @@ max(`fPressGraceMs`, 500 ms) after it closes (`WheelClosedRecently`, stamped by
 window + 100 ms), so a pending hold or tap never acts on an upsert even with
 `fPressGraceMs = 0`; when the press acts; and on a Huginn-wheel activation.
 The 500 ms floor is the default of those two. The new item is combat-locked
-like any other. One info line each, with P(better) like the `[Hold]` lines
-when the rule decided, `[SlotLocker] Slot N combat upsert: 'Old' -> 'New'
-(s=+a vs -b, +d > ln m 0.000 + z 2.58 x sd 0.300, P 0.999)`, else
-`(s=+a vs -b, +d > 3.0 x ln m 0.405, no belief)`; either ends `; K higher
-challenger(s) missed the line` when `bTestAllChallengers` went past the best.
+like any other. One info line each, `[SlotLocker] Slot N combat upsert:
+'Old' -> 'New' (s=+a vs -b, lead +d > 1.00, wanted 1.6s)`, or `its need is
+covered` in place of the lead.
 The change counts as `upsert` in `[SlotChurn]` and the heartbeat.
 Replayed on the 2026-10-11 12:05-13:27 log (11 fights, 15.7 min in combat, 105
 page-0 changes), before the page limit and the departure rule: about 32-36
@@ -1523,7 +1529,7 @@ bKeepSlotPositions = true       ; Keep an item in the slot it was already in (se
 bHoldSeatedItems = true         ; Hold a seated item until a challenger clears the line
 fChallengerConfidence = 0.8     ; P(challenger better) it needs: lead > fChallengerMinGap + z x sigma_Delta (0.24.2)
 fChallengerMinGap = 0           ; A minimum lead on top, in score units (0 = confidence alone)
-bTestAllChallengers = 0         ; 1 = ask challengers in rank order, first past the line wins (hold and combat upsert; 0.24.13)
+bTestAllChallengers = 0         ; 1 = ask challengers in rank order, first past the line wins (the hold; 0.24.13)
 fChallengerMargin = 0.5         ; The fixed margin, only when the ranking carries no beliefs (0.5 = 50%)
 bReturnToHomeKey = true         ; A returning item takes back the key it left (home keys)
 fHomeKeyMemorySec = 60          ; ...if it left within this long; 0-600, 0 = off

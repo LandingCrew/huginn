@@ -6397,6 +6397,74 @@ void RunSlotLockerOverrideScopeTest()
                 passed = false;
             }
             (void)locker.SetInCombat(false);
+
+            // 5v (review of PR #254). Time wanted while shown does not count:
+            //     A sits on key 0 and on the memoryless page (+4.0) from 1 s;
+            //     key 1 holds C (-2.0). At 6 s an urgent override breaks key 0
+            //     (a departure no upsert caused: out for 3 s, then back), and A
+            //     is wanted on no key from then. With fCombatWantedSec 5 s it
+            //     waits past 9.5 s (3.5 s on the clock, 8.5 s if its time on
+            //     the key counted) and takes key 1 at 11.1 s.
+            {
+                auto longCfg = wantCfg;
+                longCfg.combatWantedSec = 5.0f;
+                locker.SetConfig(longCfg);
+                Override::OverrideCollection breaker;
+                {
+                    Override::OverrideResult r;
+                    r.priority = 100;
+                    r.reason = "probe urgent override";
+                    Candidate::ItemCandidate item;
+                    item.formID = P;
+                    r.candidate = Candidate::CandidateVariant{ item };
+                    breaker.activeOverrides.push_back(std::move(r));
+                }
+                locker.Reset();
+                (void)locker.SetInCombat(true);
+                const auto t5 = std::chrono::steady_clock::now();
+                (void)locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, -2.0 } }), none, {}, at(t5, 0));
+                for (int ms = 1000; ms <= 5000; ms += 1000) {
+                    (void)locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, -2.0 } }), none, {},
+                        memoryless(t5, ms, { { A, 4.0 }, { C, -2.0 } }));
+                }
+                auto broken = scoredPage({ { P, 0.0 }, { C, -2.0 } });
+                broken[0].type = AssignmentType::Override;
+                shown = locker.ApplyLocks(broken, breaker, {}, memoryless(t5, 6000, { { A, 4.0 } }));
+                const bool overrideTook = shows(shown, 0, P) && shows(shown, 1, C);
+                shown = locker.ApplyLocks(broken, breaker, {}, memoryless(t5, 9500, { { A, 4.0 } }));
+                const bool aWaited = shows(shown, 1, C);
+                shown = locker.ApplyLocks(broken, breaker, {}, memoryless(t5, 11100, { { A, 4.0 } }));
+                if (!overrideTook || !aWaited || !shows(shown, 1, A)) {
+                    logger::error("TEST FAIL: an item off a key kept its time on it (override took {}, A waited {}, key1={:08X}, want A at 11.1 s)"sv,
+                        overrideTook, aWaited, shown.size() > 1 ? shown[1].formID : 0);
+                    passed = false;
+                }
+                (void)locker.SetInCombat(false);
+                locker.SetConfig(wantCfg);
+            }
+
+            // 5w (review of PR #254). A covered key: key 0 holds R, locked at
+            //     +3.0, which an active-buff filter now drops (its buff runs).
+            //     S (+0.5, behind R's stale score) takes it once wanted for
+            //     1.5 s; without the covered flag the key holds R.
+            constexpr RE::FormID Rw = 0x0BAD0A0A, Sw = 0x0BAD0A0B;
+            for (const bool covered : { false, true }) {
+                locker.Reset();
+                (void)locker.SetInCombat(true);
+                const auto t6 = std::chrono::steady_clock::now();
+                (void)locker.ApplyLocks(scoredPage({ { Rw, 3.0 } }), none, {}, at(t6, 0));
+                auto run = memoryless(t6, 4000, { { Sw, 0.5 } });
+                if (covered) run.needCovered = [Rw](RE::FormID f, uint16_t) { return f == Rw; };
+                (void)locker.ApplyLocks(scoredPage({ { Rw, 3.0 } }), none, {}, run);
+                run.now = t6 + std::chrono::milliseconds(5600);
+                shown = locker.ApplyLocks(scoredPage({ { Rw, 3.0 } }), none, {}, run);
+                if (!shows(shown, 0, covered ? Sw : Rw)) {
+                    logger::error("TEST FAIL: covered key ({}): key0={:08X}, want {:08X}"sv,
+                        covered, shown.size() > 0 ? shown[0].formID : 0, covered ? Sw : Rw);
+                    passed = false;
+                }
+                (void)locker.SetInCombat(false);
+            }
         }
         locker.SetConfig(cfg);
 

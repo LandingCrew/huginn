@@ -276,7 +276,7 @@ namespace Huginn::Slot
         const WildcardRequest* wildcard,
         WildcardResult* wildcardOut,
         Core::SlotAlloc::Input* inputOut,
-        SlotAssignments* memorylessOut) const
+        MemorylessPage* memorylessOut) const
     {
         // Hold the snapshot for the duration of the call so the config refs
         // passed to AllocateSlotsInternal stay valid even across a concurrent reload.
@@ -358,7 +358,7 @@ namespace Huginn::Slot
         const WildcardRequest* wildcard,
         WildcardResult* wildcardOut,
         Core::SlotAlloc::Input* inputOut,
-        SlotAssignments* memorylessOut) const
+        MemorylessPage* memorylessOut) const
     {
         namespace SA = Core::SlotAlloc;
         if (wildcardOut) {
@@ -549,19 +549,6 @@ namespace Huginn::Slot
         };
         toAssignments(out, nullptr, assignments);
 
-        // 0.24.29: the memoryless page, for the combat upsert's stale keys
-        // (core/CombatUpsert.h): the same input with the memory taken out,
-        // ranked on the live scores. Pure and on a copy: no seating, events
-        // or capture, and the live page above is unchanged.
-        if (memorylessOut) {
-            memorylessOut->clear();
-            std::vector<double> liveScores(in.candidates.size());
-            for (size_t k = 0; k < in.candidates.size(); ++k) liveScores[k] = in.candidates[k].score;
-            std::vector<uint32_t> order;
-            SA::Input bare = SA::StatelessInput(in, liveScores, order);
-            toAssignments(SA::Allocate(bare), &order, *memorylessOut);
-        }
-
         ReportEvents(pageIndex, slotConfigs, candidates, overrides, overrideIndex, out.events, forTest);
 
         if (wildcardOut) {
@@ -647,6 +634,31 @@ namespace Huginn::Slot
         // last: nothing above reads `in` after this point.
         if (inputOut) {
             *inputOut = std::move(in);
+        }
+
+        // 0.24.29: the memoryless page, for the combat upsert's challengers
+        // (core/CombatUpsert.h): the same input with the memory taken out,
+        // ranked on the live scores (a remembered-only row is never ranked).
+        // Pure: no seating, events or capture, and the live page above is
+        // unchanged. On the input handed out when there is one -- it is the
+        // shadow's page B, built once -- else on `in`, which nothing reads now.
+        if (memorylessOut) {
+            *memorylessOut = MemorylessPage{};
+            SA::Input& bare = inputOut ? *inputOut : in;
+            std::vector<double> liveScores(bare.candidates.size());
+            for (size_t k = 0; k < bare.candidates.size(); ++k) {
+                const auto& c = bare.candidates[k];
+                liveScores[k] = c.isRememberedOnly ? Core::kUnrankedScore : c.score;
+            }
+            std::vector<uint32_t> order;
+            SA::MakeStateless(bare, liveScores, order);
+            const SA::Output bareOut = SA::Allocate(bare);
+            toAssignments(bareOut, &order, memorylessOut->page);
+            if (inputOut) {
+                memorylessOut->inInput = true;
+                memorylessOut->stateless = SA::StatelessPageOf(bare, bareOut, order);
+                memorylessOut->order = std::move(order);
+            }
         }
         return assignments;
     }

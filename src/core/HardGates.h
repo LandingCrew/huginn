@@ -133,13 +133,6 @@ namespace Huginn::Core::Gate
         return !darknessApplies;
     }
 
-    /// lock_out_of_reach (0.24.29): an unlock spell or scroll that cannot open
-    /// the lock in the crosshair (core/LockReach.h).
-    [[nodiscard]] constexpr bool LockOutOfReach(bool unlocks, int reach, int lockLevel) noexcept
-    {
-        return Lock::OutOfReach(unlocks, reach, lockLevel);
-    }
-
     /// favorite_suppressed: a favourite under favourites mode Suppress.
     [[nodiscard]] constexpr bool FavoriteSuppressed(bool favorited, bool suppressFavorites) noexcept
     {

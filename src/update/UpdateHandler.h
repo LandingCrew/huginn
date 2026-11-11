@@ -43,6 +43,11 @@ namespace Huginn::Update
        */
       static UpdateHandler* GetSingleton();
 
+      /// 0.24.29: ms the update loop has lost to suspensions since launch
+      /// (each gap over the 1 s clamp, less the 1 s it counts). The combat
+      /// upsert's wanted clock does not count them.
+      [[nodiscard]] std::int64_t SuspendedMs() const noexcept { return m_suspendedMs.load(std::memory_order_relaxed); }
+
       /**
        * @brief Register this handler with SKSE's event system
        * @return true if registration succeeded, false otherwise
@@ -149,6 +154,10 @@ namespace Huginn::Update
 
       /// Last update time point
       std::chrono::steady_clock::time_point m_lastUpdate;
+
+      /// 0.24.29: the time the loop lost to suspensions (the clamp in
+      /// DoUpdate: alt-tab, the console, a pause), ms since launch.
+      std::atomic<std::int64_t> m_suspendedMs{ 0 };
 
       /// The latest player input, steady_clock ticks since its epoch
       /// (kNoInput before the first). Written by ProcessEvent (game threads),

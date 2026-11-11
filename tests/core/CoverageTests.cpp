@@ -196,7 +196,8 @@ TEST_CASE("filter reasons: names, groups and lookup")
     // R8.1 (0.23.55): the four hard gates, appended. The values below stay
     // pinned (old files index their own head's list, but the plugin reads the
     // reasons by value), and the head lists them in this order.
-    CHECK(Filter::kReasonCount == 20);
+    CHECK(Filter::kReasonCount == 21);   // 0.24.29: lock_out_of_reach, resist_weaker
+    CHECK(static_cast<int>(Reason::resist_weaker) == 20);
     CHECK(static_cast<int>(Reason::invisibility) == 5);
     CHECK(static_cast<int>(Reason::resist) == 11);
     CHECK(static_cast<int>(Reason::truncated) == 14);

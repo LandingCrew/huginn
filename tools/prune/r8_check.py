@@ -495,7 +495,7 @@ BUDGET = {
         r'^\s*row\.utilMissing = lg\.utilMissing \? 1 : 0;$',
         r'^\s*if \(!ctx\.legacyShadow\.ran\) return;$',
         r'^\s*Core::LegacyShadow::RanksAndPages\(liveOrder, liveMu, tie, legacyShadowPageInput, ctx\.pageRunRows, '
-        r'ctx\.legacyShadow\);$',
+        r'ctx\.legacyShadow(?:, builtB, ctx\.statelessBOrder)?\);$',   # 0.24.29: page B built by the allocator in combat
         r'^\s*if \(ctx\.eligible\.size\(\) == ctx\.legacyShadow\.mu\.size\(\) && '
         r'ctx\.legacyShadow\.keyA\.size\(\) == ctx\.eligible\.size\(\)\) \{$',
         r'^\s*e\.legacyShadowMu = static_cast<float>\(ctx\.legacyShadow\.mu\[r\]\);$',

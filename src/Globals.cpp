@@ -216,9 +216,16 @@ void LoadCandidateConfigFromINI(const CSimpleIniA& ini) {
   Candidate::g_candidateConfig.enableSoulGemRecharge =
     ini.GetBoolValue(section, "bEnableSoulGemRecharge", true);
 
-  logger::info("[CandidateConfig] Uncastable spell policy: {}, soul gem recharge: {}",
+  // 0.24.29: which resist potions of one element are offered (core/ResistPotions.h)
+  std::string pick(ini.GetValue(section, "sResistPotionPick", "Greedy"));
+  std::transform(pick.begin(), pick.end(), pick.begin(), ::tolower);
+  Candidate::g_candidateConfig.resistPotionPick =
+    pick == "all" ? Candidate::ResistPotionPick::All : Candidate::ResistPotionPick::Greedy;
+
+  logger::info("[CandidateConfig] Uncastable spell policy: {}, soul gem recharge: {}, resist potions: {}",
     Candidate::ToString(Candidate::g_candidateConfig.uncastableSpellPolicy),
-    Candidate::g_candidateConfig.enableSoulGemRecharge ? "enabled" : "disabled");
+    Candidate::g_candidateConfig.enableSoulGemRecharge ? "enabled" : "disabled",
+    Candidate::ToString(Candidate::g_candidateConfig.resistPotionPick));
 }
 
 Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {

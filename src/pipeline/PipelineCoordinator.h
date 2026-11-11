@@ -183,6 +183,13 @@ namespace Huginn::Pipeline
         Core::SlotAlloc::Input legacyShadowAllocInput;
         bool haveAllocInput = false;
         std::vector<uint32_t> pageRunRows;
+        // 0.24.29: in combat, the allocator builds the memoryless page (the
+        // combat upsert's challengers) in place on that input; it is B's
+        // stateless page, and the shadow takes it instead of building it
+        // again. Written by every allocation.
+        bool statelessBBuilt = false;
+        std::vector<uint32_t> statelessBOrder;
+        Core::SlotAlloc::StatelessPage statelessB;
 
         /// Reset all fields for reuse, preserving allocated container capacity
         /// (except the legacy pass's: since R8.4 the pass returns a fresh Run
@@ -235,6 +242,9 @@ namespace Huginn::Pipeline
             recsFloors = Scoring::RecsFloors::none;
             haveAllocInput = false;
             pageRunRows.clear();
+            statelessBBuilt = false;
+            statelessBOrder.clear();
+            statelessB = {};
             choiceLive = false;
             choiceAttrs.clear();
             choiceScores.clear();

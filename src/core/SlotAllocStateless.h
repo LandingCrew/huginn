@@ -102,16 +102,13 @@ namespace Huginn::Core::SlotAlloc
         return in;
     }
 
-    /// The stateless page of `in` ranked on `scores`, made in place: `in` is
-    /// left stateless with its candidates in the new order (`order`, as
-    /// MakeStateless gives it). keyOf is indexed by the candidates' order AT
-    /// ENTRY. For a caller that owns the input and builds more than one
-    /// page from it (the pipeline's two shadow pages: no copy of 500 rows).
-    [[nodiscard]] inline StatelessPage AllocateStatelessInPlace(Input& in, std::span<const double> scores,
-                                                                std::vector<std::uint32_t>& order)
+    /// The page and keys of `out`, an allocation of `in` after MakeStateless
+    /// gave it `order`: keyOf is indexed by the candidates' order BEFORE
+    /// MakeStateless. For a caller that allocated the stateless input itself
+    /// (SlotAllocator's memoryless page, which the shadow then reuses as B's).
+    [[nodiscard]] inline StatelessPage StatelessPageOf(const Input& in, const Output& out,
+                                                       std::span<const std::uint32_t> order)
     {
-        MakeStateless(in, scores, order);
-        const Output out = Allocate(in);
         StatelessPage res;
         res.page = PageOf(in, out);
         res.keyOf.assign(in.candidates.size(), std::int8_t{ -1 });
@@ -128,6 +125,18 @@ namespace Huginn::Core::SlotAlloc
             }
         }
         return res;
+    }
+
+    /// The stateless page of `in` ranked on `scores`, made in place: `in` is
+    /// left stateless with its candidates in the new order (`order`, as
+    /// MakeStateless gives it). keyOf is indexed by the candidates' order AT
+    /// ENTRY. For a caller that owns the input and builds more than one
+    /// page from it (the pipeline's two shadow pages: no copy of 500 rows).
+    [[nodiscard]] inline StatelessPage AllocateStatelessInPlace(Input& in, std::span<const double> scores,
+                                                                std::vector<std::uint32_t>& order)
+    {
+        MakeStateless(in, scores, order);
+        return StatelessPageOf(in, Allocate(in), order);
     }
 
     /// The stateless page of `live` ranked on `scores` (see the header); keyOf

@@ -98,8 +98,9 @@ class GoldenFile(unittest.TestCase):
         self.assertEqual(h["filters"][8], "summon_limit")
         # 0.23.55 (R8.1): the four hard gates, appended after truncated.
         self.assertEqual(h["filters"][14:], ["truncated", "no_follower", "no_workstation", "not_dark",
-                                             "favorite_suppressed", "lock_out_of_reach"])   # 0.24.29: appended
-        self.assertEqual(len(h["filters"]), 20)
+                                             "favorite_suppressed", "lock_out_of_reach",
+                                             "resist_weaker"])   # 0.24.29: appended
+        self.assertEqual(len(h["filters"]), 21)
         self.assertEqual(h["kinds"][7], "Armor")
         self.assertEqual(h["episode"], {"onset": 0.5, "expiry": 0.25, "minSec": 1.0, "graceSec": 4.0,
                                         "answerSlackSec": 0.5, "deathDrops": 1,

@@ -13,13 +13,21 @@
 // [Hold] give-ways in 200 s at margins of 0.4-0.9), and following that would
 // bring the churn back.
 //
-// The rule (0.24.29; the game side is SlotLocker::ApplyCombatUpserts). One line,
-// whatever the beliefs:
-//   s(challenger) - s(item on the key) > fCombatChallengerMargin   (1.0)
-// and the challenger has been on the memoryless page (this run's ranking
-// alone, core/SlotAllocStateless.h) for fCombatWantedSec (1.5 s). The game
-// side passes it to the planner below as z = 0, ln m = the margin, and the
-// margin as the fixed barrier; below 0 the upsert is off.
+// The rule (0.24.29; the game side is SlotLocker::ApplyCombatUpserts). One line:
+//   s(challenger) - s(item on the key) > fCombatChallengerMargin   (1.0; below 0 = off)
+// and the challenger has been wanted -- on the memoryless page (this run's
+// ranking alone, core/SlotAllocStateless.h) and on no key -- for
+// fCombatWantedSec (1.5 s) without a break (CombatWantedClock below).
+//
+// A key whose item an active-buff filter dropped this run (the Resist Fire
+// just drunk, its buff now running: the need it answers is covered) has no
+// score this run, only the one it was locked on. Measured against that, a
+// covered key would hold the answer to a need that is gone; so a covered key
+// takes any challenger past the wanted clock, ahead of the keys that need a
+// lead. Every other filter that drops a key's item (it cannot be afforded, it
+// is equipped, on cooldown just after use, a heal at full health) says the
+// player used it or will want it back in a moment: those keys keep the score
+// they were locked on.
 //
 // Why (2026-11-09, LoreRim): the line before it was the challenger rule at
 // fCombatChallengerConfidence 0.995, z 2.576 x sigma_Delta. With sd 2-3 on
@@ -35,14 +43,12 @@
 // being named within a second or two.
 //
 // An item an upsert displaced may come back once it has been off its key for
-// UpsertRecentMs (and beats the key's item by the margin again): the fight's
-// context changed, not a flicker.
+// UpsertRecentMs, has been wanted again for fCombatWantedSec (its clock starts
+// when it leaves the key: time wanted while shown does not count), and beats
+// the key's item by the margin: the fight's context changed, not a flicker.
 //
-// Which challengers are asked (bTestAllChallengers, shared with the hold):
-// 0 (default) asks each key's BEST fitting challenger only; 1 asks them in
-// rank order and the first that clears the line takes the key. Under the
-// fixed barrier the two are the same (a lower score cannot clear a line the
-// best one missed), which is why the fallback path is unchanged either way.
+// Each key is asked about its best fitting challenger only: under one fixed
+// line a lower score cannot clear what the best one missed.
 //
 // Never on a key that
 //   - is not combat-locked;
@@ -71,10 +77,8 @@
 // press floor) after the Wheeler wheel closes (WheelClosedRecently): the
 // widget comes back then and the player reaches for a key.
 //
-// Pure (the standard library and core/ChallengerRule.h), host-tested in
-// tests/core/CombatUpsertTests.cpp.
+// Pure (the standard library), host-tested in tests/core/CombatUpsertTests.cpp.
 
-#include "core/ChallengerRule.h"
 #include "core/SlotScoreMath.h"
 
 #include <algorithm>
@@ -89,33 +93,20 @@
 
 namespace Huginn::Core
 {
-    /// What a challenger's score must clear over the frozen item's:
-    /// marginMult * ln(1 + challengerMargin). +inf (off) for marginMult <= 0 or
-    /// NaN, and for a NaN margin (LogHoldMargin's "nothing beats the holder").
-    [[nodiscard]] inline double CombatUpsertBarrier(float marginMult, float challengerMargin) noexcept
+    /// The challenger beats the frozen item by more than `margin`
+    /// (fCombatChallengerMargin). Never for a non-finite score on either side
+    /// (an unranked row, a pinned sentinel) or a margin below 0 or not finite
+    /// (the upsert off).
+    [[nodiscard]] inline bool CombatUpsertBeats(SlotScore challenger, SlotScore frozen, double margin) noexcept
     {
-        if (!(marginMult > 0.0f) || !std::isfinite(marginMult)) {
-            return std::numeric_limits<double>::infinity();
-        }
-        // ln m < 0 only for a margin below 0, which SlotSettings clamps away;
-        // a barrier below 0 would let a worse item in.
-        const double logMargin = std::max(LogHoldMargin(challengerMargin), 0.0);
-        return static_cast<double>(marginMult) * logMargin;
-    }
-
-    /// The challenger clears the barrier over the frozen item. Never for a
-    /// non-finite score on either side (an unranked row, a pinned sentinel)
-    /// or an infinite barrier.
-    [[nodiscard]] inline bool CombatUpsertBeats(SlotScore challenger, SlotScore frozen, double barrier) noexcept
-    {
-        if (!std::isfinite(challenger) || !std::isfinite(frozen) || !std::isfinite(barrier)) {
+        if (!std::isfinite(challenger) || !std::isfinite(frozen) || !(margin >= 0.0) || !std::isfinite(margin)) {
             return false;
         }
-        return ScoreExceedsByMargin(challenger, frozen, barrier);
+        return ScoreExceedsByMargin(challenger, frozen, margin);
     }
 
     /// At most one upsert per page per this long (and one per run). Several
-    /// keys can clear the barrier on the same run -- a context flip re-scores
+    /// keys can clear the margin on the same run -- a context flip re-scores
     /// the page at once -- and each arrival is a change the player has to read;
     /// 3 s spaces them past the 600 ms press grace and the 300 ms double-tap
     /// window with room to look. The replay of the 2026-10-11 log puts the
@@ -132,7 +123,7 @@ namespace Huginn::Core
     enum class CombatUpsertGate : uint8_t
     {
         Open,
-        Off,              ///< barrier infinite (the upsert off)
+        Off,              ///< fCombatChallengerMargin below 0 (the upsert off)
         NotCombatLocked,  ///< the key holds no combat lock
         WheelOpen,        ///< the Wheeler wheel is open
         Pinned,           ///< the key shows an override or Remembrance item
@@ -145,7 +136,7 @@ namespace Huginn::Core
 
     struct CombatUpsertGateInput
     {
-        bool enabled = false;          ///< the barrier is finite
+        bool enabled = false;          ///< fCombatChallengerMargin >= 0
         bool combatLocked = false;     ///< in combat and the key holds a combat lock
         bool wheelOpen = false;
         bool shownPinned = false;      ///< the key shows an override or Remembrance item
@@ -190,95 +181,68 @@ namespace Huginn::Core
         return sinceCloseMs >= 0.0 && sinceCloseMs < holdMs;
     }
 
-    /// The combat upsert's line (0.24.13). `barrier`: the fixed barrier
-    /// (CombatUpsertBarrier), for a pair no belief covers; infinite or NaN =
-    /// the upsert is off, whatever the beliefs.
-    /// `minGap` = ln m (fChallengerMinGap, clamped by Challenger::ClampMinGap),
-    /// `z` the multiple of sigma_Delta (0.24.29: 0 -- the game passes its fixed
-    /// fCombatChallengerMargin as ln m and as the barrier),
-    /// both >= 0. `testAll` = bTestAllChallengers.
-    struct CombatUpsertRule
+    /// A key open to an upsert: the score of the item on it, and whether an
+    /// active-buff filter dropped that item this run (its need is covered).
+    struct UpsertKey
     {
-        double barrier = std::numeric_limits<double>::infinity();
-        double minGap = 0.0;
-        double z = 0.0;
-        bool testAll = false;
+        SlotScore score = kUnrankedScore;
+        bool covered = false;
     };
-
-    /// One pair under the rule. `sigmaDelta`: the pair's sigma_Delta; NaN or
-    /// negative = no belief covers the pair, and the fixed barrier decides
-    /// (`*sdOut` = -1); else the challenger rule at the combat confidence
-    /// (`*sdOut` = sigma_Delta). Never for a non-finite score on either side.
-    [[nodiscard]] inline bool CombatUpsertTakes(SlotScore challenger, SlotScore frozen, double sigmaDelta,
-        const CombatUpsertRule& rule, double* sdOut = nullptr) noexcept
-    {
-        if (sdOut) *sdOut = -1.0;
-        if (!std::isfinite(challenger) || !std::isfinite(frozen)) return false;
-        if (!(sigmaDelta >= 0.0)) {   // NaN or negative: no belief
-            return CombatUpsertBeats(challenger, frozen, rule.barrier);
-        }
-        if (sdOut) *sdOut = sigmaDelta;
-        return Challenger::Exceeds(challenger, frozen, sigmaDelta, rule.minGap, rule.z);
-    }
 
     struct CombatUpsertPick
     {
-        std::size_t key = 0;          ///< index into `frozen`
+        std::size_t key = 0;          ///< index into `keys`
         std::size_t challenger = 0;   ///< index into `challengers`
-        double margin = 0.0;          ///< s(challenger) - s(frozen item)
-        double sd = -1.0;             ///< sigma_Delta when the challenger rule decided; < 0 = the fixed barrier
-        std::size_t passedOver = 0;   ///< higher-ranked challengers for the key that missed the line (testAll)
+        double lead = 0.0;            ///< s(challenger) - s(item on the key)
+        bool covered = false;         ///< the key's item's need was covered: no lead asked
     };
 
-    /// Which challenger takes which key this run. `frozen[k]`: the score of the
-    /// item on key k, nullopt when the key is not open to an upsert.
-    /// `challengers[c]`: challenger scores. `fits[k][c]`: challenger c may go on
-    /// key k (missing entries = no). `sigma[k][c]`: the pair's sigma_Delta
-    /// (missing or NaN = no belief: the fixed barrier).
+    /// Which challenger takes which key this run. `keys[k]`: the item on key
+    /// k, nullopt when the key is not open to an upsert. `challengers[c]`:
+    /// challenger scores. `fits[k][c]`: challenger c may go on key k (missing
+    /// entries = no). `margin`: fCombatChallengerMargin (below 0 or not
+    /// finite: none).
     ///
-    /// For each open key, its challengers in rank order (score, highest first;
-    /// ties: lower index), skipping those that do not fit or are already
-    /// placed: with rule.testAll off only the first is asked; on, the first
-    /// that clears the line is the key's pick. Greedy over the keys' picks on
-    /// the margin, largest first (ties: lower key): one challenger per key and
-    /// one key per challenger, at most `maxPicks` in all (the game passes 1:
-    /// one upsert per page per run). Under the fixed barrier alone this is the
-    /// pre-0.24.13 planner (every passing pair, greedy on the margin): a key's
-    /// best challenger has its widest margin, and a lower one cannot clear a
-    /// barrier the best one missed.
+    /// For each open key, its best challenger (highest score, ties: lower
+    /// index) that fits and is not already placed: it takes the key when the
+    /// key is covered, or when it beats the key's item by the margin. Greedy
+    /// over the keys' picks, the covered keys first and then the widest lead
+    /// (ties: lower key): one challenger per key and one key per challenger,
+    /// at most `maxPicks` in all (the game passes 1: one upsert per page per
+    /// run).
     [[nodiscard]] inline std::vector<CombatUpsertPick> PlanCombatUpserts(
-        const std::vector<std::optional<SlotScore>>& frozen, const std::vector<SlotScore>& challengers,
-        const std::vector<std::vector<bool>>& fits, const std::vector<std::vector<double>>& sigma,
-        const CombatUpsertRule& rule, std::size_t maxPicks = std::numeric_limits<std::size_t>::max())
+        const std::vector<std::optional<UpsertKey>>& keys, const std::vector<SlotScore>& challengers,
+        const std::vector<std::vector<bool>>& fits, double margin,
+        std::size_t maxPicks = std::numeric_limits<std::size_t>::max())
     {
         std::vector<CombatUpsertPick> picks;
-        if (!std::isfinite(rule.barrier)) return picks;   // off
+        if (!(margin >= 0.0) || !std::isfinite(margin)) return picks;   // off
         std::vector<std::size_t> order;
         for (std::size_t c = 0; c < challengers.size(); ++c) {
             if (std::isfinite(challengers[c])) order.push_back(c);
         }
         std::stable_sort(order.begin(), order.end(),
             [&challengers](std::size_t a, std::size_t b) { return challengers[a] > challengers[b]; });
-        auto sigmaOf = [&sigma](std::size_t k, std::size_t c) {
-            return k < sigma.size() && c < sigma[k].size() ? sigma[k][c] : std::numeric_limits<double>::quiet_NaN();
+        // The covered keys rank before any lead; among them, the lower key.
+        auto before = [](const CombatUpsertPick& a, const CombatUpsertPick& b) {
+            if (a.covered != b.covered) return a.covered;
+            return !a.covered && a.lead > b.lead;
         };
-        std::vector<bool> keyTaken(frozen.size(), false);
+        std::vector<bool> keyTaken(keys.size(), false);
         std::vector<bool> challengerTaken(challengers.size(), false);
         while (picks.size() < maxPicks) {
             std::optional<CombatUpsertPick> best;
-            for (std::size_t k = 0; k < frozen.size(); ++k) {
-                if (keyTaken[k] || !frozen[k] || k >= fits.size()) continue;
-                std::size_t passed = 0;
+            for (std::size_t k = 0; k < keys.size(); ++k) {
+                if (keyTaken[k] || !keys[k] || k >= fits.size()) continue;
+                const auto& key = *keys[k];
                 for (const std::size_t c : order) {
                     if (challengerTaken[c] || c >= fits[k].size() || !fits[k][c]) continue;
-                    double sd = -1.0;
-                    if (CombatUpsertTakes(challengers[c], *frozen[k], sigmaOf(k, c), rule, &sd)) {
-                        const double margin = challengers[c] - *frozen[k];
-                        if (!best || margin > best->margin) best = CombatUpsertPick{ k, c, margin, sd, passed };
-                        break;
+                    // The best fitting challenger only.
+                    if (key.covered || CombatUpsertBeats(challengers[c], key.score, margin)) {
+                        const CombatUpsertPick pick{ k, c, challengers[c] - key.score, key.covered };
+                        if (!best || before(pick, *best)) best = pick;
                     }
-                    if (!rule.testAll) break;   // the best challenger only
-                    ++passed;
+                    break;
                 }
             }
             if (!best) break;
@@ -287,18 +251,6 @@ namespace Huginn::Core
             picks.push_back(*best);
         }
         return picks;
-    }
-
-    /// The fixed barrier alone (no beliefs, best challenger only): the
-    /// fallback ranking's planner, and the pre-0.24.13 one.
-    [[nodiscard]] inline std::vector<CombatUpsertPick> PlanCombatUpserts(
-        const std::vector<std::optional<SlotScore>>& frozen, const std::vector<SlotScore>& challengers,
-        const std::vector<std::vector<bool>>& fits, double barrier,
-        std::size_t maxPicks = std::numeric_limits<std::size_t>::max())
-    {
-        CombatUpsertRule rule;
-        rule.barrier = barrier;
-        return PlanCombatUpserts(frozen, challengers, fits, {}, rule, maxPicks);
     }
 
     /// An item as the upsert compares them: the same form and stack, or the
@@ -313,6 +265,64 @@ namespace Huginn::Core
         {
             return (formID == f && uniqueID == u) || (!name.empty() && name == n);
         }
+    };
+
+    /// Since when each challenger has been wanted without a break
+    /// (fCombatWantedSec): on the page the upsert challenges from and on no
+    /// key. An item that drops out of the list -- it stopped being wanted, or
+    /// a key shows it -- starts over when it comes back, so an item that just
+    /// left a key has no wanted time from the runs it was shown. Per fight.
+    class CombatWantedClock
+    {
+    public:
+        /// This run's wanted items. Each keeps its start while it stays in
+        /// the list; one new to it starts at `nowMs`; the rest are forgotten.
+        void Note(const std::vector<UpsertItem>& wanted, double nowMs)
+        {
+            std::vector<Since> next;
+            next.reserve(wanted.size());
+            for (const auto& w : wanted) {
+                double since = nowMs;
+                for (const auto& s : m_since) {
+                    if (s.item.Same(w.formID, w.uniqueID, w.name)) {
+                        since = s.sinceMs;
+                        break;
+                    }
+                }
+                next.push_back({ w, since });
+            }
+            m_since = std::move(next);
+        }
+
+        /// How long the item has been wanted at `nowMs`; < 0 when it is not.
+        [[nodiscard]] double ForMs(uint32_t formID, uint16_t uniqueID, std::string_view name,
+            double nowMs) const noexcept
+        {
+            for (const auto& s : m_since) {
+                if (s.item.Same(formID, uniqueID, name)) return nowMs - s.sinceMs;
+            }
+            return -1.0;
+        }
+
+        /// `ms` passed that does not count (the game was suspended): every
+        /// wait resumes where it stopped.
+        void Skip(double ms) noexcept
+        {
+            if (!(ms > 0.0)) return;
+            for (auto& s : m_since) s.sinceMs += ms;
+        }
+
+        void Clear() noexcept { m_since.clear(); }
+
+        [[nodiscard]] std::size_t Size() const noexcept { return m_since.size(); }
+
+    private:
+        struct Since
+        {
+            UpsertItem item;
+            double sinceMs = 0.0;
+        };
+        std::vector<Since> m_since;
     };
 
     /// What the upsert must remember between runs, page-wide: the items that

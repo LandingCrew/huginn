@@ -216,16 +216,17 @@ namespace Huginn::Slot
             /// grace, wheel closed, no holds) are what a test harness wants.
             bool wheelOpen = false;          ///< the Wheeler wheel is open: no upsert
             float pressGraceMs = 0.0f;       ///< fPressGraceMs
-            float challengerMargin = 0.5f;   ///< fChallengerMargin: the barrier is a multiple of ln(1 + this)
             /// R9, the challenger rule's line for the churn telemetry (which
             /// changes were at or under ln m + z sigma_Delta): z = Phi^-1(tau)
             /// and ln m, as the allocation read them.
             double challengerZ = 0.0;
             double challengerMinGap = 0.0;
-            /// 0.24.13, bTestAllChallengers: the combat upsert asks each key's
-            /// challengers in rank order (the first past the line wins), not
-            /// only the best one.
-            bool testAllChallengers = false;
+            /// 0.24.29: this run's active-buff filters (Resist Fire with its
+            /// buff running, Invisibility while invisible ...) dropped this
+            /// item: the need it answers is covered, and a combat-locked key
+            /// showing it takes any challenger past the wanted clock
+            /// (core/CombatUpsert.h). Empty = nothing is.
+            std::function<bool(RE::FormID formID, uint16_t uniqueID)> needCovered;
             /// Key i has an active Remembrance hold of its own, or shows one.
             std::array<bool, MAX_SLOTS_PER_PAGE> remembranceHoldOnKey{};
             /// 0.24.29: the page this run's ranking alone builds (no hold,
@@ -235,6 +236,11 @@ namespace Huginn::Slot
             /// allocator's page (`wanted`) stands in.
             bool haveMemorylessPage = false;
             SlotAssignments memorylessPage;
+            /// 0.24.29: ms the game has been suspended since launch
+            /// (UpdateHandler::SuspendedMs: alt-tab, the console). The wanted
+            /// clock skips what it gained since the last run: a want the
+            /// player could not see does not ripen. 0 in the in-game test.
+            double suspendedMs = 0.0;
             /// This run's clock for the upsert and the churn record. Epoch (the
             /// default) = steady_clock::now(); the in-game test passes later
             /// times to step past the page spacing without sleeping.
@@ -440,19 +446,13 @@ namespace Huginn::Slot
 
         // The combat flag SetInCombat last saw. Guarded by m_mutex.
         bool m_inCombat = false;
-        // 0.24.29: since when each item has been on the page the combat
-        // upsert challenges from (fCombatWantedSec), continuously; an item
-        // that leaves it starts over. Cleared when combat ends.
-        struct WantedSince
-        {
-            RE::FormID formID = 0;
-            uint16_t uniqueID = 0;
-            std::string name;
-            double sinceMs = 0.0;
-        };
-        std::vector<WantedSince> m_wantedSince;
-        void NoteWanted(const SlotAssignments& page, double nowMs);
-        [[nodiscard]] double WantedForMs(const SlotAssignment& a, double nowMs) const;
+        // 0.24.29: since when each challenger has been wanted -- on the page
+        // the combat upsert challenges from and on no key -- without a break
+        // (fCombatWantedSec, core::CombatWantedClock). Cleared when combat
+        // ends. Guarded by m_mutex.
+        Core::CombatWantedClock m_wantedClock;
+        /// RunContext::suspendedMs as the last combat run saw it.
+        double m_lastSuspendedMs = 0.0;
 
         // Combat upsert, page-wide (core::CombatUpsertMemory): items that
         // recently left a key or that an upsert displaced this fight (never
@@ -507,13 +507,14 @@ namespace Huginn::Slot
 
         /// Combat upsert (core/CombatUpsert.h), after dedup: a combat-locked
         /// key open to it takes a challenger whose score beats the key's own
-        /// item by fCombatChallengerMargin, once it has been on the memoryless
-        /// page for fCombatWantedSec. Challengers: that page's ordinary picks
-        /// (the allocator's page without it) that no key shows, not equipped,
-        /// nor gone from a key in the last few seconds, on a key whose class
-        /// they fit. At most one
-        /// per run, kCombatUpsertPageSpacingMs apart. The new item is locked
-        /// like any other. Caller holds m_mutex.
+        /// item by fCombatChallengerMargin -- any challenger, on a key whose
+        /// item's need is covered (RunContext::needCovered) -- once it has been
+        /// wanted for fCombatWantedSec. Challengers: the memoryless page's
+        /// ordinary picks (the allocator's page without it) that no key shows,
+        /// not equipped, nor gone from a key in the last few seconds, on a key
+        /// whose class they fit. At most one per run,
+        /// kCombatUpsertPageSpacingMs apart. The new item is locked like any
+        /// other. Caller holds m_mutex.
         void ApplyCombatUpserts(SlotAssignments& result, const SlotAssignments& wanted, const RunContext& run,
             std::chrono::steady_clock::time_point now);
 

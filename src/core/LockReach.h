@@ -99,8 +99,23 @@ namespace Huginn::Core::Lock
         [[nodiscard]] int Value() const noexcept { return (!any || unknown) ? kUnknownReach : reach; }
     };
 
+    /// The lock the crosshair shows: its level, kNoLock when the crosshair is
+    /// on no lock. The one reading of WorldState's pair (the hard gate, the
+    /// skip gate's compare, lock_in_crosshair).
+    [[nodiscard]] constexpr int CrosshairLock(bool lookingAtLock, int level) noexcept
+    {
+        return lookingAtLock ? level : kNoLock;
+    }
+
+    /// lock_in_crosshair (needs.csv): a lock a spell, scroll or lockpick can
+    /// open -- any but none and one that requires a key.
+    [[nodiscard]] constexpr bool Pickable(int lock) noexcept
+    {
+        return lock != kNoLock && lock < kRequiresKey;
+    }
+
     /// lock_out_of_reach: an unlock item that cannot open the lock in the
-    /// crosshair. `lockLevel` is kNoLock without one.
+    /// crosshair. `lockLevel` is kNoLock without one (CrosshairLock).
     [[nodiscard]] constexpr bool OutOfReach(bool unlocks, int reach, int lockLevel) noexcept
     {
         if (!unlocks || lockLevel == kNoLock) return false;

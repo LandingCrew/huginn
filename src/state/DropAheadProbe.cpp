@@ -1,6 +1,7 @@
 #include "DropAheadProbe.h"
 
 #include "HandModelProbe.h"
+#include "HostileSight.h"
 #include "input/HandEquipGate.h"  // the hand equip gate rides the hook (0.24.26)
 
 #include "NeedSensorState.h"  // NeedClock
@@ -676,6 +677,16 @@ namespace Huginn::State::DropAheadProbe
             static std::atomic<bool> s_logged{ false };
             if (!s_logged.exchange(true)) {
                logger::error("[HandModel] an exception in the probe was caught (logged once)"sv);
+            }
+         }
+         // So does the hostiles' line of sight (0.24.29, HostileSight.h): the
+         // fight's element counts a hostile's cast or readied spell only in sight.
+         try {
+            HostileSight::OnPlayerUpdate(a_this);
+         } catch (...) {
+            static std::atomic<bool> s_logged{ false };
+            if (!s_logged.exchange(true)) {
+               logger::error("[HostileSight] an exception in the sight test was caught (logged once)"sv);
             }
          }
          // So does the hand equip gate (0.24.26): a slot key's equip into a

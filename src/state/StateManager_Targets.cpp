@@ -18,6 +18,7 @@
 #include "StateManager.h"
 #include "StateConstants.h"
 #include "StateEvaluator.h"  // v0.6.11: For ClassifyActor
+#include "HostileSight.h"    // 0.24.29: cast / ready elements only in sight
 #include "../Profiling.h"
 #include "core/TargetFamilies.h"
 #include "core/TargetTracking.h"
@@ -106,6 +107,7 @@ namespace Huginn::State
          bool summoned = false;
          std::uint8_t castBits = 0;
          std::uint8_t readyBits = 0;   // 0.24.29: ReadyElementBits
+         std::vector<std::uint32_t> sightRequest;   // 0.24.29: the hostiles HostileSight tests
       };
    }
 
@@ -469,10 +471,19 @@ namespace Huginn::State
             if (actor->IsInCombat()) {
               hostileNeeds.families |= GetCachedFamilies(actor);
               hostileNeeds.summoned |= IsSummon(actor);
-              if (actor->IsCasting(nullptr)) {
-                hostileNeeds.castBits |= CastElementBits(actor);
+              // 0.24.29: a cast or a readied spell counts only for a hostile
+              // in the player's line of sight (HostileSight.h; the main-thread
+              // hook tests the ones named here, so a newcomer counts from the
+              // next poll). Health lost to an element needs no sight.
+              const std::uint8_t cast = actor->IsCasting(nullptr) ? CastElementBits(actor) : 0;
+              const std::uint8_t ready = ReadyElementBits(actor);
+              if ((cast | ready) != 0) {
+                hostileNeeds.sightRequest.push_back(formID);
+                if (HostileSight::Sees(formID)) {
+                  hostileNeeds.castBits |= cast;
+                  hostileNeeds.readyBits |= ready;
+                }
               }
-              hostileNeeds.readyBits |= ReadyElementBits(actor);
             }
 
             // Skip building secondary state if this is the crosshair target
@@ -1005,6 +1016,7 @@ namespace Huginn::State
       // player (Core::Needs::ElementsShown): a hostile seen casting fire,
       // frost or shock or holding it ready, or health lost to it, held the
       // same way.
+      HostileSight::Request(std::move(hostileNeeds.sightRequest));
       const bool fighting = m_combatDebounce.Value();
       std::uint32_t shownNew = 0;
       UpdateNeedSensors([&](NeedSensorState& n) {
