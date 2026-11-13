@@ -888,12 +888,21 @@ namespace Huginn::Console
       const char* name = form ? form->GetName() : nullptr;
       // 0.23.41: a player-made potion or a spell no tome teaches is mapped
       // late (EffectCatalog::FindOrMap), as the selection log does.
-      const bool built = catalog.Find(*id) != nullptr;
+      // 0.24.30: an item the player has is graded among what they have
+      // (held); its record's grade, within the load order, follows.
+      const auto* record = catalog.FindRecord(*id);
+      const auto* held = catalog.FindHeld(*id);
       const auto* entry = catalog.FindOrMapId(*id);
-      auto line = std::format("[cap] {:08X} {}{} : {}", *id, name ? name : "?", entry && !built ? " (late entry)" : "",
+      auto line = std::format("[cap] {:08X} {}{} : {}", *id, name ? name : "?",
+         held ? " (held: among what the player has)" : entry && !record ? " (late entry)" : "",
          entry ? Core::Effect::FormatCap(entry->cap) : std::string("not in the catalog (out of scope or unknown)"));
       Print(line.c_str());
       logger::info("{}"sv, line);
+      if (held && record) {
+         const auto rline = std::format("[cap]   record, within the load order: {}", Core::Effect::FormatCap(record->cap));
+         Print(rline.c_str());
+         logger::info("{}"sv, rline);
+      }
       if (!entry || !form) return;
 
       auto* player = RE::PlayerCharacter::GetSingleton();

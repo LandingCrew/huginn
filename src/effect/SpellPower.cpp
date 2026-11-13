@@ -23,10 +23,15 @@ namespace Huginn::Effect
         std::vector<SpellEffectPower> out;
         if (!caster || !spell) return out;
         auto* avo = caster->AsActorValueOwner();
+        std::uint32_t index = 0;
         for (auto* e : spell->effects) {
+            // Counted even when empty (a missing master's effect): the
+            // catalog's rows are numbered by place in the list.
+            const std::uint32_t at = index++;
             if (!e || !e->baseEffect) continue;
             auto* mgef = e->baseEffect;
             SpellEffectPower p;
+            p.index = at;
             p.effect = mgef->GetFormID();
             p.name = mgef->GetName() ? mgef->GetName() : "";
             p.baseMagnitude = e->effectItem.magnitude;

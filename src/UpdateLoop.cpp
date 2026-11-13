@@ -1,6 +1,7 @@
 #include "UpdateLoop.h"
 #include "Globals.h"
 #include "pipeline/PipelineCoordinator.h"
+#include "effect/LiveValues.h"   // HasWork: the held grading drains in a run (0.24.30)
 #include "Profiling.h"
 
 #include "state/StateManager.h"
@@ -548,8 +549,11 @@ static void RunPipelineIfNeeded(float deltaMs, RE::PlayerCharacter* player,
     //
     // Anything that must survive a quiet scene belongs in NeedsForcedRun(), not
     // as another term here.
+    // 0.24.30: LiveValues' hand-over is drained by RunPipeline's ApplyPending,
+    // so the gate opens while it has work. Not in NeedsForcedRun: the run
+    // still hash-skips after the drain unless the held grading changed.
     if (!stateChanged && !pageChanged &&
-        !Pipeline::PipelineCoordinator::GetSingleton().NeedsForcedRun()) {
+        !Pipeline::PipelineCoordinator::GetSingleton().NeedsForcedRun() && !Effect::LiveValues::HasWork()) {
         Learning::PipelineStateCache::GetSingleton().RefreshTimestamp();
         return;
     }

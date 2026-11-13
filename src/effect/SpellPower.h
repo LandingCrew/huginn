@@ -26,6 +26,7 @@ namespace Huginn::Effect
 {
     struct SpellEffectPower
     {
+        std::uint32_t index = 0;        // its place in the item's effect list, empty slots counted
         RE::FormID effect = 0;          // the MGEF
         std::string name;
         float baseMagnitude = 0.0f;     // the record

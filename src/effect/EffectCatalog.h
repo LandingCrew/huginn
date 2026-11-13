@@ -59,6 +59,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -100,7 +101,7 @@ namespace Huginn::Effect
 
     /// 0.24.30: an item's numbers as the player has them now: a spell's,
     /// potion's or food's effect rows, or a weapon's damage or an armour
-    /// piece's rating (< 0: the record's).
+    /// piece's rating (< 0: the record's). Default: the record's numbers.
     struct LiveNumbers
     {
         std::vector<LiveRow> rows;
@@ -150,23 +151,46 @@ namespace Huginn::Effect
         /// Block up to `timeout` for the worker (the console and test mode).
         bool WaitUntilReady(std::chrono::milliseconds timeout) const;
 
-        /// The entry of an in-scope base form, or nullptr: a live entry
-        /// (SetLive) in place of the record's while there is one.
+        /// The entry of an in-scope base form, or nullptr: the held entry
+        /// (graded among what the player has, below) while there is one,
+        /// else the record's.
         [[nodiscard]] const CatalogEntry* Find(RE::FormID formID) const;
-        /// 0.24.30: the item as the player has it now -- a spell's, potion's
-        /// or food's effect rows from the game (perks, skill, Fortify school),
-        /// a weapon's damage or an armour piece's rating with tempering
-        /// (effect/LiveValues.h) -- graded against the build's populations.
-        /// Find answers it in place of the record's entry until ClearLive. The
-        /// update loop's thread (it reads the form, as FindOrMap). Returns true
-        /// when the entry was made; the old one's memory is kept for the
-        /// process (a pipeline run may still hold its cap).
-        bool SetLive(const RE::TESBoundObject* form, const LiveNumbers& numbers);
-        /// A load: every live entry goes (the next character's perks are not
-        /// these); their memory is kept.
-        void ClearLive();
-        /// Live entries now.
-        [[nodiscard]] std::size_t LiveCount() const;
+        /// The record's entry only, graded within the load order (`hg dump
+        /// all`, the build's own questions).
+        [[nodiscard]] const CatalogEntry* FindRecord(RE::FormID formID) const;
+        /// The held entry only (nullptr before the held grading is published,
+        /// or for an item the player does not have).
+        [[nodiscard]] const CatalogEntry* FindHeld(RE::FormID formID) const;
+
+        // 0.24.30: the held grading. Every spell the player knows and item
+        // they carry is mapped from its numbers as the player has them
+        // (effect/LiveValues.h: perks, skill, Fortify school, tempering; the
+        // record's for what is not read) and graded among those same items
+        // (Core::Effect::HeldPopulations): its effects against what the
+        // player has, a weapon's damage and an armour piece's rating within
+        // the load order. The update loop's thread; `generation` is the
+        // load's (LiveValues), and a call for another load is dropped
+        // before it touches the form.
+        //
+        /// Map one held item from `numbers`. True when its mapping changed
+        /// (a new item, or its numbers moved); `read` is set when the form
+        /// was read (not a set of numbers seen before for it).
+        bool SetHeld(const RE::TESBoundObject* form, const LiveNumbers& numbers, std::uint32_t generation,
+                     bool& read);
+        /// The player no longer has it.
+        bool DropHeld(RE::FormID formID, std::uint32_t generation);
+        /// Grade every held item among them all and publish the entries,
+        /// when a held mapping changed since the last time. True when it
+        /// published. A published generation is freed once two later ones
+        /// and kRetireAfter have passed (a pipeline run, or the selection
+        /// log's tick, may still hold an entry).
+        bool RegradeHeld(std::size_t* graded = nullptr);
+        /// A held mapping changed since the last RegradeHeld (any thread).
+        [[nodiscard]] bool HeldDirty() const noexcept { return heldDirty_.load(std::memory_order_acquire); }
+        /// A load (`generation` is the next one): the held items and their
+        /// entries go -- another save's perks, and an FF form names another
+        /// item there.
+        void ClearLive(std::uint32_t generation);
 
         /// Find, else -- for a form the player holds or knows that the build
         /// never saw or left out by the tome rule -- an entry mapped now
@@ -243,24 +267,39 @@ namespace Huginn::Effect
         Core::Effect::LateEntries<CatalogEntry> late_;
         std::unique_ptr<EffectReader> lateReader_;
 
-        // Live entries (0.24.30): the map under liveMutex_ (Find takes it
-        // shared, and only while anyLive_); the store keeps every one made, so
-        // a pointer Find handed out stays valid. The reader under
-        // liveMakeMutex_.
+        // The held grading (0.24.30). Published: the entries' map and the
+        // held population under liveMutex_ (Find takes it shared, and only
+        // while anyLive_). Made: the mappings, under liveMakeMutex_ (the
+        // update loop's thread; a load's ClearLive waits for a read under way).
+        using Generation = std::vector<std::unique_ptr<CatalogEntry>>;
         mutable std::shared_mutex liveMutex_;
         std::unordered_map<RE::FormID, const CatalogEntry*> live_;
-        std::vector<std::unique_ptr<CatalogEntry>> liveStore_;
-        // Per spell, the entries made and the numbers they were made from: a
-        // conditional perk flips a spell between a few states, and each state
-        // is mapped once (under liveMakeMutex_).
-        struct LiveMade
+        std::shared_ptr<const Core::Effect::Populations> heldPops_;
+        std::atomic<bool> anyLive_{ false };
+
+        struct HeldMapping
         {
             LiveNumbers numbers;
-            const CatalogEntry* entry = nullptr;
+            Core::Effect::ItemMapping mapping;
         };
-        std::unordered_map<RE::FormID, std::vector<LiveMade>> liveMade_;
-        std::atomic<bool> anyLive_{ false };
+        struct HeldItem
+        {
+            std::size_t current = 0;            // into seen
+            std::vector<HeldMapping> seen;      // a conditional perk flips an item between a few states: each mapped once
+        };
         std::mutex liveMakeMutex_;
+        std::unordered_map<RE::FormID, HeldItem> held_;
+        std::uint32_t liveGeneration_ = 0;
+        std::atomic<bool> heldDirty_{ false };
         std::unique_ptr<EffectReader> liveReader_;
+        std::unique_ptr<Generation> published_;
+        struct Retired
+        {
+            std::chrono::steady_clock::time_point at;
+            std::unique_ptr<Generation> entries;
+        };
+        std::deque<Retired> retired_;
+        static constexpr auto kRetireAfter = std::chrono::seconds(60);
+        void RetireLocked(std::unique_ptr<Generation> gen);
     };
 }

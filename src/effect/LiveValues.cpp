@@ -72,8 +72,10 @@ namespace Huginn::Effect::LiveValues
             Consumable,   // a potion or food the player carries (not a poison)
             Weapon,
             Armour,
+            Record,       // carried, its record's numbers: a scroll, staff, poison, arrow, soul gem, torch
         };
-        constexpr std::array<const char*, 4> kWhatNames{ "spells", "potions and food", "weapons", "armour" };
+        constexpr std::array<const char*, 5> kWhatNames{ "spells", "potions and food", "weapons", "armour",
+                                                         "others at their record" };
 
         struct Work
         {
@@ -250,11 +252,13 @@ namespace Huginn::Effect::LiveValues
             bool haveLast = false;
             std::uint32_t seenGeneration = 0;
             std::vector<Work> queue;
-            std::array<std::size_t, 4> kinds{};   // this sweep's items by What, for its summary line
+            std::array<std::size_t, 5> kinds{};   // this sweep's items by What, for its summary line
             std::size_t cursor = 0;
             std::size_t moved = 0;   // this sweep, for its summary line
             std::string why;
             bool quiet = false;      // the periodic sweep: its line at debug
+            bool onlyNew = false;    // only the items not read yet: what is gone is not known from it
+            std::unordered_set<RE::FormID> seen;   // this sweep's items so far
             float ratio = 0.0f;      // the first moved magnitude's new / old, for the flip line
             std::chrono::steady_clock::time_point nextSweep{};
             std::unordered_map<RE::FormID, Numbers> computed;
@@ -270,11 +274,26 @@ namespace Huginn::Effect::LiveValues
         MainState g_main;
 
         std::atomic<bool> g_loaded{ false };
+        // The load: bumped under g_pendingMutex, with the hand-over cleared, so
+        // an item taken from it carries the load it was read in.
         std::atomic<std::uint32_t> g_generation{ 0 };
+        // A sweep is under way (main thread); the load's first whole sweep is
+        // handed over. The held grading is published only after it, and once
+        // per sweep, not once per item.
+        std::atomic<bool> g_reading{ false };
+        std::atomic<bool> g_firstSweepDone{ false };
 
-        // Handed to the update loop.
+        // Handed to the update loop: an item's numbers to map (the record's
+        // when none moved them), or that the player no longer has it.
+        struct Pending
+        {
+            RE::TESBoundObject* form = nullptr;
+            Numbers numbers;
+            bool drop = false;
+        };
         std::mutex g_pendingMutex;
-        std::unordered_map<RE::FormID, std::pair<RE::TESBoundObject*, Numbers>> g_pending;
+        std::unordered_map<RE::FormID, Pending> g_pending;
+        std::atomic<std::size_t> g_pendingCount{ 0 };   // g_pending.size(), set under the lock
 
         /// The player's spells a key can show (a cast spell; abilities,
         /// diseases and powers are never in scope).
@@ -299,7 +318,9 @@ namespace Huginn::Effect::LiveValues
         /// Everything a sweep reads: the spells known, then the potions,
         /// food, weapons and armour the player carries (the inventory's
         /// entries; a poison's strength is the Poisoner perks' entry points,
-        /// not these, and a staff has no damage).
+        /// not these, and a staff has no damage), and the rest the catalog
+        /// grades at their record's numbers -- every one is graded among what
+        /// the player has.
         std::vector<Work> Items(RE::PlayerCharacter* player)
         {
             std::vector<Work> out;
@@ -310,13 +331,19 @@ namespace Huginn::Effect::LiveValues
                 auto* obj = e ? e->object : nullptr;
                 if (!obj) continue;
                 if (obj->Is(RE::FormType::AlchemyItem)) {
-                    if (!static_cast<RE::AlchemyItem*>(obj)->IsPoison()) out.push_back({ obj, What::Consumable });
+                    const bool poison = static_cast<RE::AlchemyItem*>(obj)->IsPoison();
+                    out.push_back({ obj, poison ? What::Record : What::Consumable });
                 }
                 else if (obj->Is(RE::FormType::Weapon)) {
-                    if (!static_cast<RE::TESObjectWEAP*>(obj)->IsStaff()) out.push_back({ obj, What::Weapon });
+                    const bool staff = static_cast<RE::TESObjectWEAP*>(obj)->IsStaff();
+                    out.push_back({ obj, staff ? What::Record : What::Weapon });
                 }
                 else if (obj->Is(RE::FormType::Armor)) {
                     out.push_back({ obj, What::Armour });
+                }
+                else if (obj->Is(RE::FormType::Scroll) || obj->Is(RE::FormType::Ammo) ||
+                         obj->Is(RE::FormType::SoulGem) || obj->Is(RE::FormType::Light)) {
+                    out.push_back({ obj, What::Record });
                 }
             }
             return out;
@@ -361,9 +388,7 @@ namespace Huginn::Effect::LiveValues
         {
             Numbers n;
             n.rows.reserve(power.size());
-            for (std::uint32_t i = 0; i < power.size(); ++i) {
-                n.rows.push_back(LiveRow{ i, power[i].magnitude, power[i].duration });
-            }
+            for (const auto& p : power) n.rows.push_back(LiveRow{ p.index, p.magnitude, p.duration });
             return n;
         }
 
@@ -396,6 +421,7 @@ namespace Huginn::Effect::LiveValues
         /// moves keeps the catalog's entry.
         bool SameAsRecord(const Work& w, const Numbers& n)
         {
+            if (w.what == What::Record) return true;
             if (w.what == What::Weapon) return std::fabs(n.damage - RecordDamage(w.form)) <= kEpsilon;
             if (w.what == What::Armour) return std::fabs(n.armorRating - RecordRating(w.form)) <= kEpsilon;
             const auto* item = static_cast<const RE::MagicItem*>(w.form);
@@ -485,6 +511,9 @@ namespace Huginn::Effect::LiveValues
                 out = Numbers{};
                 out.armorRating = ReadGear(player, w.form, false);
                 return out.armorRating >= 0.0f;
+            case What::Record:
+                out = Numbers{};
+                return true;
             }
             return false;
         }
@@ -514,6 +543,9 @@ namespace Huginn::Effect::LiveValues
             if (onlyNew) {
                 std::erase_if(g_main.queue, [](const Work& w) { return g_main.computed.contains(w.form->GetFormID()); });
             }
+            g_main.onlyNew = onlyNew;
+            g_main.seen.clear();
+            g_reading.store(!g_main.queue.empty(), std::memory_order_release);
             g_main.kinds = {};
             for (const auto& w : g_main.queue) ++g_main.kinds[static_cast<std::size_t>(w.what)];
             g_main.cursor = 0;
@@ -541,22 +573,48 @@ namespace Huginn::Effect::LiveValues
             for (; g_main.cursor < end; ++g_main.cursor) {
                 const Work& w = g_main.queue[g_main.cursor];
                 if (!w.form) continue;
+                const RE::FormID id = w.form->GetFormID();
+                g_main.seen.insert(id);
                 Numbers now;
-                if (!ReadOne(player, w, now)) continue;
-                const auto it = g_main.computed.find(w.form->GetFormID());
+                const bool read = ReadOne(player, w, now);
+                if (!read) now = Numbers{};
+                const auto it = g_main.computed.find(id);
                 const bool known = it != g_main.computed.end();
-                if (known ? Same(it->second, now) : SameAsRecord(w, now)) {
-                    if (!known) g_main.computed.emplace(w.form->GetFormID(), now);
-                    continue;
+                if (known && Same(it->second, now)) continue;
+                // The catalog maps the record's numbers when nothing moved them.
+                const bool asRecord = !read || SameAsRecord(w, now);
+                if (known) {
+                    if (g_main.ratio == 0.0f) g_main.ratio = RatioOf(it->second, now);
+                    g_main.prior[id] = it->second;
+                    ++g_main.moved;
                 }
-                if (known && g_main.ratio == 0.0f) g_main.ratio = RatioOf(it->second, now);
-                if (known) g_main.prior[w.form->GetFormID()] = it->second;
-                g_main.computed[w.form->GetFormID()] = now;
-                ++g_main.moved;
+                else if (!asRecord) {
+                    ++g_main.moved;
+                }
+                g_main.computed[id] = now;
                 std::lock_guard lock(g_pendingMutex);
-                g_pending[w.form->GetFormID()] = { w.form, std::move(now) };
+                g_pending[id] = Pending{ w.form, asRecord ? Numbers{} : std::move(now), false };
+                g_pendingCount.store(g_pending.size(), std::memory_order_release);
             }
             if (g_main.cursor >= g_main.queue.size() && !g_main.queue.empty()) {
+                // A whole sweep: what was read before and is not now, the
+                // player no longer has (sold, used up, a spell forgotten).
+                if (!g_main.onlyNew) {
+                    std::vector<RE::FormID> gone;
+                    for (const auto& [id, n] : g_main.computed) {
+                        if (!g_main.seen.contains(id)) gone.push_back(id);
+                    }
+                    if (!gone.empty()) {
+                        std::lock_guard lock(g_pendingMutex);
+                        for (const RE::FormID id : gone) {
+                            g_main.computed.erase(id);
+                            g_main.prior.erase(id);
+                            g_pending[id] = Pending{ nullptr, Numbers{}, true };
+                        }
+                        g_pendingCount.store(g_pending.size(), std::memory_order_release);
+                    }
+                    g_firstSweepDone.store(true, std::memory_order_release);
+                }
                 if (!g_main.quiet) {
                     logger::info("[LiveValues] read {} ({}): {} moved"sv, KindsText(), g_main.why, g_main.moved);
                 }
@@ -584,6 +642,8 @@ namespace Huginn::Effect::LiveValues
                 g_main.causes = std::move(now);
                 g_main.queue.clear();
                 g_main.cursor = 0;
+                g_main.seen.clear();
+                g_reading.store(false, std::memory_order_release);
             }
         }
 
@@ -682,6 +742,8 @@ namespace Huginn::Effect::LiveValues
             g_main.checked.clear();
             g_main.queue.clear();
             g_main.cursor = 0;
+            g_main.seen.clear();
+            g_reading.store(false, std::memory_order_release);
             g_main.causes = Causes{};
             g_main.loadedAt = std::chrono::steady_clock::now();
         }
@@ -728,45 +790,84 @@ namespace Huginn::Effect::LiveValues
 
     void SetGameLoaded(bool loaded) noexcept
     {
-        g_generation.fetch_add(1, std::memory_order_acq_rel);
-        g_loaded.store(loaded, std::memory_order_release);
+        std::uint32_t gen = 0;
         {
+            // With the hand-over cleared: an item taken before this carries
+            // the old load, which the catalog drops without reading its form.
             std::lock_guard lock(g_pendingMutex);
+            gen = g_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
             g_pending.clear();
+            g_pendingCount.store(0, std::memory_order_release);
         }
-        Effect::EffectCatalog::GetSingleton().ClearLive();
+        g_firstSweepDone.store(false, std::memory_order_release);
+        g_loaded.store(loaded, std::memory_order_release);
+        Effect::EffectCatalog::GetSingleton().ClearLive(gen);
+    }
+
+    bool HasWork() noexcept
+    {
+        if (g_pendingCount.load(std::memory_order_acquire) > 0) return true;
+        return g_firstSweepDone.load(std::memory_order_acquire) && !g_reading.load(std::memory_order_acquire) &&
+               Effect::EffectCatalog::GetSingleton().HeldDirty();
     }
 
     bool ApplyPending(std::size_t budget)
     {
-        std::vector<std::pair<RE::TESBoundObject*, Numbers>> take;
-        {
-            std::lock_guard lock(g_pendingMutex);
-            if (g_pending.empty()) return false;
-            for (auto it = g_pending.begin(); it != g_pending.end() && take.size() < budget;) {
-                take.push_back(std::move(it->second));
-                it = g_pending.erase(it);
-            }
-        }
         auto& catalog = Effect::EffectCatalog::GetSingleton();
-        bool changed = false;
-        for (auto& [form, n] : take) {
-            if (!catalog.SetLive(form, n)) continue;
-            changed = true;
-            if (const auto* entry = catalog.Find(form->GetFormID())) {
+        // Up to `budget` forms read and mapped; a set of numbers the catalog
+        // mapped before for that item (a perk flipping back) costs no read.
+        std::size_t reads = 0;
+        bool empty = false;
+        while (reads < budget) {
+            RE::FormID id = 0;
+            Pending p;
+            std::uint32_t gen = 0;
+            {
+                std::lock_guard lock(g_pendingMutex);
+                if (g_pending.empty()) {
+                    empty = true;
+                    break;
+                }
+                const auto it = g_pending.begin();
+                id = it->first;
+                p = std::move(it->second);
+                g_pending.erase(it);
+                g_pendingCount.store(g_pending.size(), std::memory_order_release);
+                gen = g_generation.load(std::memory_order_acquire);
+            }
+            if (p.drop) {
+                if (catalog.DropHeld(id, gen)) logger::trace("[LiveValues] {:08X} no longer held"sv, id);
+                continue;
+            }
+            bool read = false;
+            const bool changed = catalog.SetHeld(p.form, p.numbers, gen, read);
+            if (read) ++reads;
+            if (changed) {
                 std::string numbers;
-                for (const auto& r : n.rows) {
+                for (const auto& r : p.numbers.rows) {
                     if (!numbers.empty()) numbers += ", ";
                     numbers += std::format("{:.1f} for {:.0f}s", r.magnitude, r.duration);
                 }
-                if (n.damage >= 0.0f) numbers = std::format("damage {:.1f} (record {:.0f})", n.damage, RecordDamage(form));
-                if (n.armorRating >= 0.0f) {
-                    numbers = std::format("armour {:.1f} (record {:.0f})", n.armorRating, RecordRating(form));
-                }
-                logger::debug("[LiveValues] {:08X} '{}' now {}: {}"sv, form->GetFormID(),
-                    form->GetName() ? form->GetName() : "?", numbers, Core::Effect::FormatCap(entry->cap));
+                if (p.numbers.damage >= 0.0f) numbers = std::format("damage {:.1f}", p.numbers.damage);
+                if (p.numbers.armorRating >= 0.0f) numbers = std::format("armour {:.1f}", p.numbers.armorRating);
+                logger::trace("[LiveValues] {:08X} '{}' held at {}"sv, id, p.form->GetName() ? p.form->GetName() : "?",
+                    numbers.empty() ? std::string("its record's numbers") : numbers);
             }
         }
-        return changed;
+        if (!empty) {
+            std::lock_guard lock(g_pendingMutex);
+            empty = g_pending.empty();
+        }
+        // Graded once everything handed over is mapped and no sweep is under
+        // way: one regrade per change, not one per item.
+        if (!empty || g_reading.load(std::memory_order_acquire) || !g_firstSweepDone.load(std::memory_order_acquire)) {
+            return false;
+        }
+        const auto t0 = std::chrono::steady_clock::now();
+        std::size_t graded = 0;
+        if (!catalog.RegradeHeld(&graded)) return false;
+        logger::debug("[LiveValues] {} held items graded among themselves ({:.1f} ms)"sv, graded,
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+        return true;
     }
 }

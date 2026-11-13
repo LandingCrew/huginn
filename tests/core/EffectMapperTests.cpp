@@ -581,6 +581,68 @@ TEST_CASE("effect mapper: tempering adds damage (the codebase's model), it does 
     CHECK(Get(cap, Col::weapon_damage) == doctest::Approx(2.0 / 3.0));  // 26: above 25, below 30
 }
 
+TEST_CASE("effect mapper: held grading -- effects among what the player has, gear features within the load order")
+{
+    World w;
+    auto fireM = Mgef(kArchValueModifier, "Health", "Fire Damage", kFlagDetrimental);
+    fireM.resistAV = "FireResist";
+    fireM.school = "Destruction";
+    const auto fire = w.Add(fireM);
+    const auto resist = w.Add(Mgef(kArchValueModifier, "FireResist", "Resist Fire"));
+    // The load order: fire spells 10 .. 50, swords 20 .. 30.
+    for (const float mag : { 10.0f, 20.0f, 30.0f, 40.0f, 50.0f }) {
+        auto& s = w.Item(Kind::Spell, "Fire");
+        World::Fx(s, fire, mag);
+    }
+    for (const float d : { 20.0f, 25.0f, 30.0f }) {
+        auto& s = w.Item(Kind::Weapon, "Sword");
+        s.weaponType = 1;
+        s.damage = d;
+        s.speed = 1.0f;
+    }
+    for (const float mag : { 30.0f, 50.0f, 70.0f }) {
+        auto& a = w.Item(Kind::Armour, "Ring");
+        World::Fx(a, resist, mag);
+    }
+    const auto r = w.Build();
+    const auto classes = ClassifyAll(w.effects, nullptr);
+
+    // Held: two fire spells as cast at 2.5x (25, 75), the 25 sword, one
+    // 60 s Resist Fire potion and the 70 ring.
+    ItemRecord low = w.items[0];
+    low.effects[0].magnitude = 25.0f;
+    ItemRecord high = w.items[2];
+    high.effects[0].magnitude = 75.0f;
+    ItemRecord potion;
+    potion.kind = Kind::Potion;
+    potion.formId = 0x2000;
+    potion.name = "Resist Fire, 60 s";
+    potion.value = 10;
+    World::Fx(potion, resist, 50, 60);
+    const ItemMapping mLow = MapItem(low, w.effects, classes);
+    const ItemMapping mHigh = MapItem(high, w.effects, classes);
+    const ItemMapping mSword = MapItem(w.items[6], w.effects, classes);
+    const ItemMapping mPotion = MapItem(potion, w.effects, classes);
+    const ItemMapping mRing = MapItem(w.items[10], w.effects, classes);
+    REQUIRE(mPotion.inScope);
+    const Populations held = HeldPopulations({ &mLow, &mHigh, &mSword, &mPotion, &mRing });
+
+    // Against the records both spells top out; among what is held they keep their order.
+    CHECK(Get(Grade(mLow, r.pops), Col::damage_health_fire) == doctest::Approx(2.0 / 5.0));
+    CHECK(Get(Grade(mHigh, r.pops), Col::damage_health_fire) == doctest::Approx(1.0));
+    CHECK(Get(Grade(mLow, held, &r.pops), Col::damage_health_fire) == doctest::Approx(1.0 / 2.0));
+    CHECK(Get(Grade(mHigh, held, &r.pops), Col::damage_health_fire) == doctest::Approx(1.0));
+
+    // The sword's damage stays graded within the load order's swords.
+    CHECK(Get(Grade(mSword, held, &r.pops), Col::weapon_damage) == doctest::Approx(2.0 / 3.0));
+    CHECK(Get(Grade(mSword, held), Col::weapon_damage) == doctest::Approx(1.0));   // without: the only sword held
+
+    // The lone timed potion grades among timed items held (itself), not against the ring.
+    CHECK(held.Size(Col::resist_fire, Populations::kGroupTimed) == 1);
+    CHECK(Get(Grade(mPotion, held, &r.pops), Col::resist_fire) == doctest::Approx(1.0));
+    CHECK(Get(Grade(mRing, held, &r.pops), Col::resist_fire) == doctest::Approx(1.0));
+}
+
 TEST_CASE("effect mapper: a school only for spells, scrolls and staves")
 {
     World w;
