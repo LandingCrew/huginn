@@ -187,6 +187,15 @@ namespace Huginn::State
       // All tracked targets (flat vector — cache-friendly for N≤50, contiguous copy)
       std::vector<TargetActorState> targets;
 
+      // 0.24.31: a living ally -- a teammate, or a summon or thrall of the
+      // player's side (core/TargetTracking.h IsPlayerSide) -- is in the
+      // crosshair, or was within Core::Gate::kAllyAimHoldSec. What a spell for
+      // someone else waits for (no_ally_aimed).
+      bool allyInCrosshair = false;
+      // 0.24.31: a teammate down on one knee (ally_injured's step): a heal for
+      // someone else passes no_ally_aimed without the crosshair.
+      bool allyDown = false;
+
       // Cached aggregate counts — kept in sync automatically by InsertOrUpdate,
       // Remove, and Clear. External code that mutates `targets` directly
       // (e.g. std::erase_if) must call UpdateCachedCounts() before reading.
@@ -239,6 +248,8 @@ namespace Huginn::State
       void Clear() noexcept {
       primary.reset();
       targets.clear();
+      allyInCrosshair = false;
+      allyDown = false;
       cachedEnemyCount = 0;
       cachedAnyCasting = false;
       }

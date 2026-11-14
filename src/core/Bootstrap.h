@@ -273,5 +273,35 @@ namespace Huginn::Core::Bootstrap
     /// FNV-1a 64 of the parts joined by 0x1F: theta (need, column),
     /// strength (need, column), recent (family, tau as "%g"), covered.
     [[nodiscard]] std::uint64_t StableKey(std::string_view kind, std::string_view a = {}, std::string_view b = {}) noexcept;
+
+    /// A theta pair the shipped bootstrap re-seeded by hand after its fit
+    /// (its provenance's "hand_edits"), and the files it replaced: the
+    /// lowercase sha256 of every bootstrap shipped before the edit,
+    /// space-separated. A save whose THTA names one of them takes the file's
+    /// value for the pair on load (ChoiceCosave MergeTheta's `reseed`). A save
+    /// written under the edited file, or under any later one (a refit), keeps
+    /// its own: each re-seed lands once per character.
+    struct ThetaReseed
+    {
+        std::string_view need;
+        std::string_view col;
+        std::string_view fromSha256;
+    };
+
+    /// 0.24.31: ally_injured x restore_health_other, 1.0 (the obvious-pair
+    /// prior: R6's fit had no follower data) -> 4.19, the weight of the
+    /// player's own heal (health_deficit x restore_health). A heal for a
+    /// downed follower ranked 202nd of 219 (2026-11-13). Replaced R6's fit
+    /// (cd246919) and 0.24.29's file (dcb45ea7).
+    inline constexpr std::array<ThetaReseed, 1> kReseededTheta{ {
+        { "ally_injured", "restore_health_other",
+          "9259e37e742b94633274a5e7b1bca1481428b23da2dbd51d04738906240aea02 "
+          "1af1efa21d9c499996ab52c69e29f8126cc11dadf7a38a5cd2eac49fb3e676b0" },
+    } };
+
+    /// The stable keys of the kReseededTheta pairs that replace the file
+    /// `saveSha256` names (a save's THTA; case-insensitive). Empty for the
+    /// current file, a later one, or an unknown one.
+    [[nodiscard]] std::vector<std::uint64_t> ReseededThetaKeys(std::string_view saveSha256);
     [[nodiscard]] std::string TauText(double tau);
 }

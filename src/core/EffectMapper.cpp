@@ -105,6 +105,22 @@ namespace Huginn::Core::Effect
             }
         }
 
+        /// 0.24.31: a column the player's own vitals drive -- what a restore
+        /// or a regeneration does for whoever it lands on. One cast at someone
+        /// else keeps only its family (Grade).
+        bool IsPlayerVital(Col c) noexcept
+        {
+            switch (c) {
+                case Col::restore_health:
+                case Col::restore_magicka:
+                case Col::restore_stamina:
+                case Col::regen_health:
+                case Col::regen_magicka:
+                case Col::regen_stamina: return true;
+                default: return false;
+            }
+        }
+
         float HungerSize(const MagicEffectRecord& m)
         {
             for (const auto& k : m.keywords) {
@@ -778,7 +794,20 @@ namespace Huginn::Core::Effect
                 m.outcomes.push_back(o);
                 continue;
             }
-            const auto& mg = effects[row.effect];
+            // A spell or scroll casts by its own delivery, whatever its effects'
+            // records say: LoreRim's "Healing Aura on Target" (a target-actor
+            // spell) carries the self-delivered Restore Health of its "on Self"
+            // twin, and read by the effect it was a self heal (2026-11-13).
+            // Every rule below that asks where the row lands reads this.
+            const MagicEffectRecord* lands = &effects[row.effect];
+            MagicEffectRecord asCast;
+            if ((it.kind == Kind::Spell || it.kind == Kind::Scroll) && it.delivery >= 0 &&
+                it.delivery != lands->delivery) {
+                asCast = *lands;
+                asCast.delivery = it.delivery;
+                lands = &asCast;
+            }
+            const auto& mg = *lands;
             const auto& cls = classes[row.effect];
             o.cls = cls;
             o.hidden = mg.HiddenInUI();
@@ -955,12 +984,17 @@ namespace Huginn::Core::Effect
         // Restore amounts (absolute) for the overshoot cross-feature: the item's
         // TOTAL per vital (effects.csv), summed over the rows that count for the
         // column (visible ones when there are any, so Simonrim's hidden perk
-        // variants are not added on top).
+        // variants are not added on top). 0.24.31: a spell's or scroll's row
+        // cast at someone else (Healing Touch, Healing Aura on Target) restores
+        // them, not the user: its overshoot of the user's gap meant nothing, and
+        // at full health it read as a full overshoot against the heal.
         {
             const Eligibility eligible(m);
+            const bool castable = it.kind == Kind::Spell || it.kind == Kind::Scroll;
             for (const auto& r : m.rows) {
                 const int v = VitalIndex(r.col);
                 if (v < 0 || !eligible(r, r.col)) continue;
+                if (castable && r.delivery != kDeliverySelf) continue;
                 if (r.fullRestore) m.fullRestore[static_cast<std::size_t>(v)] = true;
                 else m.restoreAmount[static_cast<std::size_t>(v)] += r.raw;
             }
@@ -1235,6 +1269,13 @@ namespace Huginn::Core::Effect
         std::uint32_t maxDur = 0;
         bool longLasting = false;
         bool healsOthers = false;
+        float othersHeal = 0.0f;
+        float othersRegen = 0.0f;
+        bool anySummon = false;
+        // Only a spell or a scroll is cast where its delivery says, as the
+        // overshoot reads it (MapItem): a potion lands on the drinker whatever
+        // its effect record says.
+        const bool castable = m.kind == Kind::Spell || m.kind == Kind::Scroll;
         for (const auto& r : m.rows) {
             for (const Col c : { r.col, r.col2 }) {
                 // Any kept heal that reaches others, visible or not: Breath of
@@ -1242,7 +1283,25 @@ namespace Huginn::Core::Effect
                 // an area heals the allies around.
                 if (c == Col::restore_health && (r.delivery != kDeliverySelf || r.area > 0)) healsOthers = true;
                 if (!eligible(r, c)) continue;
-                put(c, RowValue(r, c, pops));
+                const float v = RowValue(r, c, pops);
+                // 0.24.31: a restore or regeneration cast at someone else (touch,
+                // aimed, at an actor or a location) does not restore the player,
+                // so it does not take the player's vital columns, whose weights
+                // the player's own wounds drive (health_deficit x restore_health
+                // 4.19 in the bootstrap): Healing Aura on Target ranked first for
+                // 90 s while the player was at 1-20% health (2026-11-14). Its
+                // family (restore, regen) keeps the value -- what kind of item it
+                // is -- and a heal's goes to restore_health_other below.
+                if (castable && r.delivery != kDeliverySelf && IsPlayerVital(c)) {
+                    put(FamilyOf(c), v);
+                    if (c == Col::restore_health) othersHeal = std::max(othersHeal, v);
+                    if (c == Col::regen_health) othersRegen = std::max(othersRegen, v);
+                    continue;
+                }
+                put(c, v);
+            }
+            for (const Col c : { r.col, r.col2 }) {
+                if (c != Col::_Count && (c == Col::summon || FamilyOf(c) == Col::summon)) anySummon = true;
             }
             anyFullRestore = anyFullRestore || r.fullRestore;
             if (FamilyKey(r.col) == Col::cure && r.cureByArchetype) anyCureArchetype = true;
@@ -1255,7 +1314,11 @@ namespace Huginn::Core::Effect
             if (r.duration >= kDurationSentinel) longLasting = true;
         }
         // restore_health_other: a conjunctive column, valued as restore_health.
-        if (healsOthers) put(Col::restore_health_other, val[Index(Col::restore_health)]);
+        if (healsOthers) put(Col::restore_health_other, std::max(val[Index(Col::restore_health)], othersHeal));
+        // A health regeneration cast at someone else heals them too, so it is a
+        // heal for others -- unless it rides a summon (Dead Thrall: the
+        // thrall's own regeneration, not a heal the player casts).
+        if (othersRegen > 0.0f && !anySummon) put(Col::restore_health_other, othersRegen);
         // Families: max over their specifics.
         for (std::size_t i = 0; i < kColumnCount; ++i) {
             if (val[i] <= 0.0f) continue;
@@ -1350,7 +1413,16 @@ namespace Huginn::Core::Effect
             for (const Col c : { pr.row.col, pr.row.col2 }) {
                 if (c == Col::_Count) continue;
                 const float v = RowValue(pr.row, c, pops);
-                if (v > 0.0f) out.push_back(PerkValue{ pr.perks, c, v });
+                if (!(v > 0.0f)) continue;
+                // 0.24.31: as Grade -- a perk's restore cast at someone else
+                // does not take the player's vital column.
+                if ((m.kind == Kind::Spell || m.kind == Kind::Scroll) && pr.row.delivery != kDeliverySelf &&
+                    IsPlayerVital(c)) {
+                    out.push_back(PerkValue{ pr.perks, FamilyOf(c), v });
+                    if (c == Col::restore_health) out.push_back(PerkValue{ pr.perks, Col::restore_health_other, v });
+                    continue;
+                }
+                out.push_back(PerkValue{ pr.perks, c, v });
             }
         }
         return out;

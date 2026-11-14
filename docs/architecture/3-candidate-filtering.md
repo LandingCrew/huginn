@@ -1,6 +1,6 @@
 # Candidate Generation, Filtering & Priors
 
-> **R11 (0.24.4):** the filters below read the candidate's facets from the effect catalog (`core/CapFacets.h` via `effect/Facets.h`), not the classifiers' tags: full vitals (RestoreHealth / Magicka / Stamina, not for TargetsOthers or HealsOverTime, not for food), the active buffs (Invisibility, Muffle, ArmorBuff but not a ward, Summon, Warming, Waterbreathing), the resist check (any resist_* column the player already covers, potions and spells alike; never a hostile or damaging item, so an elemental cloak's resist rider does not filter it: `Core::Facets::ResistJudgeable`) and the no_follower gate (TargetsOthers). A candidate the catalog has no entry for passes every effect filter. Since R8.1 the context zeros are hard gates; since R8.3 nothing is dropped by a utility floor (the hand-tuned engine (context weights × the bandit's learning score × multipliers) no longer ranks: every candidate is ranked on the choice score μ (θ over need × effect columns, b per item; doc 9, [9-implementation-map.md](9-implementation-map.md)), and the old engine runs only for the D2 feature `ln learn mult` (`[Scoring] bLegacyLearnFeature`, confined by `tools/prune/r8_check.py`)).
+> **R11 (0.24.4):** the filters below read the candidate's facets from the effect catalog (`core/CapFacets.h` via `effect/Facets.h`), not the classifiers' tags: full vitals (RestoreHealth / Magicka / Stamina, not for TargetsOthers or HealsOverTime, not for food), the active buffs (Invisibility, Muffle, ArmorBuff but not a ward and, since 0.24.31, not one cast at someone else, Summon, Warming, Waterbreathing), the resist check (any resist_* column the player already covers, potions and spells alike; never a hostile or damaging item, so an elemental cloak's resist rider does not filter it: `Core::Facets::ResistJudgeable`) and the no_follower gate (TargetsOthers). A candidate the catalog has no entry for passes every effect filter. Since R8.1 the context zeros are hard gates; since R8.3 nothing is dropped by a utility floor (the hand-tuned engine (context weights × the bandit's learning score × multipliers) no longer ranks: every candidate is ranked on the choice score μ (θ over need × effect columns, b per item; doc 9, [9-implementation-map.md](9-implementation-map.md)), and the old engine runs only for the D2 feature `ln learn mult` (`[Scoring] bLegacyLearnFeature`, confined by `tools/prune/r8_check.py`)).
 
 > **Purpose:** Reference for what becomes a candidate, the hard filters that remove
 > candidates, the intrinsic priors that bootstrap learning, and how survivors reach
@@ -105,9 +105,9 @@ table is the code, not an idealisation:
 
 | | Affordability | Equipped | Full vitals | Hard gates (§2.7) | Active buff |
 |---|---|---|---|---|---|
-| **Spell** | `currentMagicka < effectiveCost` → policy-dependent (§3) | `player.IsSpellEquipped(formID)` | RestoreHealth, RestoreMagicka | `favorite_suppressed`, `no_follower` (TargetsOthers), `lock_out_of_reach` (Unlock) | Invisibility, Muffle, Armor, `SpellType::Summon` once `summonCount` reaches `summonLimit` (0.23.46; before, any summon up hid them all), plus resist redundancy |
+| **Spell** | `currentMagicka < effectiveCost` → policy-dependent (§3) | `player.IsSpellEquipped(formID)` | RestoreHealth, RestoreMagicka | `favorite_suppressed`, `no_follower` and `no_ally_aimed` (TargetsOthers), `lock_out_of_reach` (Unlock) | Invisibility, Muffle, Armor, `SpellType::Summon` once `summonCount` reaches `summonLimit` (0.23.46; before, any summon up hid them all), plus resist redundancy |
 | **Item** (Potion/Food/SoulGem) | `count <= 0` | — (never filtered) | RestoreHealth, RestoreMagicka, RestoreStamina — **skipped entirely for `Food` and `Alcohol`** | — | resist redundancy, Waterbreathing, Invisibility |
-| **Scroll** | `count <= 0` | — | RestoreHealth only | `no_follower` (TargetsOthers), `lock_out_of_reach` (Unlock) | Invisibility, Muffle |
+| **Scroll** | `count <= 0` | — | RestoreHealth only | `no_follower` and `no_ally_aimed` (TargetsOthers), `lock_out_of_reach` (Unlock) | Invisibility, Muffle |
 | **Ammo** | `count <= 0` | `isEquipped` | — | — | — |
 | **Weapon / Staff** | always passes | always passes | — | `favorite_suppressed`; a staff `lock_out_of_reach` (Unlock) | — |
 | **Torch** | `count <= 0` | `isEquipped` | — | `not_dark` | — |
@@ -195,10 +195,11 @@ active-buff filters, and each drop is a `Core::Filter::Dropped` with its reason:
 
 | Reason | Drops | The old engine's zero it replaces |
 |---|---|---|
-| `no_follower` | a spell or scroll tagged `TargetsOthers` with no living follower near | `WeightForCandidate`'s `!followerPresent` arms |
+| `no_follower` | a spell or scroll tagged `TargetsOthers` with no living follower near (0.24.31: an ally in the crosshair -- a summon or thrall too -- counts as near; in a fight a combat key whose item this drops is freed, `FreesCombatKey`) | `WeightForCandidate`'s `!followerPresent` arms |
 | `no_workstation` | apparel when no craft it fortifies (Smithing, Enchanting, Alchemy) has its station in the crosshair; a ring that fortifies two crafts passes at either | the apparel arm (no baseline; only the station's fortify weight) |
 | `not_dark` | a torch while darkness does not apply: daylight (`WorldState::isDark` false, `fDarkLightLevel` with its hysteresis), or Night Eye, a light spell or a torch already up | the torch arm (`darknessWeight` only) |
 | `favorite_suppressed` | a favourite (spells and weapons carry the flag) under `[Favorites] sFavoritesMode = Suppress` | the two Suppress skips in `UtilityScorer::ScoreCandidates`, deleted |
+| `no_ally_aimed` (0.24.31) | a spell or scroll for someone else (`TargetsOthers`: not hostile, at others by touch, aim or location, and any help -- restore, regen, fortify, defense, resist, a cure but not a dispel (Dispel on Target is aimed at enemies as often as allies), movement, rally) while no living ally is in the crosshair: a teammate, or a summon or thrall of the player's side, held for `kAllyAimHoldSec` (4 s) after the crosshair leaves them. A heal for someone else (RestoreHealth) also passes while a teammate is down on one knee (`allyDown`, ally_injured's step), crosshair or not; a resist or other buff for someone else still waits for the look. Its "on Self" twin is the buff then (the user, 2026-11-13: "on self is the preferred buff iff we are not looking at an ally"); in game Fire Shell on Target ranked level with Fire Shell on Self and took its key | none: new, and the live filter's only (the old engine keeps `no_follower`) |
 | `lock_out_of_reach` (0.24.29) | an unlock spell, scroll or staff (the catalog's `Unlock` facet, `utility_unlock`) whose reach is below the level of the lock in the crosshair, and every one at a lock that requires a key | none: new. The old `unlockWeight` raised every unlock spell alike, and so did `lock_in_crosshair x utility_unlock` |
 
 ### Resist items: what stacks (0.24.29, `core/ResistPotions.h`)
@@ -698,6 +699,7 @@ There is no automated test suite in the repository; these are in-game checks
 - [ ] Invisibility potion excluded while invisible, and offered again in the last
       `fRefreshPriorSec` seconds of the effect (§2.8)
 - [ ] A spell for others is `filtered_by` `no_follower` with no follower near
+- [ ] With a follower near, Fire Shell on Target is `filtered_by` `no_ally_aimed` until the crosshair is on the follower (or a summon), and offered then; Fire Shell on Self is never gated
 - [ ] A Fortify Smithing ring is `filtered_by` `no_workstation` away from a forge and offered at one
 - [ ] A torch is `filtered_by` `not_dark` in daylight and offered in a dark cave
 - [ ] Under `sFavoritesMode = Suppress` a favourite is `filtered_by` `favorite_suppressed`

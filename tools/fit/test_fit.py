@@ -486,14 +486,15 @@ class ReplayEquivalence(unittest.TestCase):
 class HardGateDrops(TempWork):
     """0.23.55 (R8.1): a row dropped by each of the four hard gates reads its reason by the
     head's own filter list, in v3load and in tools/replay; the older reasons read the same.
-    0.24.29: lock_out_of_reach and resist_weaker, appended after them, the same way."""
+    0.24.29: lock_out_of_reach and resist_weaker, appended after them, the same way; 0.24.31:
+    no_ally_aimed."""
     NEW = ('no_follower', 'no_workstation', 'not_dark', 'favorite_suppressed', 'lock_out_of_reach',
-           'resist_weaker')
+           'resist_weaker', 'no_ally_aimed')
     SWORD = {"weapon_damage": 0.75, "weapon_type_sword": 1}
 
     def text(self):
         head, seg1, seg2 = trv3.make_session()
-        self.assertEqual(head['filters'][15:], list(self.NEW))     # the golden head (0.23.55, 0.24.29)
+        self.assertEqual(head['filters'][15:], list(self.NEW))     # the golden head (0.23.55, 0.24.29, 0.24.31)
         r = seg1[0]['ctx']['rows'][0]
         extra = [dict(r, form='000A000' + str(i), uid=0, kind=kind, src=None, cap=cap, flags=4, slot=-1,
                       util=None, x={}, wp=None, fb=fb, cr=None, **{k: None for k in trv3.OLD_KEYS})
@@ -503,7 +504,8 @@ class HardGateDrops(TempWork):
                      ('not_dark', 'Light', None),
                      ('favorite_suppressed', 'Weapon', self.SWORD),
                      ('lock_out_of_reach', 'Spell', {"utility": 0.5, "utility_unlock": 0.5}),
-                     ('resist_weaker', 'Potion', {"resist": 0.08, "resist_fire": 0.08})])]
+                     ('resist_weaker', 'Potion', {"resist": 0.08, "resist_fire": 0.08}),
+                     ('no_ally_aimed', 'Spell', {"resist": 1.0, "resist_fire": 1.0, "delivery_aimed": 1})])]
         seg1[0]['ctx']['rows'] = seg1[0]['ctx']['rows'] + extra
         head = dict(head, launch='20261029-120000')
         for d in seg1 + seg2:
@@ -518,7 +520,7 @@ class HardGateDrops(TempWork):
         self.assertTrue(all(not row[common.FLAGS] & common.F['eligible'] for row in rows[-len(self.NEW):]))
         self.assertEqual(rows[3][common.FB], 'cooldown')          # an older reason, unchanged
         self.assertIsNone(rows[0][common.FB])                      # an eligible row: none
-        self.assertEqual(len(D['heads'][0]['filters']), 21)
+        self.assertEqual(len(D['heads'][0]['filters']), 22)
 
     def test_replay_reader(self):
         decs = replay.load_v3([self.write('v3.jsonl', self.text())])

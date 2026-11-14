@@ -55,7 +55,10 @@ namespace Huginn::Core::Facets
         HealsOverTime,     // a health restore that works over time: regen_health, or restore_health on
                            // an aura or over time (timing_over_time) and not concentration
         TargetsOthers,     // a spell or scroll for someone else: not hostile, delivered by touch, aimed or
-                           // at a location, and restoring, regenerating, fortifying a vital or armouring
+                           // at a location, and helping whoever it lands on (restore, regen, fortify,
+                           // defense, resist, cure, movement, rally; 0.24.31: resist, the skill and
+                           // combat fortifies, cure, movement and rally added -- Fire Shell on Target
+                           // was not "for someone else" and took the key of Fire Shell on Self)
         Damage,            // the damage or absorb family
         Hostile,           // the hostile modifier
         Fortify,           // the fortify_vital, fortify_skill or fortify_combat family
@@ -136,8 +139,16 @@ namespace Huginn::Core::Facets
                                   ((has(Col::restore_health) || has(Col::restore_health_other)) &&
                                    (has(Col::aura) || (has(Col::timing_over_time) && !has(Col::concentration)))));
         const bool spellLike = kind == Effect::Kind::Spell || kind == Effect::Kind::Scroll;
-        const bool atOthers = has(Col::delivery_touch) || has(Col::delivery_aimed) || has(Col::delivery_target_location);
-        const bool helps = has(Col::restore) || has(Col::regen) || has(Col::fortify_vital) || has(Col::defense_armor);
+        bool atOthers = false;
+        for (const Col d : Effect::kCastAtOthersDelivery) atOthers = atOthers || has(d);
+        // A cure, but not a dispel (0.24.31): LoreRim's Dispel on Target is as
+        // often aimed at an enemy's buffs as at an ally's debuffs, and gating
+        // it on an ally in the crosshair hid it where it was aimed.
+        const bool cures = has(Col::cure_disease) || has(Col::cure_poison) || has(Col::cure_paralysis) ||
+                           has(Col::cure_injury);
+        const bool helps = has(Col::restore) || has(Col::regen) || has(Col::fortify_vital) || has(Col::defense) ||
+                           has(Col::resist) || has(Col::fortify_skill) || has(Col::fortify_combat) || cures ||
+                           has(Col::movement) || has(Col::influence_rally);
         add(F::TargetsOthers, spellLike && !has(Col::hostile) && atOthers && helps);
         add(F::Damage, has(Col::damage) || has(Col::absorb));
         add(F::Hostile, has(Col::hostile));

@@ -89,6 +89,8 @@ namespace Huginn::Context
     {
         return Core::Gate::Inputs{
             .followerNear = FollowerNear(targets),
+            .allyInCrosshair = targets.allyInCrosshair,
+            .allyDown = targets.allyDown,
             .station = StationCraft(world),
             .darknessApplies = DarknessApplies(player, world),
             .suppressFavorites = suppressFavorites,

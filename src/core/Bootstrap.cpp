@@ -3,6 +3,7 @@
 #include "core/ObviousPairs.h"
 
 #include <algorithm>
+#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <format>
@@ -643,6 +644,28 @@ namespace Huginn::Core::Bootstrap
         h *= 1099511628211ull;
         mix(b);
         return h;
+    }
+
+    std::vector<std::uint64_t> ReseededThetaKeys(std::string_view saveSha256)
+    {
+        std::string sha(saveSha256);
+        for (auto& ch : sha) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        std::vector<std::uint64_t> keys;
+        if (sha.empty()) return keys;
+        for (const auto& r : kReseededTheta) {
+            std::string_view from = r.fromSha256;
+            while (!from.empty()) {
+                const auto sp = from.find(' ');
+                const auto one = from.substr(0, sp);
+                if (one == sha) {
+                    keys.push_back(StableKey("theta", r.need, r.col));
+                    break;
+                }
+                if (sp == std::string_view::npos) break;
+                from.remove_prefix(sp + 1);
+            }
+        }
+        return keys;
     }
 
     std::string TauText(double tau)

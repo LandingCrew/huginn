@@ -150,11 +150,16 @@ namespace Huginn::Core::ChoiceCosave
     {
         std::size_t applied = 0;    // saved entries the build knows
         std::size_t unknown = 0;    // saved keys the build no longer knows (dropped)
-        std::size_t fromFile = 0;   // build keys the save lacks (the bootstrap's value)
+        std::size_t fromFile = 0;   // build keys the save lacks (the bootstrap's value; re-seeded keys not counted)
         std::size_t duplicate = 0;  // a key saved twice: the last one wins
+        std::size_t reseeded = 0;   // saved keys in `reseed`: the bootstrap's value taken instead (0.24.31)
     };
+    /// `reseed`: build keys whose saved value is dropped for the file's (the
+    /// caller passes Bootstrap::ReseededThetaKeys() when the save learned from
+    /// another bootstrap file, nothing otherwise).
     [[nodiscard]] std::vector<ThetaEntry> MergeTheta(std::span<const std::uint64_t> buildKeys,
-                                                     std::span<const ThetaEntry> saved, MergeReport& rep);
+                                                     std::span<const ThetaEntry> saved, MergeReport& rep,
+                                                     std::span<const std::uint64_t> reseed = {});
 
     /// A reset (Reset Learned Weights, `hg reset weights`, `hg reset all`)
     /// while the model is off (no or an invalid bootstrap; 0.24.18): the

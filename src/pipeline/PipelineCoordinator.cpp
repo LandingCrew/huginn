@@ -1138,11 +1138,13 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
     lockRun.haveMemorylessPage = wantMemoryless && !memoryless.page.empty();
     lockRun.memorylessPage = std::move(memoryless.page);
     // 0.24.29: a key whose item an active-buff filter dropped this run (its
-    // need is covered) takes any challenger past the wanted clock.
+    // need is covered) takes any challenger past the wanted clock; 0.24.31:
+    // so does one for someone else with no ally in the crosshair
+    // (Core::Filter::FreesCombatKey).
     lockRun.suspendedMs = static_cast<double>(Update::UpdateHandler::GetSingleton()->SuspendedMs());
     lockRun.needCovered = [&filtered = ctx.filtered](RE::FormID formID, uint16_t uniqueID) {
         const auto reason = Core::Filter::Find(filtered, formID, uniqueID);
-        return reason && Core::Filter::IsActiveBuff(*reason);
+        return reason && Core::Filter::FreesCombatKey(*reason);
     };
     // A combat-locked key's item, checked against the game every run: a spell
     // or shout the player no longer knows, or an item now equipped / worn.

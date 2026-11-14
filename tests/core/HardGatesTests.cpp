@@ -27,6 +27,28 @@ TEST_CASE("hard gates: no_follower")
     CHECK_FALSE(Gate::NoFollower(false, true));
 }
 
+TEST_CASE("hard gates: no_ally_aimed")
+{
+    // 0.24.31: "on self is the preferred buff iff we are not looking at an ally".
+    CHECK(Gate::NotAtAlly(true, false));           // Fire Shell on Target, no ally in the crosshair
+    CHECK_FALSE(Gate::NotAtAlly(true, true));      // looking at a follower or a summon
+    CHECK_FALSE(Gate::NotAtAlly(false, false));    // Fire Shell on Self: never this gate
+    CHECK_FALSE(Gate::NotAtAlly(false, true));
+    // A heal for someone else passes while a teammate is down, crosshair or not.
+    CHECK_FALSE(Gate::NotAtAlly(true, false, true, true));
+    CHECK(Gate::NotAtAlly(true, false, true, false));    // a heal, no one down: the look
+    CHECK(Gate::NotAtAlly(true, false, false, true));    // a resist for someone else: still the look
+}
+
+TEST_CASE("hard gates: an ally stays looked at for kAllyAimHoldSec")
+{
+    CHECK_FALSE(Gate::AllyAimHeld(-1.0, 10.0));          // never looked at
+    CHECK(Gate::AllyAimHeld(10.0, 10.0));
+    CHECK(Gate::AllyAimHeld(10.0, 10.0 + Gate::kAllyAimHoldSec));
+    CHECK_FALSE(Gate::AllyAimHeld(10.0, 10.0 + Gate::kAllyAimHoldSec + 0.1));
+    CHECK_FALSE(Gate::AllyAimHeld(10.0, 9.0));           // a clock that went back: not held
+}
+
 TEST_CASE("hard gates: the bench mapping is the old engine's")
 {
     using Gate::Craft;
@@ -113,6 +135,8 @@ TEST_CASE("hard gates: the default inputs gate everything a gate can")
 {
     const Gate::Inputs in{};
     CHECK(Gate::NoFollower(true, in.followerNear));
+    CHECK(Gate::NotAtAlly(true, in.allyInCrosshair));
+    CHECK(Gate::NotAtAlly(true, in.allyInCrosshair, true, in.allyDown));
     CHECK(Gate::NoWorkstation(Gate::Crafts{ .enchanting = true }, in.station));
     CHECK(Gate::NotDark(in.darknessApplies));
     CHECK_FALSE(Gate::FavoriteSuppressed(true, in.suppressFavorites));

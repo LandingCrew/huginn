@@ -1,6 +1,7 @@
 #include "ChoiceSerializer.h"
 #include "Globals.h"
 
+#include "core/Bootstrap.h"   // ReseededThetaKeys (0.24.31)
 #include "core/ChoiceCosave.h"
 
 #include <cstddef>
@@ -388,17 +389,22 @@ namespace Huginn::Persist
          std::vector<CC::ThetaEntry> saved = std::move(theta->entries);
          CC::MergeReport rep;
          const auto keys = learner.Keys();
-         const auto merged = CC::MergeTheta(keys, saved, rep);
+         const auto [fileUtc, fileSha] = learner.FileIdentity();
+         const bool sameFile = theta->sha256 == fileSha;
+         // 0.24.31: a save that learned from a file a hand re-seed replaced
+         // takes the file's value for that pair (kReseededTheta), once.
+         const auto reseed = sameFile ? std::vector<std::uint64_t>{}
+                                      : Core::Bootstrap::ReseededThetaKeys(theta->sha256);
+         const auto merged = CC::MergeTheta(keys, saved, rep, reseed);
          std::vector<Learning::ChoiceLearner::Entry> entries;
          entries.reserve(merged.size());
          for (const auto& e : merged) entries.push_back(Learning::ChoiceLearner::Entry{ e.key, e.mu, e.var });
          const std::size_t applied = learner.ImportEntries(entries);
-         const auto [fileUtc, fileSha] = learner.FileIdentity();
-         const bool sameFile = theta->sha256 == fileSha;
          logger::info("[Cosave] THTA applied over the bootstrap: {} entries from the save, {} keys the save lacks at "
-                      "the file's value, {} saved keys this build no longer knows (dropped){}{}"sv,
+                      "the file's value, {} saved keys this build no longer knows (dropped){}{}{}"sv,
             applied, rep.fromFile, rep.unknown,
             rep.duplicate ? std::format(", {} duplicate key(s) (the last kept)", rep.duplicate) : std::string{},
+            rep.reseeded ? std::format(", {} re-seeded by the file (kReseededTheta)", rep.reseeded) : std::string{},
             sameFile ? std::string{}
                      : std::format("; NOTE: the save learned from bootstrap {} ({}), this build reads {} ({})",
                           theta->createdUtc.empty() ? "?" : theta->createdUtc, theta->sha256.substr(0, 16),
