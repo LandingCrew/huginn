@@ -30,6 +30,7 @@ namespace Huginn::Effect
         bool known = false;   // the catalog has an entry (else kind and facets say nothing)
         Core::Effect::Kind kind = Core::Effect::Kind::Potion;
         Core::Facets::Set facets;
+        int unlockReach = -1;   // 0.24.29: CatalogEntry::unlockReach (core/LockReach.h)
     };
 
     /// The catalog's answer for a form; known = false before the catalog is

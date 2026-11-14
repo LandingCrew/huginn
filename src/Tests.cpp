@@ -92,6 +92,7 @@ namespace
                 f.Add(F::Summon);
             }
             if (type == ST::Utility || has(T::Telekinesis) || hasX(X::Unlock)) f.Add(F::Utility);
+            if (hasX(X::Unlock)) f.Add(F::Unlock);
             if (has(T::Light) || has(T::DetectLife) || hasX(X::DarkVision)) f.Add(F::Vision);
             if (has(T::Ward)) { f.Add(F::Ward); f.Add(F::Defense); }
             if (has(T::Armor)) { f.Add(F::ArmorBuff); f.Add(F::Defense); }
@@ -108,11 +109,13 @@ namespace
             if constexpr (std::is_same_v<T, Candidate::SpellCandidate>) {
                 ff.kind = K::Spell;
                 spellLike(c.type, c.tags, c.tagsExt);
+                if (f.Has(F::Unlock)) ff.unlockReach = Core::Lock::ReachFromText(c.name);   // 0.24.29
                 return true;
             }
             else if constexpr (std::is_same_v<T, Candidate::ScrollCandidate>) {
                 ff.kind = K::Scroll;
                 spellLike(c.type, c.tags, c.tagsExt);
+                if (f.Has(F::Unlock)) ff.unlockReach = Core::Lock::ReachFromText(c.name);   // 0.24.29
                 return true;
             }
             else if constexpr (std::is_same_v<T, Candidate::ItemCandidate>) {
@@ -3250,7 +3253,53 @@ void RunUnitTests()
                 }
             }
 
-            logger::info("  ✓ PASS: spells for others: 0 alone, {:.2f} with a hurt follower"sv, w);
+            // 0.24.29: an unlock spell short of the lock in the crosshair is
+            // dropped (lock_out_of_reach); one that reaches it stays, and with
+            // no lock in the crosshair none is dropped. A key-only lock drops all.
+            {
+                Candidate::SpellCandidate novice{};
+                novice.name = "Open Novice Lock";
+                novice.formID = 0x0BADF10C;
+                novice.tagsExt = Spell::SpellTagExt::Unlock;
+                Candidate::SpellCandidate master = novice;
+                master.name = "Open Master Lock";
+                master.formID = 0x0BADF10D;
+                Candidate::ScrollCandidate noviceScroll{};
+                noviceScroll.name = "Scroll of Open Novice Lock";
+                noviceScroll.formID = 0x0BADF10E;
+                noviceScroll.tagsExt = Spell::SpellTagExt::Unlock;
+                noviceScroll.count = 1;   // a scroll with none is dropped as unaffordable first
+                const State::PlayerActorState anyone{};
+                State::WorldState expertLock{};
+                expertLock.isLookingAtLock = true;
+                expertLock.lockLevel = State::LockLevel::EXPERT;
+                State::WorldState keyLock = expertLock;
+                keyLock.lockLevel = State::LockLevel::REQUIRES_KEY;
+                State::WorldState noLock{};
+                noLock.lockLevel = State::LockLevel::MASTER;   // stale level, no lock in the crosshair
+                const auto lockR = Core::Filter::Reason::lock_out_of_reach;
+                const auto name = [](std::optional<Core::Filter::Reason> r) {
+                    return r ? std::string(Core::Filter::ReasonName(*r)) : std::string("kept");
+                };
+                struct LockCase { const char* what; Candidate::CandidateVariant c; const State::WorldState* w; bool drop; };
+                const LockCase cases[] = {
+                    { "Open Novice Lock at an Expert lock", novice, &expertLock, true },
+                    { "Scroll of Open Novice Lock at an Expert lock", noviceScroll, &expertLock, true },
+                    { "Open Master Lock at an Expert lock", master, &expertLock, false },
+                    { "Open Master Lock at a key-only lock", master, &keyLock, true },
+                    { "Open Novice Lock with no lock in the crosshair", novice, &noLock, false },
+                };
+                for (const auto& lc : cases) {
+                    const auto r = FilterReasonFor(lc.c, anyone, testTargets, *lc.w);
+                    if (lc.drop ? r != lockR : r.has_value()) {
+                        logger::error("TEST FAIL (6k): {}: got {}, want {}", lc.what, name(r),
+                            lc.drop ? "lock_out_of_reach" : "kept");
+                        return;
+                    }
+                }
+            }
+
+            logger::info("  ✓ PASS: spells for others: 0 alone, {:.2f} with a hurt follower; unlocks by lock level"sv, w);
         }
 
         // Test 6g: No environmental conditions → all weights zero
@@ -6190,7 +6239,10 @@ void RunSlotLockerOverrideScopeTest()
     const Override::OverrideCollection none{};
     {
         auto cfg = testConfig;
-        cfg.combatUpsertMarginMult = 3.0f;
+        // 0.24.29: the line is a lead of fCombatChallengerMargin; the wanted
+        // clock (fCombatWantedSec) has its own case below (5s), so 0 here.
+        cfg.combatChallengerMargin = 1.0f;
+        cfg.combatWantedSec = 0.0f;
         cfg.combatUpsertCooldownSec = 10.0f;
         locker.SetConfig(cfg);
         locker.Reset();
@@ -6199,15 +6251,15 @@ void RunSlotLockerOverrideScopeTest()
         // Key 0 frozen on A (s=0), key 1 on C (s=-1.5).
         (void)locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, -1.5 } }), none, {}, at(t0, 0));
 
-        // 5a. Off: the freeze is absolute.
-        cfg.combatUpsertMarginMult = 0.0f;
+        // 5a. Off (fCombatChallengerMargin below 0): the freeze is absolute.
+        cfg.combatChallengerMargin = -1.0f;
         locker.SetConfig(cfg);
         auto shown = locker.ApplyLocks(scoredPage({ { D, 1.5 }, { E, -1.4 } }), none, {}, at(t0, 1000));
         if (!shows(shown, 0, A) || !shows(shown, 1, C)) {
-            logger::error("TEST FAIL: fCombatUpsertMarginMult = 0 still upserted"sv);
+            logger::error("TEST FAIL: fCombatChallengerMargin < 0 still upserted"sv);
             passed = false;
         }
-        cfg.combatUpsertMarginMult = 3.0f;
+        cfg.combatChallengerMargin = 1.0f;
         locker.SetConfig(cfg);
 
         // 5b. The wheel open: none.
@@ -6232,7 +6284,7 @@ void RunSlotLockerOverrideScopeTest()
 
         // 5d. The allocator wants an override on key 1 (waiting out
         //     fMinLockDurationMs): key 1 is left to it. D (+1.5) takes key 0
-        //     (+1.5 > 1.216); one upsert, A displaced.
+        //     (+1.5 > 1.0); one upsert, A displaced.
         auto withHold = at(t0, 2000);
         auto waiting = scoredPage({ { D, 1.5 }, { E, -1.4 } });
         waiting[1].type = AssignmentType::Override;   // no active override: the lock holds, the gate must too
@@ -6245,7 +6297,9 @@ void RunSlotLockerOverrideScopeTest()
 
         // 5e. No cascade: A, displaced, is now the allocator's pick for key 1
         //     and beats C by +1.5 -- past the page spacing, the press floor
-        //     and with key 1 open, it must still not come back.
+        //     and with key 1 open, it must still not come back while it left
+        //     a key less than fCombatUpsertCooldownSec (10 s here) ago. (Past
+        //     that it may: 0.24.29 bars no item for the fight.)
         shown = locker.ApplyLocks(scoredPage({ { D, 1.5 }, { A, 0.0 } }), none, {}, at(t0, 6000));
         if (!shows(shown, 1, C)) {
             logger::error("TEST FAIL: the item an upsert displaced came back on another key (key1={:08X})"sv,
@@ -6260,6 +6314,31 @@ void RunSlotLockerOverrideScopeTest()
             passed = false;
         }
         (void)locker.SetInCombat(false);
+
+        // 5x (review of PR #254). The item an upsert displaced comes back:
+        //     D (+1.5) takes key 0 from A (0.0) at 2 s (key 1's C, +0.8, is
+        //     not led by the margin). A then rises to +3.0: at 6 s it left a
+        //     key 4 s ago (out: fCombatUpsertCooldownSec 10 s); at 12.5 s it
+        //     takes a key again. Before 0.24.29 the churn pass marked it
+        //     displaced by an upsert, barred for the rest of the fight.
+        {
+            locker.Reset();
+            (void)locker.SetInCombat(true);
+            const auto t7 = std::chrono::steady_clock::now();
+            (void)locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, 0.8 } }), none, {}, at(t7, 0));
+            shown = locker.ApplyLocks(scoredPage({ { D, 1.5 }, { C, 0.8 } }), none, {}, at(t7, 2000));
+            const bool dTook = shows(shown, 0, D) && shows(shown, 1, C);
+            shown = locker.ApplyLocks(scoredPage({ { A, 3.0 }, { C, 0.8 } }), none, {}, at(t7, 6000));
+            const bool aWaited = shows(shown, 0, D) && shows(shown, 1, C);
+            shown = locker.ApplyLocks(scoredPage({ { A, 3.0 }, { C, 0.8 } }), none, {}, at(t7, 12500));
+            const bool aBack = shows(shown, 0, A) || shows(shown, 1, A);
+            if (!dTook || !aWaited || !aBack) {
+                logger::error("TEST FAIL: the item an upsert displaced (D took {}, A waited {}, A back {}; key0={:08X}, key1={:08X})"sv,
+                    dTook, aWaited, aBack, shown.size() > 0 ? shown[0].formID : 0, shown.size() > 1 ? shown[1].formID : 0);
+                passed = false;
+            }
+            (void)locker.SetInCombat(false);
+        }
 
         // 5g. Two keys clearing the barrier on one run: one changes; the
         //     other waits out the page spacing.
@@ -6280,11 +6359,147 @@ void RunSlotLockerOverrideScopeTest()
         }
         (void)locker.SetInCombat(false);
 
+        // 5s (0.24.29). The wanted clock (fCombatWantedSec 1.5): key 0 on A
+        //     (0.0), key 1 on C (-2.0); the memoryless page shows A and G
+        //     (+1.0, a lead of 3.0 over C). G takes nothing while it is new
+        //     (4.0 s) or wanted for 1.0 s (5.0 s); at 1.6 s (5.6 s) it takes key
+        //     1, the key it leads by more. 5t: a run without G in between
+        //     restarts its clock. 5u: a lead at the margin (1.0 over A, with C
+        //     gone from the page's challengers) is not enough.
+        constexpr RE::FormID G = 0x0BAD0A08, H = 0x0BAD0A09;
+        {
+            auto wantCfg = cfg;
+            wantCfg.combatWantedSec = 1.5f;
+            wantCfg.combatUpsertCooldownSec = 0.0f;
+            locker.SetConfig(wantCfg);
+            const auto memoryless = [&](std::chrono::steady_clock::time_point t0w, int ms,
+                                        std::initializer_list<std::pair<RE::FormID, double>> rows) {
+                auto run = at(t0w, ms);
+                run.haveMemorylessPage = true;
+                run.memorylessPage = scoredPage(rows);
+                return run;
+            };
+            locker.Reset();
+            (void)locker.SetInCombat(true);
+            const auto t2 = std::chrono::steady_clock::now();
+            (void)locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, -2.0 } }), none, {}, at(t2, 0));
+            shown = locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, -2.0 } }), none, {}, memoryless(t2, 4000, { { A, 0.0 }, { G, 1.0 } }));
+            const bool newHeld = shows(shown, 1, C);
+            shown = locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, -2.0 } }), none, {}, memoryless(t2, 5000, { { A, 0.0 }, { G, 1.0 } }));
+            const bool oneSecHeld = shows(shown, 1, C);
+            shown = locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, -2.0 } }), none, {}, memoryless(t2, 5600, { { A, 0.0 }, { G, 1.0 } }));
+            if (!newHeld || !oneSecHeld || !shows(shown, 1, G) || !shows(shown, 0, A)) {
+                logger::error("TEST FAIL: the wanted clock (new held {}, 1 s held {}; key0={:08X}, key1={:08X}, want A, G at 1.6 s)"sv,
+                    newHeld, oneSecHeld, shown.size() > 0 ? shown[0].formID : 0, shown.size() > 1 ? shown[1].formID : 0);
+                passed = false;
+            }
+            (void)locker.SetInCombat(false);
+
+            // 5t. G wanted at 4.0 s, gone at 5.0 s, back at 5.6 s: its clock
+            //     restarted, so key 1 holds C.
+            locker.Reset();
+            (void)locker.SetInCombat(true);
+            const auto t3 = std::chrono::steady_clock::now();
+            (void)locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, -2.0 } }), none, {}, at(t3, 0));
+            (void)locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, -2.0 } }), none, {}, memoryless(t3, 4000, { { A, 0.0 }, { G, 1.0 } }));
+            (void)locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, -2.0 } }), none, {}, memoryless(t3, 5000, { { A, 0.0 } }));
+            shown = locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, -2.0 } }), none, {}, memoryless(t3, 5600, { { A, 0.0 }, { G, 1.0 } }));
+            if (!shows(shown, 1, C)) {
+                logger::error("TEST FAIL: a want that flickered kept its clock (key1={:08X}, want C)"sv,
+                    shown.size() > 1 ? shown[1].formID : 0);
+                passed = false;
+            }
+            (void)locker.SetInCombat(false);
+
+            // 5u. H leads A by exactly the margin (1.0) for 3 s: no change.
+            locker.Reset();
+            (void)locker.SetInCombat(true);
+            const auto t4 = std::chrono::steady_clock::now();
+            (void)locker.ApplyLocks(scoredPage({ { A, 0.0 } }), none, {}, at(t4, 0));
+            (void)locker.ApplyLocks(scoredPage({ { A, 0.0 } }), none, {}, memoryless(t4, 4000, { { H, 1.0 } }));
+            shown = locker.ApplyLocks(scoredPage({ { A, 0.0 } }), none, {}, memoryless(t4, 7000, { { H, 1.0 } }));
+            if (!shows(shown, 0, A)) {
+                logger::error("TEST FAIL: a lead at the margin took a key (key0={:08X}, want A)"sv,
+                    shown.size() > 0 ? shown[0].formID : 0);
+                passed = false;
+            }
+            (void)locker.SetInCombat(false);
+
+            // 5v (review of PR #254). Time wanted while shown does not count:
+            //     A sits on key 0 and on the memoryless page (+4.0) from 1 s;
+            //     key 1 holds C (-2.0). At 6 s an urgent override breaks key 0
+            //     (a departure: out for 3 s, then back, as after an upsert), and A
+            //     is wanted on no key from then. With fCombatWantedSec 5 s it
+            //     waits past 9.5 s (3.5 s on the clock, 8.5 s if its time on
+            //     the key counted) and takes key 1 at 11.1 s.
+            {
+                auto longCfg = wantCfg;
+                longCfg.combatWantedSec = 5.0f;
+                locker.SetConfig(longCfg);
+                Override::OverrideCollection breaker;
+                {
+                    Override::OverrideResult r;
+                    r.priority = 100;
+                    r.reason = "probe urgent override";
+                    Candidate::ItemCandidate item;
+                    item.formID = P;
+                    r.candidate = Candidate::CandidateVariant{ item };
+                    breaker.activeOverrides.push_back(std::move(r));
+                }
+                locker.Reset();
+                (void)locker.SetInCombat(true);
+                const auto t5 = std::chrono::steady_clock::now();
+                (void)locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, -2.0 } }), none, {}, at(t5, 0));
+                for (int ms = 1000; ms <= 5000; ms += 1000) {
+                    (void)locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, -2.0 } }), none, {},
+                        memoryless(t5, ms, { { A, 4.0 }, { C, -2.0 } }));
+                }
+                auto broken = scoredPage({ { P, 0.0 }, { C, -2.0 } });
+                broken[0].type = AssignmentType::Override;
+                shown = locker.ApplyLocks(broken, breaker, {}, memoryless(t5, 6000, { { A, 4.0 } }));
+                const bool overrideTook = shows(shown, 0, P) && shows(shown, 1, C);
+                shown = locker.ApplyLocks(broken, breaker, {}, memoryless(t5, 9500, { { A, 4.0 } }));
+                const bool aWaited = shows(shown, 1, C);
+                shown = locker.ApplyLocks(broken, breaker, {}, memoryless(t5, 11100, { { A, 4.0 } }));
+                if (!overrideTook || !aWaited || !shows(shown, 1, A)) {
+                    logger::error("TEST FAIL: an item off a key kept its time on it (override took {}, A waited {}, key1={:08X}, want A at 11.1 s)"sv,
+                        overrideTook, aWaited, shown.size() > 1 ? shown[1].formID : 0);
+                    passed = false;
+                }
+                (void)locker.SetInCombat(false);
+                locker.SetConfig(wantCfg);
+            }
+
+            // 5w (review of PR #254). A covered key: key 0 holds R, locked at
+            //     +3.0, which an active-buff filter now drops (its buff runs).
+            //     S (+0.5, behind R's stale score) takes it once wanted for
+            //     1.5 s; without the covered flag the key holds R.
+            constexpr RE::FormID Rw = 0x0BAD0A0A, Sw = 0x0BAD0A0B;
+            for (const bool covered : { false, true }) {
+                locker.Reset();
+                (void)locker.SetInCombat(true);
+                const auto t6 = std::chrono::steady_clock::now();
+                (void)locker.ApplyLocks(scoredPage({ { Rw, 3.0 } }), none, {}, at(t6, 0));
+                auto run = memoryless(t6, 4000, { { Sw, 0.5 } });
+                if (covered) run.needCovered = [Rw](RE::FormID f, uint16_t) { return f == Rw; };
+                (void)locker.ApplyLocks(scoredPage({ { Rw, 3.0 } }), none, {}, run);
+                run.now = t6 + std::chrono::milliseconds(5600);
+                shown = locker.ApplyLocks(scoredPage({ { Rw, 3.0 } }), none, {}, run);
+                if (!shows(shown, 0, covered ? Sw : Rw)) {
+                    logger::error("TEST FAIL: covered key ({}): key0={:08X}, want {:08X}"sv,
+                        covered, shown.size() > 0 ? shown[0].formID : 0, covered ? Sw : Rw);
+                    passed = false;
+                }
+                (void)locker.SetInCombat(false);
+            }
+        }
+        locker.SetConfig(cfg);
+
         // 5h. Same-run cascade: an urgent override breaks key 1 and the item it
         //     displaces (C, +1.0) is the allocator's pick for key 0 (A, -1.0):
         //     no upsert in a run where another key changes. 5i: on later runs C
-        //     stays out (it left a key less than the cooldown ago -- a
-        //     departure no upsert caused), and comes back once that has passed.
+        //     stays out (it left a key less than the cooldown ago), and comes
+        //     back once that has passed.
         locker.Reset();
         (void)locker.SetInCombat(true);
         Override::OverrideCollection urgent;

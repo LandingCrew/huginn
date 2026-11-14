@@ -38,6 +38,7 @@ namespace Huginn::Effect
             out.known = true;
             out.kind = entry->kind;
             out.facets = Core::Facets::FromCap(entry->cap, entry->kind);
+            out.unlockReach = entry->unlockReach;
         }
         return out;
     }
@@ -92,6 +93,7 @@ namespace Huginn::Effect
         if (ff.known) {
             s.known = true;
             s.facets = ff.facets;
+            s.unlockReach = ff.unlockReach;
             // The catalog's kind for an item (a poison, a food the source type
             // calls a potion); the variant's own source decides the rest.
             if (s.source == Source::Item) s.kind = ff.kind;
@@ -104,6 +106,7 @@ namespace Huginn::Effect
                 if (const auto t = g_testResolver(candidate)) {
                     s.known = t->known;
                     s.facets = t->facets;
+                    s.unlockReach = t->unlockReach;
                     if (s.source == Source::Item) s.kind = t->kind;
                 }
             }

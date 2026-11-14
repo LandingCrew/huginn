@@ -1040,64 +1040,65 @@ reports no departures). Apart from these reconcile rules, play without Wheeler
 is unchanged: nothing is hidden, and `EquipManager` equips a uid-0 weapon by
 its base form.
 
-**Combat upsert** (`fCombatChallengerConfidence`, default 0.995;
-`fCombatUpsertMarginMult`, default 3, 0 = off; `fCombatUpsertCooldownSec`,
-default 10, 0 = no limit; `src/core/CombatUpsert.h`, wired in
-`SlotLocker::ApplyCombatUpserts`, after dedup and before the combat sweep;
-0.23.38, the challenger rule since 0.24.13). The freeze cut page-0 changes in
-combat from 34-60 a minute to about 9, but made the key absolute. A challenger
-now takes a combat-locked key when R9's challenger rule
-(`core/ChallengerRule.h`) says it is the better item with probability above
-`fCombatChallengerConfidence`: `s(challenger) - s(item on the key) > ln m +
-z_combat x sigma_Delta`, z_combat = Phi^-1(`fCombatChallengerConfidence`),
-ln m = `fChallengerMinGap` -- the hold's own rule at a stricter confidence,
-read whenever this run's beliefs cover both rows (the choice ranking, with the
-frozen item scored this run). Why its own key and not `fChallengerConfidence`:
-a key that changes mid-fight costs more than one that changes at rest (the
-misclicks behind the freeze), and the fixed-margin upsert was deliberately 3x
-the calm hold's margin (3 x ln 1.5 against ln 1.5). The default keeps that
-ratio on z: 3 x z(0.8) = 2.525 = z(0.9942), and 0.995 (z 2.576, 3.06x) is the
-nearest round value. Where no belief covers the pair -- the FALLBACK ranking
-(no bootstrap, no sigma), or a frozen item this run did not score, whose row
-belongs to an older run's table -- the fixed barrier stays, as the hold falls
-back to the fixed margin: `s(challenger) - s(item on the key) >
-fCombatUpsertMarginMult x ln(1 + fChallengerMargin)` (3 x ln 1.5 = 1.216,
-about 3.4x the utility under the bridge). Both scores finite either way.
-`fCombatUpsertMarginMult = 0` still turns the upsert off in both rankings.
-No swap-back on fixed beliefs, as for the hold: both lines are >= 0 and the
-rule's is symmetric in the pair, so the displaced item could not take its key
-back even without the departure memory below (host-tested on random pages,
-`tests/core/CombatUpsertTests.cpp`). It is measured against the item ON the
-key -- this run's score if it was scored, else the last score the key had (the
-conservative side) -- never against the allocator's seating, which keeps
-reshuffling behind the locks (48 `[Hold]` give-ways in 200 s at margins of
-0.4-0.9). Challengers are
-the allocator's ordinary picks for this page (not override, Remembrance or
-wildcard) that no key shows (by item or name) and that are not equipped (the
-locker cannot see `bSkipEquipped`), on a key the allocator placed them on or
-whose class they fit (`SlotClassifier::Matches`). That set already passed the
-ranking, the class cap and the slot filters; the class-cap term is not applied
-again. Never a challenger: an item an upsert displaced this fight, or any item
-that left a key less than max(`fCombatUpsertCooldownSec`, 3 s) ago
-(`Core::CombatUpsertMemory`). Without that, a displaced item that the seating
-wants on another key upserted that key a run later: the home-key move the
-combat lock defers, as two changes in 0.1 s (verifier, #208). At most one
-upsert per page per run, and 3 s apart (`kCombatUpsertPageSpacingMs`): a
-context flip can put several keys past the barrier at once, and the spacing
-shows them one at a time, each past the press grace and the double-tap window.
-None in a run where any key of the page changes (one visible change per run;
-checked for the whole page before the per-key gates); since an item only leaves
-a key that changes, that also stops an item an override displaced this run from
-upserting another key in the same run. The combat
-lock's no-enemy release (`fCombatNoEnemyReleaseSec`) ends the fight for this
-too: the "displaced this fight" list is cleared, as at combat end. A page
-switch clears each key's upsert cooldown and press record.
-Each open key asks its best fitting challenger (by score), or with
-`bTestAllChallengers = 1` its challengers in rank order until one clears the
-line; the keys' picks are paired greedy on the margin (`PlanCombatUpserts`).
-Under the fixed barrier alone the two settings, and the pre-0.24.13 planner
-(every passing pair, greedy on the margin), give the same picks: a lower score
-cannot clear a barrier the best one missed. Never on a key showing
+**Combat upsert** (`fCombatChallengerMargin`, default 1.0, below 0 = off;
+`fCombatWantedSec`, default 1.5; `fCombatUpsertCooldownSec`, default 0 = no
+limit; `src/core/CombatUpsert.h`, wired in `SlotLocker::ApplyCombatUpserts`,
+after dedup and before the combat sweep; 0.23.38, this rule since 0.24.29).
+In a fight every key holds its item until a challenger is clearly better: its
+score beats the item on the key by `fCombatChallengerMargin`
+(`s(challenger) - s(item on the key) > margin`, belief or not), and it has
+been wanted -- on the memoryless page and on no key -- for `fCombatWantedSec`
+without a break (`Core::CombatWantedClock`, cleared when combat ends; time the
+game spends suspended, alt-tab or the console, does not count). Time
+an item spends wanted while a key shows it does not count: an item knocked
+off a key starts its wait when it leaves. The clock moves only on a pipeline
+run, and a quiet fight skips runs, so each combat run names the next time a
+waiting challenger's time gates all open (its wait, its recent departure, the
+page spacing, the wheel-close hold, a key's press grace or cooldown;
+`Core::NextUpsertWakeMs`), and `PipelineCoordinator::NeedsForcedRun` forces
+one run then (`SlotLocker::CombatUpsertWakeDue`; 0.24.29, review of #254). A
+challenger whose gates are already open schedules nothing: only a change the
+hash sees can change its verdict. The memoryless page is the page
+this run's ranking alone builds (`core/SlotAllocStateless.h`; `SlotAllocator`
+builds it as `memorylessOut` while the lock is in combat, `SlotLocker::IsInCombat`,
+in place on the input it hands the D2 shadow, which then takes it as its page
+B). Without that page the allocator's page stands in. A key whose item an
+active-buff filter dropped this run (`Core::Filter::IsActiveBuff`: the Resist
+Fire just drunk, its buff running) is covered: it has no score this run, only
+the one it was locked on, so it takes any challenger past the wanted clock,
+ahead of the keys that need a lead. A key whose item another filter dropped
+(unaffordable, equipped, on cooldown just after use, a heal at full health)
+keeps the score it was locked on. Why one fixed line (2026-11-09): the line before
+it was R9's challenger rule at 0.995 (z 2.576 x sigma_Delta); with sd 2-3 on
+both items it asked a lead of about 7, so keys held items ranked 45th-167th
+through whole fights while an answer such as Resist Fire waited for the end,
+and patches on it (stale keys at 0.8, then 0.95, once per key per fight)
+either churned or held. A replay of that evening's 31 fights put this line at
+about 8.5 changes a minute (the freeze was tuned to about 9), 4.4 s from
+wanted to shown, and no press on an item it had moved; the wanted clock does
+most of that work, as half of the page's wants are gone within a second or
+two. It is measured against the item ON the key -- this run's score if it was
+scored, else the last score the key had -- never against the allocator's
+seating, which keeps reshuffling behind the locks. Challengers are the
+memoryless page's ordinary picks (not override, Remembrance or wildcard) that
+no key shows (by item or name) and that are not equipped (the locker cannot
+see `bSkipEquipped`), on a key whose class they fit
+(`SlotClassifier::Matches`). Never a challenger: an item that left a key less
+than max(`fCombatUpsertCooldownSec`, 3 s) ago (`Core::CombatUpsertMemory`):
+the home-key move as two changes in 0.1 s (verifier, #208). An item an upsert
+displaced may come back after that, if it beats the key's item by the margin
+again. At most one upsert per page per run, and 3 s apart
+(`kCombatUpsertPageSpacingMs`): a context flip can put several keys past the
+line at once, and the spacing shows them one at a time, each past the press
+grace and the double-tap window. None in a run where any key of the page
+changes (one visible change per run; checked for the whole page before the
+per-key gates); since an item only leaves a key that changes, that also stops
+an item an override displaced this run from upserting another key in the same
+run. A page switch clears each key's upsert cooldown and press record.
+Each open key asks its best fitting challenger (by score): under one fixed
+line a lower score cannot clear what the best one missed. The keys' picks are
+paired greedy, covered keys first, then the widest lead (`PlanCombatUpserts`).
+Never on a key showing
 an override, a Remembrance item or a wildcard, that the allocator wants for an
 override or Remembrance item this run (a non-urgent override waiting out
 `fMinLockDurationMs`: an upsert first would be two changes and would restart
@@ -1110,11 +1111,9 @@ max(`fPressGraceMs`, 500 ms) after it closes (`WheelClosedRecently`, stamped by
 window + 100 ms), so a pending hold or tap never acts on an upsert even with
 `fPressGraceMs = 0`; when the press acts; and on a Huginn-wheel activation.
 The 500 ms floor is the default of those two. The new item is combat-locked
-like any other. One info line each, with P(better) like the `[Hold]` lines
-when the rule decided, `[SlotLocker] Slot N combat upsert: 'Old' -> 'New'
-(s=+a vs -b, +d > ln m 0.000 + z 2.58 x sd 0.300, P 0.999)`, else
-`(s=+a vs -b, +d > 3.0 x ln m 0.405, no belief)`; either ends `; K higher
-challenger(s) missed the line` when `bTestAllChallengers` went past the best.
+like any other. One info line each, `[SlotLocker] Slot N combat upsert:
+'Old' -> 'New' (s=+a vs -b, lead +d > 1.00, wanted 1.6s)`, or `its need is
+covered` in place of the lead.
 The change counts as `upsert` in `[SlotChurn]` and the heartbeat.
 Replayed on the 2026-10-11 12:05-13:27 log (11 fights, 15.7 min in combat, 105
 page-0 changes), before the page limit and the departure rule: about 32-36
@@ -1537,7 +1536,7 @@ bKeepSlotPositions = true       ; Keep an item in the slot it was already in (se
 bHoldSeatedItems = true         ; Hold a seated item until a challenger clears the line
 fChallengerConfidence = 0.8     ; P(challenger better) it needs: lead > fChallengerMinGap + z x sigma_Delta (0.24.2)
 fChallengerMinGap = 0           ; A minimum lead on top, in score units (0 = confidence alone)
-bTestAllChallengers = 0         ; 1 = ask challengers in rank order, first past the line wins (hold and combat upsert; 0.24.13)
+bTestAllChallengers = 0         ; 1 = ask challengers in rank order, first past the line wins (the hold; 0.24.13)
 fChallengerMargin = 0.5         ; The fixed margin, only when the ranking carries no beliefs (0.5 = 50%)
 bReturnToHomeKey = true         ; A returning item takes back the key it left (home keys)
 fHomeKeyMemorySec = 60          ; ...if it left within this long; 0-600, 0 = off
@@ -1554,9 +1553,9 @@ bOverridesBreakLock = true      ; Allow high-priority overrides to break locks
 iImmediateBreakPriority = 50    ; Override priority that bypasses fMinLockDurationMs
 fCombatLockDurationMs = -1      ; In combat: -1 = freeze until combat ends, 0 = fLockDurationMs, else ms (<= 120000)
 fCombatNoEnemyReleaseSec = 5    ; ...but combat ends for the lock after this long with no enemy; 0 = off, 0-60
-fCombatChallengerConfidence = 0.995 ; Combat upsert: P(challenger better) it needs (the challenger rule; 0.24.13)
-fCombatUpsertMarginMult = 3.0   ; ...0 = off; else its fixed barrier, x ln(1 + fChallengerMargin), with no belief
-fCombatUpsertCooldownSec = 10   ; At most one combat upsert per key per this long; 0 = no limit
+fCombatChallengerMargin = 1.0   ; Combat upsert: the lead over a held key's item it needs; below 0 = off (0.24.29)
+fCombatWantedSec = 1.5          ; ...and how long the challenger must have been wanted, s; 0-30
+fCombatUpsertCooldownSec = 0    ; At most one combat upsert per key per this long; 0 = no limit
 fPressGraceMs = 600             ; Misclick guard: a key changed this recently acts on its previous item; 0-2000, 0 = off
 fVitalBucketHysteresis = 0.03   ; HP/MP/SP level moves up only this far past a boundary (falls at it); 0-0.1
 fDistanceBucketHysteresis = 0.1 ; Distance band moves only this fraction past a boundary, both ways; 0-0.5

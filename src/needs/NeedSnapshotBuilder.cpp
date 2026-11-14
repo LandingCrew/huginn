@@ -4,6 +4,7 @@
 #include "NeedSettings.h"
 #include "Profiling.h"
 #include "core/BenchKind.h"
+#include "core/LockReach.h"
 #include "state/StateManager.h"
 
 namespace Huginn::Needs
@@ -159,7 +160,10 @@ namespace Huginn::Needs
       s.edgeDistance = n.edgeDistance;
       s.edgeSpeed = n.edgeSpeed;
       s.edgeApproach = n.edgeApproach;
-      s.lock = src.world.isLookingAtLock;
+      // 0.24.29: a lock that requires a key reads 0 (needs.csv): no spell,
+      // scroll or lockpicking potion answers it. It read 1 before, which
+      // raised every Open Lock spell at a door only a key opens.
+      s.lock = Core::Lock::Pickable(Core::Lock::CrosshairLock(src.world.isLookingAtLock, src.world.lockLevel));
       s.workstation = WorkstationOf(n);
       s.oreVein = src.world.isLookingAtOreVein;
       s.merchant = n.merchant;

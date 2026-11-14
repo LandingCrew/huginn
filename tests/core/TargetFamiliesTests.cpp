@@ -16,6 +16,7 @@
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <cstdint>
 #include <fstream>
 #include <map>
@@ -281,4 +282,29 @@ TEST_CASE("target families: named cases pin each rule part")
           "a person with ActorTypeAnimal keeps the animal overlay" },
     };
     RunCases(kCases, std::size(kCases));
+}
+
+TEST_CASE("target families: ElementsShown reads a readied spell, or a cast or a hurt within the window (0.24.29)")
+{
+    const std::uint32_t fire = FamilyBit(Family::ElementFire);
+    const std::uint32_t frost = FamilyBit(Family::ElementFrost);
+    const std::uint32_t shock = FamilyBit(Family::ElementShock);
+    constexpr double kUnset = -1.0;
+    const std::array<double, 3> none{ kUnset, kUnset, kUnset };
+
+    CHECK(ElementsShown(100.0, none, none) == 0u);
+    // A fire cast seen now, a frost hurt 4 s ago: both, nothing else.
+    CHECK(ElementsShown(100.0, { 100.0, kUnset, kUnset }, { kUnset, 96.0, kUnset }) == (fire | frost));
+    // The window's edge is in, past it is out.
+    CHECK(ElementsShown(100.0, none, { kUnset, kUnset, 100.0 - kElementShownWindowSec }) == shock);
+    CHECK(ElementsShown(100.0, { 94.9, kUnset, kUnset }, none) == 0u);
+    // Early in a launch the clock can sit under the window: -1 is still never.
+    CHECK(ElementsShown(2.0, none, none) == 0u);
+    CHECK(ElementsShown(2.0, { 0.0, kUnset, kUnset }, none) == fire);
+    // A spell readied in a raised hand counts this poll, with no time at all.
+    CHECK(ElementsShown(100.0, none, none, 0b001) == fire);
+    CHECK(ElementsShown(100.0, none, none, 0b110) == (frost | shock));
+    CHECK(ElementsShown(100.0, { 100.0, kUnset, kUnset }, none, 0b100) == (fire | shock));
+    // Only the three element facets, never a family bit.
+    CHECK((ElementsShown(10.0, { 10.0, 10.0, 10.0 }, { 10.0, 10.0, 10.0 }, 0xFF) & ~(fire | frost | shock)) == 0u);
 }

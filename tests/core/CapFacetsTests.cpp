@@ -120,7 +120,8 @@ TEST_CASE("cap facets: one facet per column family the consumers read")
              Case{ Col::cure_disease, F::CureDisease }, Case{ Col::vision, F::Vision }, Case{ Col::utility, F::Utility },
              Case{ Col::movement, F::Movement }, Case{ Col::utility_water_breathing, F::Waterbreathing },
              Case{ Col::survival_warmth, F::Warming }, Case{ Col::survival_intoxication, F::Intoxicating },
-             Case{ Col::self_harm, F::SelfHarm }, Case{ Col::narcotic, F::Narcotic } }) {
+             Case{ Col::self_harm, F::SelfHarm }, Case{ Col::narcotic, F::Narcotic },
+             Case{ Col::utility_unlock, F::Unlock } }) {
         INFO("column " << Effect::kColumns[static_cast<std::size_t>(c.col)].id);
         const auto s = Facets::FromCap(CapOf({ c.col }), Kind::Potion);
         CHECK(s.Has(c.facet));

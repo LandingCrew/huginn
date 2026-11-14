@@ -83,6 +83,9 @@ namespace Huginn::Effect
         // perk the character has is added at runtime (CrossFeatures.h
         // PerkAdjustedCap; `hg cap` prints them).
         std::vector<Core::Effect::PerkValue> perkRows;
+        // 0.24.29: the highest lock level its unlock rows open
+        // (core/LockReach.h; -1 unknown or none), for lock_out_of_reach.
+        int unlockReach = -1;
     };
 
     class EffectCatalog

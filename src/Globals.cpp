@@ -216,9 +216,16 @@ void LoadCandidateConfigFromINI(const CSimpleIniA& ini) {
   Candidate::g_candidateConfig.enableSoulGemRecharge =
     ini.GetBoolValue(section, "bEnableSoulGemRecharge", true);
 
-  logger::info("[CandidateConfig] Uncastable spell policy: {}, soul gem recharge: {}",
+  // 0.24.29: which resist potions of one element are offered (core/ResistPotions.h)
+  std::string pick(ini.GetValue(section, "sResistPotionPick", "Greedy"));
+  std::transform(pick.begin(), pick.end(), pick.begin(), ::tolower);
+  Candidate::g_candidateConfig.resistPotionPick =
+    pick == "all" ? Candidate::ResistPotionPick::All : Candidate::ResistPotionPick::Greedy;
+
+  logger::info("[CandidateConfig] Uncastable spell policy: {}, soul gem recharge: {}, resist potions: {}",
     Candidate::ToString(Candidate::g_candidateConfig.uncastableSpellPolicy),
-    Candidate::g_candidateConfig.enableSoulGemRecharge ? "enabled" : "disabled");
+    Candidate::g_candidateConfig.enableSoulGemRecharge ? "enabled" : "disabled",
+    Candidate::ToString(Candidate::g_candidateConfig.resistPotionPick));
 }
 
 Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {
@@ -243,20 +250,17 @@ Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {
     const double noEnemy = ini.GetDoubleValue(section, "fCombatNoEnemyReleaseSec", 5.0);
     config.combatNoEnemyReleaseSec = !std::isfinite(noEnemy) ? 5.0f
       : static_cast<float>(std::clamp(noEnemy, 0.0, 60.0));
-    // Combat upsert (core/CombatUpsert.h): 0-20 (0 = off), cooldown 0-300 s.
-    const double upsertMult = ini.GetDoubleValue(section, "fCombatUpsertMarginMult", 3.0);
-    config.combatUpsertMarginMult = !std::isfinite(upsertMult) ? 3.0f
-      : static_cast<float>(std::clamp(upsertMult, 0.0, 20.0));
-    const double upsertCooldown = ini.GetDoubleValue(section, "fCombatUpsertCooldownSec", 10.0);
-    config.combatUpsertCooldownSec = !std::isfinite(upsertCooldown) ? 10.0f
+    // Combat upsert (core/CombatUpsert.h; 0.24.29): the lead a challenger
+    // needs over a held key's item (below 0 = off), how long it must have
+    // been wanted, and the per-key cooldown (0-300 s).
+    const double upsertMargin = ini.GetDoubleValue(section, "fCombatChallengerMargin", 1.0);
+    config.combatChallengerMargin = !std::isfinite(upsertMargin) ? 1.0f
+      : upsertMargin < 0.0 ? -1.0f : static_cast<float>(std::min(upsertMargin, 20.0));
+    const double wantedSec = ini.GetDoubleValue(section, "fCombatWantedSec", 1.5);
+    config.combatWantedSec = !std::isfinite(wantedSec) ? 1.5f : static_cast<float>(std::clamp(wantedSec, 0.0, 30.0));
+    const double upsertCooldown = ini.GetDoubleValue(section, "fCombatUpsertCooldownSec", 0.0);
+    config.combatUpsertCooldownSec = !std::isfinite(upsertCooldown) ? 0.0f
       : static_cast<float>(std::clamp(upsertCooldown, 0.0, 300.0));
-    // 0.24.13: the upsert's confidence under the choice ranking, clamped to
-    // the challenger rule's range (core/ChallengerRule.h) as
-    // fChallengerConfidence is; NaN or +-inf reads as the default.
-    const double upsertConfidence = ini.GetDoubleValue(section, "fCombatChallengerConfidence", 0.995);
-    config.combatChallengerConfidence = !std::isfinite(upsertConfidence) ? 0.995f
-      : static_cast<float>(std::clamp(upsertConfidence, Core::Challenger::kMinConfidence,
-          Core::Challenger::kMaxConfidence));
   }
 
   logger::info("[SlotLockerConfig] duration={:.0f}ms, min={:.0f}ms, lockOnFill={}, overridesBreak={}, breakPri={}, combat={}",
@@ -266,11 +270,10 @@ Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {
       : std::format("{:.0f}ms", config.combatLockDurationMs));
   logger::info("[SlotLockerConfig] combat lock lets go after {:.1f}s with no enemy (0 = never)",
     config.combatNoEnemyReleaseSec);
-  if (config.combatUpsertMarginMult > 0.0f) {
-    logger::info("[SlotLockerConfig] combat upsert: a challenger better than a combat-locked key's item with P > {:.3f} (z {:.3f}; with no belief, beating it by {:.1f} x ln(1 + fChallengerMargin)) takes it, at most once per key per {:.0f}s",
-      config.combatChallengerConfidence,
-      Core::Challenger::ZForConfidence(static_cast<double>(config.combatChallengerConfidence)),
-      config.combatUpsertMarginMult, config.combatUpsertCooldownSec);
+  if (config.combatChallengerMargin >= 0.0f) {
+    logger::info("[SlotLockerConfig] combat upsert: a challenger wanted for {:.1f}s that beats a held key's item by "
+      "{:.2f} takes it (one change per 3s on the page; {:.0f}s per key)",
+      config.combatWantedSec, config.combatChallengerMargin, config.combatUpsertCooldownSec);
   } else {
     logger::info("[SlotLockerConfig] combat upsert: off");
   }

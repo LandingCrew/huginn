@@ -3,6 +3,7 @@
 #include "StateConstants.h"
 #include "StateTypes.h"              // For EffectType
 #include "core/RefreshPass.h"       // ActorBuffs::refreshDue (R8.1)
+#include "core/ResistPotions.h"     // 0.24.29: the running resist effects
 #include <cmath>
 #include <cstdint>
 #include <string_view>
@@ -212,6 +213,14 @@ namespace Huginn::State
     // below, so a block entering its last seconds marks the state changed and
     // the pipeline runs on it. Player only (0 on a target).
     Core::Refresh::DueBits refreshDue = 0;
+    // 0.24.29: the elements a POTION's resistance runs for, not yet due for
+    // its refresh (core/ResistPotions.h, one bit per Core::Refresh::Element):
+    // no other resist potion of such an element is offered.
+    std::uint8_t potionResist = 0;
+    // 0.24.29: the resist effects a spell, scroll or staff put on the player,
+    // still running and not due for their refresh: that spell again would
+    // only refresh it (core/ResistPotions.h CastBlocked).
+    Core::ResistPotions::CastEffects castResist;
 
     EffectType activeCloakType = EffectType::None;  // Fire/Frost/Shock
 
@@ -323,6 +332,8 @@ namespace Huginn::State
                    summonCount == other.summonCount &&
                    summonLimit == other.summonLimit &&
                    refreshDue == other.refreshDue &&
+                   potionResist == other.potionResist &&
+                   castResist == other.castResist &&
                    // Regen buffs/debuffs (v0.6.6)
                    hasHealthRegenBuff == other.hasHealthRegenBuff &&
                    hasHealthRegenDebuff == other.hasHealthRegenDebuff &&

@@ -64,6 +64,12 @@
 //              Spider" daedra): fire Flame / Fire / Ember / Incinerat, frost
 //              Frost / Ice / Snowray / Goron, shock Storm / Shock / Thunder /
 //              Lightning. Constructs named after atronachs are not elementals.
+//              0.24.29: the fight also sets element_* by what it has SHOWN the
+//              player (ElementsShown below): a hostile seen casting a spell of
+//              that element or holding one ready in a raised hand (it glows),
+//              or health lost to it. A fire mage is no elemental,
+//              but a fight with one is a fire fight until it ends, and a resist
+//              potion is drunk between the casts, not only while burning.
 //
 // The actor-side keyword reading in the test is the race map's: the
 // ActorType* keywords on more than half of a race's NPC records.
@@ -221,6 +227,34 @@ namespace Huginn::Core::Needs
                 if (says({ "frost", "ice", "snowray", "goron" })) mask |= kFrost;
                 if (says({ "storm", "shock", "thunder", "lightning" })) mask |= kShock;
             }
+        }
+        return mask;
+    }
+
+    /// 0.24.29: how long before the combat flag rises a cast or a hit still
+    /// counts for the fight (the first fireball usually starts it).
+    inline constexpr double kElementShownWindowSec = 5.0;
+
+    /// 0.24.29: the element facets (fire, frost, shock) the player has been
+    /// SHOWN: a living combat hostile seen casting a spell of that element
+    /// (castAt) or health lost to it (hurtAt), within windowSec of now (times
+    /// on one clock in seconds, -1 = never); or a living combat hostile with a
+    /// spell of it readied in a hand, hands raised, this poll (readyNow: bit 0
+    /// fire, 1 frost, 2 shock, as the game side reads them). A readied spell
+    /// glows in the caster's hand: what it holds is visible, what it knows is
+    /// not (the perception line). The game side ORs this into the families it
+    /// holds for the fight (StateManager, PollTargets), so target_element_*
+    /// stays up from the first sight or burn until combat ends, where
+    /// enemy_casting_* and *_damage_rate fade in seconds.
+    [[nodiscard]] inline std::uint32_t ElementsShown(double now, const std::array<double, 3>& castAt,
+                                                     const std::array<double, 3>& hurtAt, std::uint8_t readyNow = 0,
+                                                     double windowSec = kElementShownWindowSec) noexcept
+    {
+        constexpr std::array<std::uint32_t, 3> kBits{ FamilyRules::kFire, FamilyRules::kFrost, FamilyRules::kShock };
+        const auto recent = [&](double at) { return at >= 0.0 && now - at <= windowSec; };
+        std::uint32_t mask = 0;
+        for (std::size_t i = 0; i < kBits.size(); ++i) {
+            if (recent(castAt[i]) || recent(hurtAt[i]) || (readyNow & (1u << i)) != 0) mask |= kBits[i];
         }
         return mask;
     }

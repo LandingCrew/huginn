@@ -86,10 +86,15 @@ namespace Huginn::Core::LegacyShadow
     /// are index-aligned with the rows (B's mu, the DPS tie-break). `in` is
     /// the live allocation's input, handed over (nullptr: no page this run);
     /// it is left stateless and reordered. `pageRunRows[k]` is the row of its
-    /// candidate k (>= rows: remembered-only, never ranked).
+    /// candidate k (>= rows: remembered-only, never ranked). `builtB`
+    /// (0.24.29): B's stateless page already built in place on `in` (the
+    /// combat upsert's memoryless page, SlotAllocator), with the order
+    /// MakeStateless gave `in`; nullptr = build it here.
     inline void RanksAndPages(std::span<const std::uint32_t> liveOrder, std::span<const double> liveMu,
                               std::span<const float> tieBreak, SlotAlloc::Input* in,
-                              std::span<const std::uint32_t> pageRunRows, Run& out)
+                              std::span<const std::uint32_t> pageRunRows, Run& out,
+                              const SlotAlloc::StatelessPage* builtB = nullptr,
+                              std::span<const std::uint32_t> builtOrderB = {})
     {
         const std::size_t rows = out.mu.size();
         ShadowCompare::RanksOf(out.mu, tieBreak, liveOrder, out.rankA);
@@ -108,8 +113,12 @@ namespace Huginn::Core::LegacyShadow
         }
         // B's page first, in place; `in` is then in B's stateless order
         // (orderB[j] = its index k at entry), so A's scores follow that order.
+        // Built already (the same input and B's scores, unranked for the
+        // remembered-only rows): taken as it is.
         std::vector<std::uint32_t> orderB, orderA;
-        const auto pageB0 = SlotAlloc::AllocateStatelessInPlace(*in, scoresB, orderB);   // keyOf by k
+        const bool haveB = builtB && builtB->keyOf.size() == n && builtOrderB.size() == n;
+        const auto pageB0 = haveB ? *builtB : SlotAlloc::AllocateStatelessInPlace(*in, scoresB, orderB);   // keyOf by k
+        if (haveB) orderB.assign(builtOrderB.begin(), builtOrderB.end());
         std::vector<double> scoresANow(n);
         for (std::size_t j = 0; j < n; ++j) scoresANow[j] = scoresA[orderB[j]];
         const auto pageA = SlotAlloc::AllocateStatelessInPlace(*in, scoresANow, orderA);  // keyOf by j

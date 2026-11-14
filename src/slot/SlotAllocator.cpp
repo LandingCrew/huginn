@@ -4,6 +4,7 @@
 #include "override/OverrideConditions.h"
 #include "override/OverrideConfig.h"
 #include "telemetry/SoakMetrics.h"
+#include "core/SlotAllocStateless.h"   // 0.24.29: the memoryless page for the combat upsert
 #include "core/StackIdentity.h"
 #include <algorithm>
 #include <format>
@@ -274,7 +275,8 @@ namespace Huginn::Slot
         const State::WorldState& world,
         const WildcardRequest* wildcard,
         WildcardResult* wildcardOut,
-        Core::SlotAlloc::Input* inputOut) const
+        Core::SlotAlloc::Input* inputOut,
+        MemorylessPage* memorylessOut) const
     {
         // Hold the snapshot for the duration of the call so the config refs
         // passed to AllocateSlotsInternal stay valid even across a concurrent reload.
@@ -285,7 +287,7 @@ namespace Huginn::Slot
         }
         const size_t page = pageIndex < snap->size() ? pageIndex : 0;
         return AllocateSlotsInternal(page, generation, (*snap)[page].slots,
-            candidates, overrides, player, world, /*forTest=*/false, wildcard, wildcardOut, inputOut);
+            candidates, overrides, player, world, /*forTest=*/false, wildcard, wildcardOut, inputOut, memorylessOut);
     }
 
     SlotAssignments SlotAllocator::AllocateSlots(
@@ -355,7 +357,8 @@ namespace Huginn::Slot
         bool forTest,
         const WildcardRequest* wildcard,
         WildcardResult* wildcardOut,
-        Core::SlotAlloc::Input* inputOut) const
+        Core::SlotAlloc::Input* inputOut,
+        MemorylessPage* memorylessOut) const
     {
         namespace SA = Core::SlotAlloc;
         if (wildcardOut) {
@@ -511,34 +514,40 @@ namespace Huginn::Slot
             }
         }
 
-        // The page, from the game's candidates.
-        for (size_t i = 0; i < out.slots.size(); ++i) {
-            const auto& s = out.slots[i];
-            const auto cls = slotConfigs[i].classification;
-            switch (s.kind) {
-            case SA::Kind::Empty:
-                assignments.push_back(SlotAssignment::Empty(i, cls));
-                break;
-            case SA::Kind::Override: {
-                // Told apart by its type, never by its score: the score is the
-                // +inf sentinel (the old 1000.0 utility would overflow exp()).
-                Scoring::ScoredCandidate sc;
-                sc.candidate = *overrides.activeOverrides[overrideIndex[s.src]].candidate;
-                auto a = SlotAssignment::FromCandidate(i, cls, sc, AssignmentType::Override);
-                a.score = Core::kPinnedScore;
-                assignments.push_back(std::move(a));
-                break;
+        // The page, from the game's candidates. `order` (0.24.29): a
+        // stateless input's re-ordering (candidate k of it is candidates[order[k]]).
+        const auto toAssignments = [&](const SA::Output& o, const std::vector<uint32_t>* order, SlotAssignments& dst) {
+            for (size_t i = 0; i < o.slots.size(); ++i) {
+                const auto& s = o.slots[i];
+                const auto cls = slotConfigs[i].classification;
+                const size_t src = (order && s.kind != SA::Kind::Override && s.src < order->size())
+                    ? (*order)[s.src] : s.src;
+                switch (s.kind) {
+                case SA::Kind::Empty:
+                    dst.push_back(SlotAssignment::Empty(i, cls));
+                    break;
+                case SA::Kind::Override: {
+                    // Told apart by its type, never by its score: the score is the
+                    // +inf sentinel (the old 1000.0 utility would overflow exp()).
+                    Scoring::ScoredCandidate sc;
+                    sc.candidate = *overrides.activeOverrides[overrideIndex[s.src]].candidate;
+                    auto a = SlotAssignment::FromCandidate(i, cls, sc, AssignmentType::Override);
+                    a.score = Core::kPinnedScore;
+                    dst.push_back(std::move(a));
+                    break;
+                }
+                case SA::Kind::Remembered:
+                    dst.push_back(SlotAssignment::FromCandidate(i, cls, candidates[src], AssignmentType::Remembered));
+                    break;
+                default:
+                    dst.push_back(SlotAssignment::FromCandidate(i, cls, candidates[src],
+                        s.kind == SA::Kind::Wildcard ? AssignmentType::Wildcard : AssignmentType::Normal));
+                    break;
+                }
+                dst.back().seatMoved = s.seatMoved;
             }
-            case SA::Kind::Remembered:
-                assignments.push_back(SlotAssignment::FromCandidate(i, cls, candidates[s.src], AssignmentType::Remembered));
-                break;
-            default:
-                assignments.push_back(SlotAssignment::FromCandidate(i, cls, candidates[s.src],
-                    s.kind == SA::Kind::Wildcard ? AssignmentType::Wildcard : AssignmentType::Normal));
-                break;
-            }
-            assignments.back().seatMoved = s.seatMoved;
-        }
+        };
+        toAssignments(out, nullptr, assignments);
 
         ReportEvents(pageIndex, slotConfigs, candidates, overrides, overrideIndex, out.events, forTest);
 
@@ -625,6 +634,31 @@ namespace Huginn::Slot
         // last: nothing above reads `in` after this point.
         if (inputOut) {
             *inputOut = std::move(in);
+        }
+
+        // 0.24.29: the memoryless page, for the combat upsert's challengers
+        // (core/CombatUpsert.h): the same input with the memory taken out,
+        // ranked on the live scores (a remembered-only row is never ranked).
+        // Pure: no seating, events or capture, and the live page above is
+        // unchanged. On the input handed out when there is one -- it is the
+        // shadow's page B, built once -- else on `in`, which nothing reads now.
+        if (memorylessOut) {
+            *memorylessOut = MemorylessPage{};
+            SA::Input& bare = inputOut ? *inputOut : in;
+            std::vector<double> liveScores(bare.candidates.size());
+            for (size_t k = 0; k < bare.candidates.size(); ++k) {
+                const auto& c = bare.candidates[k];
+                liveScores[k] = c.isRememberedOnly ? Core::kUnrankedScore : c.score;
+            }
+            std::vector<uint32_t> order;
+            SA::MakeStateless(bare, liveScores, order);
+            const SA::Output bareOut = SA::Allocate(bare);
+            toAssignments(bareOut, &order, memorylessOut->page);
+            if (inputOut) {
+                memorylessOut->inInput = true;
+                memorylessOut->stateless = SA::StatelessPageOf(bare, bareOut, order);
+                memorylessOut->order = std::move(order);
+            }
         }
         return assignments;
     }

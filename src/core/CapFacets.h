@@ -84,6 +84,7 @@ namespace Huginn::Core::Facets
         Intoxicating,      // survival_intoxication
         SelfHarm,          // the self_harm family (a consumable's cost to its user)
         Narcotic,          // narcotic: an alcoholic drink or a drug (0.24.16; core/EffectMapper.h IsNarcotic)
+        Unlock,            // utility_unlock: opens a lock (0.24.29; how far it reaches: core/LockReach.h)
         _Count
     };
     inline constexpr std::size_t kFacetCount = static_cast<std::size_t>(F::_Count);
@@ -94,7 +95,7 @@ namespace Huginn::Core::Facets
         "Damage", "Hostile", "Fortify", "Regen", "Stealth", "Invisibility", "Muffle", "ArmorBuff", "Ward", "Defense",
         "Resist", "ResistFire", "ResistFrost", "ResistShock", "ResistPoison", "ResistMagic", "Summon", "Cure",
         "CurePoison", "CureDisease", "Vision", "Utility", "Movement", "Waterbreathing", "Warming",
-        "Intoxicating", "SelfHarm", "Narcotic",
+        "Intoxicating", "SelfHarm", "Narcotic", "Unlock",
     };
 
     /// A set of facets.
@@ -166,6 +167,7 @@ namespace Huginn::Core::Facets
         add(F::Intoxicating, has(Col::survival_intoxication));
         add(F::SelfHarm, has(Col::self_harm));
         add(F::Narcotic, has(Col::narcotic));
+        add(F::Unlock, has(Col::utility_unlock));
         return s;
     }
 
@@ -205,6 +207,7 @@ namespace Huginn::Core::Facets
         School school = School::None;
         bool melee = false;    // a weapon: a one- or two-handed blade, axe, mace or dagger (the weapon's type)
         bool ranged = false;   // a weapon: bow, crossbow or staff (the weapon's type, a form fact)
+        int unlockReach = -1;  // 0.24.29: the catalog's reach for an Unlock item (core/LockReach.h), -1 unknown
     };
 
     /// Narcotic: the `narcotic` column (effects.csv, EffectMapper.h

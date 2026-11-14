@@ -83,6 +83,11 @@ namespace Huginn::Pipeline
         // entering its last fRefreshPriorSec seconds moves no hashed bucket,
         // and the filters only let its item through on a run.
         Core::Refresh::DueBits refreshDue = 0;
+        // 0.24.29: the crosshair lock's level (Gate::Inputs::lockLevel,
+        // Lock::kNoLock for none). Compared like refreshDue: the need reads
+        // only 0/1, so a Novice door beside an Expert chest moves nothing
+        // hashed, and lock_out_of_reach only redraws on a run.
+        int lockLevel = -1;
         // R8.1: seconds since the current fight began, kNever out of combat
         // (core/CombatOnset.h): the combat_onset clock, read once per run for
         // the legacy pass's potion multiplier.
@@ -178,6 +183,13 @@ namespace Huginn::Pipeline
         Core::SlotAlloc::Input legacyShadowAllocInput;
         bool haveAllocInput = false;
         std::vector<uint32_t> pageRunRows;
+        // 0.24.29: in combat, the allocator builds the memoryless page (the
+        // combat upsert's challengers) in place on that input; it is B's
+        // stateless page, and the shadow takes it instead of building it
+        // again. Written by every allocation.
+        bool statelessBBuilt = false;
+        std::vector<uint32_t> statelessBOrder;
+        Core::SlotAlloc::StatelessPage statelessB;
 
         /// Reset all fields for reuse, preserving allocated container capacity
         /// (except the legacy pass's: since R8.4 the pass returns a fresh Run
@@ -202,6 +214,7 @@ namespace Huginn::Pipeline
             underwaterActive = false;
             workstationActive = false;
             refreshDue = 0;
+            lockLevel = -1;
             combatOnsetAgo = 0.0f;
 
             scoredCandidates.clear();
@@ -229,6 +242,9 @@ namespace Huginn::Pipeline
             recsFloors = Scoring::RecsFloors::none;
             haveAllocInput = false;
             pageRunRows.clear();
+            statelessBBuilt = false;
+            statelessBOrder.clear();
+            statelessB = {};
             choiceLive = false;
             choiceAttrs.clear();
             choiceScores.clear();
@@ -272,9 +288,10 @@ namespace Huginn::Pipeline
         /// Latches that have needed this: falling (#60), a pending reason
         /// downgrade (#62), underwater (#61), a learner update, and (R8.3) the
         /// need signature moving a step since the last run -- which replaced
-        /// the elemental window here. A latch wired into only the inner gate is
-        /// silently dead in a static scene, which is exactly where the reason
-        /// hold needed it. Add the next one here, not at a call site.
+        /// the elemental window here; 0.24.29, a combat challenger's wait
+        /// maturing (CombatUpsertWakeDue). A latch wired into only the inner
+        /// gate is silently dead in a static scene, which is exactly where the
+        /// reason hold needed it. Add the next one here, not at a call site.
         ///
         /// Underwater is the cautionary one. It was missing from the hash the
         /// whole time and nobody noticed, because the sensor never fired: #61's
@@ -288,7 +305,7 @@ namespace Huginn::Pipeline
         [[nodiscard]] bool NeedsForcedRun() const noexcept
         {
             return m_wasFalling || m_wasUnderwater || m_reasonHold.IsHolding() || LearnerWeightsChanged() ||
-                   NeedSignatureMoved();
+                   NeedSignatureMoved() || CombatUpsertWakeDue();
         }
 
         /// Drop everything that describes the character being unloaded. The held
@@ -354,6 +371,14 @@ namespace Huginn::Pipeline
         /// R8.3: the need signature NeedMonitor holds now differs from the one
         /// the last committed run scored with (out of line: NeedMonitor.h).
         [[nodiscard]] bool NeedSignatureMoved() const noexcept;
+        /// 0.24.29 (review of PR #254): a waiting combat challenger's time
+        /// gates (fCombatWantedSec, its recent departure, the page's spacing)
+        /// opened since the last run (Slot::SlotLocker::CombatUpsertWakeDue).
+        /// The wanted clock moves only on a run, and a quiet fight -- its
+        /// element held, nothing hashed changing -- skips them, so a matured
+        /// wait sat until an unrelated change. One run per maturing wait: the
+        /// run sets the next time. Out of line: SlotLocker.h.
+        [[nodiscard]] static bool CombatUpsertWakeDue() noexcept;
         void LogStateTransition(PipelineContext& ctx);
         void EnrichElementalDamage(PipelineContext& ctx);
         void ScoreCandidates(PipelineContext& ctx);
@@ -425,6 +450,7 @@ namespace Huginn::Pipeline
         std::atomic<uint64_t> m_lastNeedSignature{ 0 };
         uint8_t m_lastOverrideSignature = 0xFF;   // never a real signature: first run always counts
         Core::Refresh::DueBits m_lastRefreshDue = 0;   // R8.1: refreshDue at the last run
+        int m_lastLockLevel = -1;                        // 0.24.29: lockLevel at the last run
 
         // Holds the displayed reason so a momentary one stays readable.
         // Label-only (R8.3: fed by the page's explanations, UpdateContextReason);

@@ -380,12 +380,11 @@ namespace Huginn::State
       // CandidateGenerator). Any thread; the poll reads them atomically.
       void SetRefreshPriorSec(float sec) noexcept { m_refreshPriorSec.store(sec); }
       [[nodiscard]] float GetRefreshPriorSec() const noexcept { return m_refreshPriorSec.load(); }
-      void SetResistFilterThreshold(float threshold) noexcept { m_resistFilterThreshold.store(threshold); }
    private:
       float m_summonLimit = 1.0f;   // PollPlayerMagicEffects' last commanded-actor limit (0.24.24); reset in ResetTrackingState
       std::atomic<float> m_refreshPriorSec{ Core::Refresh::kDefaultRefreshSec };
-      std::atomic<float> m_resistFilterThreshold{ 50.0f };   // CandidateConfig::resistThresholdToFilter's default
       Core::Refresh::DueBits m_lastRefreshDue = 0;            // PollPlayerMagicEffects: for the transition line
+      std::uint8_t m_lastPotionResist = 0;                    // 0.24.29: the same, for the running resist potions
 
       PlayerActorState m_playerState;
       TargetCollection m_targets;

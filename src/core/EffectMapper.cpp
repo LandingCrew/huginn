@@ -1,5 +1,6 @@
 #include "EffectMapper.h"
 
+#include "core/LockReach.h"
 #include "core/MiniRegex.h"
 
 #include <algorithm>
@@ -1065,6 +1066,17 @@ namespace Huginn::Core::Effect
             fix(Col::light_radius,
                 std::min(1.0f, static_cast<float>(std::log1p(it.lightRadius) / std::log1p(1024.0))));
         }
+        // 0.24.29: how far its unlock rows reach (core/LockReach.h). Direct
+        // rows only (m.outcomes is one per row of it.effects); an unlock that
+        // comes through a wrapper's payload leaves the reach unknown.
+        Lock::ItemReach reach;
+        for (std::size_t i = 0; i < m.outcomes.size() && i < it.effects.size(); ++i) {
+            const auto& o = m.outcomes[i];
+            if (!o.kept || (o.cls.col != Col::utility_unlock && o.cls.col2 != Col::utility_unlock)) continue;
+            const auto e = it.effects[i].effect;
+            if (e < effects.size()) reach.Add(Lock::RowReach(effects[e].name, effects[e].description));
+        }
+        m.unlockReach = reach.Value();
         return m;
     }
 

@@ -6,6 +6,7 @@
 
 #include "core/CrossFeatures.h"
 #include "core/EffectMapper.h"
+#include "core/LockReach.h"
 
 #include <doctest/doctest.h>
 
@@ -14,6 +15,7 @@
 #include <string>
 
 using namespace Huginn::Core::Effect;
+namespace Lock = Huginn::Core::Lock;
 
 namespace
 {
@@ -579,6 +581,30 @@ TEST_CASE("effect mapper: tempering adds damage (the codebase's model), it does 
     const auto classes = ClassifyAll(w.effects, nullptr);
     const Cap cap = Grade(MapItem(tempered, w.effects, classes), r.pops);
     CHECK(Get(cap, Col::weapon_damage) == doctest::Approx(2.0 / 3.0));  // 26: above 25, below 30
+}
+
+TEST_CASE("effect mapper: an unlock item's reach from its kept unlock rows' text (0.24.29)")
+{
+    World w;
+    auto open = Mgef(kArchScript, "", "Open Apprentice Lock");
+    open.description = "The spell transmutes locked objects, opening locks up to apprentice level.";
+    const auto eOpen = w.Add(open);
+    auto boom = Mgef(kArchScript, "", "Detonate Lock");
+    boom.description = "Open a lock with a level <25> points or more below your Alteration skill with a shockwave.";
+    const auto eBoom = w.Add(boom);
+    const auto eHeal = w.Add(Mgef(kArchValueModifier, "Health", "Restore Health"));
+    REQUIRE(ColOf(w.effects[eOpen]) == Col::utility_unlock);
+    REQUIRE(ColOf(w.effects[eBoom]) == Col::utility_unlock);
+
+    World::Fx(w.Item(Kind::Spell, "Open Apprentice Lock"), eOpen, 0.0f);
+    World::Fx(w.Item(Kind::Spell, "Detonate Lock"), eBoom, 0.0f);
+    World::Fx(w.Item(Kind::Spell, "Heal"), eHeal, 25.0f);
+    const auto classes = ClassifyAll(w.effects, nullptr);
+    const auto apprentice = MapItem(w.items[0], w.effects, classes);
+    CHECK(Get(Grade(apprentice, w.Build().pops), Col::utility_unlock) > 0.0f);
+    CHECK(apprentice.unlockReach == Lock::kApprentice);
+    CHECK(MapItem(w.items[1], w.effects, classes).unlockReach == Lock::kUnknownReach);   // by skill: unknown
+    CHECK(MapItem(w.items[2], w.effects, classes).unlockReach == Lock::kUnknownReach);   // not an unlock item
 }
 
 TEST_CASE("effect mapper: a school only for spells, scrolls and staves")

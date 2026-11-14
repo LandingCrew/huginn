@@ -129,20 +129,20 @@ PROBES = [
     ('0.24.17: the [Soak] tally\'s read of A\'s key used elsewhere in the log', 'src/learning/SelectionLogV3.cpp',
      'r.util = e.utility;', '            if (e.legacyShadowKeyA >= 0) r.flags |= Flag::Shown;', 'after'),
     # --- 0.24.17 (review round 2): the verifier's escapes ---
-    ('0.24.17: an A score from the allocation input into the live list (old name; PRUNED_SCOPED)', PC, 'Core::LegacyShadow::RanksAndPages(liveOrder, liveMu, tie, legacyShadowPageInput, ctx.pageRunRows, ctx.legacyShadow);',
+    ('0.24.17: an A score from the allocation input into the live list (old name; PRUNED_SCOPED)', PC, 'Core::LegacyShadow::RanksAndPages(liveOrder, liveMu, tie, legacyShadowPageInput, ctx.pageRunRows, ctx.legacyShadow, builtB, ctx.statelessBOrder);',
      '    if (!ctx.allocInput.candidates.empty()) ctx.scoredCandidates.front().score = ctx.allocInput.candidates.front().score;',
      'after'),
-    ('0.24.17: an A score from the allocation input into the live list', PC, 'Core::LegacyShadow::RanksAndPages(liveOrder, liveMu, tie, legacyShadowPageInput, ctx.pageRunRows, ctx.legacyShadow);',
+    ('0.24.17: an A score from the allocation input into the live list', PC, 'Core::LegacyShadow::RanksAndPages(liveOrder, liveMu, tie, legacyShadowPageInput, ctx.pageRunRows, ctx.legacyShadow, builtB, ctx.statelessBOrder);',
      '    if (!ctx.legacyShadowAllocInput.candidates.empty()) ctx.scoredCandidates.front().score = '
      'ctx.legacyShadowAllocInput.candidates.front().score;', 'after'),
     ('0.24.17: the allocation input read in DeriveDisplayLabels', PC,
      'void PipelineCoordinator::DeriveDisplayLabels(PipelineContext& ctx)',
      '{ const double aTop = ctx.legacyShadowAllocInput.candidates.empty() ? 0.0 : '
      'ctx.legacyShadowAllocInput.candidates[0].score; (void)aTop; }', 'after'),
-    ('0.24.17: the page-input alias read after the pass', PC, 'Core::LegacyShadow::RanksAndPages(liveOrder, liveMu, tie, legacyShadowPageInput, ctx.pageRunRows, ctx.legacyShadow);',
+    ('0.24.17: the page-input alias read after the pass', PC, 'Core::LegacyShadow::RanksAndPages(liveOrder, liveMu, tie, legacyShadowPageInput, ctx.pageRunRows, ctx.legacyShadow, builtB, ctx.statelessBOrder);',
      '    if (legacyShadowPageInput && !legacyShadowPageInput->candidates.empty()) ctx.scoredCandidates.front().score = '
      'legacyShadowPageInput->candidates[0].score;', 'after'),
-    ('0.24.17: the page-input alias read after the pass (old name; PRUNED_SCOPED)', PC, 'Core::LegacyShadow::RanksAndPages(liveOrder, liveMu, tie, legacyShadowPageInput, ctx.pageRunRows, ctx.legacyShadow);',
+    ('0.24.17: the page-input alias read after the pass (old name; PRUNED_SCOPED)', PC, 'Core::LegacyShadow::RanksAndPages(liveOrder, liveMu, tie, legacyShadowPageInput, ctx.pageRunRows, ctx.legacyShadow, builtB, ctx.statelessBOrder);',
      '    if (pageInput && !pageInput->candidates.empty()) ctx.scoredCandidates.front().score = pageInput->candidates[0].score;',
      'after'),
     ('0.24.17: the clear of the allocation input after the pass dropped (REQUIRED)', PC,
