@@ -120,9 +120,8 @@ namespace Huginn::Core::Needs
         // --- Ally -----------------------------------------------------------
         bool followerPresent = false;   // a teammate, or the player's own summon or thrall (0.23.41)
         bool followerBleedout = false;  // a follower down on one knee
-        // 0.24.32: 1 - health fraction of the most hurt living teammate (0..1),
-        // the crosshair's included. Fair on LoreRim: TrueHUD draws a teammate's
-        // health bar once they are hit (uInfoBarDisplayTeammates = On Hit).
+        // 0.24.32: how much of their health the most hurt living teammate is
+        // missing (0..1), the crosshair's included (Core::Needs::WoundFraction).
         float followerHealthMissing = 0.0f;
 
         // --- Environment ----------------------------------------------------

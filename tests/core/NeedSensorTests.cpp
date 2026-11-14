@@ -872,3 +872,14 @@ TEST_CASE("regen debuffs per vital: health is its own signal, any vital is regen
     CHECK_FALSE(none.Any());
     CHECK(none == RegenDebuffs{});
 }
+
+TEST_CASE("need sensors: a follower's wound is what a heal mends (0.24.32)")
+{
+    CHECK(WoundFraction(200.0f, 0.0f) == 0.0f);
+    CHECK(WoundFraction(70.0f, -130.0f) == doctest::Approx(0.65f));
+    CHECK(WoundFraction(0.0f, -200.0f) == doctest::Approx(1.0f));
+    // A drain or a disease lowers the maximum, not the damage: no wound.
+    CHECK(WoundFraction(140.0f, 0.0f) == 0.0f);
+    CHECK(WoundFraction(0.0f, 0.0f) == 0.0f);
+    CHECK(WoundFraction(100.0f, 5.0f) == 0.0f);
+}

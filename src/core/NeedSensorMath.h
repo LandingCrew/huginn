@@ -17,6 +17,8 @@
 //   RegenDebuffs    those effects per vital: regen_suppressed reads any;
 //                   healthBlocked (a cut of kRegenBlockCut or more) feeds
 //                   the snapshot's healthRegenSuppressed
+//   WoundFraction   ally_injured's follower reading (0.24.32): the share of
+//                   their health a heal can mend
 //
 // Times are seconds on any monotonic clock (the caller passes steady_clock
 // seconds); nothing here reads a clock.
@@ -32,6 +34,18 @@
 
 namespace Huginn::Core::Needs
 {
+    /// How much of its health an actor is missing that a heal can mend, 0..1:
+    /// the damage modifier (<= 0) over current - damage. A disease or a drain
+    /// lowers the maximum (a temporary modifier), not this, so it does not
+    /// read as an injury no heal clears (0.24.32, ally_injured).
+    [[nodiscard]] constexpr float WoundFraction(float current, float damageModifier) noexcept
+    {
+        const float damage = damageModifier < 0.0f ? -damageModifier : 0.0f;
+        const float max = current + damage;
+        if (!(max > 0.0f)) return 0.0f;
+        return std::clamp(damage / max, 0.0f, 1.0f);
+    }
+
     /// sum(amount_i * exp(-(t - t_i) / tau)), kept as one value and the time
     /// it was last brought up to date. Add() and At() take a time that never
     /// goes backwards; an earlier time is treated as "now" (no growth).

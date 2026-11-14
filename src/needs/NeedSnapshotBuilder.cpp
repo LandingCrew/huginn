@@ -141,8 +141,9 @@ namespace Huginn::Needs
 
       // Ally
       // A teammate, or the player's own summon or thrall (0.23.41): someone
-      // near to cast the spells for others on. ally_injured stays the
-      // teammate's bleedout: a summon does not kneel, it dies.
+      // near to cast the spells for others on. ally_injured reads teammates
+      // only: their bleedout, and (0.24.32) how much of their health they are
+      // missing.
       s.followerPresent = src.targets.GetFollowerCount() > 0 || n.playerSummonNear;
       s.followerBleedout = n.followerBleedout;
       s.followerHealthMissing = n.followerHealthMissing;
