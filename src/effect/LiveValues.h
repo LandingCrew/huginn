@@ -41,12 +41,13 @@
 //     sweep that moved something logs what changed since the last one (the
 //     perk entries' owner conditions, the effects on the player, the hands;
 //     at debug).
-//   update loop (ApplyPending, at the start of a pipeline run): maps up to a
+//   update loop (ApplyPending, every tick before the pipeline's gate): maps up to a
 //     budget of handed-over items (EffectCatalog::SetHeld; a set of numbers
 //     seen before costs nothing). Once nothing is left and no sweep is under
 //     way -- after the load's first whole sweep -- every held item is graded
 //     among them all (RegradeHeld), and every lookup reads those entries in
-//     place of the records'; true then, so the run is not skipped.
+//     place of the records'; true then, and the page is marked dirty so a
+//     run follows.
 //   self-check (main thread, once a second): a spell the player cast, or a
 //     potion or food they took, running on them carries the game's own
 //     magnitude and duration; each (item, effect) is compared with ours once
@@ -69,12 +70,20 @@ namespace Huginn::Effect::LiveValues
     /// everything again). Clears the catalog's live entries both ways.
     void SetGameLoaded(bool loaded) noexcept;
 
-    /// Items handed over and not mapped yet, or a held grading due. The
-    /// update loop runs the pipeline for it even in a quiet scene: ApplyPending
-    /// is called only from a run, and a load hands over ~230 items, 4 a run
-    /// (2026-11-13: 4.5 minutes from the load's read to the first grading,
-    /// in a scene that rarely ran the pipeline). Any thread.
+    /// Items handed over and not mapped yet, or a held grading due: the
+    /// update loop calls ApplyPending only then. It runs every tick, before
+    /// the pipeline's gate: called from a pipeline run, a load's ~230 items
+    /// took 4.5 minutes to grade in a quiet scene (2026-11-13). Any thread.
     [[nodiscard]] bool HasWork() noexcept;
+
+    /// [Scoring] bHoldConditionRegradesInCombat (default on, hot-reloadable):
+    /// in a fight, a grading due to nothing about the character -- a perk
+    /// entry point's own condition (in combat, the Mages Guild Boon), an
+    /// item picked up or used up -- waits until the fight ends; a level,
+    /// perk point, magic skill, Fortify or spell learned grades at once, the
+    /// waiting changes with it. Off: every change grades at once. From the main INI over the shipped one, at
+    /// kDataLoaded and on every settings reload.
+    void LoadSettings(const CSimpleIniA& ini);
 
     /// The update loop: map up to `budget` handed-over items, and grade what
     /// the player has once all are in. True when the held grading changed.

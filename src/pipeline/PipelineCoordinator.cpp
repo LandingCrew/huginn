@@ -31,7 +31,6 @@
 #include "effect/CrossFeatures.h"
 #include "effect/EffectCatalog.h"
 #include "effect/Facets.h"
-#include "effect/LiveValues.h"   // 0.24.30: spells re-graded as cast
 #include "needs/NeedMonitor.h"
 #include "telemetry/SoakMetrics.h"
 #include "ui/DebugSettings.h"
@@ -76,12 +75,6 @@ PipelineCoordinator& PipelineCoordinator::GetSingleton()
     return instance;
 }
 
-namespace
-{
-    /// 0.24.30: live entries made per pipeline run (LiveValues::ApplyPending).
-    constexpr std::size_t kLiveItemsPerRun = 4;
-}
-
 bool PipelineCoordinator::RunPipeline(
     float deltaMs,
     RE::PlayerCharacter* player,
@@ -115,12 +108,9 @@ bool PipelineCoordinator::RunPipeline(
     // into the skip decision so a page-only change still forces a run.
     const bool pageResynced = ResolveDisplayPage(m_ctx);
 
-    // 0.24.30: spells whose numbers moved (a perk, a skill, Fortify <School>)
-    // are re-graded as the player casts them now; a run on the new grades.
-    // A few per run: each reads and maps the form (milliseconds in Debug).
-    const bool liveChanged = Effect::LiveValues::ApplyPending(kLiveItemsPerRun);
-
-    if (CheckHashSkip(m_ctx, pageChanged || pageResynced || liveChanged)) {
+    // 0.24.30: the held grading (LiveValues) is applied before the update
+    // loop's gate (RunPipelineIfNeeded); a change marks the page dirty.
+    if (CheckHashSkip(m_ctx, pageChanged || pageResynced)) {
         return false;  // Hash unchanged, pipeline skipped
     }
 

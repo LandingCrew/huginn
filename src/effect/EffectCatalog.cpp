@@ -394,22 +394,6 @@ namespace Huginn::Effect
 
     namespace
     {
-        bool SameNumbers(const LiveNumbers& a, const LiveNumbers& b)
-        {
-            constexpr float kEps = 0.01f;
-            if (a.rows.size() != b.rows.size() || std::fabs(a.damage - b.damage) > kEps ||
-                std::fabs(a.armorRating - b.armorRating) > kEps) {
-                return false;
-            }
-            for (std::size_t i = 0; i < a.rows.size(); ++i) {
-                if (a.rows[i].index != b.rows[i].index || std::fabs(a.rows[i].magnitude - b.rows[i].magnitude) > kEps ||
-                    std::fabs(a.rows[i].duration - b.rows[i].duration) > kEps) {
-                    return false;
-                }
-            }
-            return true;
-        }
-
         /// The states an item keeps mapped (a conditional perk's flip, a
         /// stack tempered and sold): the oldest goes past this.
         constexpr std::size_t kSeenPerItem = 4;
@@ -423,21 +407,22 @@ namespace Huginn::Effect
         std::lock_guard make(liveMakeMutex_);
         if (generation != liveGeneration_) return false;   // another load's: the form may be gone
         const RE::FormID id = form->GetFormID();
-        auto& item = held_[id];
-        for (std::size_t i = 0; i < item.seen.size(); ++i) {
-            if (!SameNumbers(item.seen[i].numbers, numbers)) continue;
-            if (item.current == i) return false;
-            item.current = i;
-            heldDirty_ = true;
-            return true;
+        if (const auto it = held_.find(id); it != held_.end()) {
+            auto& known = it->second;
+            for (std::size_t i = 0; i < known.seen.size(); ++i) {
+                if (!SameLiveNumbers(known.seen[i].numbers, numbers)) continue;
+                if (known.current == i) return false;
+                known.current = i;
+                heldDirty_ = true;
+                return true;
+            }
         }
+        // The entry is made only once the mapping is: a read that throws
+        // must not leave an item with nothing seen (RegradeHeld indexes it).
         read = true;
         if (!liveReader_) liveReader_ = std::make_unique<EffectReader>();
         ReadResult rr;
-        if (!liveReader_->ReadForm(form, nullptr, rr) || rr.items.empty()) {
-            if (item.seen.empty()) held_.erase(id);
-            return false;
-        }
+        if (!liveReader_->ReadForm(form, nullptr, rr) || rr.items.empty()) return false;
         auto& rec = rr.items.front();
         MarkHeld(rec);   // known or carried: rule 1's tome test does not apply
         for (auto& row : rec.effects) {
@@ -454,11 +439,9 @@ namespace Huginn::Effect
         ResolveZeroMagnitudes(rr.items, rr.effects, classes);
         ItemMapping m = MapItem(rec, rr.effects, classes);
         LogBudgetHits("a held entry"sv);
-        if (!m.inScope) {
-            // Out of scope (an ingredient, a power): no entry, held or not.
-            if (item.seen.empty()) held_.erase(id);
-            return false;
-        }
+        // Out of scope (an ingredient, a power): no entry, held or not.
+        if (!m.inScope) return false;
+        auto& item = held_[id];
         if (item.seen.size() >= kSeenPerItem) {
             const std::size_t drop = item.current == 0 ? 1 : 0;
             item.seen.erase(item.seen.begin() + static_cast<std::ptrdiff_t>(drop));
@@ -496,13 +479,16 @@ namespace Huginn::Effect
         if (!heldDirty_.exchange(false, std::memory_order_acq_rel)) return false;
         std::vector<const ItemMapping*> mappings;
         mappings.reserve(held_.size());
-        for (const auto& [id, item] : held_) mappings.push_back(&item.seen[item.current].mapping);
+        for (const auto& [id, item] : held_) {
+            if (item.current < item.seen.size()) mappings.push_back(&item.seen[item.current].mapping);
+        }
         auto pops = std::make_shared<const Populations>(HeldPopulations(mappings));
         auto gen = std::make_unique<Generation>();
         gen->reserve(held_.size());
         std::unordered_map<RE::FormID, const CatalogEntry*> map;
         map.reserve(held_.size());
         for (const auto& [id, item] : held_) {
+            if (item.current >= item.seen.size()) continue;
             const ItemMapping& m = item.seen[item.current].mapping;
             auto entry = std::make_unique<CatalogEntry>(MakeEntry(m, Grade(m, *pops, &pops_), *pops));
             map.emplace(id, entry.get());
@@ -513,6 +499,7 @@ namespace Huginn::Effect
             live_.swap(map);
             heldPops_ = std::move(pops);
             anyLive_.store(!live_.empty(), std::memory_order_release);
+            gradingEpoch_.fetch_add(1, std::memory_order_acq_rel);
         }
         if (graded) *graded = gen->size();
         RetireLocked(std::move(published_));
@@ -532,6 +519,7 @@ namespace Huginn::Effect
             live_.clear();
             heldPops_.reset();
             anyLive_.store(false, std::memory_order_release);
+            gradingEpoch_.fetch_add(1, std::memory_order_acq_rel);
         }
         RetireLocked(std::move(published_));
         if (n > 0) logger::info("[LiveValues] {} held items cleared (a load)"sv, n);

@@ -112,6 +112,26 @@ namespace Huginn::Effect
         float armorRating = -1.0f;
     };
 
+    /// The same numbers, to 0.01: the same rows (by place in the effect
+    /// list) with the same magnitudes and durations, damage and rating.
+    /// LiveValues asks it whether an item moved; the catalog, whether a set
+    /// of numbers is one it has mapped (one test, so they agree).
+    [[nodiscard]] inline bool SameLiveNumbers(const LiveNumbers& a, const LiveNumbers& b) noexcept
+    {
+        constexpr float kEps = 0.01f;
+        const auto within = [](float x, float y) { return (x > y ? x - y : y - x) <= kEps; };
+        if (a.rows.size() != b.rows.size() || !within(a.damage, b.damage) || !within(a.armorRating, b.armorRating)) {
+            return false;
+        }
+        for (std::size_t i = 0; i < a.rows.size(); ++i) {
+            if (a.rows[i].index != b.rows[i].index || !within(a.rows[i].magnitude, b.rows[i].magnitude) ||
+                !within(a.rows[i].duration, b.rows[i].duration)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     class EffectCatalog
     {
     public:
@@ -223,6 +243,13 @@ namespace Huginn::Effect
         /// the base form says; nullopt for a plain stack (use Find).
         [[nodiscard]] std::optional<CatalogEntry> InstanceEntry(const RE::TESBoundObject* base,
                                                                 const RE::ExtraDataList* extra) const;
+        /// Moves each time the population InstanceEntry grades against does
+        /// (a held grading published, a load's clear): a cache of instance
+        /// entries made before is stale. Any thread.
+        [[nodiscard]] std::uint64_t GradingEpoch() const noexcept
+        {
+            return gradingEpoch_.load(std::memory_order_acquire);
+        }
 
         /// The column an MGEF maps to (the dump's per-row view), or nullptr.
         [[nodiscard]] const Core::Effect::EffectClass* ClassOf(RE::FormID mgef) const;
@@ -279,6 +306,7 @@ namespace Huginn::Effect
         std::unordered_map<RE::FormID, const CatalogEntry*> live_;
         std::shared_ptr<const Core::Effect::Populations> heldPops_;
         std::atomic<bool> anyLive_{ false };
+        std::atomic<std::uint64_t> gradingEpoch_{ 0 };   // heldPops_ swapped (RegradeHeld, ClearLive)
 
         struct HeldMapping
         {

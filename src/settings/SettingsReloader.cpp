@@ -23,6 +23,7 @@
 #include "ui/DebugSettings.h"
 #include "input/KeybindingSettings.h"
 #include "input/EquipSettings.h"
+#include "effect/LiveValues.h"
 #include "input/InputHandler.h"
 #include "candidate/CandidateGenerator.h"
 #include "settings/ShippedDefaults.h"
@@ -185,6 +186,9 @@ namespace Huginn::Settings
         // [Equip] (0.24.26): read at the next hand equip.
         Input::EquipSettings::GetSingleton().LoadFromIni(mainIni);
         logger::debug("[SettingsReloader]   [Equip] loaded"sv);
+
+        // [Scoring] bHoldConditionRegradesInCombat (0.24.30): read at the next grading.
+        Effect::LiveValues::LoadSettings(mainIni);
 
         // Read-only comes from [Widget] (dMenu's file), not from the keybindings
         // it suppresses -- so it must be pushed AFTER the dMenu INI is loaded

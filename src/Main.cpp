@@ -835,6 +835,8 @@ static void OnDataLoaded()
         inputHandler.SetKeyCodes(keybindings);
         // [Equip] (0.24.26), from the same parse; reloaded with the rest.
         Input::EquipSettings::GetSingleton().LoadFromIni(keyIni);
+        // [Scoring] bHoldConditionRegradesInCombat (0.24.30), the same parse.
+        Effect::LiveValues::LoadSettings(keyIni);
 
         // NOTE: read-only is not pushed here. [Widget] IS now read at
         // kDataLoaded (see the earlyDMenuIni block above), so pushing here would

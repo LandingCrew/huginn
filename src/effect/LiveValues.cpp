@@ -2,6 +2,8 @@
 
 #include "EffectCatalog.h"
 #include "SpellPower.h"
+#include "state/StateManager.h"
+#include "util/InventoryUtil.h"
 
 #include <algorithm>
 #include <array>
@@ -32,6 +34,12 @@ namespace Huginn::Effect::LiveValues
         /// numbers without moving anything the fingerprint reads -- seen
         /// 2026-11-10 as every spell flipping by 10 % and back.
         constexpr auto kSweepEvery = std::chrono::seconds(3);
+        /// A weapon's or armour piece's numbers move with tempering, a
+        /// combat skill or a perk, never within seconds of a fight: the
+        /// periodic sweep reads gear already read on one sweep in this many
+        /// (15 s), and a magic school's skill or Fortify not at all. Every
+        /// sweep still sees whether it is carried.
+        constexpr std::size_t kGearEvery = 5;
         /// A change under this is no change (rounding in the perk math).
         constexpr float kEpsilon = 0.01f;
         /// After a load, the first read waits this long: read in the load's
@@ -258,6 +266,8 @@ namespace Huginn::Effect::LiveValues
             std::string why;
             bool quiet = false;      // the periodic sweep: its line at debug
             bool onlyNew = false;    // only the items not read yet: what is gone is not known from it
+            bool keepGear = false;   // gear read before keeps its numbers this sweep (kGearEvery)
+            std::size_t periodic = 0;   // periodic sweeps since gear was last read
             std::unordered_set<RE::FormID> seen;   // this sweep's items so far
             float ratio = 0.0f;      // the first moved magnitude's new / old, for the flip line
             std::chrono::steady_clock::time_point nextSweep{};
@@ -290,7 +300,20 @@ namespace Huginn::Effect::LiveValues
             RE::TESBoundObject* form = nullptr;
             Numbers numbers;
             bool drop = false;
+            // Not a change to the character: found by the periodic sweep (a
+            // perk entry point's own condition flipping, an item picked up
+            // or used up) or gone from a whole sweep. In a fight its grading
+            // may wait for the end (bHoldConditionRegradesInCombat).
+            bool canWait = false;
         };
+
+        // [Scoring] bHoldConditionRegradesInCombat (hot-reloadable).
+        std::atomic<bool> g_holdInCombat{ true };
+        // Since the last grading, a held item changed with the character: a
+        // load, a level, perk point, magic skill or Fortify, a spell learned.
+        // The update loop's thread only.
+        bool g_realChange = false;
+        bool g_holdLogged = false;   // this hold's line written
         std::mutex g_pendingMutex;
         std::unordered_map<RE::FormID, Pending> g_pending;
         std::atomic<std::size_t> g_pendingCount{ 0 };   // g_pending.size(), set under the lock
@@ -325,11 +348,26 @@ namespace Huginn::Effect::LiveValues
         {
             std::vector<Work> out;
             for (auto* s : KnownSpells(player)) out.push_back({ s, What::Spell });
-            auto* inv = player->GetInventoryChanges();
-            if (!inv || !inv->entryList) return out;
-            for (auto* e : *inv->entryList) {
-                auto* obj = e ? e->object : nullptr;
-                if (!obj) continue;
+            // The inventory as the game counts it: the base container's items
+            // with the changes' deltas, only what has a count left (a changes
+            // entry at 0 is an item sold or used up; one the base container
+            // gave has no entry until it moves).
+            const auto inventory = Util::GetInventorySafe(player, [](RE::TESBoundObject& o) {
+                switch (o.GetFormType()) {
+                case RE::FormType::AlchemyItem:
+                case RE::FormType::Weapon:
+                case RE::FormType::Armor:
+                case RE::FormType::Scroll:
+                case RE::FormType::Ammo:
+                case RE::FormType::SoulGem:
+                case RE::FormType::Light:
+                    return true;
+                default:
+                    return false;
+                }
+            });
+            for (const auto& [obj, data] : inventory) {
+                if (!obj || data.first <= 0) continue;
                 if (obj->Is(RE::FormType::AlchemyItem)) {
                     const bool poison = static_cast<RE::AlchemyItem*>(obj)->IsPoison();
                     out.push_back({ obj, poison ? What::Record : What::Consumable });
@@ -392,21 +430,6 @@ namespace Huginn::Effect::LiveValues
             return n;
         }
 
-        bool Same(const Numbers& a, const Numbers& b)
-        {
-            if (a.rows.size() != b.rows.size() || std::fabs(a.damage - b.damage) > kEpsilon ||
-                std::fabs(a.armorRating - b.armorRating) > kEpsilon) {
-                return false;
-            }
-            for (std::size_t i = 0; i < a.rows.size(); ++i) {
-                if (std::fabs(a.rows[i].magnitude - b.rows[i].magnitude) > kEpsilon ||
-                    std::fabs(a.rows[i].duration - b.rows[i].duration) > kEpsilon) {
-                    return false;
-                }
-            }
-            return true;
-        }
-
         float RecordDamage(const RE::TESBoundObject* obj)
         {
             return static_cast<float>(static_cast<const RE::TESObjectWEAP*>(obj)->GetAttackDamage());
@@ -458,16 +481,18 @@ namespace Huginn::Effect::LiveValues
         {
             const float record = weapon ? RecordDamage(obj) : RecordRating(obj);
             if (record <= 0.0f) return -1.0f;
-            auto* inv = player->GetInventoryChanges();
-            if (!inv || !inv->entryList) return -1.0f;
+            // The changes' entry holds the stacks' extra data (tempering); an
+            // item the base container gave and that never moved has none:
+            // its plain stack is all there is.
             RE::InventoryEntryData* entry = nullptr;
-            for (auto* e : *inv->entryList) {
-                if (e && e->object == obj) {
-                    entry = e;
-                    break;
+            if (auto* inv = player->GetInventoryChanges(); inv && inv->entryList) {
+                for (auto* e : *inv->entryList) {
+                    if (e && e->object == obj) {
+                        entry = e;
+                        break;
+                    }
                 }
             }
-            if (!entry) return -1.0f;
             const auto shown = [&](RE::ExtraDataList* xl) {
                 // One stack as the inventory menu builds it: its own list of
                 // one extra data list. The destructor frees the list's nodes,
@@ -482,13 +507,13 @@ namespace Huginn::Effect::LiveValues
             const float plain = shown(nullptr);
             if (!(plain > 0.0f)) return -1.0f;
             float best = plain;
-            if (entry->extraLists) {
+            if (entry && entry->extraLists) {
                 for (auto* xl : *entry->extraLists) {
                     if (xl) best = std::max(best, shown(xl));
                 }
             }
             if (!g_main.quiet) {
-                logger::debug("[LiveValues] {} {:08X} '{}': record {:.1f}, shown {:.1f} untempered, {:.1f} best stack -> {:.1f}"sv,
+                logger::trace("[LiveValues] {} {:08X} '{}': record {:.1f}, shown {:.1f} untempered, {:.1f} best stack -> {:.1f}"sv,
                     weapon ? "weapon" : "armour", obj->GetFormID(), obj->GetName() ? obj->GetName() : "?", record, plain,
                     best, record * best / plain);
             }
@@ -537,8 +562,10 @@ namespace Huginn::Effect::LiveValues
             return 0.0f;
         }
 
-        void StartSweep(RE::PlayerCharacter* player, std::string why, bool quiet = false, bool onlyNew = false)
+        void StartSweep(RE::PlayerCharacter* player, std::string why, bool quiet = false, bool onlyNew = false,
+                        bool keepGear = false)
         {
+            g_main.keepGear = keepGear;
             g_main.queue = Items(player);
             if (onlyNew) {
                 std::erase_if(g_main.queue, [](const Work& w) { return g_main.computed.contains(w.form->GetFormID()); });
@@ -575,12 +602,16 @@ namespace Huginn::Effect::LiveValues
                 if (!w.form) continue;
                 const RE::FormID id = w.form->GetFormID();
                 g_main.seen.insert(id);
+                if (g_main.keepGear && (w.what == What::Weapon || w.what == What::Armour) &&
+                    g_main.computed.contains(id)) {
+                    continue;   // carried, numbers as last read
+                }
                 Numbers now;
                 const bool read = ReadOne(player, w, now);
                 if (!read) now = Numbers{};
                 const auto it = g_main.computed.find(id);
                 const bool known = it != g_main.computed.end();
-                if (known && Same(it->second, now)) continue;
+                if (known && Effect::SameLiveNumbers(it->second, now)) continue;
                 // The catalog maps the record's numbers when nothing moved them.
                 const bool asRecord = !read || SameAsRecord(w, now);
                 if (known) {
@@ -593,7 +624,13 @@ namespace Huginn::Effect::LiveValues
                 }
                 g_main.computed[id] = now;
                 std::lock_guard lock(g_pendingMutex);
-                g_pending[id] = Pending{ w.form, asRecord ? Numbers{} : std::move(now), false };
+                // The periodic sweep's finds may wait; a fingerprint's sweep
+                // (and a spell learned: onlyNew) may not, nor may an item
+                // whose earlier hand-over could not and is still unmapped.
+                const auto waiting = g_pending.find(id);
+                const bool canWait = g_main.quiet && !g_main.onlyNew &&
+                                     (waiting == g_pending.end() || waiting->second.canWait);
+                g_pending[id] = Pending{ w.form, asRecord ? Numbers{} : std::move(now), false, canWait };
                 g_pendingCount.store(g_pending.size(), std::memory_order_release);
             }
             if (g_main.cursor >= g_main.queue.size() && !g_main.queue.empty()) {
@@ -609,7 +646,7 @@ namespace Huginn::Effect::LiveValues
                         for (const RE::FormID id : gone) {
                             g_main.computed.erase(id);
                             g_main.prior.erase(id);
-                            g_pending[id] = Pending{ nullptr, Numbers{}, true };
+                            g_pending[id] = Pending{ nullptr, Numbers{}, true, true };
                         }
                         g_pendingCount.store(g_pending.size(), std::memory_order_release);
                     }
@@ -730,6 +767,13 @@ namespace Huginn::Effect::LiveValues
     void OnPlayerUpdate(RE::PlayerCharacter* player)
     {
         if (!player || !g_loaded.load(std::memory_order_acquire)) return;
+        // The player survives a quit to the main menu while its container is
+        // freed (PR #88: GetInventorySafe's base-container pass faulted there):
+        // the menus first, then Get3D, as the update loop's IsWorldLoaded.
+        if (auto* ui = RE::UI::GetSingleton();
+            !ui || ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME) || ui->IsMenuOpen(RE::MainMenu::MENU_NAME)) {
+            return;
+        }
         if (!player->Get3D() || !Effect::EffectCatalog::GetSingleton().Ready()) return;
 
         const std::uint32_t gen = g_generation.load(std::memory_order_acquire);
@@ -767,17 +811,23 @@ namespace Huginn::Effect::LiveValues
             Fingerprint countOnly = g_main.last;
             countOnly.spellCount = now.spellCount;
             const bool onlyCount = countOnly == now;
+            // A magic school's skill or Fortify moves spells, potions and
+            // food, never gear (the fingerprint reads no combat skill).
+            const bool magicOnly = now.level == g_main.last.level && now.perkPoints == g_main.last.perkPoints &&
+                                   now.spellCount == g_main.last.spellCount;
             const std::string why = WhatMoved(g_main.last, now);
             g_main.last = now;
             if (onlyCount) {
                 if (g_main.queue.empty()) StartSweep(player, why, /*quiet=*/true, /*onlyNew=*/true);
             }
             else {
-                StartSweep(player, why);
+                StartSweep(player, why, /*quiet=*/false, /*onlyNew=*/false, /*keepGear=*/magicOnly);
             }
         }
         else if (g_main.queue.empty() && std::chrono::steady_clock::now() >= g_main.nextSweep) {
-            StartSweep(player, "the periodic sweep", /*quiet=*/true);
+            const bool gear = ++g_main.periodic >= kGearEvery;
+            if (gear) g_main.periodic = 0;
+            StartSweep(player, "the periodic sweep", /*quiet=*/true, /*onlyNew=*/false, /*keepGear=*/!gear);
         }
         if (!g_main.queue.empty()) ReadSome(player);
 
@@ -790,25 +840,62 @@ namespace Huginn::Effect::LiveValues
 
     void SetGameLoaded(bool loaded) noexcept
     {
-        std::uint32_t gen = 0;
-        {
-            // With the hand-over cleared: an item taken before this carries
-            // the old load, which the catalog drops without reading its form.
-            std::lock_guard lock(g_pendingMutex);
-            gen = g_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
-            g_pending.clear();
-            g_pendingCount.store(0, std::memory_order_release);
-        }
         g_firstSweepDone.store(false, std::memory_order_release);
         g_loaded.store(loaded, std::memory_order_release);
-        Effect::EffectCatalog::GetSingleton().ClearLive(gen);
+        // SKSE's message handler calls this: nothing may escape it (the lock,
+        // the catalog's clear and its log line can throw). If the clear
+        // fails, the catalog keeps the old load's generation and refuses
+        // every item handed over after this: the records' grading, not a
+        // crash.
+        try {
+            std::uint32_t gen = 0;
+            {
+                // With the hand-over cleared: an item taken before this carries
+                // the old load, which the catalog drops without reading its form.
+                std::lock_guard lock(g_pendingMutex);
+                gen = g_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
+                g_pending.clear();
+                g_pendingCount.store(0, std::memory_order_release);
+            }
+            Effect::EffectCatalog::GetSingleton().ClearLive(gen);
+            g_realChange = false;
+            g_holdLogged = false;
+        } catch (...) {
+            try {
+                logger::error("[LiveValues] clearing the held items on a load failed; the records grade until the next load"sv);
+            } catch (...) {
+            }
+        }
+    }
+
+    namespace
+    {
+        /// A grading due to nothing about the character waits for the
+        /// fight's end (bHoldConditionRegradesInCombat): a perk that holds
+        /// out of combat regraded every spell 25 s into a fight (2026-11-13,
+        /// FE72686B x1.1), moving spells against the scrolls, staffs and
+        /// potions on the keys; the last Resist Frost drunk let that through
+        /// the same day. A used-up item is not offered, and one picked up is
+        /// offered at its record's grade until then.
+        bool HoldForFight() noexcept
+        {
+            return g_holdInCombat.load(std::memory_order_relaxed) && !g_realChange &&
+                   State::StateManager::GetSingleton().IsInCombat();
+        }
+    }
+
+    void LoadSettings(const CSimpleIniA& ini)
+    {
+        const bool hold = ini.GetBoolValue("Scoring", "bHoldConditionRegradesInCombat", true);
+        const bool was = g_holdInCombat.exchange(hold, std::memory_order_relaxed);
+        logger::info("[LiveValues] Loaded: bHoldConditionRegradesInCombat={}{}"sv, hold, was != hold ? " (changed)" : "");
     }
 
     bool HasWork() noexcept
     {
         if (g_pendingCount.load(std::memory_order_acquire) > 0) return true;
         return g_firstSweepDone.load(std::memory_order_acquire) && !g_reading.load(std::memory_order_acquire) &&
-               Effect::EffectCatalog::GetSingleton().HeldDirty();
+               Effect::EffectCatalog::GetSingleton().HeldDirty() && !HoldForFight();
     }
 
     bool ApplyPending(std::size_t budget)
@@ -836,12 +923,15 @@ namespace Huginn::Effect::LiveValues
                 gen = g_generation.load(std::memory_order_acquire);
             }
             if (p.drop) {
-                if (catalog.DropHeld(id, gen)) logger::trace("[LiveValues] {:08X} no longer held"sv, id);
+                if (catalog.DropHeld(id, gen)) {
+                    logger::trace("[LiveValues] {:08X} no longer held"sv, id);
+                }
                 continue;
             }
             bool read = false;
             const bool changed = catalog.SetHeld(p.form, p.numbers, gen, read);
             if (read) ++reads;
+            if (changed && !p.canWait) g_realChange = true;
             if (changed) {
                 std::string numbers;
                 for (const auto& r : p.numbers.rows) {
@@ -863,11 +953,22 @@ namespace Huginn::Effect::LiveValues
         if (!empty || g_reading.load(std::memory_order_acquire) || !g_firstSweepDone.load(std::memory_order_acquire)) {
             return false;
         }
+        if (catalog.HeldDirty() && HoldForFight()) {
+            if (!g_holdLogged) {
+                g_holdLogged = true;
+                logger::debug("[LiveValues] a held item moved in a fight with the character unchanged: graded when it ends (bHoldConditionRegradesInCombat)"sv);
+            }
+            return false;
+        }
         const auto t0 = std::chrono::steady_clock::now();
         std::size_t graded = 0;
         if (!catalog.RegradeHeld(&graded)) return false;
-        logger::debug("[LiveValues] {} held items graded among themselves ({:.1f} ms)"sv, graded,
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+        const bool wasHeld = g_holdLogged;
+        g_realChange = false;
+        g_holdLogged = false;
+        logger::debug("[LiveValues] {} held items graded among themselves ({:.1f} ms{})"sv, graded,
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(),
+            wasHeld ? ", held from the fight" : "");
         return true;
     }
 }

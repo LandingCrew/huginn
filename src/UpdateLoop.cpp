@@ -1,7 +1,7 @@
 #include "UpdateLoop.h"
 #include "Globals.h"
 #include "pipeline/PipelineCoordinator.h"
-#include "effect/LiveValues.h"   // HasWork: the held grading drains in a run (0.24.30)
+#include "effect/LiveValues.h"   // the held grading drains before the gate (0.24.30)
 #include "Profiling.h"
 
 #include "state/StateManager.h"
@@ -510,6 +510,9 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
 // Skip-check + pipeline run. Returns early if state is unchanged and no
 // page was cycled.
 
+/// 0.24.30: held items mapped per tick (LiveValues::ApplyPending).
+static constexpr std::size_t kHeldItemsPerTick = 4;
+
 static void RunPipelineIfNeeded(float deltaMs, RE::PlayerCharacter* player,
                                 std::chrono::steady_clock::time_point now)
 {
@@ -536,6 +539,16 @@ static void RunPipelineIfNeeded(float deltaMs, RE::PlayerCharacter* player,
         Slot::SlotAllocator::GetSingleton().MarkPageDirty();
     }
 
+    // 0.24.30: LiveValues' hand-over (the items' numbers as the player has
+    // them, ~230 after a load) is mapped here, a few a tick, before the gate:
+    // a quiet scene drains it without the pipeline gathering state every
+    // tick, and a run is forced only when the held grading changed (the page
+    // marked dirty, as for the ammo count above). Each item read maps its
+    // form (milliseconds in Debug); one seen before costs nothing.
+    if (Effect::LiveValues::HasWork() && Effect::LiveValues::ApplyPending(kHeldItemsPerTick)) {
+        Slot::SlotAllocator::GetSingleton().MarkPageDirty();
+    }
+
     bool pageChanged = Slot::SlotAllocator::GetSingleton().PeekPageChanged();
 
     // The pipeline must also run with no sensor delta at all when
@@ -549,11 +562,8 @@ static void RunPipelineIfNeeded(float deltaMs, RE::PlayerCharacter* player,
     //
     // Anything that must survive a quiet scene belongs in NeedsForcedRun(), not
     // as another term here.
-    // 0.24.30: LiveValues' hand-over is drained by RunPipeline's ApplyPending,
-    // so the gate opens while it has work. Not in NeedsForcedRun: the run
-    // still hash-skips after the drain unless the held grading changed.
     if (!stateChanged && !pageChanged &&
-        !Pipeline::PipelineCoordinator::GetSingleton().NeedsForcedRun() && !Effect::LiveValues::HasWork()) {
+        !Pipeline::PipelineCoordinator::GetSingleton().NeedsForcedRun()) {
         Learning::PipelineStateCache::GetSingleton().RefreshTimestamp();
         return;
     }

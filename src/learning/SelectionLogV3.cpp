@@ -205,6 +205,9 @@ namespace Huginn::Learning::SelectionLogV3
         // (Reset): a player enchantment is a dynamic FF form, and its ID means
         // another enchantment in another save.
         std::unordered_map<InstanceKey, std::shared_ptr<const Effect::CatalogEntry>, InstanceKeyHash> g_instances;
+        // 0.24.30: an instance is graded among what the player has; a new
+        // held grading makes the cached ones stale (EffectCatalog::GradingEpoch).
+        std::uint64_t g_instancesEpoch = 0;
 
         // Call only when ExtraListsReadable(): reads the list's extra data.
         std::shared_ptr<const Effect::CatalogEntry> InstanceFor(const Effect::EffectCatalog& catalog,
@@ -221,6 +224,10 @@ namespace Huginn::Learning::SelectionLogV3
             const RE::FormID ench = xe && xe->enchantment ? xe->enchantment->GetFormID() : 0;
             if (std::fabs(temper - 1.0f) < 1e-4f && ench == 0) return nullptr;
             const InstanceKey key{ obj->GetFormID(), static_cast<int32_t>(std::lround(temper * 1000.0f)), ench };
+            if (const auto epoch = catalog.GradingEpoch(); epoch != g_instancesEpoch) {
+                g_instances.clear();
+                g_instancesEpoch = epoch;
+            }
             if (const auto it = g_instances.find(key); it != g_instances.end()) return it->second;
             std::shared_ptr<const Effect::CatalogEntry> made;
             if (auto e = catalog.InstanceEntry(obj, xl)) made = std::make_shared<const Effect::CatalogEntry>(std::move(*e));
