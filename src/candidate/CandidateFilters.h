@@ -7,6 +7,7 @@
 #include "core/FilterReason.h"
 #include "core/HardGates.h"     // R8.1: the hard gates' inputs
 #include "core/CapFacets.h"     // R11: the resist check reads facets
+#include "core/ResistPotions.h"  // 0.24.29: resist potions do not stack
 #include <optional>
 #include <span>
 #include <vector>
@@ -30,6 +31,7 @@ namespace Huginn::Candidate
         size_t filteredByDuplication = 0;    // Duplicate items removed
         size_t filteredByFullVitals = 0;     // Healing when health is full, etc.
         size_t filteredByHardGate = 0;       // R8.1: no follower / no workstation / not dark / suppressed favourite
+        size_t filteredByResistPick = 0;     // 0.24.29: a weaker resist potion (sResistPotionPick = Greedy)
         size_t outputCount = 0;              // Candidates after all filtering
 
         /// Reset all counters to zero
@@ -42,6 +44,7 @@ namespace Huginn::Candidate
             filteredByDuplication = 0;
             filteredByFullVitals = 0;
             filteredByHardGate = 0;
+            filteredByResistPick = 0;
             outputCount = 0;
         }
     };
@@ -138,14 +141,12 @@ namespace Huginn::Candidate
             Core::Facets::Subject& subject   // out: the catalog lookup, for the arms that read it
         ) const;
 
-        // Helper (R11): an item whose resist facets (core/CapFacets.h) the
-        // player already covers; an element whose block is due for its
-        // refresh (R8.1) is not redundant. Potions and spells alike.
-        [[nodiscard]] bool IsResistRedundant(
-            Core::Facets::Set facets,
-            const State::ActorResistances& resistances,
-            Core::Refresh::DueBits refreshDue
-        ) const;
+        // 0.24.29: a resist potion's strength per element (the greedy pick).
+        [[nodiscard]] static std::optional<Core::ResistPotions::Strengths> ResistPotionStrengths(RE::FormID formID);
+
+        // 0.24.29: a resist spell whose own resist effect already runs.
+        [[nodiscard]] static bool ResistCastRunning(RE::FormID formID, Core::Facets::Set facets,
+            const Core::ResistPotions::CastEffects& running);
 
     };
 

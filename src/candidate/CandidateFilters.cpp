@@ -2,6 +2,8 @@
 #include "effect/Facets.h"     // R11: the facets the filters read (core/CapFacets.h)
 #include "core/Coverage.h"     // SummonLimitReached (0.23.46)
 #include "core/RefreshPass.h"  // the refresh pass (R8.1)
+#include "core/ResistPotions.h"  // 0.24.29: resist potions do not stack
+#include "effect/EffectCatalog.h"
 #include <algorithm>
 
 namespace Huginn::Candidate
@@ -41,8 +43,12 @@ namespace Huginn::Candidate
 
         // R11: `targetsOthers` is the effect catalog's TargetsOthers facet
         // (core/CapFacets.h), read once per candidate by RunVisitorFilters.
+        // 0.24.29: `unlocks` and `unlockReach` are the catalog's Unlock facet
+        // and reach (core/LockReach.h), read with the facets (a staff's only
+        // while a lock is in the crosshair).
         template <class T>
-        [[nodiscard]] std::optional<R> HardGate(const T& c, const Core::Gate::Inputs& g, bool targetsOthers) noexcept
+        [[nodiscard]] std::optional<R> HardGate(const T& c, const Core::Gate::Inputs& g, bool targetsOthers,
+                                                bool unlocks = false, int unlockReach = Core::Lock::kUnknownReach) noexcept
         {
             // A favourite under Suppress (IsFavoritedCandidate: the one test
             // Candidate::IsFavorited and the scorer read too).
@@ -52,7 +58,12 @@ namespace Huginn::Candidate
                 if (Core::Gate::NoFollower(targetsOthers, g.followerNear))
                     return R::no_follower;
             }
-            else if constexpr (std::is_same_v<T, ApparelCandidate>) {
+            if constexpr (std::is_same_v<T, SpellCandidate> || std::is_same_v<T, ScrollCandidate> ||
+                          std::is_same_v<T, WeaponCandidate>) {
+                if (Core::Lock::OutOfReach(unlocks, unlockReach, g.lockLevel))
+                    return R::lock_out_of_reach;
+            }
+            if constexpr (std::is_same_v<T, ApparelCandidate>) {
                 if (Core::Gate::NoWorkstation(CraftsOf(c.magnitudes), g.station))
                     return R::no_workstation;
             }
@@ -138,8 +149,9 @@ namespace Huginn::Candidate
                     return R::full_magicka;
 
                 // 4. Hard gates (R8.1): a suppressed favourite, a spell for
-                // someone else with no follower near.
-                if (const auto gate = HardGate(c, gates, f.Has(F::TargetsOthers))) return gate;
+                // someone else with no follower near; 0.24.29: an unlock spell
+                // that cannot open the lock in the crosshair.
+                if (const auto gate = HardGate(c, gates, f.Has(F::TargetsOthers), f.Has(F::Unlock), subject.unlockReach)) return gate;
 
                 // 5. Active Buff (R8.1: each passes in its buff's last seconds)
                 if (checkBuffs) {
@@ -171,7 +183,9 @@ namespace Huginn::Candidate
                         player.buffs.hasWarmingEffect && !Due(player, B::warming))
                         return R::warming;
                 }
-                if (checkResists && IsResistRedundant(f, player.resistances, player.buffs.refreshDue))
+                // 0.24.29: one of this spell's own resist effects runs: casting
+                // it again only refreshes it (core/ResistPotions.h).
+                if (checkResists && ResistCastRunning(c.formID, f, player.buffs.castResist))
                     return R::resist;
 
                 return std::nullopt;
@@ -206,8 +220,9 @@ namespace Huginn::Candidate
                 // 5. Active Buff. Not the resist check for food/alcohol: it
                 // is eaten for hunger, and a stew's side resist (LoreRim) let
                 // a poison-immunity necklace strip every stew from the list.
-                if (checkResists && !isFood &&
-                    IsResistRedundant(f, player.resistances, player.buffs.refreshDue))
+                // 0.24.29: nor a resist potion while a potion's resist to its
+                // element runs, whatever the total: they do not stack.
+                if (checkResists && !isFood && Core::ResistPotions::Blocked(f, player.buffs.potionResist))
                     return R::resist;
                 if (checkBuffs) {
                     if (f.Has(F::Waterbreathing) && player.buffs.hasWaterBreathing &&
@@ -234,8 +249,9 @@ namespace Huginn::Candidate
                     player.vitals.health >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
                     return R::full_health;
 
-                // 4. Hard gates (R8.1): a scroll for someone else, no follower near.
-                if (const auto gate = HardGate(c, gates, f.Has(F::TargetsOthers))) return gate;
+                // 4. Hard gates (R8.1): a scroll for someone else, no follower near;
+                // 0.24.29: an unlock scroll that cannot open the lock in the crosshair.
+                if (const auto gate = HardGate(c, gates, f.Has(F::TargetsOthers), f.Has(F::Unlock), subject.unlockReach)) return gate;
 
                 // 5. Active Buff
                 if (checkBuffs) {
@@ -262,8 +278,20 @@ namespace Huginn::Candidate
             // =================================================================
             else if constexpr (std::is_same_v<T, WeaponCandidate>) {
                 // Weapons pass the other visitor filters (equipped-skip is
-                // per-slot in SlotAllocator); a suppressed favourite is gated.
-                return HardGate(c, gates, false);
+                // per-slot in SlotAllocator); a suppressed favourite is gated,
+                // and (0.24.29) an Open Lock staff or wand short of the lock in
+                // the crosshair (LoreRim has them at all five levels). The
+                // catalog is asked only while a lock is in the crosshair.
+                bool unlocks = false;
+                int reach = Core::Lock::kUnknownReach;
+                if (gates.lockLevel != Core::Lock::kNoLock && c.type == Weapon::WeaponType::Staff) {
+                    const auto staff = Effect::FacetsOfForm(c.formID);
+                    if (staff.known) {
+                        unlocks = staff.facets.Has(F::Unlock);
+                        reach = staff.unlockReach;
+                    }
+                }
+                return HardGate(c, gates, false, unlocks, reach);
             }
             // =================================================================
             // TORCH
@@ -332,10 +360,34 @@ namespace Huginn::Candidate
         // Snapshot active cooldowns once (avoids per-candidate shared_lock acquisition)
         const auto activeCooldowns = m_cooldownMgr.GetActiveCooldownKeys();
 
-        // Single forward pass: filter + dedup, moving survivors into output.
-        // Each candidate is moved at most once (into output). No in-place
-        // erase_if means no variant move-assignment chains that trigger
-        // string proxy swaps on freed memory.
+        // 0.24.29: sResistPotionPick = Greedy -- the strongest resist potion
+        // per element among those that pass every other filter
+        // (core/ResistPotions.h WeakerAmong); the weaker ones drop as
+        // resist_weaker. Review of PR #254: the best was read BEFORE the
+        // pass, so a strongest potion that a later filter dropped
+        // (favourite-suppressed, or blocked by a running potion of another of
+        // its elements) still dropped every weaker one, and no potion of the
+        // element was offered. Now the pass only notes its survivors (by
+        // index, with each resist potion's strengths, read once), the pick
+        // runs over them, and the survivors move into output after it, in
+        // their order.
+        const bool greedyResist = m_config.filterRedundantResists &&
+                                  m_config.resistPotionPick == ResistPotionPick::Greedy;
+        struct Kept
+        {
+            size_t index = 0;                 ///< into gatherBuffer
+            Core::Facets::Subject subject;
+            size_t resist = SIZE_MAX;         ///< into keptResist; SIZE_MAX: not a resist potion
+        };
+        std::vector<Kept> kept;
+        std::vector<Core::ResistPotions::Strengths> keptResist;
+        if (greedyResist) kept.reserve(gatherBuffer.size());
+
+        // Single forward pass: filter + dedup, moving survivors into output
+        // (under the greedy pick, after it). Each candidate is moved at most
+        // once (into output). No in-place erase_if means no variant
+        // move-assignment chains that trigger string proxy swaps on freed
+        // memory.
         size_t weaponsBefore = 0;
         size_t weaponsFilteredByEquipped = 0;
         size_t weaponsFilteredByAffordability = 0;
@@ -395,6 +447,14 @@ namespace Huginn::Candidate
                                     setAsideForHold();
                             }
                             break;
+                        case R::lock_out_of_reach:
+                            // 0.24.29: a hard gate, but never set aside for the
+                            // hold: a held key showing an Open Lock spell that
+                            // cannot open the lock in the crosshair is the bug
+                            // this gate fixes.
+                            ++stats.filteredByHardGate;
+                            if (isWeapon) ++weaponsFilteredByHardGate;
+                            break;
                         case R::equipped:
                             ++stats.filteredByEquipped;
                             if (isWeapon) ++weaponsFilteredByEquipped;
@@ -405,7 +465,7 @@ namespace Huginn::Candidate
                             ++stats.filteredByFullVitals;
                             if (isWeapon) ++weaponsFilteredByFullVitals;
                             break;
-                        default:   // the active-buff filters (Reason::invisibility..Reason::resist)
+                        default:   // the active-buff filters (Core::Filter::IsActiveBuff)
                             ++stats.filteredByActiveBuff;
                             if (isWeapon) ++weaponsFilteredByActiveBuff;
                             break;
@@ -444,8 +504,36 @@ namespace Huginn::Candidate
 
             // Passed all filters — move into output (single move per survivor)
             if (isWeapon) ++weaponsPassed;
+            if (greedyResist) {
+                // 7. Held for the greedy resist pick below.
+                Kept k{ static_cast<size_t>(&c - gatherBuffer.data()), subject };
+                if (const auto* item = std::get_if<ItemCandidate>(&c)) {
+                    if (const auto s = ResistPotionStrengths(item->formID)) {
+                        k.resist = keptResist.size();
+                        keptResist.push_back(*s);
+                    }
+                }
+                kept.push_back(std::move(k));
+                continue;
+            }
             output.push_back(std::move(c));
             if (subjects) subjects->push_back(subject);
+        }
+
+        // 7. 0.24.29: a resist potion weaker than another of its element that
+        // passed (resist_weaker); the rest move into output in pass order.
+        if (greedyResist) {
+            const auto weaker = Core::ResistPotions::WeakerAmong(keptResist);
+            for (auto& k : kept) {
+                auto& c = gatherBuffer[k.index];
+                if (k.resist != SIZE_MAX && weaker[k.resist]) {
+                    recordDrop(c, Core::Filter::Reason::resist_weaker);
+                    ++stats.filteredByResistPick;
+                    continue;
+                }
+                output.push_back(std::move(c));
+                if (subjects) subjects->push_back(std::move(k.subject));
+            }
         }
 
         // Limit output size if configured
@@ -501,40 +589,57 @@ namespace Huginn::Candidate
         }
     }
 
+    // 0.24.29: a resist potion's strength per element (cap(i)'s resist_*
+    // columns, graded by magnitude); nullopt for anything else (food, a
+    // poison, a form the catalog does not map).
+    std::optional<Core::ResistPotions::Strengths> CandidateFilters::ResistPotionStrengths(RE::FormID formID)
+    {
+        auto& catalog = Effect::EffectCatalog::GetSingleton();
+        if (!catalog.Ready() || formID == 0) return std::nullopt;
+        const auto* entry = catalog.FindOrMapId(formID);
+        if (!entry || entry->kind != Core::Effect::Kind::Potion) return std::nullopt;
+        if (!Core::Facets::ResistJudgeable(Core::Facets::FromCap(entry->cap, entry->kind))) return std::nullopt;
+        using C = Core::Effect::Col;
+        const Core::ResistPotions::Strengths s{
+            Core::Effect::Get(entry->cap, C::resist_fire), Core::Effect::Get(entry->cap, C::resist_frost),
+            Core::Effect::Get(entry->cap, C::resist_shock), Core::Effect::Get(entry->cap, C::resist_poison),
+            Core::Effect::Get(entry->cap, C::resist_magic) };
+        if (!Core::ResistPotions::Any(s)) return std::nullopt;
+        return s;
+    }
+
     // =========================================================================
-    // HELPER: RESIST REDUNDANCY CHECK (a potion or a spell)
+    // HELPER: A RESIST SPELL ALREADY RUNNING
     // =========================================================================
-    // R11: one check over the effect catalog's resist facets (core/CapFacets.h)
-    // for potions and spells alike. An item that resists an element the player
-    // already resists above the threshold is redundant -- unless that element's
-    // resistance block is due for its refresh (R8.1: it falls to the threshold
-    // within fRefreshPriorSec, ActorBuffs::refreshDue). Any one blocked element
-    // makes it redundant, as the potion check always did. Before R11 the spell
-    // check read the old classifier's type (Defensive) and element (the first
-    // of fire, frost, shock, poison); resist_* columns are set only by a
-    // resistance the item GIVES, so a poison aura (Strider's Shroud: damage,
-    // not resist_poison) still passes, and Resist Magic now counts for spells
-    // as it did for potions. A hostile or damaging item is never judged by
-    // its resistance (Core::Facets::ResistJudgeable): LoreRim's elemental
-    // cloaks carry a resist rider for the opposite element, and before R11
-    // only a Defensive spell reached this check, so a cloak never did.
-    bool CandidateFilters::IsResistRedundant(
-        Core::Facets::Set facets,
-        const State::ActorResistances& resistances,
-        Core::Refresh::DueBits refreshDue) const
+    // 0.24.29: a resist spell one of whose own resist effects runs on the
+    // player (ActorBuffs::castResist): casting it again only refreshes it. A
+    // hostile or damaging spell is never judged by its resistance
+    // (Core::Facets::ResistJudgeable): LoreRim's elemental cloaks carry a
+    // resist rider for the opposite element.
+    bool CandidateFilters::ResistCastRunning(RE::FormID formID, Core::Facets::Set facets,
+        const Core::ResistPotions::CastEffects& running)
     {
         if (!Core::Facets::ResistJudgeable(facets)) return false;
-        const float threshold = m_config.resistThresholdToFilter;
-        using E = Core::Refresh::Element;
-        using F = Core::Facets::F;
-        const auto blocked = [&](float resist, E e) {
-            return resist > threshold && !Core::Refresh::IsDue(refreshDue, Core::Refresh::ResistBlock(e));
-        };
-        return (facets.Has(F::ResistFire) && blocked(resistances.fire, E::fire)) ||
-               (facets.Has(F::ResistFrost) && blocked(resistances.frost, E::frost)) ||
-               (facets.Has(F::ResistShock) && blocked(resistances.shock, E::shock)) ||
-               (facets.Has(F::ResistPoison) && blocked(resistances.poison, E::poison)) ||
-               (facets.Has(F::ResistMagic) && blocked(resistances.magic, E::magic));
+        if (running.n == 0) return false;
+        const auto* item = RE::TESForm::LookupByID<RE::MagicItem>(formID);
+        if (!item) return false;
+        std::array<std::uint32_t, Core::ResistPotions::CastEffects::kMax> own{};
+        std::size_t n = 0;
+        for (const auto* e : item->effects) {
+            if (!e || !e->baseEffect || n >= own.size()) continue;
+            switch (e->baseEffect->data.primaryAV) {
+                case RE::ActorValue::kResistFire:
+                case RE::ActorValue::kResistFrost:
+                case RE::ActorValue::kResistShock:
+                case RE::ActorValue::kPoisonResist:
+                case RE::ActorValue::kResistMagic:
+                    own[n++] = e->baseEffect->GetFormID();
+                    break;
+                default:
+                    break;
+            }
+        }
+        return Core::ResistPotions::CastBlocked(std::span<const std::uint32_t>(own.data(), n), running);
     }
 
 }  // namespace Huginn::Candidate

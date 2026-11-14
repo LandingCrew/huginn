@@ -75,6 +75,7 @@
 #include "learning/ChoiceSubscriber.h"
 #include "needs/NeedSettings.h"
 #include "state/DropAheadProbe.h"
+#include "state/HostileSight.h"
 #include "state/HandModelProbe.h"
 #include "effect/LiveValues.h"   // 0.24.30
 
@@ -911,6 +912,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
         State::DropAheadProbe::SetGameLoaded(false);  // R3: off through the load
         State::HandModelProbe::SetGameLoaded(false);
         Effect::LiveValues::SetGameLoaded(false);  // 0.24.30: the next character's perks are not these
+        State::HostileSight::SetGameLoaded(false);   // 0.24.29
         Input::HandEquipGate::GetSingleton().Drop("a save is loading", /*force=*/true);  // 0.24.26
         Input::HandEquipGate::GetSingleton().ClearMenus();  // the hook does not run through the load
         Learning::SelectionLogV3::OnLoadStarting();   // R4: no extra-list reads through the load
@@ -924,6 +926,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
         State::DropAheadProbe::SetGameLoaded(true);  // R3: the probe hook may cast now
         State::HandModelProbe::SetGameLoaded(true);
         Effect::LiveValues::SetGameLoaded(true);   // 0.24.30: read the spells as cast
+        State::HostileSight::SetGameLoaded(true);
         break;
     case SKSE::MessagingInterface::kPostLoadGame:
     {
@@ -940,6 +943,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
             State::DropAheadProbe::SetGameLoaded(true);  // R3: the probe hook may cast now
             State::HandModelProbe::SetGameLoaded(true);
             Effect::LiveValues::SetGameLoaded(true);   // 0.24.30: read the spells as cast
+            State::HostileSight::SetGameLoaded(true);
         }
         break;
     }

@@ -31,6 +31,7 @@
 // =============================================================================
 
 #include "core/BenchKind.h"
+#include "core/LockReach.h"
 
 #include <cstdint>
 
@@ -111,6 +112,7 @@ namespace Huginn::Core::Gate
         Craft station = Craft::None;     // StationCraft of the crosshair bench
         bool darknessApplies = false;    // DarknessApplies
         bool suppressFavorites = false;  // [Favorites] sFavoritesMode = Suppress
+        int lockLevel = Lock::kNoLock;   // 0.24.29: the crosshair lock's level (core/LockReach.h), kNoLock for none
     };
 
     /// no_follower: a spell or scroll for someone else, with no one near to take it.

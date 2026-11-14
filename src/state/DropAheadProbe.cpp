@@ -2,6 +2,7 @@
 
 #include "HandModelProbe.h"
 #include "effect/LiveValues.h"   // 0.24.30: the spells read as cast, on this hook
+#include "HostileSight.h"
 #include "input/HandEquipGate.h"  // the hand equip gate rides the hook (0.24.26)
 
 #include "NeedSensorState.h"  // NeedClock
@@ -679,11 +680,16 @@ namespace Huginn::State::DropAheadProbe
                logger::error("[HandModel] an exception in the probe was caught (logged once)"sv);
             }
          }
-         // So does the hand equip gate (0.24.26): a slot key's equip into a
-         // hand waits here, on the main thread, for the hand's caster to go
-         // idle; and the open menus that take the controls are read here, on
-         // the thread that owns them, for the slot keys' gate on the input
-         // thread. After the probe, so a swap it makes is seen next frame.
+         // So does the hostiles' line of sight (0.24.29, HostileSight.h): the
+         // fight's element counts a hostile's cast or readied spell only in sight.
+         try {
+            HostileSight::OnPlayerUpdate(a_this);
+         } catch (...) {
+            static std::atomic<bool> s_logged{ false };
+            if (!s_logged.exchange(true)) {
+               logger::error("[HostileSight] an exception in the sight test was caught (logged once)"sv);
+            }
+         }
          // 0.24.30: the spells the player knows, read as they would cast them
          // now (the perk entry points need the main thread).
          try {
@@ -694,6 +700,11 @@ namespace Huginn::State::DropAheadProbe
                logger::error("[LiveValues] an exception reading the spells was caught (logged once)"sv);
             }
          }
+         // So does the hand equip gate (0.24.26): a slot key's equip into a
+         // hand waits here, on the main thread, for the hand's caster to go
+         // idle; and the open menus that take the controls are read here, on
+         // the thread that owns them, for the slot keys' gate on the input
+         // thread. After the probe, so a swap it makes is seen next frame.
          try {
             auto& gate = Input::HandEquipGate::GetSingleton();
             gate.ObserveMenus();

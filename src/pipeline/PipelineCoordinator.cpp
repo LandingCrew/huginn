@@ -19,6 +19,7 @@
 #include "slot/Remembrance.h"
 #include "slot/SlotUtils.h"
 #include "input/EquipManager.h"
+#include "update/UpdateHandler.h"   // SuspendedMs: the wanted clock skips a suspension
 #include "wheeler/WheelerClient.h"  // IsWheelOpen (combat upsert); ValidateWheelState in UpdateDebugWidgets
 #include "learning/PipelineStateCache.h"
 #include "learning/ChoiceLearner.h"
@@ -250,6 +251,7 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
 
     // R8.1: the refresh pass's bits, as the magic-effects poll left them.
     ctx.refreshDue = ctx.playerState.buffs.refreshDue;
+    ctx.lockLevel = Core::Lock::CrosshairLock(ctx.worldState.isLookingAtLock, ctx.worldState.lockLevel);
 
     // R8.1: the one combat clock (combat_onset's), for the discriminator.
     ctx.combatOnsetAgo = Core::Needs::CombatOnsetAgo(ctx.playerState.isInCombat,
@@ -292,7 +294,8 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
     // window, so the active-buff filter lets its item through.
     const bool signatureChanged = ctx.needSignature != m_lastNeedSignature.load(std::memory_order_relaxed) ||
                                 ctx.overrideSignature != m_lastOverrideSignature ||
-                                ctx.refreshDue != m_lastRefreshDue;
+                                ctx.refreshDue != m_lastRefreshDue ||
+                                ctx.lockLevel != m_lastLockLevel;   // 0.24.29: lock_out_of_reach
 
     if (ctx.stateHash == m_lastPipelineHash && !pageChanged &&
         !unhashedStateActive && !signatureChanged && !NeedsForcedRun()) {
@@ -306,6 +309,7 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
     m_lastNeedSignature.store(ctx.needSignature, std::memory_order_relaxed);
     m_lastOverrideSignature = ctx.overrideSignature;
     m_lastRefreshDue = ctx.refreshDue;
+    m_lastLockLevel = ctx.lockLevel;
 
     // Commit point for the learner latch: everything below this line scores and
     // publishes, so whatever reward set the flag is about to reach the widget.
@@ -337,6 +341,11 @@ bool PipelineCoordinator::LearnerWeightsChanged() noexcept
     const bool oldLearnerRead = Scoring::Legacy::Enabled() || Scoring::Legacy::ShadowEnabled() || !choiceLive;
     return (oldLearnerRead && Scoring::Legacy::WeightsChanged()) ||
            (g_choiceLearner && g_choiceLearner->WeightsChanged());
+}
+
+bool PipelineCoordinator::CombatUpsertWakeDue() noexcept
+{
+    return Slot::SlotLocker::GetSingleton().CombatUpsertWakeDue(std::chrono::steady_clock::now());
 }
 
 bool PipelineCoordinator::NeedSignatureMoved() const noexcept
@@ -1061,9 +1070,21 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
         ctx.pageRunRows.clear();
         for (const auto& sc : pageCandidates) ctx.pageRunRows.push_back(sc.isRememberedOnly ? UINT32_MAX : sc.runRow);
     }
+    // 0.24.29: in combat, the page the ranking alone builds, for the combat
+    // upsert's challengers (core/CombatUpsert.h). In combat as the lock sees
+    // it (SlotLocker::IsInCombat, with the no-enemy release): the game's flag
+    // can stay up for minutes after the last kill, with no key combat-locked
+    // and nothing to read the page.
+    const bool wantMemoryless = Slot::SlotLocker::GetSingleton().IsInCombat();
+    Slot::MemorylessPage memoryless;
     ctx.rawAssignments = slotAllocator.AllocateSlotsForPage(
         ctx.displayPageIndex, pageCandidates, ctx.overrides, ctx.playerState, ctx.worldState,
-        &wildcardRequest, &wildcardResult, legacyShadowInput);
+        &wildcardRequest, &wildcardResult, legacyShadowInput,
+        wantMemoryless ? &memoryless : nullptr);
+    // Built on the shadow's input: its page B (ShadowLegacyPages).
+    ctx.statelessBBuilt = memoryless.inInput;
+    ctx.statelessBOrder = std::move(memoryless.order);
+    ctx.statelessB = std::move(memoryless.stateless);
     ctx.haveAllocInput = legacyShadowInput != nullptr && !ctx.legacyShadowAllocInput.slots.empty() &&
                          ctx.legacyShadowAllocInput.candidates.size() == ctx.pageRunRows.size();
     // If an off-thread page mutation landed since the snapshot (Wheeler callback,
@@ -1121,10 +1142,18 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
     // open, none on a key inside press grace, a barrier on the hold's margin.
     lockRun.wheelOpen = Wheeler::WheelerClient::GetSingleton().IsWheelOpen();
     lockRun.pressGraceMs = Slot::SlotSettings::GetSingleton().PressGraceMs();
-    lockRun.challengerMargin = Slot::SlotSettings::GetSingleton().ChallengerMargin();
+    // The churn telemetry's line (which changes were at or under ln m + z sigma_Delta).
     lockRun.challengerZ = Core::Challenger::ZForConfidence(Slot::SlotSettings::GetSingleton().ChallengerConfidence());
     lockRun.challengerMinGap = Core::Challenger::ClampMinGap(Slot::SlotSettings::GetSingleton().ChallengerMinGap());
-    lockRun.testAllChallengers = Slot::SlotSettings::GetSingleton().TestAllChallengers();
+    lockRun.haveMemorylessPage = wantMemoryless && !memoryless.page.empty();
+    lockRun.memorylessPage = std::move(memoryless.page);
+    // 0.24.29: a key whose item an active-buff filter dropped this run (its
+    // need is covered) takes any challenger past the wanted clock.
+    lockRun.suspendedMs = static_cast<double>(Update::UpdateHandler::GetSingleton()->SuspendedMs());
+    lockRun.needCovered = [&filtered = ctx.filtered](RE::FormID formID, uint16_t uniqueID) {
+        const auto reason = Core::Filter::Find(filtered, formID, uniqueID);
+        return reason && Core::Filter::IsActiveBuff(*reason);
+    };
     // A combat-locked key's item, checked against the game every run: a spell
     // or shout the player no longer knows, or an item now equipped / worn.
     // The worn stack's uniqueID in one hand (the list carrying ExtraWorn, else
@@ -1315,9 +1344,12 @@ void PipelineCoordinator::ShadowLegacyPages(PipelineContext& ctx)
     }
     // The allocation's handed-over input is spent by the pass (it builds both
     // stateless pages in place on it).
+    // In combat the allocator built page B on it already (the memoryless page).
     Core::SlotAlloc::Input* const legacyShadowPageInput = ctx.haveAllocInput ? &ctx.legacyShadowAllocInput : nullptr;
     ctx.haveAllocInput = false;
-    Core::LegacyShadow::RanksAndPages(liveOrder, liveMu, tie, legacyShadowPageInput, ctx.pageRunRows, ctx.legacyShadow);
+    const Core::SlotAlloc::StatelessPage* const builtB = ctx.statelessBBuilt ? &ctx.statelessB : nullptr;
+    ctx.statelessBBuilt = false;
+    Core::LegacyShadow::RanksAndPages(liveOrder, liveMu, tie, legacyShadowPageInput, ctx.pageRunRows, ctx.legacyShadow, builtB, ctx.statelessBOrder);
     // The pass left A's order and A's mu in the input: drop it now, so
     // nothing after this point (nor the next run) can read it.
     ctx.legacyShadowAllocInput = {};

@@ -24,6 +24,21 @@ namespace Huginn::Candidate
         }
     }
 
+    /// 0.24.29: which resist potions of one element are offered when no
+    /// potion's resist runs (core/ResistPotions.h). They do not stack.
+    enum class ResistPotionPick : uint8_t {
+        Greedy,   // only the strongest on hand (default)
+        All       // every one; the score decides
+    };
+
+    [[nodiscard]] constexpr const char* ToString(ResistPotionPick pick) noexcept {
+        switch (pick) {
+            case ResistPotionPick::Greedy: return "Greedy";
+            case ResistPotionPick::All:    return "All";
+            default: return "Unknown";
+        }
+    }
+
     /**
      * @brief Configuration for candidate generation and filtering.
      *
@@ -44,13 +59,17 @@ namespace Huginn::Candidate
         // Controls filtering of items whose effects are already active.
         // =============================================================================
 
-        /// Filter out resist items (potions AND spells) if player already has high resistance.
-        /// Prevents recommending "Resist Fire" when player has 75% fire resist.
+        /// Filter resist items that would not stack (core/ResistPotions.h): a
+        /// resist potion while a potion's resist to its element runs, a resist
+        /// spell while its own effect runs, and the weaker potions of an
+        /// element (sResistPotionPick = Greedy). 0.24.29 removed the 50 %
+        /// threshold on the player's total resistance.
         bool filterRedundantResists = true;
 
-        /// Resistance threshold (percentage) above which resist items are filtered.
-        /// If fire resist >= this value, don't recommend more fire resist items.
-        float resistThresholdToFilter = 50.0f;
+        /// 0.24.29 ([Candidates] sResistPotionPick): Greedy offers only the
+        /// strongest resist potion per element. Either way, none while a
+        /// potion's resist to that element runs.
+        ResistPotionPick resistPotionPick = ResistPotionPick::Greedy;
 
         /// Filter items whose buff is already active on player.
         /// Examples: waterbreathing, invisibility, muffle

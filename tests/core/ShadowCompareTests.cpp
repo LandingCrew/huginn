@@ -267,6 +267,28 @@ namespace
         return { run.keyA, run.keyB0 };
     }
 
+    /// The same, with B's page built first by the allocator as the combat
+    /// upsert's memoryless page (0.24.29, SlotAllocator): MakeStateless and
+    /// Allocate on the input, then handed to the pass, which skips B's build.
+    TwoPages PipelineSequenceBuiltB(SA::Input in, const std::vector<double>& scoresA, const std::vector<double>& scoresB)
+    {
+        const std::size_t n = in.candidates.size();
+        std::vector<std::uint32_t> orderB;
+        SA::MakeStateless(in, scoresB, orderB);
+        const SA::StatelessPage builtB = SA::StatelessPageOf(in, SA::Allocate(in), orderB);
+        Huginn::Core::LegacyShadow::Run run;
+        run.mu = scoresA;
+        std::vector<std::uint32_t> rows(n), live(n);
+        std::vector<float> tie(n);
+        for (std::uint32_t i = 0; i < n; ++i) {
+            rows[i] = i;
+            live[i] = i;
+        }
+        for (std::uint32_t k = 0; k < n; ++k) tie[orderB[k]] = in.candidates[k].tieBreak;
+        Huginn::Core::LegacyShadow::RanksAndPages(live, scoresB, tie, &in, rows, run, &builtB, orderB);
+        return { run.keyA, run.keyB0 };
+    }
+
     std::vector<double> ScoresOf(const SA::Input& in)
     {
         std::vector<double> s;
@@ -364,6 +386,10 @@ TEST_CASE("legacy shadow: a stateless page ignores memory and matches a memoryle
                 const auto two = PipelineSequence(in, scoresA, scores);
                 CHECK(two.keyB0 == SA::AllocateStateless(in, scores).keyOf);
                 CHECK(two.keyA == SA::AllocateStateless(in, scoresA).keyOf);
+                // 0.24.29: page B handed over built (the memoryless page) gives the same keys.
+                const auto built = PipelineSequenceBuiltB(in, scoresA, scores);
+                CHECK(built.keyB0 == two.keyB0);
+                CHECK(built.keyA == two.keyA);
             }
 
             // keyOf names the key showing each candidate's item.

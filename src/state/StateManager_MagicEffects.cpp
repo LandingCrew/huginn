@@ -14,6 +14,7 @@
 #include "../util/NameMatch.h"
 #include "../effect/EffectCatalog.h"
 #include "core/RefreshPass.h"   // the refresh pass (R8.1)
+#include "core/ResistPotions.h"  // 0.24.29: the running resist potions
 
 #include <cmath>
 
@@ -252,10 +253,17 @@ namespace Huginn::State
 
     // R8.1 (0.23.55): the refresh pass's inputs, filled in the same walk: the
     // remaining time of every effect that sets an active-buff flag (each Add
-    // sits beside the flag it times), and the timed parts of each resistance.
-    // Abilities are skipped above all of them, so an ability never times a
-    // block: its part of a resistance counts as permanent.
+    // sits beside the flag it times). Abilities are skipped above all of
+    // them, so an ability never times a block.
     Core::Refresh::Inputs refresh;
+    // 0.24.29: per element, the player's resist effects from a potion (not
+    // food): they do not stack, so one running blocks the rest
+    // (core/ResistPotions.h).
+    std::array<Core::Refresh::Timer, Core::ResistPotions::kElementCount> potionResist{};
+    // ... and the resist effects a spell, scroll or staff put on the player,
+    // by effect form (the same spell again would only refresh one).
+    Core::ResistPotions::CastEffects castResist;
+    const float refreshSec = m_refreshPriorSec.load();
 
     // Single iteration over active effects (pattern from EffectsSensor.cpp)
     if (activeEffects) {
@@ -563,10 +571,9 @@ namespace Huginn::State
           }
         }
 
-        // R8.1: a timed part of a resistance the resist filter reads (a
-        // value modifier on the element's AV: a resist potion or spell, or a
-        // weakness, which subtracts). A constant one is not kept: with every
-        // part no timed effect explains, it counts as permanent.
+        // 0.24.29: a timed resistance (a value modifier on the element's AV)
+        // from a potion or a cast: core/ResistPotions.h. A constant one (gear)
+        // is the permanent resistance the threshold reads.
         if (archetype == RE::EffectSetting::Archetype::kValueModifier ||
             archetype == RE::EffectSetting::Archetype::kPeakValueModifier) {
           using E = Core::Refresh::Element;
@@ -579,9 +586,14 @@ namespace Huginn::State
             case RE::ActorValue::kResistMagic: element = E::magic; break;
             default: break;
           }
-          if (element) {
-            refresh.resist[static_cast<std::size_t>(*element)].Add(
-                baseEffect->IsDetrimental() ? -magnitude : magnitude, remainingSec);
+          if (element && !baseEffect->IsDetrimental() && magnitude > 0.0f && spell && remainingSec >= 0.0f) {
+            if (spell->GetFormType() == RE::FormType::AlchemyItem) {
+              if (!static_cast<RE::AlchemyItem*>(spell)->IsFood()) {
+                potionResist[static_cast<std::size_t>(*element)].Add(remainingSec);
+              }
+            } else if (!Core::Refresh::RefreshDue(remainingSec, refreshSec)) {
+              castResist.Add(baseEffect->GetFormID());
+            }
           }
         }
 
@@ -954,18 +966,30 @@ namespace Huginn::State
     // Update effects and buffs with change detection
     {
       std::unique_lock lock(m_playerMutex);
-      // R8.1: which active-buff blocks are due for their refresh, against the
-      // resistances the last resistance poll published. A bit that flips
-      // changes the buffs below, so the pipeline runs on it.
+      // R8.1: which active-buff blocks are due for their refresh. A bit that
+      // flips changes the buffs below, so the pipeline runs on it.
       {
         const auto& r = m_playerState.resistances;
-        refresh.resistTotal = { r.fire, r.frost, r.shock, r.poison, r.magic };
-        refresh.resistThreshold = m_resistFilterThreshold.load();
-        newBuffs.refreshDue = Core::Refresh::ComputeDue(refresh, m_refreshPriorSec.load());
+        newBuffs.refreshDue = Core::Refresh::ComputeDue(refresh, refreshSec);
         if (newBuffs.refreshDue != m_lastRefreshDue) {
           logger::info("[StateManager] Refresh due: {} (window {:.1f}s)"sv,
             Core::Refresh::DueNames(newBuffs.refreshDue), m_refreshPriorSec.load());
           m_lastRefreshDue = newBuffs.refreshDue;
+        }
+        newBuffs.castResist = castResist;
+        newBuffs.potionResist = Core::ResistPotions::RunningBits(potionResist, refreshSec);
+        if (newBuffs.potionResist != m_lastPotionResist) {
+          static constexpr std::array<const char*, Core::ResistPotions::kElementCount> kNames{
+            "fire", "frost", "shock", "poison", "magic" };
+          std::string names;
+          for (std::size_t e = 0; e < kNames.size(); ++e) {
+            if (!(newBuffs.potionResist & Core::ResistPotions::Bit(static_cast<Core::Refresh::Element>(e)))) continue;
+            if (!names.empty()) names += ',';
+            names += kNames[e];
+          }
+          logger::info("[StateManager] Resist potion running: {} (player fire {:.0f} frost {:.0f} shock {:.0f})"sv,
+            names.empty() ? "none" : names, r.fire, r.frost, r.shock);
+          m_lastPotionResist = newBuffs.potionResist;
         }
       }
       bool effectsChanged = (m_playerState.effects != newEffects);

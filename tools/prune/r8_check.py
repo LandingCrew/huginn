@@ -481,7 +481,8 @@ BUDGET = {
         r'&ctx\.legacyShadowAllocInput : nullptr;$',
         r'^\s*if \(legacyShadowInput\) \{$',
         r'^\s*\*legacyShadowInput = \{\};\s+// ',
-        r'^\s*&wildcardRequest, &wildcardResult, legacyShadowInput\);$',
+        # 0.24.29: or ',' -- the memoryless page's out-parameter follows on its own line.
+        r'^\s*&wildcardRequest, &wildcardResult, legacyShadowInput(\);|,)$',
         r'^\s*ctx\.haveAllocInput = legacyShadowInput != nullptr && !ctx\.legacyShadowAllocInput\.slots\.empty\(\) &&$',
         r'^\s*ctx\.legacyShadowAllocInput\.candidates\.size\(\) == ctx\.pageRunRows\.size\(\);$',
         r'^\s*Core::SlotAlloc::Input\* const legacyShadowPageInput = ctx\.haveAllocInput \? '
@@ -494,7 +495,7 @@ BUDGET = {
         r'^\s*row\.utilMissing = lg\.utilMissing \? 1 : 0;$',
         r'^\s*if \(!ctx\.legacyShadow\.ran\) return;$',
         r'^\s*Core::LegacyShadow::RanksAndPages\(liveOrder, liveMu, tie, legacyShadowPageInput, ctx\.pageRunRows, '
-        r'ctx\.legacyShadow\);$',
+        r'ctx\.legacyShadow(?:, builtB, ctx\.statelessBOrder)?\);$',   # 0.24.29: page B built by the allocator in combat
         r'^\s*if \(ctx\.eligible\.size\(\) == ctx\.legacyShadow\.mu\.size\(\) && '
         r'ctx\.legacyShadow\.keyA\.size\(\) == ctx\.eligible\.size\(\)\) \{$',
         r'^\s*e\.legacyShadowMu = static_cast<float>\(ctx\.legacyShadow\.mu\[r\]\);$',
@@ -763,10 +764,12 @@ CLASSIFIER_BUDGET = {
         r'^\s*if \(item\.data\.type != Item::ItemType::SoulGem\) return;$',
     ], 'the soul gem split (the registry\'s form kind)'),
     # The in-game Debug suite: the classifier and D2 tests, the synthetic candidates stated in the
-    # old vocabulary, and their facet resolver (InstallSyntheticFacetResolver). Counted. 177:
+    # old vocabulary, and their facet resolver (InstallSyntheticFacetResolver). Counted. 179:
     # 153 plus the 25 lines of the item registry's own tests that call its potion views, less
-    # the healingSpell SpellTag local that went out of RunMultiplicativeScoringTests' Test 1.
-    'src/Tests.cpp': (177, None, 'the Debug suite: classifier and D2 tests, synthetic candidates and their resolver'),
+    # the healingSpell SpellTag local that went out of RunMultiplicativeScoringTests' Test 1,
+    # plus 2 for 0.24.29's lock_out_of_reach test: its synthetic unlock spell's and scroll's
+    # tags and the resolver's Unlock line, 3 lines, one of them in the slack the budget had.
+    'src/Tests.cpp': (179, None, 'the Debug suite: classifier and D2 tests, synthetic candidates and their resolver'),
 }
 
 

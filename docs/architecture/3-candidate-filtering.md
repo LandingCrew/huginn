@@ -105,11 +105,11 @@ table is the code, not an idealisation:
 
 | | Affordability | Equipped | Full vitals | Hard gates (§2.7) | Active buff |
 |---|---|---|---|---|---|
-| **Spell** | `currentMagicka < effectiveCost` → policy-dependent (§3) | `player.IsSpellEquipped(formID)` | RestoreHealth, RestoreMagicka | `favorite_suppressed`, `no_follower` (TargetsOthers) | Invisibility, Muffle, Armor, `SpellType::Summon` once `summonCount` reaches `summonLimit` (0.23.46; before, any summon up hid them all), plus resist redundancy |
+| **Spell** | `currentMagicka < effectiveCost` → policy-dependent (§3) | `player.IsSpellEquipped(formID)` | RestoreHealth, RestoreMagicka | `favorite_suppressed`, `no_follower` (TargetsOthers), `lock_out_of_reach` (Unlock) | Invisibility, Muffle, Armor, `SpellType::Summon` once `summonCount` reaches `summonLimit` (0.23.46; before, any summon up hid them all), plus resist redundancy |
 | **Item** (Potion/Food/SoulGem) | `count <= 0` | — (never filtered) | RestoreHealth, RestoreMagicka, RestoreStamina — **skipped entirely for `Food` and `Alcohol`** | — | resist redundancy, Waterbreathing, Invisibility |
-| **Scroll** | `count <= 0` | — | RestoreHealth only | `no_follower` (TargetsOthers) | Invisibility, Muffle |
+| **Scroll** | `count <= 0` | — | RestoreHealth only | `no_follower` (TargetsOthers), `lock_out_of_reach` (Unlock) | Invisibility, Muffle |
 | **Ammo** | `count <= 0` | `isEquipped` | — | — | — |
-| **Weapon / Staff** | always passes | always passes | — | `favorite_suppressed` | — |
+| **Weapon / Staff** | always passes | always passes | — | `favorite_suppressed`; a staff `lock_out_of_reach` (Unlock) | — |
 | **Torch** | `count <= 0` | `isEquipped` | — | `not_dark` | — |
 | **Apparel** | — (worn pieces are never gathered) | — | — | `no_workstation` | — |
 
@@ -127,15 +127,14 @@ Gaps worth knowing, all present in v0.19.10:
 **Full-vital threshold:** `State::DefaultState::FULL_VITAL` is `1.0` and
 `FULL_VITAL_EPSILON` is `0.01` (`CandidateFilters.cpp:8`), so the gate fires at ≥ 99%.
 
-**Resist redundancy (R11):** `CandidateFilters::IsResistRedundant` checks the
-item's ResistFire/Frost/Shock/Poison/Magic facets (the effect catalog's resist_*
-columns) against `player.resistances` and the `resistThresholdToFilter` percentage,
-for potions and spells alike, unless that element's block is due for its refresh. A
-hostile or damaging item is never judged (`Core::Facets::ResistJudgeable`): LoreRim's
-Flame Cloak carries resist_frost beside its damage aura, and judged by that rider a
-Nord mage over the frost threshold lost it. Before R11 the potion check read the item
-tags and the spell check `SpellType::Defensive` plus `ElementType` (no Resist Magic
-arm); the history below describes that version.
+**Resist redundancy (0.24.29):** what stacks, not a threshold -- see "Resist items: what
+stacks" below. Until 0.24.29 `CandidateFilters::IsResistRedundant` hid any resist item
+whose element the player resisted past `resistThresholdToFilter` (50 %), on the total,
+so a potion just drunk hid a spell that would have stacked with it; the threshold is gone.
+A hostile or damaging item is never judged (`Core::Facets::ResistJudgeable`): LoreRim's
+Flame Cloak carries resist_frost beside its damage aura. Before R11 the potion check read
+the item tags and the spell check `SpellType::Defensive` plus `ElementType` (no Resist
+Magic arm); the history below describes that version.
 
 > **Changed in #130.** This accepted `SpellType::Buff` as well, from when an
 > elemental resist spell *was* typed `Buff`. #128 moved every spell that
@@ -200,6 +199,39 @@ active-buff filters, and each drop is a `Core::Filter::Dropped` with its reason:
 | `no_workstation` | apparel when no craft it fortifies (Smithing, Enchanting, Alchemy) has its station in the crosshair; a ring that fortifies two crafts passes at either | the apparel arm (no baseline; only the station's fortify weight) |
 | `not_dark` | a torch while darkness does not apply: daylight (`WorldState::isDark` false, `fDarkLightLevel` with its hysteresis), or Night Eye, a light spell or a torch already up | the torch arm (`darknessWeight` only) |
 | `favorite_suppressed` | a favourite (spells and weapons carry the flag) under `[Favorites] sFavoritesMode = Suppress` | the two Suppress skips in `UtilityScorer::ScoreCandidates`, deleted |
+| `lock_out_of_reach` (0.24.29) | an unlock spell, scroll or staff (the catalog's `Unlock` facet, `utility_unlock`) whose reach is below the level of the lock in the crosshair, and every one at a lock that requires a key | none: new. The old `unlockWeight` raised every unlock spell alike, and so did `lock_in_crosshair x utility_unlock` |
+
+### Resist items: what stacks (0.24.29, `core/ResistPotions.h`)
+
+Resist potions of one element do not stack: a second one only replaces the first. A spell's resist
+is another effect and stacks with a potion's; casting the same spell again only refreshes it. So:
+
+- **No threshold.** The player's resistance does not hide anything: until 0.24.29 a total over
+  50 % hid every resist item, so a 40 % potion on 20 % hid Fire Shell, which would have
+  stacked. The R8.1 refresh pass's resist block, which timed that total's fall, is gone with it.
+- **A potion** drops as `resist` while any POTION's resistance to its element runs
+  (`ActorBuffs::potionResist`, from the magic-effect poll: a timed value modifier on the element's
+  resist AV from an `AlchemyItem` that is not food), until that effect is inside `fRefreshPriorSec`
+  of its end. An active-buff drop, so a combat key showing one is covered.
+- **A spell** drops as `resist` while one of ITS OWN resist effects runs (`ActorBuffs::castResist`,
+  by effect form, outside its refresh window): a cloak's resist rider does not hide Frost Shell.
+- **Greedy** (`[Candidates] sResistPotionPick = Greedy`, the default): with no potion running, only
+  the strongest potion on hand per element is offered (cap(i)'s `resist_<element>`, graded by
+  magnitude; a tie keeps both); the rest drop as `resist_weaker`, after the cooldown and duplicate
+  stages. `All` keeps every one and the score decides.
+
+Found 2026-11-10: after Resist Fire (Fair, 40 % for 120 s) the total crossed the 50 % threshold
+back and forth, and Diluted and plain Resist Fire took combat keys 11 and 18 s after the drink;
+the next session, Fire Shell on Self was never offered once the potion was up.
+
+`lock_out_of_reach`'s reach is read when the catalog maps the item (`core/LockReach.h`,
+`ItemMapping::unlockReach`): the highest of "novice" .. "master" its kept unlock rows' text names,
+description first, then name (Requiem / LoreRim "opening locks up to apprentice level", the Gray
+Cowl's "(novice and apprentice)"). A row that names none (Detonate Lock goes by Alteration skill)
+leaves the item's reach unknown, and it is never dropped for a level, only at a key-only lock. The
+lock's level is `WorldState::lockLevel` while `isLookingAtLock` (`Gate::Inputs::lockLevel`). Found
+2026-11-09: Open Novice Lock offered at an Expert chest; LoreRim's Open Lock spells are scripted
+(magnitude 0), so `utility_unlock` was 0.5 for all five.
 
 One predicate per gate, in `src/core/HardGates.h` (host-tested), on facts read from the
 state by `Context::HardGateInputs` (`context/ContextRuleEngine.h`): `FollowerNear(targets)`,
@@ -237,9 +269,8 @@ constant effect) never runs out, so its block never passes.
 - invisibility, muffle, armor, warming, waterbreathing: every active effect that sets the
   filter's flag; the block ends with the last of them (the longest remaining time; one
   constant effect means never);
-- resist: the element's resistance stays over `resistThresholdToFilter` until enough of its
-  timed parts (value modifiers on the element's AV, weaknesses subtracting) have ended;
-  whatever no timed effect explains (gear, a race, an ability) is permanent;
+- resist (0.24.29): the running potion's or spell's own timer (`core/ResistPotions.h`); the
+  threshold it once timed is gone;
 - summon_limit: a cast at the limit dismisses the oldest commanded summon or thrall, so the
   block ends with that one's timer (`Coverage::OldestRemaining`, the value `covered(i)` reads,
   so the two cannot disagree). With a thrall or any untimed summon as the oldest, it never
@@ -599,7 +630,6 @@ bEnableDrowning = true               ; no threshold — binary
 - Cooldown durations per source type (§2.5)
 - Active-buff filter toggles: `filterRedundantResists`, `filterActiveBuffs`,
   `filterHealingWhenFull`, `filterMagickaWhenFull`, `filterStaminaWhenFull`
-- `resistThresholdToFilter = 50.0f` — a **percentage**, not a ratio
 - `maxCandidatesAfterFilter = 500`
 - A commented-out `LoadFromINI` / `SaveToINI` pair that was never implemented
 

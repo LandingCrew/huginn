@@ -48,6 +48,7 @@ GOLDEN_0_24_9 = REPO / "tests" / "core" / "fixtures" / "decisions" / "synthetic_
 # The golden file as 0.24.16 wrote it: before the D2 shadow's columns (amu, ar,
 # br, ak, bk; 0.24.17).
 GOLDEN_0_24_16 = REPO / "tests" / "core" / "fixtures" / "decisions" / "synthetic_v3_0.24.16.jsonl"
+GOLDEN_0_24_28 = REPO / "tests" / "core" / "fixtures" / "decisions" / "synthetic_v3_0.24.28.jsonl"
 OLD_KEYS = ("est", "a", "n", "ucb", "rec", "prior", "cw", "fl", "wu", "hk")
 SHADOW_KEYS = ("mu", "sd", "lm", "um", "ex")
 SHADOW_A_KEYS = ("amu", "ar", "br", "ak", "bk")   # 0.24.17
@@ -97,8 +98,9 @@ class GoldenFile(unittest.TestCase):
         self.assertEqual(h["filters"][8], "summon_limit")
         # 0.23.55 (R8.1): the four hard gates, appended after truncated.
         self.assertEqual(h["filters"][14:], ["truncated", "no_follower", "no_workstation", "not_dark",
-                                             "favorite_suppressed"])
-        self.assertEqual(len(h["filters"]), 19)
+                                             "favorite_suppressed", "lock_out_of_reach",
+                                             "resist_weaker"])   # 0.24.29: appended
+        self.assertEqual(len(h["filters"]), 21)
         self.assertEqual(h["kinds"][7], "Armor")
         self.assertEqual(h["episode"], {"onset": 0.5, "expiry": 0.25, "minSec": 1.0, "graceSec": 4.0,
                                         "answerSlackSec": 0.5, "deathDrops": 1,
@@ -329,6 +331,22 @@ class GoldenFile0_24_16(unittest.TestCase):
                 self.assertEqual(tuple(r[k] for k in SHADOW_A_KEYS), (None,) * 5)
         self.assertTrue(close(self.decs[0]["ctx"]["rows"][0]["mu"], 1.25))   # everything else as before
         self.assertTrue(close(self.decs[0]["chosen"]["util"], 1.234))
+
+
+class GoldenFile0_24_28(unittest.TestCase):
+    """The same session as 0.24.28 wrote it (19 filters, before 0.24.29
+    appended lock_out_of_reach): a row's fb indexes its own head's list, so
+    the decoded session is the same."""
+
+    def test_same_session(self):
+        old = replay.load_v3([GOLDEN_0_24_28])
+        new = replay.load_v3([GOLDEN])
+        self.assertEqual(len(old[0]["head"]["filters"]), 19)
+        self.assertEqual(new[0]["head"]["filters"][:19], old[0]["head"]["filters"])
+        rows = lambda decs: [(r["form"], r["fb"], r["flags"]) for d in decs for r in d["rows"]]
+        self.assertEqual(rows(old), rows(new))
+        self.assertTrue(any(fb for _, fb, _ in rows(new)))   # the session has filtered rows to compare
+        self.assertEqual([d["out"] for d in old], [d["out"] for d in new])
 
 
 class GoldenFile0_24_8(unittest.TestCase):

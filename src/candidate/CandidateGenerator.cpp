@@ -1,6 +1,5 @@
 #include "CandidateGenerator.h"
 #include "Profiling.h"
-#include "state/StateManager.h"   // SetResistFilterThreshold (R8.1)
 #include <algorithm>
 
 namespace Huginn::Candidate
@@ -57,9 +56,6 @@ namespace Huginn::Candidate
 
         // Create filters
         m_filters = std::make_unique<CandidateFilters>(m_cooldownMgr, m_config);
-        // R8.1: the refresh pass's resist bits are computed by the magic-effects
-        // poll against the threshold the resist filter uses.
-        State::StateManager::GetSingleton().SetResistFilterThreshold(m_config.resistThresholdToFilter);
 
         m_initialized = true;
 
@@ -89,7 +85,6 @@ namespace Huginn::Candidate
         // Copy global config to local snapshot.
         // Safe because writes only occur when the update loop is paused.
         m_config = g_candidateConfig;
-        State::StateManager::GetSingleton().SetResistFilterThreshold(m_config.resistThresholdToFilter);   // R8.1
 
         // Re-sync cooldown durations with new config values
         m_cooldownMgr.SetDuration(SourceType::Spell, m_config.spellCooldown);

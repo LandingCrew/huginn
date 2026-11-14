@@ -161,7 +161,20 @@ def join_v2(idx, d):
 # ---------------------------------------------------------------------------
 # obvious pairs
 # ---------------------------------------------------------------------------
+# 0.24.29: obvious pairs whose start is stronger than T0, as a multiple of it. The element
+# pairs (a fire caster seen, a fire fight, fire damage -> resist_fire; frost, shock alike):
+# at 1 x T0 a resist potion's one strong term (+0.8) was cancelled by the fit's
+# consumable-in-combat terms, and on the 2026-11-09 log it ranked 21st-137th while a caster
+# threw fire; at 2.5 it ranked in the top 8 in 52 of 78 such moments, and no resist potion
+# rose in a fight with no element shown. The fit had no information on these pairs, so
+# their start is what ships (configs/Huginn_Bootstrap.json carries the same values).
+PAIR_STRENGTH = {(f'{s}_{e}' if s != 'damage_rate' else f'{e}_damage_rate', f'resist_{e}'): 2.5
+                 for e in ('fire', 'frost', 'shock') for s in ('enemy_casting', 'target_element', 'damage_rate')}
+
+
 def obvious_pairs(needs, cols, path=EFFECTS_CSV):
+    """{(k, j): theta0 / T0}: the sign of each obvious pair of effects.csv, times its
+    PAIR_STRENGTH where it has one."""
     NI = {n: i for i, n in enumerate(needs)}; CI = {c: j for j, c in enumerate(cols)}
     out = {}
     for r in csv.DictReader(open(path, encoding='utf-8')):
@@ -171,7 +184,7 @@ def obvious_pairs(needs, cols, path=EFFECTS_CSV):
                 sign = -1.0 if (t == 'combat_regen_ok' and r['id'] == 'kind_food') else 1.0
                 if r['id'].startswith('overshoot_'):
                     sign = 0.0
-                out[(NI[t], CI[r['id']])] = sign
+                out[(NI[t], CI[r['id']])] = sign * PAIR_STRENGTH.get((t, r['id']), 1.0)
     return out
 
 
