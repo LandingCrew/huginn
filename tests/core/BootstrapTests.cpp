@@ -162,6 +162,15 @@ TEST_CASE("bootstrap: the shipped file reads and maps by name")
     CHECK(std::find(d.cols.begin(), d.cols.end(), "narcotic") == d.cols.end());
     CHECK(std::find(d.cols.begin(), d.cols.end(), "alcohol") == d.cols.end());
     CHECK(m.report.colsPrior == 1);
+    // 0.24.31: the hand re-seed of the heal for others (provenance "hand_edits").
+    {
+        const auto k = static_cast<std::size_t>(Needs::NeedId::ally_injured);
+        const auto j = Col(Effect::Col::restore_health_other);
+        CHECK(m.model.Th(k, j).mu == doctest::Approx(4.19213));
+        CHECK(m.model.Th(k, j).var == doctest::Approx(1.0));
+        REQUIRE(Bootstrap::ReseededThetaKeys().size() == 1);
+        CHECK(Bootstrap::ReseededThetaKeys()[0] == Bootstrap::StableKey("theta", "ally_injured", "restore_health_other"));
+    }
     const auto alc = Col(Effect::Col::narcotic);
     for (std::size_t k = 0; k < C::K; ++k) {
         const auto p = Obvious::PriorOf(static_cast<Needs::NeedId>(k), Effect::Col::narcotic);

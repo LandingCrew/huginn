@@ -99,6 +99,29 @@ TEST_CASE("coverage: a buff of the same column covers by strength")
     }
 }
 
+TEST_CASE("coverage: what is cast at someone else is not covered by the player's own effects")
+{
+    // 0.24.31: Healing Touch for a downed follower read covered by the
+    // player's own heal running (2026-11-13).
+    Coverage::Active a;
+    a.Add(Effect::Col::restore_health, 0.5f, 20.0f);
+    a.Add(Effect::Col::resist_fire, 1.0f, 100.0f);
+    const auto self = Sorted({ { Effect::Col::restore_health, 0.3f }, { Effect::Col::delivery_self, 1.0f } });
+    const auto touch = Sorted({ { Effect::Col::restore_health, 0.3f }, { Effect::Col::restore_health_other, 0.3f }, { Effect::Col::delivery_touch, 1.0f } });
+    const auto aimed = Sorted({ { Effect::Col::resist_fire, 1.0f }, { Effect::Col::delivery_aimed, 1.0f } });
+    CHECK(Coverage::Covered(self, a, 5.0f).value > 0.9f);
+    CHECK(Coverage::Covered(touch, a, 5.0f).value == 0.0f);
+    CHECK(Coverage::Covered(aimed, a, 5.0f).value == 0.0f);
+    CHECK(Coverage::CoveredParts(touch, a, 5.0f).other == 0.0f);
+    CHECK(Coverage::CoveredParts(aimed, a, 5.0f).other == 0.0f);
+    // A summon at a location still counts against the limit.
+    a.summons = 1;
+    a.summonLimit = 1.0f;
+    const auto summon = Sorted({ { Effect::Col::summon_creature, 0.5f }, { Effect::Col::delivery_target_location, 1.0f } });
+    CHECK(Coverage::Covered(summon, a, 5.0f).value == doctest::Approx(1.0f));
+    CHECK(Coverage::CoveredParts(summon, a, 5.0f).summonValue == doctest::Approx(1.0f));
+}
+
 TEST_CASE("coverage: Add keeps the strongest strength and the longest time")
 {
     Coverage::Active a;
@@ -196,8 +219,18 @@ TEST_CASE("filter reasons: names, groups and lookup")
     // R8.1 (0.23.55): the four hard gates, appended. The values below stay
     // pinned (old files index their own head's list, but the plugin reads the
     // reasons by value), and the head lists them in this order.
-    CHECK(Filter::kReasonCount == 21);   // 0.24.29: lock_out_of_reach, resist_weaker
+    CHECK(Filter::kReasonCount == 22);   // 0.24.29: lock_out_of_reach, resist_weaker; 0.24.31: no_ally_aimed
     CHECK(static_cast<int>(Reason::resist_weaker) == 20);
+    CHECK(static_cast<int>(Reason::no_ally_aimed) == 21);
+    CHECK(Filter::ReasonName(Reason::no_ally_aimed) == "no_ally_aimed");
+    // A combat key frees for the active-buff reasons and no_ally_aimed only.
+    CHECK(Filter::FreesCombatKey(Reason::resist));
+    CHECK(Filter::FreesCombatKey(Reason::armor));
+    CHECK(Filter::FreesCombatKey(Reason::no_ally_aimed));
+    CHECK_FALSE(Filter::FreesCombatKey(Reason::equipped));
+    CHECK_FALSE(Filter::FreesCombatKey(Reason::cooldown));
+    CHECK_FALSE(Filter::FreesCombatKey(Reason::affordability));
+    CHECK_FALSE(Filter::FreesCombatKey(Reason::no_follower));
     CHECK(static_cast<int>(Reason::invisibility) == 5);
     CHECK(static_cast<int>(Reason::resist) == 11);
     CHECK(static_cast<int>(Reason::truncated) == 14);

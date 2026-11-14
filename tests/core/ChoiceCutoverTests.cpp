@@ -212,6 +212,24 @@ TEST_CASE("cosave merge: saved keys override the bootstrap, missing keys keep th
     CHECK(merged[1] == CC::ThetaEntry{ 40, -2.0, 0.25 });
 }
 
+TEST_CASE("cosave merge: a re-seeded key takes the file's value over the save's (0.24.31)")
+{
+    const std::vector<std::uint64_t> buildKeys{ 10, 20, 30 };
+    const std::vector<CC::ThetaEntry> saved{ { 10, 0.4, 0.8 }, { 20, 1.1, 0.9 } };
+    const std::vector<std::uint64_t> reseed{ 20, 30 };   // 30 is not in the save: nothing to drop
+    CC::MergeReport rep;
+    const auto merged = CC::MergeTheta(buildKeys, saved, rep, reseed);
+    CHECK(rep.reseeded == 1);
+    CHECK(rep.applied == 1);
+    CHECK(rep.fromFile == 2);   // 20 (re-seeded) and 30 (not saved)
+    REQUIRE(merged.size() == 1);
+    CHECK(merged[0] == CC::ThetaEntry{ 10, 0.4, 0.8 });
+    // Without a reseed list (a save written under the same file) the save wins.
+    const auto kept = CC::MergeTheta(buildKeys, saved, rep);
+    CHECK(rep.reseeded == 0);
+    CHECK(kept.size() == 2);
+}
+
 TEST_CASE("cosave merge: a key saved twice keeps the last value; an empty save keeps every file value")
 {
     const std::vector<std::uint64_t> buildKeys{ 1, 2 };

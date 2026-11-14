@@ -521,6 +521,8 @@ namespace Huginn::State
          int allyCount = 0;
          bool hasInjuredAlly = false;
          bool anyCasting = false;  // mirrors GameState::anyCasting (ward weights)
+         bool allyInCrosshair = false;  // 0.24.31: the no_ally_aimed gate
+         bool allyDown = false;         // 0.24.31: its pass for heals
 
          bool operator==(const TargetDigest&) const = default;
       };
@@ -549,6 +551,7 @@ namespace Huginn::State
 
       RE::FormID m_stickyTargetFormID = 0;      // Last detected crosshair target
       float m_stickyTargetLastSeenTime = 0.0f;  // Game-time when crosshair last detected it
+      double m_allyAimLastSec = -1.0;           // 0.24.31: NeedClock seconds an ally was last in the crosshair (-1 never)
 
       // =============================================================================
       // ACTOR TYPE CACHE (Optimization: avoids repeated ClassifyActor string matching)

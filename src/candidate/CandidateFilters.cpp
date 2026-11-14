@@ -48,7 +48,8 @@ namespace Huginn::Candidate
         // while a lock is in the crosshair).
         template <class T>
         [[nodiscard]] std::optional<R> HardGate(const T& c, const Core::Gate::Inputs& g, bool targetsOthers,
-                                                bool unlocks = false, int unlockReach = Core::Lock::kUnknownReach) noexcept
+                                                bool unlocks = false, int unlockReach = Core::Lock::kUnknownReach,
+                                                bool healsHealth = false) noexcept
         {
             // A favourite under Suppress (IsFavoritedCandidate: the one test
             // Candidate::IsFavorited and the scorer read too).
@@ -57,6 +58,8 @@ namespace Huginn::Candidate
             if constexpr (std::is_same_v<T, SpellCandidate> || std::is_same_v<T, ScrollCandidate>) {
                 if (Core::Gate::NoFollower(targetsOthers, g.followerNear))
                     return R::no_follower;
+                if (Core::Gate::NotAtAlly(targetsOthers, g.allyInCrosshair, healsHealth, g.allyDown))
+                    return R::no_ally_aimed;
             }
             if constexpr (std::is_same_v<T, SpellCandidate> || std::is_same_v<T, ScrollCandidate> ||
                           std::is_same_v<T, WeaponCandidate>) {
@@ -151,7 +154,8 @@ namespace Huginn::Candidate
                 // 4. Hard gates (R8.1): a suppressed favourite, a spell for
                 // someone else with no follower near; 0.24.29: an unlock spell
                 // that cannot open the lock in the crosshair.
-                if (const auto gate = HardGate(c, gates, f.Has(F::TargetsOthers), f.Has(F::Unlock), subject.unlockReach)) return gate;
+                if (const auto gate = HardGate(c, gates, f.Has(F::TargetsOthers), f.Has(F::Unlock), subject.unlockReach,
+                                               f.Has(F::RestoreHealth))) return gate;
 
                 // 5. Active Buff (R8.1: each passes in its buff's last seconds)
                 if (checkBuffs) {
@@ -251,7 +255,8 @@ namespace Huginn::Candidate
 
                 // 4. Hard gates (R8.1): a scroll for someone else, no follower near;
                 // 0.24.29: an unlock scroll that cannot open the lock in the crosshair.
-                if (const auto gate = HardGate(c, gates, f.Has(F::TargetsOthers), f.Has(F::Unlock), subject.unlockReach)) return gate;
+                if (const auto gate = HardGate(c, gates, f.Has(F::TargetsOthers), f.Has(F::Unlock), subject.unlockReach,
+                                               f.Has(F::RestoreHealth))) return gate;
 
                 // 5. Active Buff
                 if (checkBuffs) {

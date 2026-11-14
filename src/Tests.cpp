@@ -3229,8 +3229,17 @@ void RunUnitTests()
                     "{:.3f}, got {:.3f}", hurt.allyHealWeight, w);
                 return;
             }
+            // 0.24.31: a follower near but not in the crosshair -- no_ally_aimed;
+            // looking at them, it passes.
+            if (FilterReasonFor(healOther, State::PlayerActorState{}, withFollower, testWorld) !=
+                Core::Filter::Reason::no_ally_aimed) {
+                logger::error("TEST FAIL (6k): a heal for others with a follower near, not in the crosshair, "
+                    "should be filtered no_ally_aimed");
+                return;
+            }
+            withFollower.allyInCrosshair = true;
             if (const auto r = FilterReasonFor(healOther, State::PlayerActorState{}, withFollower, testWorld)) {
-                logger::error("TEST FAIL (6k): a heal for others with a follower near was filtered ({})",
+                logger::error("TEST FAIL (6k): a heal for others with the follower in the crosshair was filtered ({})",
                     Core::Filter::ReasonName(*r));
                 return;
             }

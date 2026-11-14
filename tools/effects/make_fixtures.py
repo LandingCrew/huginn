@@ -490,6 +490,23 @@ def row_quantity(col, kr, constant):
     return raw, post, graded, full
 
 
+# 0.24.31: the columns the player's own vitals drive. A restore or regeneration cast at
+# someone else (a delivery other than self) does not reach the player: it keeps only its
+# family (restore, regen), and a heal's value goes to restore_health_other
+# (core/EffectMapper.cpp Grade, IsPlayerVital).
+PLAYER_VITAL = {'restore_health', 'restore_magicka', 'restore_stamina',
+                'regen_health', 'regen_magicka', 'regen_stamina'}
+
+
+def lands_delivery(kind, rr):
+    """Where a row lands: a spell or scroll at the item's delivery (0.24.31,
+    core/EffectMapper.cpp MapItem), anything else at its effect's."""
+    item_d = str(rr.get('delivery', '')).strip()
+    if kind in ('Spell', 'Scroll') and item_d not in ('', '-1'):
+        return item_d
+    return str(rr['effectDelivery'])
+
+
 def expected_values(items):
     """items: list of dicts {scope, constant, rows: [kept row dicts]} -> list of {col: value}."""
     def eligible_cols(it):
@@ -536,6 +553,7 @@ def expected_values(items):
         vals = {}
         if it['scope']:
             heals_others = False
+            others_heal = 0.0
             for kr, c in eligible_cols(it):
                 raw, post, graded, full = row_quantity(c, kr, it['constant'])
                 key = (c, kr['_timed'][c])
@@ -549,12 +567,18 @@ def expected_values(items):
                     v = pct(key, raw) * post
                 else:
                     v = post
+                if c in PLAYER_VITAL and kr['delivery'] != '0':
+                    f = family_of_col.get(c)
+                    vals[f] = max(vals.get(f, 0.0), v)
+                    if c == 'restore_health':
+                        others_heal = max(others_heal, v)
+                    continue
                 vals[c] = max(vals.get(c, 0.0), v)
             for kr in it['rows']:
                 if 'restore_health' in kr['cols'] and (kr['delivery'] != '0' or kr['area'] > 0):
                     heals_others = True
-            if heals_others and vals.get('restore_health', 0) > 0:
-                vals['restore_health_other'] = vals['restore_health']
+            if heals_others and max(vals.get('restore_health', 0), others_heal) > 0:
+                vals['restore_health_other'] = max(vals.get('restore_health', 0), others_heal)
             for c, v in list(vals.items()):
                 f = family_of_col.get(c)
                 if f:
@@ -753,7 +777,7 @@ def main():
                                   'factor': factor, 'stated': stated, 'light': str(rr['archetype']) in ('12', 'Light'),
                                   'dur': int(num(rr['duration'])),
                                   'area': int(num(rr['area'])), 'radius': num(rr.get('effectLightRadius', 0)),
-                                  'delivery': str(rr['effectDelivery']),
+                                  'delivery': lands_delivery(key[0], rr),
                                   'visible': visible, 'route': route, 'name': str(rr['effectName']),
                                   'kws': str(rr['effectKeywords']), 'hydrated': hydrated})
             for r in rows:
@@ -785,7 +809,12 @@ def main():
                                 pmag, pfac = None, None
                                 if z:
                                     pc, proute, pmag, pfac = zero_kept(pd_, z, pc)
-                                item_cols.add(pc)
+                                if pc in PLAYER_VITAL and lands_delivery(key[0], pd_) != '0':
+                                    item_cols.add(family_of_col[pc])
+                                    if pc == 'restore_health':
+                                        item_cols.add('restore_health_other')
+                                else:
+                                    item_cols.add(pc)
                                 if pc.startswith('summon_creature_'):
                                     item_cols.add('summon_creature')
                                 kept_row(pd_, [pc] + (['summon_creature'] if pc.startswith('summon_creature_') else []),
@@ -826,12 +855,15 @@ def main():
                     kept_row(r, cols_, not r['hide'], route, zmag, zfac, bool(z and z[0] == 'describe' and z[2] > 0))
                     if not r['hide']:
                         kept_visible[0] = True
-                    item_cols.add(c)
+                    if c in PLAYER_VITAL and lands_delivery(key[0], r) != '0':
+                        item_cols.add(family_of_col[c])
+                    else:
+                        item_cols.add(c)
                     if c.startswith('summon_creature_'):
                         item_cols.add('summon_creature')
                     if c == 'fortify_skill_lockpicking' and r['primaryAV'] == 'PickPocketSkillAdvance':
                         item_cols.add('fortify_skill_pickpocket')
-                    if c == 'restore_health' and (r['effectDelivery'] != '0' or (r['area'] not in ('', '0'))):
+                    if c == 'restore_health' and (lands_delivery(key[0], r) != '0' or (r['area'] not in ('', '0'))):
                         item_cols.add('restore_health_other')
             # Deviation (round 3): a carrier only as a companion -- no description, next to a
             # visible row the item keeps; otherwise counted as unmapped.

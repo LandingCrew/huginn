@@ -61,6 +61,8 @@ namespace Huginn::Core::Filter
         // 0.24.29 (core/LockReach.h), appended like the gates above
         lock_out_of_reach,    // an unlock spell, scroll or staff that cannot open the lock in the crosshair
         resist_weaker,        // a resist potion weaker than another of its element on hand (core/ResistPotions.h)
+        // 0.24.31 (core/HardGates.h NotAtAlly), appended
+        no_ally_aimed,        // a spell or scroll for someone else, no ally in the crosshair
         _Count
     };
     inline constexpr std::size_t kReasonCount = static_cast<std::size_t>(Reason::_Count);
@@ -70,7 +72,7 @@ namespace Huginn::Core::Filter
         "invisibility",  "muffle",       "armor",       "summon_limit",   "warming",
         "waterbreathing", "resist",      "cooldown",    "duplicate",      "truncated",
         "no_follower",    "no_workstation", "not_dark", "favorite_suppressed",
-        "lock_out_of_reach", "resist_weaker",
+        "lock_out_of_reach", "resist_weaker", "no_ally_aimed",
     };
 
     [[nodiscard]] constexpr std::string_view ReasonName(Reason r) noexcept
@@ -84,6 +86,17 @@ namespace Huginn::Core::Filter
     [[nodiscard]] constexpr bool IsActiveBuff(Reason r) noexcept
     {
         return r >= Reason::invisibility && r <= Reason::resist;
+    }
+
+    /// A combat-locked key whose item was dropped for this reason takes any
+    /// challenger past the wanted clock (core/CombatUpsert.h): the need it
+    /// answers is gone (an active-buff filter: its buff is running), or the one
+    /// it was cast for is (no_ally_aimed, 0.24.31: no ally in the crosshair --
+    /// Fire Shell on Target held a key 17 s after the player looked away from
+    /// the follower, Fire Shell on Self off the page, 2026-11-14).
+    [[nodiscard]] constexpr bool FreesCombatKey(Reason r) noexcept
+    {
+        return IsActiveBuff(r) || r == Reason::no_ally_aimed;
     }
 
     /// One gathered candidate the filters dropped, and why.

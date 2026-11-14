@@ -62,8 +62,9 @@ TEST_CASE("cap facets: restores, and who a restore is for")
     CHECK_FALSE(heal.Has(F::TargetsOthers));
     CHECK_FALSE(heal.Has(F::HealsOverTime));
 
-    // Heal Other: aimed, restore_health_other.
-    auto other = Facets::FromCap(CapOf({ Col::restore, Col::restore_health, Col::restore_health_other, Col::delivery_aimed }), Kind::Spell);
+    // Heal Other: aimed, restore_health_other only (0.24.31: a heal cast at
+    // someone else does not carry the player's restore_health).
+    auto other = Facets::FromCap(CapOf({ Col::restore, Col::restore_health_other, Col::delivery_aimed }), Kind::Spell);
     CHECK(other.Has(F::RestoreHealth));
     CHECK(other.Has(F::TargetsOthers));
 
@@ -84,6 +85,19 @@ TEST_CASE("cap facets: restores, and who a restore is for")
     auto oakTarget = Facets::FromCap(CapOf({ Col::defense, Col::defense_armor, Col::delivery_touch }), Kind::Spell);
     CHECK(oakTarget.Has(F::TargetsOthers));
     CHECK(oakTarget.Has(F::ArmorBuff));
+
+    // 0.24.31: any help lands on whoever it is cast at. Fire Shell on Target
+    // (a resist, aimed) took the key of Fire Shell on Self.
+    auto shellTarget = Facets::FromCap(CapOf({ Col::resist, Col::resist_fire, Col::delivery_aimed }), Kind::Spell);
+    CHECK(shellTarget.Has(F::TargetsOthers));
+    auto shellSelf = Facets::FromCap(CapOf({ Col::resist, Col::resist_fire, Col::delivery_self }), Kind::Spell);
+    CHECK_FALSE(shellSelf.Has(F::TargetsOthers));
+    CHECK(Facets::FromCap(CapOf({ Col::movement, Col::movement_speed, Col::delivery_aimed }), Kind::Spell).Has(F::TargetsOthers));
+    CHECK(Facets::FromCap(CapOf({ Col::fortify_skill, Col::fortify_skill_archery, Col::delivery_touch }), Kind::Scroll).Has(F::TargetsOthers));
+    CHECK(Facets::FromCap(CapOf({ Col::influence, Col::influence_rally, Col::delivery_aimed }), Kind::Spell).Has(F::TargetsOthers));
+    CHECK(Facets::FromCap(CapOf({ Col::defense, Col::defense_ward, Col::delivery_aimed }), Kind::Spell).Has(F::TargetsOthers));
+    // Not help: a summon at a location, an unlock, a light.
+    CHECK_FALSE(Facets::FromCap(CapOf({ Col::summon, Col::summon_creature, Col::delivery_target_location }), Kind::Spell).Has(F::TargetsOthers));
 
     // A Calm: aimed, not hostile, but neither restores nor armours -> not gated.
     auto calm = Facets::FromCap(CapOf({ Col::influence, Col::influence_calm, Col::delivery_aimed }), Kind::Spell);

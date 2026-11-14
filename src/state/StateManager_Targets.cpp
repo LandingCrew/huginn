@@ -22,6 +22,7 @@
 #include "../Profiling.h"
 #include "core/TargetFamilies.h"
 #include "core/TargetTracking.h"
+#include "core/HardGates.h"     // 0.24.31: AllyAimHeld (no_ally_aimed)
 
 namespace Huginn::State
 {
@@ -364,6 +365,11 @@ namespace Huginn::State
       // COMBAT_EXIT, which is the window those flips fit inside. Same thread
       // as PollPlayerPosition, the debouncer's only writer.
       const bool inCombat = player->IsInCombat() || m_combatDebounce.Value();
+      if (crosshairOrStickyActor && !crosshairOrStickyActor->IsDead() &&
+          IsPlayerSideActor(crosshairOrStickyActor, player)) {
+        m_allyAimLastSec = nowSec;
+      }
+      m_targets.allyInCrosshair = Core::Gate::AllyAimHeld(m_allyAimLastSec, nowSec);
 
       // Clear SECONDARY ENEMY targets when leaving combat (preserve primary + allies)
       if (!inCombat && !m_targets.targets.empty()) {
@@ -978,6 +984,8 @@ namespace Huginn::State
         soleTtk = m_soleHostileTtk.Update(sole, soleHealth, nowSec);
       }
 
+      m_targets.allyDown = followerBleedout;   // 0.24.31: no_ally_aimed's pass for heals
+
       // Change detection: compare lightweight digest against previous
       TargetDigest digest = ComputeTargetDigest();
       changed = !(digest == m_prevTargetDigest);
@@ -1069,6 +1077,8 @@ namespace Huginn::State
       // rules' ward weights, GameState::anyCasting) — a background caster must produce
       // a dirty signal even when the primary target is unchanged.
       digest.anyCasting = m_targets.cachedAnyCasting;
+      digest.allyInCrosshair = m_targets.allyInCrosshair;   // 0.24.31: no_ally_aimed
+      digest.allyDown = m_targets.allyDown;
 
       for (const auto& target : m_targets.targets) {
       if (target.isDead) continue;

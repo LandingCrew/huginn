@@ -44,9 +44,13 @@
 // Only specific columns count: families repeat their specifics, and the item
 // features (delivery, school, kind ...) describe the item, not an effect.
 //
-// Known limits: a buff that targets others (Oakflesh on Target) reads covered
-// by the player's own Oakflesh; detrimental effects never cover (a fire spell
-// is not covered by the player burning).
+// An item cast at someone else (touch, aimed, at a location: Oakflesh or Fire
+// Shell on Target, Healing Touch) is never covered by the player's own effects
+// (0.24.31; before it, a heal for a downed follower read covered by the
+// player's own heal running, 2026-11-13). The actor it lands on is not read,
+// so it reads uncovered. Its summon count still counts: a summon is the
+// player's whatever the delivery. Detrimental effects never cover (a fire
+// spell is not covered by the player burning).
 //
 // Pure: standard library only (src/core/README.md).
 // =============================================================================
@@ -163,10 +167,25 @@ namespace Huginn::Core::Coverage
         float remaining = kNoTimer;  // r of the column that gave it (kNoTimer: no timer, or no factor)
     };
 
+    /// 0.24.31: the item is cast at someone else (touch, aimed, at a location),
+    /// so what is running on the player does not cover it (summon counts aside).
+    [[nodiscard]] inline bool CastAtOthers(const Effect::Cap& cap) noexcept
+    {
+        for (const auto& v : cap) {
+            if (!(v.v > 0.0f)) continue;
+            if (v.col == Effect::Col::delivery_touch || v.col == Effect::Col::delivery_aimed ||
+                v.col == Effect::Col::delivery_target_location) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /// covered(i), its left(r) centred at `refreshCentreSec` ([Scoring] fRefreshPriorSec).
     [[nodiscard]] inline Result Covered(const Effect::Cap& cap, const Active& a, float refreshCentreSec) noexcept
     {
         Result best;
+        const bool atOthers = CastAtOthers(cap);
         for (const auto& v : cap) {
             const auto i = static_cast<std::size_t>(v.col);
             if (i >= Effect::kColumnCount || !(v.v > 0.0f)) continue;
@@ -180,6 +199,7 @@ namespace Huginn::Core::Coverage
                 if (a.summons >= limit) r = a.summonRemaining;
             }
             else {
+                if (atOthers) continue;
                 const float act = a.strength[i];
                 if (!(act > 0.0f)) continue;
                 share = std::min(1.0f, act / v.v);
@@ -207,6 +227,7 @@ namespace Huginn::Core::Coverage
     [[nodiscard]] inline Parts CoveredParts(const Effect::Cap& cap, const Active& a, float refreshCentreSec) noexcept
     {
         Parts p;
+        const bool atOthers = CastAtOthers(cap);
         for (const auto& v : cap) {
             const auto i = static_cast<std::size_t>(v.col);
             if (i >= Effect::kColumnCount || !(v.v > 0.0f)) continue;
@@ -225,6 +246,7 @@ namespace Huginn::Core::Coverage
                 p.summonValue = std::max(p.summonValue, share * left);
                 continue;
             }
+            if (atOthers) continue;
             const float act = a.strength[i];
             if (!(act > 0.0f)) continue;
             const float value = std::min(1.0f, act / v.v) * LeftPrior(a.remaining[i], refreshCentreSec);

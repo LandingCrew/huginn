@@ -1,5 +1,6 @@
 #include "core/ChoiceCosave.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <format>
@@ -255,7 +256,7 @@ namespace Huginn::Core::ChoiceCosave
     }
 
     std::vector<ThetaEntry> MergeTheta(std::span<const std::uint64_t> buildKeys, std::span<const ThetaEntry> saved,
-                                       MergeReport& rep)
+                                       MergeReport& rep, std::span<const std::uint64_t> reseed)
     {
         rep = MergeReport{};
         std::unordered_map<std::uint64_t, std::size_t> savedAt;   // key -> the last saved entry with it
@@ -275,6 +276,11 @@ namespace Huginn::Core::ChoiceCosave
             if (!known.insert(key).second) continue;
             const auto it = savedAt.find(key);
             if (it == savedAt.end()) {
+                ++rep.fromFile;
+                continue;
+            }
+            if (std::find(reseed.begin(), reseed.end(), key) != reseed.end()) {
+                ++rep.reseeded;
                 ++rep.fromFile;
                 continue;
             }

@@ -273,5 +273,21 @@ namespace Huginn::Core::Bootstrap
     /// FNV-1a 64 of the parts joined by 0x1F: theta (need, column),
     /// strength (need, column), recent (family, tau as "%g"), covered.
     [[nodiscard]] std::uint64_t StableKey(std::string_view kind, std::string_view a = {}, std::string_view b = {}) noexcept;
+
+    /// Theta pairs the shipped bootstrap re-seeded by hand after its fit
+    /// (its provenance's "hand_edits"). A save whose THTA learned from another
+    /// bootstrap file takes the file's value for these on load
+    /// (ChoiceCosave MergeTheta's `reseed`); a save written under the file
+    /// keeps its own, so each re-seed lands once per character.
+    /// 0.24.31: ally_injured x restore_health_other, 1.0 (the obvious-pair
+    /// prior: R6's fit had no follower data) -> 4.19, the weight of the
+    /// player's own heal (health_deficit x restore_health). A heal for a
+    /// downed follower ranked 202nd of 219 (2026-11-13).
+    inline constexpr std::array<std::array<std::string_view, 2>, 1> kReseededTheta{ {
+        { "ally_injured", "restore_health_other" },
+    } };
+
+    /// The stable keys of kReseededTheta.
+    [[nodiscard]] std::vector<std::uint64_t> ReseededThetaKeys();
     [[nodiscard]] std::string TauText(double tau);
 }

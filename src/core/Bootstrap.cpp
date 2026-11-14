@@ -645,6 +645,14 @@ namespace Huginn::Core::Bootstrap
         return h;
     }
 
+    std::vector<std::uint64_t> ReseededThetaKeys()
+    {
+        std::vector<std::uint64_t> keys;
+        keys.reserve(kReseededTheta.size());
+        for (const auto& [need, col] : kReseededTheta) keys.push_back(StableKey("theta", need, col));
+        return keys;
+    }
+
     std::string TauText(double tau)
     {
         char buf[32];

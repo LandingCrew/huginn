@@ -109,6 +109,8 @@ namespace Huginn::Core::Gate
     struct Inputs
     {
         bool followerNear = false;       // a living follower near (the old followerPresent)
+        bool allyInCrosshair = false;    // 0.24.31: a living ally in the crosshair, or within kAllyAimHoldSec (no_ally_aimed)
+        bool allyDown = false;           // 0.24.31: a teammate down on one knee (ally_injured's step)
         Craft station = Craft::None;     // StationCraft of the crosshair bench
         bool darknessApplies = false;    // DarknessApplies
         bool suppressFavorites = false;  // [Favorites] sFavoritesMode = Suppress
@@ -119,6 +121,40 @@ namespace Huginn::Core::Gate
     [[nodiscard]] constexpr bool NoFollower(bool targetsOthers, bool followerNear) noexcept
     {
         return targetsOthers && !followerNear;
+    }
+
+    /// no_ally_aimed (0.24.31, the live filter only; the old engine keeps
+    /// no_follower alone): a spell or scroll for someone else while no ally is
+    /// in the crosshair. Its "on Self" twin is the buff then (the user,
+    /// 2026-11-13: "on self is the preferred buff iff we are not looking at an
+    /// ally"); one for someone else comes up when the player looks at a
+    /// follower or their own summon or thrall, as they must to cast it.
+    ///
+    /// Two things keep it from flickering in a fight, where the player moves
+    /// and the crosshair crosses an ally for a moment at a time (the user,
+    /// 2026-11-14: "the temporal window is kinda tight"; a combat key also
+    /// wants its challenger for 1.5 s without a break):
+    ///  - an ally stays "looked at" for kAllyAimHoldSec after the crosshair
+    ///    leaves them (AllyAimHeld);
+    ///  - a heal (restore health) for someone else passes while a teammate is
+    ///    down (`allyDown`), crosshair or not: the downed ally is who it is
+    ///    for. A resist or another buff for someone else still waits for the
+    ///    look.
+    [[nodiscard]] constexpr bool NotAtAlly(bool targetsOthers, bool allyInCrosshair, bool healsHealth = false,
+                                           bool allyDown = false) noexcept
+    {
+        return targetsOthers && !allyInCrosshair && !(healsHealth && allyDown);
+    }
+
+    /// How long an ally stays "looked at" after the crosshair (with its 0.3 s
+    /// sticky target) last found them.
+    inline constexpr double kAllyAimHoldSec = 4.0;
+
+    /// The ally was in the crosshair within kAllyAimHoldSec of `nowSec`
+    /// (steady-clock seconds; `lastSeenSec` < 0 = never).
+    [[nodiscard]] constexpr bool AllyAimHeld(double lastSeenSec, double nowSec) noexcept
+    {
+        return lastSeenSec >= 0.0 && nowSec >= lastSeenSec && nowSec - lastSeenSec <= kAllyAimHoldSec;
     }
 
     /// no_workstation: a fortify piece when no craft it fortifies has its station up.

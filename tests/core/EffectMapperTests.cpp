@@ -895,6 +895,72 @@ TEST_CASE("effect mapper: restore_health_other from any kept heal that reaches o
     CHECK(CapOf(r, 1, Col::area) > 0.0f);
 }
 
+TEST_CASE("effect mapper: a spell lands where the spell delivers it, not where its effect says")
+{
+    // 0.24.31: LoreRim's "Healing Aura on Target" is a target-actor spell
+    // carrying the self-delivered Restore Health of "Healing Aura on Self".
+    World w;
+    const auto heal = w.Add(Mgef(kArchValueModifier, "Health", "Restore Health"));   // delivery Self
+    auto& self = w.Item(Kind::Spell, "Healing Aura on Self");
+    World::Fx(self, heal, 10, 60);
+    auto& target = w.Item(Kind::Spell, "Healing Aura on Target");
+    target.delivery = kDeliveryTargetActor;
+    World::Fx(target, heal, 10, 60);
+    auto& scroll = w.Item(Kind::Scroll, "Scroll of Healing Aura on Target");
+    scroll.delivery = kDeliveryTargetActor;
+    World::Fx(scroll, heal, 10, 60);
+    auto& potion = w.Item(Kind::Potion, "Potion");
+    potion.delivery = kDeliveryTargetActor;   // a potion is drunk: not a spell's delivery
+    World::Fx(potion, heal, 10, 60);
+    const auto r = w.Build();
+    CHECK(CapOf(r, 0, Col::delivery_self) == 1.0f);
+    CHECK(CapOf(r, 0, Col::restore_health_other) == 0.0f);
+    CHECK(CapOf(r, 1, Col::delivery_aimed) == 1.0f);
+    CHECK(CapOf(r, 1, Col::delivery_self) == 0.0f);
+    CHECK(CapOf(r, 2, Col::delivery_aimed) == 1.0f);
+    CHECK(CapOf(r, 3, Col::delivery_self) == 1.0f);
+    // The same grade either way: only where it lands moved -- from the
+    // player's column to the one for someone else (the player's wounds do not
+    // raise a heal that cannot reach them). The family keeps it.
+    REQUIRE(CapOf(r, 0, Col::restore_health) > 0.0f);
+    CHECK(CapOf(r, 1, Col::restore_health) == 0.0f);
+    CHECK(CapOf(r, 1, Col::restore_health_other) == CapOf(r, 0, Col::restore_health));
+    CHECK(CapOf(r, 1, Col::restore) == CapOf(r, 0, Col::restore));
+    CHECK(CapOf(r, 2, Col::restore_health) == 0.0f);
+    CHECK(CapOf(r, 2, Col::restore_health_other) > 0.0f);
+    CHECK(CapOf(r, 3, Col::restore_health) > 0.0f);   // the potion lands on the drinker
+    // The overshoot reads the user's gap: only what lands on the user counts.
+    CHECK(r.mappings[0].restoreAmount[0] > 0.0f);
+    CHECK(r.mappings[1].restoreAmount[0] == 0.0f);
+    CHECK(r.mappings[2].restoreAmount[0] == 0.0f);
+    CHECK(r.mappings[3].restoreAmount[0] > 0.0f);
+}
+
+TEST_CASE("effect mapper: a restore cast at someone else keeps only its family (0.24.31)")
+{
+    // Healing Hands: an aimed Restore Health with a Respite (Restore Stamina)
+    // rider. Neither reaches the caster, so neither takes the player's vital
+    // column (the player's wounds and fatigue drive those weights).
+    World w;
+    const auto heal = w.Add(Mgef(kArchValueModifier, "Health", "Restore Health"));
+    const auto respite = w.Add(Mgef(kArchValueModifier, "Stamina", "Restore Stamina"));
+    auto& hands = w.Item(Kind::Spell, "Healing Hands");
+    hands.delivery = kDeliveryAimed;
+    World::Fx(hands, heal, 24, 1);
+    World::Fx(hands, respite, 12, 1);
+    auto& self = w.Item(Kind::Spell, "Healing");
+    World::Fx(self, heal, 24, 1);
+    World::Fx(self, respite, 12, 1);
+    const auto r = w.Build();
+    CHECK(CapOf(r, 0, Col::restore_health) == 0.0f);
+    CHECK(CapOf(r, 0, Col::restore_stamina) == 0.0f);
+    CHECK(CapOf(r, 0, Col::restore_health_other) == CapOf(r, 1, Col::restore_health));
+    CHECK(CapOf(r, 0, Col::restore) == CapOf(r, 1, Col::restore));
+    CHECK(CapOf(r, 1, Col::restore_health) > 0.0f);
+    CHECK(CapOf(r, 1, Col::restore_stamina) > 0.0f);
+    CHECK(CapOf(r, 1, Col::restore_health_other) == 0.0f);
+}
+
 TEST_CASE("effect mapper: scope")
 {
     World w;
