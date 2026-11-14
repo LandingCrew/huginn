@@ -110,7 +110,7 @@ namespace Huginn::Core::Gate
     {
         bool followerNear = false;       // a living follower near (the old followerPresent)
         bool allyInCrosshair = false;    // 0.24.31: a living ally in the crosshair, or within kAllyAimHoldSec (no_ally_aimed)
-        bool allyDown = false;           // 0.24.31: a teammate down on one knee (ally_injured's step)
+        bool allyDown = false;           // 0.24.31: a teammate down on one knee (bleedout; ally_injured reads 1 then)
         Craft station = Craft::None;     // StationCraft of the crosshair bench
         bool darknessApplies = false;    // DarknessApplies
         bool suppressFavorites = false;  // [Favorites] sFavoritesMode = Suppress

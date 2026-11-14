@@ -556,5 +556,5 @@ TEST_CASE("field table: unique names, every name readable")
     std::set<std::string_view> names;
     for (const auto& f : kFields) names.insert(f.name);
     CHECK(names.size() == kFields.size());
-    CHECK(kFields.size() == 89);  // 88 until 0.23.51 added quarterstaff; 85 until 0.23.50 added edgeDistance, edgeSpeed and edgeApproach; 83 until 0.23.31 added thirstStage and healthRegenSuppressed
+    CHECK(kFields.size() == 90);  // 89 until 0.24.32 added followerHealthMissing; 88 until 0.23.51 added quarterstaff; 85 until 0.23.50 added edgeDistance, edgeSpeed and edgeApproach; 83 until 0.23.31 added thirstStage and healthRegenSuppressed
 }

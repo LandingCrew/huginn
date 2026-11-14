@@ -145,6 +145,7 @@ namespace Huginn::Needs
       // teammate's bleedout: a summon does not kneel, it dies.
       s.followerPresent = src.targets.GetFollowerCount() > 0 || n.playerSummonNear;
       s.followerBleedout = n.followerBleedout;
+      s.followerHealthMissing = n.followerHealthMissing;
 
       // Environment
       // The light held against torchlight and shadow flicker (0.23.41,

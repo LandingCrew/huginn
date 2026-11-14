@@ -84,7 +84,7 @@ FIELDS = {
     "targetHealth": ("f", -1.0), "soleHostileTtk": ("f", -1.0), "families": ("u", 0),
     "hostileSummoned": ("b", 0),
     # Ally
-    "followerPresent": ("b", 0), "followerBleedout": ("b", 0),
+    "followerPresent": ("b", 0), "followerBleedout": ("b", 0), "followerHealthMissing": ("f", 0.0),  # 0.24.32
     # Environment
     "light": ("f", 1.0), "openDaylight": ("b", 0), "underwater": ("b", 0),
     "submergedFor": ("f", 0.0), "swimming": ("b", 0), "fallDepth": ("f", 0.0),
@@ -293,7 +293,7 @@ FORMULAS = {
     "target_element_shock": lambda s: bit(s["families"], 14),
     "target_summoned": lambda s: float(s["hostileSummoned"]),
     # Ally
-    "ally_injured": lambda s: float(s["followerBleedout"]),
+    "ally_injured": lambda s: 1.0 if s["followerBleedout"] else min(max(s["followerHealthMissing"], 0.0), 1.0),
     "follower_present": lambda s: float(s["followerPresent"]),
     # Environment
     "darkness": lambda s: 0.0 if s["openDaylight"] else 1.0 - s["light"],
