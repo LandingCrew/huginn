@@ -995,7 +995,9 @@ namespace Huginn::State
         soleTtk = m_soleHostileTtk.Update(sole, soleHealth, nowSec);
       }
 
-      m_targets.allyDown = followerBleedout;   // 0.24.31: no_ally_aimed's pass for heals
+      // 0.24.31: no_ally_aimed's pass for heals; 0.24.32: a badly hurt
+      // standing teammate opens it too.
+      m_targets.allyDown = Core::Gate::AllyNeedsHeal(followerBleedout, followerHealthMissing);
 
 
       // Change detection: compare lightweight digest against previous

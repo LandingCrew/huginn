@@ -110,7 +110,7 @@ namespace Huginn::Core::Gate
     {
         bool followerNear = false;       // a living follower near (the old followerPresent)
         bool allyInCrosshair = false;    // 0.24.31: a living ally in the crosshair, or within kAllyAimHoldSec (no_ally_aimed)
-        bool allyDown = false;           // 0.24.31: a teammate down on one knee (bleedout; ally_injured reads 1 then)
+        bool allyDown = false;           // 0.24.31: a teammate down on one knee; 0.24.32: or badly hurt (AllyNeedsHeal)
         Craft station = Craft::None;     // StationCraft of the crosshair bench
         bool darknessApplies = false;    // DarknessApplies
         bool suppressFavorites = false;  // [Favorites] sFavoritesMode = Suppress
@@ -137,13 +137,27 @@ namespace Huginn::Core::Gate
     ///  - an ally stays "looked at" for kAllyAimHoldSec after the crosshair
     ///    leaves them (AllyAimHeld);
     ///  - a heal (restore health) for someone else passes while a teammate is
-    ///    down (`allyDown`), crosshair or not: the downed ally is who it is
-    ///    for. A resist or another buff for someone else still waits for the
-    ///    look.
+    ///    down or badly hurt (`allyDown`, AllyNeedsHeal), crosshair or not:
+    ///    that ally is who it is for. A resist or another buff for someone
+    ///    else still waits for the look.
     [[nodiscard]] constexpr bool NotAtAlly(bool targetsOthers, bool allyInCrosshair, bool healsHealth = false,
                                            bool allyDown = false) noexcept
     {
         return targetsOthers && !allyInCrosshair && !(healsHealth && allyDown);
+    }
+
+    /// 0.24.32: the share of their health a standing teammate can be missing
+    /// before a heal for them passes no_ally_aimed without the look: 0.65 (a
+    /// third of the bar left), where ally_injured reads about 0.82. The user,
+    /// 2026-11-14: a follower at a quarter of their health went 10 s with no
+    /// heal offered because they were not in the crosshair.
+    inline constexpr float kAllyBadlyHurtMissing = 0.65f;
+
+    /// A teammate a heal goes to without the look: down on one knee, or
+    /// missing kAllyBadlyHurtMissing of their health or more.
+    [[nodiscard]] constexpr bool AllyNeedsHeal(bool bleedout, float healthMissing) noexcept
+    {
+        return bleedout || healthMissing >= kAllyBadlyHurtMissing;
     }
 
     /// How long an ally stays "looked at" after the crosshair (with its 0.3 s
