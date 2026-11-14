@@ -221,7 +221,7 @@ TEST_CASE("cosave merge: a re-seeded key takes the file's value over the save's 
     const auto merged = CC::MergeTheta(buildKeys, saved, rep, reseed);
     CHECK(rep.reseeded == 1);
     CHECK(rep.applied == 1);
-    CHECK(rep.fromFile == 2);   // 20 (re-seeded) and 30 (not saved)
+    CHECK(rep.fromFile == 1);   // 30 (not saved); 20 counts as re-seeded only
     REQUIRE(merged.size() == 1);
     CHECK(merged[0] == CC::ThetaEntry{ 10, 0.4, 0.8 });
     // Without a reseed list (a save written under the same file) the save wins.

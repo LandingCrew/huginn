@@ -539,6 +539,13 @@ namespace Huginn::Core::Effect
     [[nodiscard]] constexpr Level LevelOf(Col c) noexcept { return kColumns[Index(c)].level; }
     [[nodiscard]] constexpr Col FamilyOf(Col c) noexcept { return kColumns[Index(c)].family; }
 
+    /// 0.24.31: the deliveries that cast an item at someone else -- touch, aimed
+    /// (a target actor too), at a location. The TargetsOthers facet
+    /// (core/CapFacets.h) and coverage (core/Coverage.h CastAtOthers) read this
+    /// one list.
+    inline constexpr std::array<Col, 3> kCastAtOthersDelivery{ Col::delivery_touch, Col::delivery_aimed,
+                                                               Col::delivery_target_location };
+
     /// The column whose id is `name`, if any (linear: for tests, tools and the console).
     [[nodiscard]] constexpr std::optional<Col> FromName(std::string_view name) noexcept
     {

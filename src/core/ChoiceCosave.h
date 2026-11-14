@@ -150,7 +150,7 @@ namespace Huginn::Core::ChoiceCosave
     {
         std::size_t applied = 0;    // saved entries the build knows
         std::size_t unknown = 0;    // saved keys the build no longer knows (dropped)
-        std::size_t fromFile = 0;   // build keys the save lacks (the bootstrap's value)
+        std::size_t fromFile = 0;   // build keys the save lacks (the bootstrap's value; re-seeded keys not counted)
         std::size_t duplicate = 0;  // a key saved twice: the last one wins
         std::size_t reseeded = 0;   // saved keys in `reseed`: the bootstrap's value taken instead (0.24.31)
     };

@@ -490,10 +490,11 @@ def row_quantity(col, kr, constant):
     return raw, post, graded, full
 
 
-# 0.24.31: the columns the player's own vitals drive. A restore or regeneration cast at
-# someone else (a delivery other than self) does not reach the player: it keeps only its
-# family (restore, regen), and a heal's value goes to restore_health_other
-# (core/EffectMapper.cpp Grade, IsPlayerVital).
+# 0.24.31: the columns the player's own vitals drive. A restore or regeneration a spell or
+# scroll casts at someone else (a delivery other than self) does not reach the player: it
+# keeps only its family (restore, regen), and a heal's value -- a health regeneration's
+# too, unless the item summons -- goes to restore_health_other (core/EffectMapper.cpp
+# Grade, IsPlayerVital). A potion lands on the drinker whatever its effect says.
 PLAYER_VITAL = {'restore_health', 'restore_magicka', 'restore_stamina',
                 'regen_health', 'regen_magicka', 'regen_stamina'}
 
@@ -554,6 +555,9 @@ def expected_values(items):
         if it['scope']:
             heals_others = False
             others_heal = 0.0
+            others_regen = 0.0
+            castable = it['kind'] in ('Spell', 'Scroll')
+            any_summon = any(c == 'summon' or c.startswith('summon_') for kr in it['rows'] for c in kr['cols'])
             for kr, c in eligible_cols(it):
                 raw, post, graded, full = row_quantity(c, kr, it['constant'])
                 key = (c, kr['_timed'][c])
@@ -567,11 +571,13 @@ def expected_values(items):
                     v = pct(key, raw) * post
                 else:
                     v = post
-                if c in PLAYER_VITAL and kr['delivery'] != '0':
+                if castable and c in PLAYER_VITAL and kr['delivery'] != '0':
                     f = family_of_col.get(c)
                     vals[f] = max(vals.get(f, 0.0), v)
                     if c == 'restore_health':
                         others_heal = max(others_heal, v)
+                    if c == 'regen_health':
+                        others_regen = max(others_regen, v)
                     continue
                 vals[c] = max(vals.get(c, 0.0), v)
             for kr in it['rows']:
@@ -579,6 +585,8 @@ def expected_values(items):
                     heals_others = True
             if heals_others and max(vals.get('restore_health', 0), others_heal) > 0:
                 vals['restore_health_other'] = max(vals.get('restore_health', 0), others_heal)
+            if others_regen > 0 and not any_summon:
+                vals['restore_health_other'] = max(vals.get('restore_health_other', 0), others_regen)
             for c, v in list(vals.items()):
                 f = family_of_col.get(c)
                 if f:
@@ -727,6 +735,7 @@ def main():
             kept_rows = []
             pending = []            # visible rows of unknown strength nothing reads: (index, no description)
             kept_visible = [False]  # does the item keep any visible row?
+            regen_others = [False]  # 0.24.31: a health regeneration cast at someone else
             hydrated = any('hydrat' in str(r['effectName']).lower() for r in rows if r['effectFormID'])
             num = lambda v: float(v) if v not in ('', None) and not (isinstance(v, float) and math.isnan(v)) else 0.0
 
@@ -809,10 +818,12 @@ def main():
                                 pmag, pfac = None, None
                                 if z:
                                     pc, proute, pmag, pfac = zero_kept(pd_, z, pc)
-                                if pc in PLAYER_VITAL and lands_delivery(key[0], pd_) != '0':
+                                if key[0] in ('Spell', 'Scroll') and pc in PLAYER_VITAL and lands_delivery(key[0], pd_) != '0':
                                     item_cols.add(family_of_col[pc])
                                     if pc == 'restore_health':
                                         item_cols.add('restore_health_other')
+                                    if pc == 'regen_health':
+                                        regen_others[0] = True
                                 else:
                                     item_cols.add(pc)
                                 if pc.startswith('summon_creature_'):
@@ -855,8 +866,10 @@ def main():
                     kept_row(r, cols_, not r['hide'], route, zmag, zfac, bool(z and z[0] == 'describe' and z[2] > 0))
                     if not r['hide']:
                         kept_visible[0] = True
-                    if c in PLAYER_VITAL and lands_delivery(key[0], r) != '0':
+                    if key[0] in ('Spell', 'Scroll') and c in PLAYER_VITAL and lands_delivery(key[0], r) != '0':
                         item_cols.add(family_of_col[c])
+                        if c == 'regen_health':
+                            regen_others[0] = True
                     else:
                         item_cols.add(c)
                     if c.startswith('summon_creature_'):
@@ -873,6 +886,8 @@ def main():
                     exp_rows[idx] = (c0, note0.replace('zero:unresolved', 'zero:carrier'))
                 else:
                     exp_rows[idx] = ('', note0.replace('zero:unresolved', 'zero:unmapped'))
+            if regen_others[0] and not any(c == 'summon' or c.startswith('summon_') for c in item_cols):
+                item_cols.add('restore_health_other')
             full = set(item_cols)
             for c in item_cols:
                 if family_of_col.get(c):
@@ -881,7 +896,7 @@ def main():
             stats['inScope'] += scope
             ench_cast = str(item.get('enchantCasting', ''))
             constant = item['kind'] == 'Armor' or str(item['castingType']) == '0' or ench_cast == '0'
-            value_items.append({'scope': scope, 'constant': constant, 'rows': kept_rows})
+            value_items.append({'scope': scope, 'constant': constant, 'rows': kept_rows, 'kind': key[0]})
             first_row_index.append(len(rows_out))
             for i, r in enumerate(rows):
                 o = {c: ('' if pd.isna(r.get(c, '')) else r.get(c, '')) for c in keep_cols}

@@ -168,8 +168,14 @@ TEST_CASE("bootstrap: the shipped file reads and maps by name")
         const auto j = Col(Effect::Col::restore_health_other);
         CHECK(m.model.Th(k, j).mu == doctest::Approx(4.19213));
         CHECK(m.model.Th(k, j).var == doctest::Approx(1.0));
-        REQUIRE(Bootstrap::ReseededThetaKeys().size() == 1);
-        CHECK(Bootstrap::ReseededThetaKeys()[0] == Bootstrap::StableKey("theta", "ally_injured", "restore_health_other"));
+        // Re-seeded only over the files the edit replaced: once per character.
+        const auto old = Bootstrap::ReseededThetaKeys("1AF1EFA21D9C499996AB52C69E29F8126CC11DADF7A38A5CD2EAC49FB3E676B0");
+        REQUIRE(old.size() == 1);
+        CHECK(old[0] == Bootstrap::StableKey("theta", "ally_injured", "restore_health_other"));
+        CHECK(Bootstrap::ReseededThetaKeys("9259e37e742b94633274a5e7b1bca1481428b23da2dbd51d04738906240aea02").size() == 1);
+        CHECK(Bootstrap::ReseededThetaKeys("f805f8fc2375f6b0593fd8a9028d88c78dbbbaaa5ff52fdb2a00952fe0e111d2").empty());
+        CHECK(Bootstrap::ReseededThetaKeys("1af1efa2").empty());   // a prefix is not the file
+        CHECK(Bootstrap::ReseededThetaKeys("").empty());
     }
     const auto alc = Col(Effect::Col::narcotic);
     for (std::size_t k = 0; k < C::K; ++k) {

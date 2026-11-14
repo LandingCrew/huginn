@@ -56,7 +56,9 @@ namespace Huginn::Candidate
             if (Core::Gate::FavoriteSuppressed(IsFavoritedCandidate(c), g.suppressFavorites))
                 return R::favorite_suppressed;
             if constexpr (std::is_same_v<T, SpellCandidate> || std::is_same_v<T, ScrollCandidate>) {
-                if (Core::Gate::NoFollower(targetsOthers, g.followerNear))
+                // 0.24.31: an ally in the crosshair (a summon or a thrall
+                // counts, IsPlayerSide) is an ally near, follower or not.
+                if (Core::Gate::NoFollower(targetsOthers, g.followerNear || g.allyInCrosshair))
                     return R::no_follower;
                 if (Core::Gate::NotAtAlly(targetsOthers, g.allyInCrosshair, healsHealth, g.allyDown))
                     return R::no_ally_aimed;
@@ -167,8 +169,11 @@ namespace Huginn::Candidate
                         return R::muffle;
                     // An armour spell, not a ward: a ward's cap carries
                     // defense_armor too, and an Oakflesh running does not make
-                    // a spell ward redundant.
-                    if (f.Has(F::ArmorBuff) && !f.Has(F::Ward) && player.buffs.hasArmorBuff &&
+                    // a spell ward redundant. 0.24.31: nor one cast at someone
+                    // else (Oakflesh on Target): the player's own buff is not
+                    // theirs.
+                    if (f.Has(F::ArmorBuff) && !f.Has(F::Ward) && !f.Has(F::TargetsOthers) &&
+                        player.buffs.hasArmorBuff &&
                         !Due(player, B::armor))
                         return R::armor;
                     // A summon only once the player's summon LIMIT is reached

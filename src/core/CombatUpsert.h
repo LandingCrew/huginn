@@ -25,8 +25,9 @@
 // covered key would hold the answer to a need that is gone; so a covered key
 // takes any challenger past the wanted clock, ahead of the keys that need a
 // lead. The same for a spell for someone else dropped because no ally is in
-// the crosshair (no_ally_aimed, 0.24.31): the one it was for is out of view,
-// and its "on Self" twin is the buff (Core::Filter::FreesCombatKey).
+// the crosshair (no_ally_aimed, 0.24.31) or none is near (no_follower: the
+// follower died or fell behind): the one it was for is out of view, and its
+// "on Self" twin is the buff (Core::Filter::FreesCombatKey).
 // Every other filter that drops a key's item (it cannot be afforded, it
 // is equipped, on cooldown just after use, a heal at full health) says the
 // player used it or will want it back in a moment: those keys keep the score

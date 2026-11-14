@@ -391,9 +391,10 @@ namespace Huginn::Persist
          const auto keys = learner.Keys();
          const auto [fileUtc, fileSha] = learner.FileIdentity();
          const bool sameFile = theta->sha256 == fileSha;
-         // 0.24.31: a save that learned from another bootstrap file takes the
-         // file's value for the pairs it re-seeded by hand (kReseededTheta).
-         const auto reseed = sameFile ? std::vector<std::uint64_t>{} : Core::Bootstrap::ReseededThetaKeys();
+         // 0.24.31: a save that learned from a file a hand re-seed replaced
+         // takes the file's value for that pair (kReseededTheta), once.
+         const auto reseed = sameFile ? std::vector<std::uint64_t>{}
+                                      : Core::Bootstrap::ReseededThetaKeys(theta->sha256);
          const auto merged = CC::MergeTheta(keys, saved, rep, reseed);
          std::vector<Learning::ChoiceLearner::Entry> entries;
          entries.reserve(merged.size());

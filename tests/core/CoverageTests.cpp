@@ -223,14 +223,15 @@ TEST_CASE("filter reasons: names, groups and lookup")
     CHECK(static_cast<int>(Reason::resist_weaker) == 20);
     CHECK(static_cast<int>(Reason::no_ally_aimed) == 21);
     CHECK(Filter::ReasonName(Reason::no_ally_aimed) == "no_ally_aimed");
-    // A combat key frees for the active-buff reasons and no_ally_aimed only.
+    // A combat key frees for the active-buff reasons, no_ally_aimed and no_follower only.
     CHECK(Filter::FreesCombatKey(Reason::resist));
     CHECK(Filter::FreesCombatKey(Reason::armor));
     CHECK(Filter::FreesCombatKey(Reason::no_ally_aimed));
     CHECK_FALSE(Filter::FreesCombatKey(Reason::equipped));
     CHECK_FALSE(Filter::FreesCombatKey(Reason::cooldown));
     CHECK_FALSE(Filter::FreesCombatKey(Reason::affordability));
-    CHECK_FALSE(Filter::FreesCombatKey(Reason::no_follower));
+    CHECK(Filter::FreesCombatKey(Reason::no_follower));
+    CHECK_FALSE(Filter::FreesCombatKey(Reason::full_health));
     CHECK(static_cast<int>(Reason::invisibility) == 5);
     CHECK(static_cast<int>(Reason::resist) == 11);
     CHECK(static_cast<int>(Reason::truncated) == 14);

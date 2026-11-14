@@ -139,9 +139,15 @@ namespace Huginn::Core::Facets
                                   ((has(Col::restore_health) || has(Col::restore_health_other)) &&
                                    (has(Col::aura) || (has(Col::timing_over_time) && !has(Col::concentration)))));
         const bool spellLike = kind == Effect::Kind::Spell || kind == Effect::Kind::Scroll;
-        const bool atOthers = has(Col::delivery_touch) || has(Col::delivery_aimed) || has(Col::delivery_target_location);
+        bool atOthers = false;
+        for (const Col d : Effect::kCastAtOthersDelivery) atOthers = atOthers || has(d);
+        // A cure, but not a dispel (0.24.31): LoreRim's Dispel on Target is as
+        // often aimed at an enemy's buffs as at an ally's debuffs, and gating
+        // it on an ally in the crosshair hid it where it was aimed.
+        const bool cures = has(Col::cure_disease) || has(Col::cure_poison) || has(Col::cure_paralysis) ||
+                           has(Col::cure_injury);
         const bool helps = has(Col::restore) || has(Col::regen) || has(Col::fortify_vital) || has(Col::defense) ||
-                           has(Col::resist) || has(Col::fortify_skill) || has(Col::fortify_combat) || has(Col::cure) ||
+                           has(Col::resist) || has(Col::fortify_skill) || has(Col::fortify_combat) || cures ||
                            has(Col::movement) || has(Col::influence_rally);
         add(F::TargetsOthers, spellLike && !has(Col::hostile) && atOthers && helps);
         add(F::Damage, has(Col::damage) || has(Col::absorb));

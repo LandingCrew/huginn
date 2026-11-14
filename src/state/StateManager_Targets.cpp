@@ -226,6 +226,7 @@ namespace Huginn::State
       const bool hadTargets = m_targets.primary.has_value() || !m_targets.targets.empty();
       m_targets.Clear();
       m_prevTargetDigest = TargetDigest{};
+      m_allyAimLastSec = -1.0;   // 0.24.31: the ally-look hold ends with the player
       return hadTargets;
       }
 

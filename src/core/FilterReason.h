@@ -93,10 +93,11 @@ namespace Huginn::Core::Filter
     /// answers is gone (an active-buff filter: its buff is running), or the one
     /// it was cast for is (no_ally_aimed, 0.24.31: no ally in the crosshair --
     /// Fire Shell on Target held a key 17 s after the player looked away from
-    /// the follower, Fire Shell on Self off the page, 2026-11-14).
+    /// the follower, Fire Shell on Self off the page, 2026-11-14), or no ally
+    /// is near at all (no_follower: the follower died or fell behind).
     [[nodiscard]] constexpr bool FreesCombatKey(Reason r) noexcept
     {
-        return IsActiveBuff(r) || r == Reason::no_ally_aimed;
+        return IsActiveBuff(r) || r == Reason::no_ally_aimed || r == Reason::no_follower;
     }
 
     /// One gathered candidate the filters dropped, and why.

@@ -281,7 +281,6 @@ namespace Huginn::Core::ChoiceCosave
             }
             if (std::find(reseed.begin(), reseed.end(), key) != reseed.end()) {
                 ++rep.reseeded;
-                ++rep.fromFile;
                 continue;
             }
             out.push_back(saved[it->second]);

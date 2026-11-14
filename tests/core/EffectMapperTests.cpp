@@ -961,6 +961,35 @@ TEST_CASE("effect mapper: a restore cast at someone else keeps only its family (
     CHECK(CapOf(r, 1, Col::restore_health_other) == 0.0f);
 }
 
+TEST_CASE("effect mapper: a regeneration cast at someone else heals them; a summon's does not; a potion lands on the drinker")
+{
+    World w;
+    const auto regen = w.Add(Mgef(kArchValueModifier, "HealRate", "Regenerate Health"));
+    auto atronachFx = Mgef(kArchSummonCreature, "", "Conjure Flame Atronach");
+    atronachFx.keywords = { "MagicSummonFire" };
+    const auto atronach = w.Add(atronachFx);
+    auto touchHeal = Mgef(kArchValueModifier, "Health", "Restore Health");
+    touchHeal.delivery = kDeliveryTouch;   // a potion carrying a touch effect record
+    const auto heal = w.Add(touchHeal);
+    auto& other = w.Item(Kind::Spell, "Regenerate Other");
+    other.delivery = kDeliveryAimed;
+    World::Fx(other, regen, 50, 30);
+    auto& thrall = w.Item(Kind::Spell, "Thrall");
+    thrall.delivery = kDeliveryAimed;
+    World::Fx(thrall, atronach, 1, 60);
+    World::Fx(thrall, regen, 50, 60);
+    auto& potion = w.Item(Kind::Potion, "Potion of Healing");
+    World::Fx(potion, heal, 25, 1);
+    const auto r = w.Build();
+    REQUIRE(CapOf(r, 0, Col::regen) > 0.0f);
+    CHECK(CapOf(r, 0, Col::regen_health) == 0.0f);
+    CHECK(CapOf(r, 0, Col::restore_health_other) > 0.0f);   // a heal for someone else: ally_injured, allyDown
+    CHECK(CapOf(r, 1, Col::regen_health) == 0.0f);
+    CHECK(CapOf(r, 1, Col::restore_health_other) == 0.0f);  // the summon's own regeneration
+    CHECK(CapOf(r, 2, Col::restore_health) > 0.0f);         // drunk: the player's column
+    CHECK(r.mappings[2].restoreAmount[0] > 0.0f);           // and the overshoot agrees
+}
+
 TEST_CASE("effect mapper: scope")
 {
     World w;

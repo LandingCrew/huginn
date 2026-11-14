@@ -68,6 +68,13 @@ TEST_CASE("cap facets: restores, and who a restore is for")
     CHECK(other.Has(F::RestoreHealth));
     CHECK(other.Has(F::TargetsOthers));
 
+    // A cure cast at someone else is for them; a dispel is not (0.24.31: LoreRim's
+    // Dispel on Target is aimed at enemies' buffs as often as at allies).
+    auto curePoison = Facets::FromCap(CapOf({ Col::cure, Col::cure_poison, Col::delivery_aimed }), Kind::Spell);
+    CHECK(curePoison.Has(F::TargetsOthers));
+    auto dispel = Facets::FromCap(CapOf({ Col::cure, Col::cure_dispel, Col::delivery_aimed }), Kind::Spell);
+    CHECK_FALSE(dispel.Has(F::TargetsOthers));
+
     // A healing aura cast on self: restore_health_other through its area, but
     // delivered on self, so not "for someone else"; it heals over time.
     auto aura = Facets::FromCap(CapOf({ Col::restore, Col::restore_health_other, Col::delivery_self, Col::aura, Col::area }), Kind::Spell);

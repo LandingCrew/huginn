@@ -114,6 +114,7 @@ namespace Huginn::State
       }
       m_stickyTargetFormID = 0;
       m_stickyTargetLastSeenTime = 0.0f;
+      m_allyAimLastSec = -1.0;   // 0.24.31: no ally-look hold carried into a load
       m_prevTargetDigest = TargetDigest{};
 
       // --- Actor type cache (race could differ between save files) ---

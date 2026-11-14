@@ -62,7 +62,7 @@ file is about 650 KiB.
 | `items` | object[] | the per-item b: `{plugin, local, name, b, precision, picks}`, keyed by the plugin that owns the FormID's load-order index (below) |
 | `items_dropped` | object | {reason: count} of the fitted items not written (below); informational |
 | `curves` | object | {need name: `["logistic", centre, slope]`}: response curves fitted by `tools/fit/curve.py` |
-| `provenance` | object | optional, informational, never checked: how the spec was chosen (the data, the yardstick, the gate); `export.py --provenance` (0.23.54); `hand_edits` (0.24.31) records a weight changed by hand after the fit. Such a pair is listed in `core/Bootstrap.h` `kReseededTheta`: a save whose THTA learned from another file takes the file's value for it on load (`ChoiceCosave::MergeTheta`'s `reseed`), once per character |
+| `provenance` | object | optional, informational, never checked: how the spec was chosen (the data, the yardstick, the gate); `export.py --provenance` (0.23.54); `hand_edits` (0.24.31) records a weight changed by hand after the fit. Such a pair is listed in `core/Bootstrap.h` `kReseededTheta` with the sha256 of every file the edit replaced: a save whose THTA names one of those takes the file's value for it on load (`ChoiceCosave::MergeTheta`'s `reseed`); a save under the edited file or a later one (a refit) keeps its own, so it lands once per character |
 
 ## The score
 

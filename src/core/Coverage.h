@@ -173,9 +173,8 @@ namespace Huginn::Core::Coverage
     {
         for (const auto& v : cap) {
             if (!(v.v > 0.0f)) continue;
-            if (v.col == Effect::Col::delivery_touch || v.col == Effect::Col::delivery_aimed ||
-                v.col == Effect::Col::delivery_target_location) {
-                return true;
+            for (const auto d : Effect::kCastAtOthersDelivery) {
+                if (v.col == d) return true;
             }
         }
         return false;

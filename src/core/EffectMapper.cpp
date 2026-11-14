@@ -1270,6 +1270,12 @@ namespace Huginn::Core::Effect
         bool longLasting = false;
         bool healsOthers = false;
         float othersHeal = 0.0f;
+        float othersRegen = 0.0f;
+        bool anySummon = false;
+        // Only a spell or a scroll is cast where its delivery says, as the
+        // overshoot reads it (MapItem): a potion lands on the drinker whatever
+        // its effect record says.
+        const bool castable = m.kind == Kind::Spell || m.kind == Kind::Scroll;
         for (const auto& r : m.rows) {
             for (const Col c : { r.col, r.col2 }) {
                 // Any kept heal that reaches others, visible or not: Breath of
@@ -1286,12 +1292,16 @@ namespace Huginn::Core::Effect
                 // 90 s while the player was at 1-20% health (2026-11-14). Its
                 // family (restore, regen) keeps the value -- what kind of item it
                 // is -- and a heal's goes to restore_health_other below.
-                if (r.delivery != kDeliverySelf && IsPlayerVital(c)) {
+                if (castable && r.delivery != kDeliverySelf && IsPlayerVital(c)) {
                     put(FamilyOf(c), v);
                     if (c == Col::restore_health) othersHeal = std::max(othersHeal, v);
+                    if (c == Col::regen_health) othersRegen = std::max(othersRegen, v);
                     continue;
                 }
                 put(c, v);
+            }
+            for (const Col c : { r.col, r.col2 }) {
+                if (c != Col::_Count && (c == Col::summon || FamilyOf(c) == Col::summon)) anySummon = true;
             }
             anyFullRestore = anyFullRestore || r.fullRestore;
             if (FamilyKey(r.col) == Col::cure && r.cureByArchetype) anyCureArchetype = true;
@@ -1305,6 +1315,10 @@ namespace Huginn::Core::Effect
         }
         // restore_health_other: a conjunctive column, valued as restore_health.
         if (healsOthers) put(Col::restore_health_other, std::max(val[Index(Col::restore_health)], othersHeal));
+        // A health regeneration cast at someone else heals them too, so it is a
+        // heal for others -- unless it rides a summon (Dead Thrall: the
+        // thrall's own regeneration, not a heal the player casts).
+        if (othersRegen > 0.0f && !anySummon) put(Col::restore_health_other, othersRegen);
         // Families: max over their specifics.
         for (std::size_t i = 0; i < kColumnCount; ++i) {
             if (val[i] <= 0.0f) continue;
@@ -1402,7 +1416,8 @@ namespace Huginn::Core::Effect
                 if (!(v > 0.0f)) continue;
                 // 0.24.31: as Grade -- a perk's restore cast at someone else
                 // does not take the player's vital column.
-                if (pr.row.delivery != kDeliverySelf && IsPlayerVital(c)) {
+                if ((m.kind == Kind::Spell || m.kind == Kind::Scroll) && pr.row.delivery != kDeliverySelf &&
+                    IsPlayerVital(c)) {
                     out.push_back(PerkValue{ pr.perks, FamilyOf(c), v });
                     if (c == Col::restore_health) out.push_back(PerkValue{ pr.perks, Col::restore_health_other, v });
                     continue;
