@@ -1,6 +1,7 @@
 #include "DropAheadProbe.h"
 
 #include "HandModelProbe.h"
+#include "effect/LiveValues.h"   // 0.24.30: the spells read as cast, on this hook
 #include "HostileSight.h"
 #include "input/HandEquipGate.h"  // the hand equip gate rides the hook (0.24.26)
 
@@ -687,6 +688,16 @@ namespace Huginn::State::DropAheadProbe
             static std::atomic<bool> s_logged{ false };
             if (!s_logged.exchange(true)) {
                logger::error("[HostileSight] an exception in the sight test was caught (logged once)"sv);
+            }
+         }
+         // 0.24.30: the spells the player knows, read as they would cast them
+         // now (the perk entry points need the main thread).
+         try {
+            Effect::LiveValues::OnPlayerUpdate(a_this);
+         } catch (...) {
+            static std::atomic<bool> s_logged{ false };
+            if (!s_logged.exchange(true)) {
+               logger::error("[LiveValues] an exception reading the spells was caught (logged once)"sv);
             }
          }
          // So does the hand equip gate (0.24.26): a slot key's equip into a

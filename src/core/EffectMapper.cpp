@@ -1091,7 +1091,7 @@ namespace Huginn::Core::Effect
     std::uint32_t Populations::GradeGroup(Col c, const KeptRow& r) const
     {
         const std::uint32_t g = RowGroup(r);
-        return (g == kGroupTimed && Size(c, g) < kMinTimedGroup) ? 0u : g;
+        return (g == kGroupTimed && Size(c, g) < minTimedGroup_) ? 0u : g;
     }
 
     std::vector<Populations::ColumnRaw> Populations::ColumnRaws(const ItemMapping& m)
@@ -1219,7 +1219,7 @@ namespace Huginn::Core::Effect
         return p >= 0 ? facts[static_cast<std::size_t>(p)].school : School::None;
     }
 
-    Cap Grade(const ItemMapping& m, const Populations& pops)
+    Cap Grade(const ItemMapping& m, const Populations& pops, const Populations* grouped)
     {
         std::array<float, kColumnCount> val{};
         const Eligibility eligible(m);
@@ -1301,11 +1301,12 @@ namespace Huginn::Core::Effect
         }
 
         for (const auto& f : m.fixed) put(f.col, f.v);
+        const Populations& gp = grouped ? *grouped : pops;
         for (const auto& g : m.grouped) {
             // A sub-type too small to grade on its own: its vanilla type's population.
-            const std::uint32_t grp = (g.hasFallback && pops.Size(g.col, g.group) < kMinSubtypeGroup) ? g.fallback : g.group;
+            const std::uint32_t grp = (g.hasFallback && gp.Size(g.col, g.group) < kMinSubtypeGroup) ? g.fallback : g.group;
             if (g.ratioToMedian) {
-                const float med = pops.Median(g.col, grp);
+                const float med = gp.Median(g.col, grp);
                 if (med > 0.0f && g.raw > 0.0f) {
                     float r = g.raw / med;
                     if (g.hi > 0.0f) r = std::clamp(r, g.lo, g.hi);
@@ -1313,7 +1314,7 @@ namespace Huginn::Core::Effect
                 }
             }
             else if (g.raw > 0.0f) {
-                put(g.col, pops.Percentile(g.col, grp, g.raw));
+                put(g.col, gp.Percentile(g.col, grp, g.raw));
             }
         }
         if (m.kind == Kind::Spell && m.magickaCost > 0.0f) {
@@ -1329,6 +1330,17 @@ namespace Huginn::Core::Effect
             if (val[i] > 0.0f) cap.push_back(Value{ static_cast<Col>(i), val[i] });
         }
         return cap;
+    }
+
+    Populations HeldPopulations(const std::vector<const ItemMapping*>& held)
+    {
+        Populations pops;
+        pops.SetMinTimedGroup(1);
+        for (const auto* m : held) {
+            if (m) pops.Add(*m);
+        }
+        pops.Finalize();
+        return pops;
     }
 
     std::vector<PerkValue> GradePerkRows(const ItemMapping& m, const Populations& pops)

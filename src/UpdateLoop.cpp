@@ -1,6 +1,7 @@
 #include "UpdateLoop.h"
 #include "Globals.h"
 #include "pipeline/PipelineCoordinator.h"
+#include "effect/LiveValues.h"   // the held grading drains before the gate (0.24.30)
 #include "Profiling.h"
 
 #include "state/StateManager.h"
@@ -509,6 +510,9 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
 // Skip-check + pipeline run. Returns early if state is unchanged and no
 // page was cycled.
 
+/// 0.24.30: held items mapped per tick (LiveValues::ApplyPending).
+static constexpr std::size_t kHeldItemsPerTick = 4;
+
 static void RunPipelineIfNeeded(float deltaMs, RE::PlayerCharacter* player,
                                 std::chrono::steady_clock::time_point now)
 {
@@ -532,6 +536,16 @@ static void RunPipelineIfNeeded(float deltaMs, RE::PlayerCharacter* player,
     // Before PeekPageChanged, so the flag this sets is seen on THIS tick rather
     // than the next one.
     if (stateManager.ConsumeAmmoCountChanged()) {
+        Slot::SlotAllocator::GetSingleton().MarkPageDirty();
+    }
+
+    // 0.24.30: LiveValues' hand-over (the items' numbers as the player has
+    // them, ~230 after a load) is mapped here, a few a tick, before the gate:
+    // a quiet scene drains it without the pipeline gathering state every
+    // tick, and a run is forced only when the held grading changed (the page
+    // marked dirty, as for the ammo count above). Each item read maps its
+    // form (milliseconds in Debug); one seen before costs nothing.
+    if (Effect::LiveValues::HasWork() && Effect::LiveValues::ApplyPending(kHeldItemsPerTick)) {
         Slot::SlotAllocator::GetSingleton().MarkPageDirty();
     }
 

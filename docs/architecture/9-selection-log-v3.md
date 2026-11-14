@@ -125,8 +125,10 @@ them (percentiles within the load order, presence 1, see
 `core/EffectMapper.h`). Caps are **content-addressed**: two items with the
 same effects share one id, so a dynamic FormID that means something else after
 a reload cannot mislabel a cap. Per-instance caps (a tempered or
-player-enchanted weapon or armour piece; `EffectCatalog::InstanceEntry`) are
-caps like any other.
+player-enchanted weapon or armour piece; `EffectCatalog::InstanceEntry`; since 0.24.30 every
+item the player has, graded among what they have from their numbers as they have them,
+`EffectCatalog::RegradeHeld`) are caps like any other: a held item's cap moves when what the
+player has moves, and gets a new id.
 
 ### `ctx`
 

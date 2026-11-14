@@ -373,9 +373,156 @@ namespace Huginn::Effect
 
     const CatalogEntry* EffectCatalog::Find(RE::FormID formID) const
     {
+        if (const auto* held = FindHeld(formID)) return held;
+        return FindRecord(formID);
+    }
+
+    const CatalogEntry* EffectCatalog::FindHeld(RE::FormID formID) const
+    {
+        if (!Ready() || !anyLive_.load(std::memory_order_acquire)) return nullptr;
+        std::shared_lock lock(liveMutex_);
+        const auto it = live_.find(formID);
+        return it == live_.end() ? nullptr : it->second;
+    }
+
+    const CatalogEntry* EffectCatalog::FindRecord(RE::FormID formID) const
+    {
         if (!Ready()) return nullptr;
         const auto it = entries_.find(formID);
         return it == entries_.end() ? nullptr : &it->second;
+    }
+
+    namespace
+    {
+        /// The states an item keeps mapped (a conditional perk's flip, a
+        /// stack tempered and sold): the oldest goes past this.
+        constexpr std::size_t kSeenPerItem = 4;
+    }
+
+    bool EffectCatalog::SetHeld(const RE::TESBoundObject* form, const LiveNumbers& numbers, std::uint32_t generation,
+                                bool& read)
+    {
+        read = false;
+        if (!form || !Ready()) return false;
+        std::lock_guard make(liveMakeMutex_);
+        if (generation != liveGeneration_) return false;   // another load's: the form may be gone
+        const RE::FormID id = form->GetFormID();
+        if (const auto it = held_.find(id); it != held_.end()) {
+            auto& known = it->second;
+            for (std::size_t i = 0; i < known.seen.size(); ++i) {
+                if (!SameLiveNumbers(known.seen[i].numbers, numbers)) continue;
+                if (known.current == i) return false;
+                known.current = i;
+                heldDirty_ = true;
+                return true;
+            }
+        }
+        // The entry is made only once the mapping is: a read that throws
+        // must not leave an item with nothing seen (RegradeHeld indexes it).
+        read = true;
+        if (!liveReader_) liveReader_ = std::make_unique<EffectReader>();
+        ReadResult rr;
+        if (!liveReader_->ReadForm(form, nullptr, rr) || rr.items.empty()) return false;
+        auto& rec = rr.items.front();
+        MarkHeld(rec);   // known or carried: rule 1's tome test does not apply
+        for (auto& row : rec.effects) {
+            for (const auto& live : numbers.rows) {
+                if (live.index != row.index) continue;
+                row.magnitude = live.magnitude;
+                row.duration = static_cast<std::uint32_t>(std::lround(std::max(0.0f, live.duration)));
+                break;
+            }
+        }
+        if (numbers.damage >= 0.0f) rec.damage = numbers.damage;
+        if (numbers.armorRating >= 0.0f) rec.armorRating = numbers.armorRating;
+        auto classes = ClassifyAll(rr.effects, &overrides_);
+        ResolveZeroMagnitudes(rr.items, rr.effects, classes);
+        ItemMapping m = MapItem(rec, rr.effects, classes);
+        LogBudgetHits("a held entry"sv);
+        // Out of scope (an ingredient, a power): no entry, held or not.
+        if (!m.inScope) return false;
+        auto& item = held_[id];
+        if (item.seen.size() >= kSeenPerItem) {
+            const std::size_t drop = item.current == 0 ? 1 : 0;
+            item.seen.erase(item.seen.begin() + static_cast<std::ptrdiff_t>(drop));
+            if (item.current > drop) --item.current;
+        }
+        item.seen.push_back(HeldMapping{ numbers, std::move(m) });
+        item.current = item.seen.size() - 1;
+        heldDirty_ = true;
+        return true;
+    }
+
+    bool EffectCatalog::DropHeld(RE::FormID formID, std::uint32_t generation)
+    {
+        std::lock_guard make(liveMakeMutex_);
+        if (generation != liveGeneration_) return false;
+        if (held_.erase(formID) == 0) return false;
+        heldDirty_ = true;
+        return true;
+    }
+
+    void EffectCatalog::RetireLocked(std::unique_ptr<Generation> gen)
+    {
+        const auto now = std::chrono::steady_clock::now();
+        if (gen) retired_.push_back(Retired{ now, std::move(gen) });
+        // Kept two generations back and kRetireAfter: an entry handed out
+        // before a swap is read within the run (or the log tick) it was
+        // handed to, and a swap always forces a run.
+        while (retired_.size() > 2 && now - retired_.front().at >= kRetireAfter) retired_.pop_front();
+    }
+
+    bool EffectCatalog::RegradeHeld(std::size_t* graded)
+    {
+        if (!Ready()) return false;
+        std::lock_guard make(liveMakeMutex_);
+        if (!heldDirty_.exchange(false, std::memory_order_acq_rel)) return false;
+        std::vector<const ItemMapping*> mappings;
+        mappings.reserve(held_.size());
+        for (const auto& [id, item] : held_) {
+            if (item.current < item.seen.size()) mappings.push_back(&item.seen[item.current].mapping);
+        }
+        auto pops = std::make_shared<const Populations>(HeldPopulations(mappings));
+        auto gen = std::make_unique<Generation>();
+        gen->reserve(held_.size());
+        std::unordered_map<RE::FormID, const CatalogEntry*> map;
+        map.reserve(held_.size());
+        for (const auto& [id, item] : held_) {
+            if (item.current >= item.seen.size()) continue;
+            const ItemMapping& m = item.seen[item.current].mapping;
+            auto entry = std::make_unique<CatalogEntry>(MakeEntry(m, Grade(m, *pops, &pops_), *pops));
+            map.emplace(id, entry.get());
+            gen->push_back(std::move(entry));
+        }
+        {
+            std::unique_lock lock(liveMutex_);
+            live_.swap(map);
+            heldPops_ = std::move(pops);
+            anyLive_.store(!live_.empty(), std::memory_order_release);
+            gradingEpoch_.fetch_add(1, std::memory_order_acq_rel);
+        }
+        if (graded) *graded = gen->size();
+        RetireLocked(std::move(published_));
+        published_ = std::move(gen);
+        return true;
+    }
+
+    void EffectCatalog::ClearLive(std::uint32_t generation)
+    {
+        std::lock_guard make(liveMakeMutex_);
+        liveGeneration_ = generation;
+        const std::size_t n = held_.size();
+        held_.clear();
+        heldDirty_ = false;
+        {
+            std::unique_lock lock(liveMutex_);
+            live_.clear();
+            heldPops_.reset();
+            anyLive_.store(false, std::memory_order_release);
+            gradingEpoch_.fetch_add(1, std::memory_order_acq_rel);
+        }
+        RetireLocked(std::move(published_));
+        if (n > 0) logger::info("[LiveValues] {} held items cleared (a load)"sv, n);
     }
 
     std::unique_ptr<CatalogEntry> EffectCatalog::MapLateForm(const RE::TESBoundObject* form)
@@ -504,6 +651,14 @@ namespace Huginn::Effect
         ResolveZeroMagnitudes(rr.items, rr.effects, classes);
         const ItemMapping m = MapItem(item, rr.effects, classes);
         LogBudgetHits("a per-instance entry"sv);
+        // Graded as the base form is: among what the player has once that
+        // is published (0.24.30), the damage within the load order.
+        std::shared_ptr<const Populations> held;
+        {
+            std::shared_lock lock(liveMutex_);
+            held = heldPops_;
+        }
+        if (held) return MakeEntry(m, Grade(m, *held, &pops_), *held);
         return MakeEntry(m, Grade(m, pops_), pops_);
     }
 }

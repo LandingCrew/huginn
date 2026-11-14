@@ -132,7 +132,7 @@ namespace Huginn::Effect
             const auto& it = read.items[i];
             const auto* form = read.forms[i];
             const ItemMapping m = MapItem(it, read.effects, classes);
-            const auto* entry = m.inScope ? catalog.Find(it.formId) : nullptr;
+            const auto* entry = m.inScope ? catalog.FindRecord(it.formId) : nullptr;   // the records only, not the held grading
             const std::string cap = entry ? FormatCap(entry->cap) : std::string{};
             std::string slotClass;
             if (m.inScope) {

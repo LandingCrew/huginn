@@ -108,6 +108,8 @@ bool PipelineCoordinator::RunPipeline(
     // into the skip decision so a page-only change still forces a run.
     const bool pageResynced = ResolveDisplayPage(m_ctx);
 
+    // 0.24.30: the held grading (LiveValues) is applied before the update
+    // loop's gate (RunPipelineIfNeeded); a change marks the page dirty.
     if (CheckHashSkip(m_ctx, pageChanged || pageResynced)) {
         return false;  // Hash unchanged, pipeline skipped
     }

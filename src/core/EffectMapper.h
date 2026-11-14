@@ -369,8 +369,14 @@ namespace Huginn::Core::Effect
         [[nodiscard]] static std::uint32_t RowGroup(const KeptRow& r) noexcept;
         /// The population a kept row grades in on column `c`: its RowGroup,
         /// except a timed row on a column whose timed population is under
-        /// kMinTimedGroup, which grades in group 0.
+        /// the smallest timed group (kMinTimedGroup unless set), which
+        /// grades in group 0.
         [[nodiscard]] std::uint32_t GradeGroup(Col c, const KeptRow& r) const;
+        /// The smallest timed population a timed row grades in. The held
+        /// population (HeldPopulations) sets 1: every item graded against it
+        /// is in it, so a lone timed item is the best of its kind the player
+        /// has, not a row graded against a population it is not in.
+        void SetMinTimedGroup(std::size_t n) noexcept { minTimedGroup_ = n; }
         /// Must not collide with the grouped populations' ids in
         /// EffectMapper.cpp (static_assert there).
         static constexpr std::uint32_t kGroupTimed = 0x20000000u;
@@ -381,11 +387,25 @@ namespace Huginn::Core::Effect
             return (static_cast<std::uint64_t>(c) << 32) | g;
         }
         std::map<std::uint64_t, std::vector<float>> pops_;
+        std::size_t minTimedGroup_ = kMinTimedGroup;
         bool finalized_ = false;
     };
 
-    /// The graded cap of one mapped item.
-    [[nodiscard]] Cap Grade(const ItemMapping& m, const Populations& pops);
+    /// The graded cap of one mapped item. `grouped`, when given, grades the
+    /// item features of a group (a weapon's damage within its type, an
+    /// armour piece's rating within its slot and weight) in place of `pops`:
+    /// the held grading (HeldPopulations) grades effects among what the
+    /// player has and those features within the load order.
+    [[nodiscard]] Cap Grade(const ItemMapping& m, const Populations& pops, const Populations* grouped = nullptr);
+
+    /// 0.24.30: the population of what the player has -- every spell they
+    /// know and item they carry, mapped from their numbers as the player has
+    /// them (effect/LiveValues.h) -- for grading those same items among
+    /// themselves. Graded against the load order's records, a spell cast at
+    /// the player's skill and perks (often 2.5x its record in LoreRim) sat
+    /// at the top of its column with most of the spells known, losing their
+    /// order among themselves. Finalized; the smallest timed group is 1.
+    [[nodiscard]] Populations HeldPopulations(const std::vector<const ItemMapping*>& held);
 
     /// The item's school (spells, scrolls, staves): its primary kept row's.
     [[nodiscard]] School PrimarySchool(const ItemMapping& m, const Populations& pops);
