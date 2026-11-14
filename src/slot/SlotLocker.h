@@ -8,8 +8,11 @@
 #include "override/OverrideConditions.h"
 #include "telemetry/SoakMetrics.h"
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <mutex>
 #include <span>
 
@@ -290,6 +293,15 @@ namespace Huginn::Slot
         /// stepped in core/WildcardGate.h).
         [[nodiscard]] bool IsInCombat() const;
 
+        /// 0.24.29 (review of PR #254): a waiting combat challenger's time
+        /// gates (its fCombatWantedSec wait, its recent departure, the page's
+        /// spacing, the wheel-close hold) have opened since the last run, so
+        /// the pipeline must run although nothing it hashes changed
+        /// (PipelineCoordinator::NeedsForcedRun). The time is set by each
+        /// combat run (core::NextUpsertWakeMs) and cleared out of combat; a
+        /// run past it sets the next. Lock-free: the skip gates ask every tick.
+        [[nodiscard]] bool CombatUpsertWakeDue(std::chrono::steady_clock::time_point now) const noexcept;
+
         /// Restart every lock's timer at the full duration, as if each key had
         /// just changed. Called when the Wheeler wheel closes: the widget is
         /// hidden while the wheel is open, so a key that changed then is first
@@ -455,12 +467,17 @@ namespace Huginn::Slot
         double m_lastSuspendedMs = 0.0;
 
         // Combat upsert, page-wide (core::CombatUpsertMemory): items that
-        // recently left a key or that an upsert displaced this fight (never
-        // challengers), and the page's last upsert. Guarded by m_mutex.
+        // recently left a key, whatever moved them (never challengers until
+        // UpsertRecentMs has passed), and the page's last upsert. Guarded by
+        // m_mutex.
         Core::CombatUpsertMemory m_upsertMemory;
         // When the Wheeler wheel last closed (RestartLocks): no upsert for
         // max(fPressGraceMs, the press floor) after it. Epoch = not since reset.
         std::chrono::steady_clock::time_point m_wheelClosedAt{};
+        // 0.24.29 (review of PR #254): when a waiting challenger's time gates
+        // next open (steady ms; +inf = none). Written under m_mutex by the
+        // combat run, read lock-free by CombatUpsertWakeDue.
+        std::atomic<double> m_upsertWakeMs{ std::numeric_limits<double>::infinity() };
 
         // =========================================================================
         // INTERNAL HELPERS

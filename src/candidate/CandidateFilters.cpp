@@ -361,25 +361,33 @@ namespace Huginn::Candidate
         const auto activeCooldowns = m_cooldownMgr.GetActiveCooldownKeys();
 
         // 0.24.29: sResistPotionPick = Greedy -- the strongest resist potion
-        // on hand per element (core/ResistPotions.h); the weaker ones drop
-        // below (resist_weaker). Read before the pass: on hand and off
-        // cooldown, as the pass would keep them.
+        // per element among those that pass every other filter
+        // (core/ResistPotions.h WeakerAmong); the weaker ones drop as
+        // resist_weaker. Review of PR #254: the best was read BEFORE the
+        // pass, so a strongest potion that a later filter dropped
+        // (favourite-suppressed, or blocked by a running potion of another of
+        // its elements) still dropped every weaker one, and no potion of the
+        // element was offered. Now the pass only notes its survivors (by
+        // index, with each resist potion's strengths, read once), the pick
+        // runs over them, and the survivors move into output after it, in
+        // their order.
         const bool greedyResist = m_config.filterRedundantResists &&
                                   m_config.resistPotionPick == ResistPotionPick::Greedy;
-        Core::ResistPotions::Strengths bestResist{};
-        if (greedyResist) {
-            for (const auto& c : gatherBuffer) {
-                const auto* item = std::get_if<ItemCandidate>(&c);
-                if (!item || item->count <= 0) continue;
-                if (activeCooldowns.contains(CooldownManager::MakeKey(item->formID, item->sourceType))) continue;
-                if (const auto s = ResistPotionStrengths(item->formID)) Core::ResistPotions::NoteBest(bestResist, *s);
-            }
-        }
+        struct Kept
+        {
+            size_t index = 0;                 ///< into gatherBuffer
+            Core::Facets::Subject subject;
+            size_t resist = SIZE_MAX;         ///< into keptResist; SIZE_MAX: not a resist potion
+        };
+        std::vector<Kept> kept;
+        std::vector<Core::ResistPotions::Strengths> keptResist;
+        if (greedyResist) kept.reserve(gatherBuffer.size());
 
-        // Single forward pass: filter + dedup, moving survivors into output.
-        // Each candidate is moved at most once (into output). No in-place
-        // erase_if means no variant move-assignment chains that trigger
-        // string proxy swaps on freed memory.
+        // Single forward pass: filter + dedup, moving survivors into output
+        // (under the greedy pick, after it). Each candidate is moved at most
+        // once (into output). No in-place erase_if means no variant
+        // move-assignment chains that trigger string proxy swaps on freed
+        // memory.
         size_t weaponsBefore = 0;
         size_t weaponsFilteredByEquipped = 0;
         size_t weaponsFilteredByAffordability = 0;
@@ -494,22 +502,38 @@ namespace Huginn::Candidate
                 continue;
             }
 
-            // 7. 0.24.29: a resist potion weaker than another of its element.
-            if (greedyResist) {
-                if (const auto* item = std::get_if<ItemCandidate>(&c)) {
-                    const auto s = ResistPotionStrengths(item->formID);
-                    if (s && Core::ResistPotions::Weaker(*s, bestResist)) {
-                        recordDrop(c, Core::Filter::Reason::resist_weaker);
-                        ++stats.filteredByResistPick;
-                        continue;
-                    }
-                }
-            }
-
             // Passed all filters — move into output (single move per survivor)
             if (isWeapon) ++weaponsPassed;
+            if (greedyResist) {
+                // 7. Held for the greedy resist pick below.
+                Kept k{ static_cast<size_t>(&c - gatherBuffer.data()), subject };
+                if (const auto* item = std::get_if<ItemCandidate>(&c)) {
+                    if (const auto s = ResistPotionStrengths(item->formID)) {
+                        k.resist = keptResist.size();
+                        keptResist.push_back(*s);
+                    }
+                }
+                kept.push_back(std::move(k));
+                continue;
+            }
             output.push_back(std::move(c));
             if (subjects) subjects->push_back(subject);
+        }
+
+        // 7. 0.24.29: a resist potion weaker than another of its element that
+        // passed (resist_weaker); the rest move into output in pass order.
+        if (greedyResist) {
+            const auto weaker = Core::ResistPotions::WeakerAmong(keptResist);
+            for (auto& k : kept) {
+                auto& c = gatherBuffer[k.index];
+                if (k.resist != SIZE_MAX && weaker[k.resist]) {
+                    recordDrop(c, Core::Filter::Reason::resist_weaker);
+                    ++stats.filteredByResistPick;
+                    continue;
+                }
+                output.push_back(std::move(c));
+                if (subjects) subjects->push_back(std::move(k.subject));
+            }
         }
 
         // Limit output size if configured

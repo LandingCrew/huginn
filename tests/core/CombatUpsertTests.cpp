@@ -326,20 +326,28 @@ TEST_CASE("combat upsert memory: the page takes one upsert per spacing")
     CHECK(mem.PageOpen(1100.0, kCombatUpsertPageSpacingMs));
 }
 
-TEST_CASE("combat upsert memory: what an upsert displaced stays out for the fight; any departure for a while")
+TEST_CASE("combat upsert memory: any departure stays out for a while, an upsert's too (review, PR #254)")
 {
+    // 0.24.29: no departure is barred for the fight. The item an upsert
+    // displaced (A) is out for recentMs like any other (C), then may come back.
     CombatUpsertMemory mem;
-    mem.NoteLeft({ 0xA, 0, "Potion A" }, 1000.0, /*byUpsert=*/true);
-    mem.NoteLeft({ 0xC, 0, "Spell C" }, 1000.0, /*byUpsert=*/false);
-    CHECK(mem.Excluded(0xA, 0, "Potion A", 600000.0, 10000.0));    // ten minutes on: still out
-    CHECK(mem.Excluded(0xC, 0, "Spell C", 5000.0, 10000.0));       // left 4 s ago
+    mem.NoteLeft({ 0xA, 0, "Potion A" }, 1000.0);   // an upsert displaced it
+    mem.NoteLeft({ 0xC, 0, "Spell C" }, 1000.0);    // an override broke its key
+    CHECK(mem.Excluded(0xA, 0, "Potion A", 5000.0, 10000.0));      // left 4 s ago
+    CHECK(mem.Excluded(0xC, 0, "Spell C", 5000.0, 10000.0));
+    CHECK_FALSE(mem.Excluded(0xA, 0, "Potion A", 11000.0, 10000.0));
     CHECK_FALSE(mem.Excluded(0xC, 0, "Spell C", 11000.0, 10000.0));
     CHECK(mem.Excluded(0xF, 0, "Potion A", 2000.0, 10000.0));      // same name, other form
     CHECK_FALSE(mem.Excluded(0xB, 0, "Other", 2000.0, 10000.0));
+    // Leaving again restarts the wait.
+    mem.NoteLeft({ 0xA, 0, "Potion A" }, 9000.0);
+    CHECK(mem.Excluded(0xA, 0, "Potion A", 11000.0, 10000.0));
     mem.Prune(11000.0, 10000.0);
-    CHECK(mem.Size() == 1);                                        // C pruned, A kept
+    CHECK(mem.Size() == 1);                                        // C pruned, A (left at 9 s) kept
     mem.EndFight();
-    CHECK_FALSE(mem.Excluded(0xA, 0, "Potion A", 600000.0, 10000.0));
+    CHECK(mem.Size() == 1);                                        // ages out on its own
+    mem.Prune(19000.0, 10000.0);
+    CHECK(mem.Size() == 0);
 }
 
 TEST_CASE("combat wanted clock: an item keeps its start while it stays wanted")
@@ -394,6 +402,68 @@ TEST_CASE("combat wanted clock: a suspension does not count (alt-tab, the consol
     CHECK(clock.ForMs(0xA, 0, "Potion A", 124600.0) == doctest::Approx(1600.0));
 }
 
+TEST_CASE("combat upsert wake: a run when a waiting challenger's time gates open (review, PR #254)")
+{
+    // The wanted clock moves only on a run, and a quiet fight skips runs: the
+    // locker names the time the next wait matures, and the skip gates force
+    // one run then (PipelineCoordinator::NeedsForcedRun).
+    constexpr double kNever = -std::numeric_limits<double>::infinity();
+    const double inf = std::numeric_limits<double>::infinity();
+
+    // Resist Fire wanted since 10.0 s, fCombatWantedSec 1.5 s: the run at
+    // 10.1 s schedules one at 11.5 s, and nothing once it has matured.
+    const double matures = 10000.0 + 1500.0;
+    CHECK(NextUpsertWakeMs({ UpsertOpenAtMs(matures, kNever, kNever, kNever, kNever) }, 10100.0) ==
+          doctest::Approx(11500.0));
+    CHECK(NextUpsertWakeMs({ UpsertOpenAtMs(matures, kNever, kNever, kNever, kNever) }, 11500.0) == inf);
+    CHECK(NextUpsertWakeMs({}, 10100.0) == inf);
+
+    // The latest gate decides: off a key until 13 s, the page open at 12 s.
+    CHECK(UpsertOpenAtMs(matures, 13000.0, 12000.0, kNever, kNever) == doctest::Approx(13000.0));
+    CHECK(UpsertOpenAtMs(matures, kNever, 12000.0, 12100.0, kNever) == doctest::Approx(12100.0));
+    CHECK(UpsertOpenAtMs(matures, kNever, kNever, kNever, 11800.0) == doctest::Approx(11800.0));
+    // The earliest challenger wakes the pipeline.
+    CHECK(NextUpsertWakeMs({ 14000.0, 11600.0, 9000.0 }, 10100.0) == doctest::Approx(11600.0));
+
+    // The memory's opening times.
+    CombatUpsertMemory mem;
+    CHECK(mem.PageOpenAtMs(kCombatUpsertPageSpacingMs) == kNever);
+    CHECK(mem.ExcludedUntilMs(0xA, 0, "Potion A", 3000.0) == kNever);
+    mem.NoteUpsert(5000.0);
+    mem.NoteLeft({ 0xA, 0, "Potion A" }, 5000.0);
+    CHECK(mem.PageOpenAtMs(kCombatUpsertPageSpacingMs) == doctest::Approx(5000.0 + kCombatUpsertPageSpacingMs));
+    CHECK(mem.ExcludedUntilMs(0xA, 0, "Potion A", 3000.0) == doctest::Approx(8000.0));
+    CHECK(mem.ExcludedUntilMs(0xF, 0, "Potion A", 3000.0) == doctest::Approx(8000.0));   // same name
+    // Consistent with Excluded and PageOpen at the edge.
+    CHECK(mem.Excluded(0xA, 0, "Potion A", 7999.0, 3000.0));
+    CHECK_FALSE(mem.Excluded(0xA, 0, "Potion A", 8000.0, 3000.0));
+    CHECK(mem.PageOpen(5000.0 + kCombatUpsertPageSpacingMs, kCombatUpsertPageSpacingMs));
+}
+
+TEST_CASE("combat upsert wake: how long a key closed on time stays closed")
+{
+    CHECK(CombatUpsertGateWaitMs(OpenKey()) == 0.0);
+    auto in = OpenKey();
+    in.sincePressMs = 100.0;   // pressed: max(grace 600, floor 500) from the press
+    CHECK(CombatUpsertGateWaitMs(in) == doctest::Approx(500.0));
+    in = OpenKey();
+    in.sinceShownMs = 200.0;   // changed: the grace from the change
+    CHECK(CombatUpsertGateWaitMs(in) == doctest::Approx(400.0));
+    in = OpenKey();
+    in.sinceUpsertMs = 4000.0;   // cooldown 10 s
+    in.sinceShownMs = 4000.0;
+    CHECK(CombatUpsertGateWaitMs(in) == doctest::Approx(6000.0));
+    in.sincePressMs = 100.0;   // both: the later one
+    CHECK(CombatUpsertGateWaitMs(in) == doctest::Approx(6000.0));
+    // A gate that opens on an event, not a time.
+    in = OpenKey();
+    in.shownPinned = true;
+    CHECK(CombatUpsertGateWaitMs(in) == std::numeric_limits<double>::infinity());
+    in = OpenKey();
+    in.wheelOpen = true;
+    CHECK(CombatUpsertGateWaitMs(in) == std::numeric_limits<double>::infinity());
+}
+
 namespace
 {
     // One run of SlotLocker::ApplyCombatUpserts's sequence on frozen keys,
@@ -436,7 +506,7 @@ namespace
             }
             for (const auto& p : PlanCombatUpserts(frozen, scores, fits, margin, 1)) {
                 auto& key = keys[p.key];
-                mem.NoteLeft({ key.formID, 0, key.name }, nowMs, true);
+                mem.NoteLeft({ key.formID, 0, key.name }, nowMs);
                 mem.NoteUpsert(nowMs);
                 key = wanted[src[p.challenger]];
                 ++changes;
@@ -450,8 +520,10 @@ TEST_CASE("combat upsert: no cascade through the item an upsert displaced (verif
     // Key k (Regular) frozen on healing potion A (s=0); key j (Healing) frozen
     // on C (s=-1.5). The seating wants B (damage, s=+1.5, fits only k) on k and
     // A on j. Run 1: B takes k. After that A, shown nowhere and the allocator's
-    // pick for j, must NOT take j: A moving k -> j in 0.1 s is the home-key
-    // move the combat lock defers, as two changes.
+    // pick for j, must NOT take j at once: A moving k -> j in 0.1 s is the
+    // home-key move the combat lock defers, as two changes. 0.24.29 (review of
+    // PR #254): once A has been off its key for recentMs it may come back,
+    // here on j, where it still leads C by more than the margin.
     const double b = 1.0;
     const double recentMs = 10000.0;
     Page page;
@@ -460,11 +532,15 @@ TEST_CASE("combat upsert: no cascade through the item an upsert displaced (verif
     page.Run(1000.0, wanted, b, recentMs);
     REQUIRE(page.changes == 1);
     CHECK(page.keys[0].formID == 0xB);
-    for (double t = 1100.0; t <= 61000.0; t += 100.0) {   // a minute of runs, past spacing and cooldown
+    for (double t = 1100.0; t < 1000.0 + recentMs; t += 100.0) {   // past the page spacing, inside recentMs
         page.Run(t, wanted, b, recentMs);
     }
     CHECK(page.changes == 1);
     CHECK(page.keys[1].formID == 0xC);
+    page.Run(1000.0 + recentMs, wanted, b, recentMs);
+    CHECK(page.changes == 2);
+    CHECK(page.keys[1].formID == 0xA);
+    CHECK(page.keys[0].formID == 0xB);
 }
 
 TEST_CASE("combat upsert: two keys clearing the margin at once change one at a time")

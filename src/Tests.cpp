@@ -6297,7 +6297,9 @@ void RunSlotLockerOverrideScopeTest()
 
         // 5e. No cascade: A, displaced, is now the allocator's pick for key 1
         //     and beats C by +1.5 -- past the page spacing, the press floor
-        //     and with key 1 open, it must still not come back.
+        //     and with key 1 open, it must still not come back while it left
+        //     a key less than fCombatUpsertCooldownSec (10 s here) ago. (Past
+        //     that it may: 0.24.29 bars no item for the fight.)
         shown = locker.ApplyLocks(scoredPage({ { D, 1.5 }, { A, 0.0 } }), none, {}, at(t0, 6000));
         if (!shows(shown, 1, C)) {
             logger::error("TEST FAIL: the item an upsert displaced came back on another key (key1={:08X})"sv,
@@ -6312,6 +6314,31 @@ void RunSlotLockerOverrideScopeTest()
             passed = false;
         }
         (void)locker.SetInCombat(false);
+
+        // 5x (review of PR #254). The item an upsert displaced comes back:
+        //     D (+1.5) takes key 0 from A (0.0) at 2 s (key 1's C, +0.8, is
+        //     not led by the margin). A then rises to +3.0: at 6 s it left a
+        //     key 4 s ago (out: fCombatUpsertCooldownSec 10 s); at 12.5 s it
+        //     takes a key again. Before 0.24.29 the churn pass marked it
+        //     displaced by an upsert, barred for the rest of the fight.
+        {
+            locker.Reset();
+            (void)locker.SetInCombat(true);
+            const auto t7 = std::chrono::steady_clock::now();
+            (void)locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, 0.8 } }), none, {}, at(t7, 0));
+            shown = locker.ApplyLocks(scoredPage({ { D, 1.5 }, { C, 0.8 } }), none, {}, at(t7, 2000));
+            const bool dTook = shows(shown, 0, D) && shows(shown, 1, C);
+            shown = locker.ApplyLocks(scoredPage({ { A, 3.0 }, { C, 0.8 } }), none, {}, at(t7, 6000));
+            const bool aWaited = shows(shown, 0, D) && shows(shown, 1, C);
+            shown = locker.ApplyLocks(scoredPage({ { A, 3.0 }, { C, 0.8 } }), none, {}, at(t7, 12500));
+            const bool aBack = shows(shown, 0, A) || shows(shown, 1, A);
+            if (!dTook || !aWaited || !aBack) {
+                logger::error("TEST FAIL: the item an upsert displaced (D took {}, A waited {}, A back {}; key0={:08X}, key1={:08X})"sv,
+                    dTook, aWaited, aBack, shown.size() > 0 ? shown[0].formID : 0, shown.size() > 1 ? shown[1].formID : 0);
+                passed = false;
+            }
+            (void)locker.SetInCombat(false);
+        }
 
         // 5g. Two keys clearing the barrier on one run: one changes; the
         //     other waits out the page spacing.
@@ -6401,7 +6428,7 @@ void RunSlotLockerOverrideScopeTest()
             // 5v (review of PR #254). Time wanted while shown does not count:
             //     A sits on key 0 and on the memoryless page (+4.0) from 1 s;
             //     key 1 holds C (-2.0). At 6 s an urgent override breaks key 0
-            //     (a departure no upsert caused: out for 3 s, then back), and A
+            //     (a departure: out for 3 s, then back, as after an upsert), and A
             //     is wanted on no key from then. With fCombatWantedSec 5 s it
             //     waits past 9.5 s (3.5 s on the clock, 8.5 s if its time on
             //     the key counted) and takes key 1 at 11.1 s.
@@ -6471,8 +6498,8 @@ void RunSlotLockerOverrideScopeTest()
         // 5h. Same-run cascade: an urgent override breaks key 1 and the item it
         //     displaces (C, +1.0) is the allocator's pick for key 0 (A, -1.0):
         //     no upsert in a run where another key changes. 5i: on later runs C
-        //     stays out (it left a key less than the cooldown ago -- a
-        //     departure no upsert caused), and comes back once that has passed.
+        //     stays out (it left a key less than the cooldown ago), and comes
+        //     back once that has passed.
         locker.Reset();
         (void)locker.SetInCombat(true);
         Override::OverrideCollection urgent;

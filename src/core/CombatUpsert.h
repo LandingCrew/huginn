@@ -171,14 +171,45 @@ namespace Huginn::Core
         return CombatUpsertGate::Open;
     }
 
+    /// How long until a key the gate closed on time alone opens (0.24.29,
+    /// review of PR #254): 0 when it is open; for PressGrace and Cooldown the
+    /// time until the press, the change and the upsert are all far enough
+    /// behind; +inf for any other gate (it opens on an event, not a time).
+    [[nodiscard]] constexpr double CombatUpsertGateWaitMs(const CombatUpsertGateInput& in) noexcept
+    {
+        const auto gate = DecideCombatUpsertGate(in);
+        if (gate == CombatUpsertGate::Open) return 0.0;
+        if (gate != CombatUpsertGate::PressGrace && gate != CombatUpsertGate::Cooldown) {
+            return std::numeric_limits<double>::infinity();
+        }
+        double wait = 0.0;
+        const double pressMs = in.graceMs > in.pressFloorMs ? in.graceMs : in.pressFloorMs;
+        if (in.sincePressMs >= 0.0 && in.sincePressMs < pressMs && pressMs - in.sincePressMs > wait) {
+            wait = pressMs - in.sincePressMs;
+        }
+        if (in.graceMs > 0.0 && in.sinceShownMs >= 0.0 && in.sinceShownMs < in.graceMs &&
+            in.graceMs - in.sinceShownMs > wait) {
+            wait = in.graceMs - in.sinceShownMs;
+        }
+        if (in.cooldownMs > 0.0 && in.sinceUpsertMs >= 0.0 && in.sinceUpsertMs < in.cooldownMs &&
+            in.cooldownMs - in.sinceUpsertMs > wait) {
+            wait = in.cooldownMs - in.sinceUpsertMs;
+        }
+        return wait;
+    }
+
     /// No upsert this soon after the Wheeler wheel closed: the widget is back
     /// and the player reaches for a key, so a challenger that waited behind
     /// the open wheel must not land in the first run after it. `sinceCloseMs`
     /// < 0 = the wheel has not closed (since the last reset).
+    [[nodiscard]] constexpr double WheelCloseHoldMs(double graceMs) noexcept
+    {
+        return graceMs > kCombatUpsertPressFloorMs ? graceMs : kCombatUpsertPressFloorMs;
+    }
+
     [[nodiscard]] constexpr bool WheelClosedRecently(double sinceCloseMs, double graceMs) noexcept
     {
-        const double holdMs = graceMs > kCombatUpsertPressFloorMs ? graceMs : kCombatUpsertPressFloorMs;
-        return sinceCloseMs >= 0.0 && sinceCloseMs < holdMs;
+        return sinceCloseMs >= 0.0 && sinceCloseMs < WheelCloseHoldMs(graceMs);
     }
 
     /// A key open to an upsert: the score of the item on it, and whether an
@@ -325,36 +356,88 @@ namespace Huginn::Core
         std::vector<Since> m_since;
     };
 
+    /// When a waiting challenger's time gates have all opened (0.24.29, review
+    /// of PR #254): the latest of its wanted clock reaching fCombatWantedSec
+    /// (`maturesAtMs`), the end of its recent-departure wait
+    /// (`excludedUntilMs`), the page's spacing (`pageOpenAtMs`), the hold
+    /// after the Wheeler wheel closed (`wheelOpenAtMs`) and the first key
+    /// opening on time (`keysOpenAtMs`: CombatUpsertGateWaitMs); -inf for a
+    /// gate that is not closed.
+    [[nodiscard]] constexpr double UpsertOpenAtMs(double maturesAtMs, double excludedUntilMs, double pageOpenAtMs,
+        double wheelOpenAtMs, double keysOpenAtMs) noexcept
+    {
+        double at = maturesAtMs;
+        if (excludedUntilMs > at) at = excludedUntilMs;
+        if (pageOpenAtMs > at) at = pageOpenAtMs;
+        if (wheelOpenAtMs > at) at = wheelOpenAtMs;
+        if (keysOpenAtMs > at) at = keysOpenAtMs;
+        return at;
+    }
+
+    /// When the pipeline must next run for the combat upsert: the earliest of
+    /// the challengers' opening times (UpsertOpenAtMs) after `nowMs`; +inf
+    /// when none is still ahead. The wanted clock moves only on a run, and a
+    /// quiet fight skips runs (nothing hashed changes once its element is
+    /// held), so without this a matured wait sat until an unrelated change.
+    /// A challenger whose gates are already open schedules nothing: it was
+    /// judged on this run, and only a change the hash sees changes that.
+    [[nodiscard]] inline double NextUpsertWakeMs(const std::vector<double>& openAtMs, double nowMs) noexcept
+    {
+        double wake = std::numeric_limits<double>::infinity();
+        for (const double at : openAtMs) {
+            if (at > nowMs && at < wake) wake = at;
+        }
+        return wake;
+    }
+
     /// What the upsert must remember between runs, page-wide: the items that
-    /// recently left a key (and which of them an upsert displaced), and when
-    /// the page last took an upsert. Times are ms on one monotonic clock.
+    /// recently left a key, and when the page last took an upsert. Times are
+    /// ms on one monotonic clock.
+    ///
+    /// 0.24.29 (review of PR #254): every departure is alike, an upsert's too.
+    /// The item an upsert displaced used to be barred for the rest of the
+    /// fight; under one fixed margin and the wanted clock it may come back
+    /// once it is off its key for `recentMs` and beats the key's item by the
+    /// margin (the fight changed, not a flicker). The flag that barred it was
+    /// set by SlotLocker's churn pass on every upsert, overriding the upsert
+    /// path's own note, so a Resist Fire bumped off a covered key never came
+    /// back; it is gone, and no path can bar an item for the fight.
     class CombatUpsertMemory
     {
     public:
-        /// `item` stopped showing on a key at `nowMs`; `byUpsert`: an upsert
-        /// replaced it.
-        void NoteLeft(UpsertItem item, double nowMs, bool byUpsert)
+        /// `item` stopped showing on a key at `nowMs`, for whatever reason.
+        void NoteLeft(UpsertItem item, double nowMs)
         {
             for (auto& d : m_left) {
                 if (d.item.Same(item.formID, item.uniqueID, item.name)) {
                     d.atMs = nowMs;
-                    d.byUpsert = d.byUpsert || byUpsert;
                     return;
                 }
             }
-            m_left.push_back({ std::move(item), nowMs, byUpsert });
+            m_left.push_back({ std::move(item), nowMs });
         }
 
-        /// Not a challenger: displaced by an upsert this fight, or left a key
-        /// less than `recentMs` ago.
+        /// Not a challenger: left a key less than `recentMs` ago.
         [[nodiscard]] bool Excluded(uint32_t formID, uint16_t uniqueID, std::string_view name, double nowMs,
             double recentMs) const noexcept
         {
             for (const auto& d : m_left) {
                 if (!d.item.Same(formID, uniqueID, name)) continue;
-                if (d.byUpsert || nowMs - d.atMs < recentMs) return true;
+                if (nowMs - d.atMs < recentMs) return true;
             }
             return false;
+        }
+
+        /// When the item's recent-departure wait ends (it left a key at most
+        /// `recentMs` before); -inf when it has not left one.
+        [[nodiscard]] double ExcludedUntilMs(uint32_t formID, uint16_t uniqueID, std::string_view name,
+            double recentMs) const noexcept
+        {
+            double until = -std::numeric_limits<double>::infinity();
+            for (const auto& d : m_left) {
+                if (d.item.Same(formID, uniqueID, name) && d.atMs + recentMs > until) until = d.atMs + recentMs;
+            }
+            return until;
         }
 
         /// The page may take an upsert: none yet, or the last one at least
@@ -364,24 +447,27 @@ namespace Huginn::Core
             return !m_hasUpsert || nowMs - m_lastUpsertMs >= spacingMs;
         }
 
+        /// When the page may take its next upsert; -inf when it has taken none.
+        [[nodiscard]] double PageOpenAtMs(double spacingMs) const noexcept
+        {
+            return m_hasUpsert ? m_lastUpsertMs + spacingMs : -std::numeric_limits<double>::infinity();
+        }
+
         void NoteUpsert(double nowMs) noexcept
         {
             m_hasUpsert = true;
             m_lastUpsertMs = nowMs;
         }
 
-        /// Drop departures older than `recentMs` that no upsert caused.
+        /// Drop departures older than `recentMs`.
         void Prune(double nowMs, double recentMs)
         {
-            std::erase_if(m_left, [&](const Left& d) { return !d.byUpsert && nowMs - d.atMs >= recentMs; });
+            std::erase_if(m_left, [&](const Left& d) { return nowMs - d.atMs >= recentMs; });
         }
 
-        /// Combat over: what upserts displaced may come back.
-        void EndFight()
-        {
-            std::erase_if(m_left, [](const Left& d) { return d.byUpsert; });
-            m_hasUpsert = false;
-        }
+        /// Combat over: the next fight's first upsert need not wait out the
+        /// page spacing. Recent departures stay until they age out.
+        void EndFight() noexcept { m_hasUpsert = false; }
 
         void Clear()
         {
@@ -396,7 +482,6 @@ namespace Huginn::Core
         {
             UpsertItem item;
             double atMs = 0.0;
-            bool byUpsert = false;
         };
         std::vector<Left> m_left;
         bool m_hasUpsert = false;

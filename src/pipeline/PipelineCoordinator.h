@@ -288,9 +288,10 @@ namespace Huginn::Pipeline
         /// Latches that have needed this: falling (#60), a pending reason
         /// downgrade (#62), underwater (#61), a learner update, and (R8.3) the
         /// need signature moving a step since the last run -- which replaced
-        /// the elemental window here. A latch wired into only the inner gate is
-        /// silently dead in a static scene, which is exactly where the reason
-        /// hold needed it. Add the next one here, not at a call site.
+        /// the elemental window here; 0.24.29, a combat challenger's wait
+        /// maturing (CombatUpsertWakeDue). A latch wired into only the inner
+        /// gate is silently dead in a static scene, which is exactly where the
+        /// reason hold needed it. Add the next one here, not at a call site.
         ///
         /// Underwater is the cautionary one. It was missing from the hash the
         /// whole time and nobody noticed, because the sensor never fired: #61's
@@ -304,7 +305,7 @@ namespace Huginn::Pipeline
         [[nodiscard]] bool NeedsForcedRun() const noexcept
         {
             return m_wasFalling || m_wasUnderwater || m_reasonHold.IsHolding() || LearnerWeightsChanged() ||
-                   NeedSignatureMoved();
+                   NeedSignatureMoved() || CombatUpsertWakeDue();
         }
 
         /// Drop everything that describes the character being unloaded. The held
@@ -370,6 +371,14 @@ namespace Huginn::Pipeline
         /// R8.3: the need signature NeedMonitor holds now differs from the one
         /// the last committed run scored with (out of line: NeedMonitor.h).
         [[nodiscard]] bool NeedSignatureMoved() const noexcept;
+        /// 0.24.29 (review of PR #254): a waiting combat challenger's time
+        /// gates (fCombatWantedSec, its recent departure, the page's spacing)
+        /// opened since the last run (Slot::SlotLocker::CombatUpsertWakeDue).
+        /// The wanted clock moves only on a run, and a quiet fight -- its
+        /// element held, nothing hashed changing -- skips them, so a matured
+        /// wait sat until an unrelated change. One run per maturing wait: the
+        /// run sets the next time. Out of line: SlotLocker.h.
+        [[nodiscard]] static bool CombatUpsertWakeDue() noexcept;
         void LogStateTransition(PipelineContext& ctx);
         void EnrichElementalDamage(PipelineContext& ctx);
         void ScoreCandidates(PipelineContext& ctx);

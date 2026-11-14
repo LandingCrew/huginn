@@ -1051,7 +1051,14 @@ been wanted -- on the memoryless page and on no key -- for `fCombatWantedSec`
 without a break (`Core::CombatWantedClock`, cleared when combat ends; time the
 game spends suspended, alt-tab or the console, does not count). Time
 an item spends wanted while a key shows it does not count: an item knocked
-off a key starts its wait when it leaves. The memoryless page is the page
+off a key starts its wait when it leaves. The clock moves only on a pipeline
+run, and a quiet fight skips runs, so each combat run names the next time a
+waiting challenger's time gates all open (its wait, its recent departure, the
+page spacing, the wheel-close hold, a key's press grace or cooldown;
+`Core::NextUpsertWakeMs`), and `PipelineCoordinator::NeedsForcedRun` forces
+one run then (`SlotLocker::CombatUpsertWakeDue`; 0.24.29, review of #254). A
+challenger whose gates are already open schedules nothing: only a change the
+hash sees can change its verdict. The memoryless page is the page
 this run's ranking alone builds (`core/SlotAllocStateless.h`; `SlotAllocator`
 builds it as `memorylessOut` while the lock is in combat, `SlotLocker::IsInCombat`,
 in place on the input it hands the D2 shadow, which then takes it as its page

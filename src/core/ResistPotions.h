@@ -12,9 +12,10 @@
 //     combat key showing one is covered) -- until that effect is within
 //     [Scoring] fRefreshPriorSec of its end (the refresh pass, R8.1);
 //   - otherwise, under [Candidates] sResistPotionPick = Greedy (the default),
-//     offer only the strongest of the element's potions on hand (cap(i)'s
-//     resist_<element>, which grows with the magnitude; Reason::resist_weaker
-//     for the rest). All: every one, the score decides.
+//     offer only the strongest of the element's potions that pass every other
+//     filter (cap(i)'s resist_<element>, which grows with the magnitude;
+//     Reason::resist_weaker for the rest; WeakerAmong). All: every one, the
+//     score decides.
 //   - drop a resist spell while one of ITS OWN resist effects runs on the
 //     player (CastBlocked, by the effect's form), until that effect is within
 //     fRefreshPriorSec of its end: Fire Shell stacks with a potion, and a
@@ -34,6 +35,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <vector>
 
 namespace Huginn::Core::ResistPotions
 {
@@ -114,6 +116,22 @@ namespace Huginn::Core::ResistPotions
             if (s[e] >= best[e]) return false;
         }
         return resists;
+    }
+
+    /// Greedy over the resist potions that passed every other filter (`kept`:
+    /// each one's strengths): true for each that is not the strongest kept for
+    /// any element it resists (Weaker; a tie keeps both). The best is chosen
+    /// among those survivors only (review of PR #254): a stronger potion that
+    /// another filter drops -- favourite-suppressed, or blocked because a
+    /// running potion covers another of its elements -- is not on offer, and
+    /// must not drop the weaker ones, or no potion of the element is offered.
+    [[nodiscard]] inline std::vector<bool> WeakerAmong(std::span<const Strengths> kept)
+    {
+        Strengths best{};
+        for (const auto& s : kept) NoteBest(best, s);
+        std::vector<bool> weaker(kept.size(), false);
+        for (std::size_t i = 0; i < kept.size(); ++i) weaker[i] = Weaker(kept[i], best);
+        return weaker;
     }
 
     /// The resist effects (their forms) a spell, scroll or staff put on the

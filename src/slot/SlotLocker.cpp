@@ -208,6 +208,7 @@ namespace Huginn::Slot
         }
         m_inCombat = inCombat;
         m_wantedClock.Clear();   // 0.24.29: the wanted clock is per fight
+        m_upsertWakeMs.store(std::numeric_limits<double>::infinity(), std::memory_order_relaxed);   // and its wake
         if (inCombat) {
             // Every key on a normal lock becomes combat-locked on the item it
             // holds (core::ConvertsAtCombatOnset). Left on its timer, it ran
@@ -265,8 +266,8 @@ namespace Huginn::Slot
         }
         // Combat over: no re-shuffle on the last kill. Each combat lock falls
         // back to the normal timer counted from now (or what it had left, if
-        // shorter), and is a normal lock from here on. What upserts displaced
-        // this fight may be challengers again next fight.
+        // shorter), and is a normal lock from here on. The next fight's first
+        // upsert need not wait out this one's page spacing.
         m_upsertMemory.EndFight();
         bool released = false;
         size_t converted = 0;
@@ -659,9 +660,12 @@ namespace Huginn::Slot
 
                 // The item that left: no combat-upsert challenger for a while
                 // (core::CombatUpsertMemory). A page switch is not a departure.
+                // 0.24.29: an upsert's departure is like any other (no ban for
+                // the fight); this used to mark it so, overriding the upsert
+                // path's own note.
                 if (!slot.shownEmpty && cause != Telemetry::SlotChange::Page) {
                     m_upsertMemory.NoteLeft({ slot.shownFormID, slot.shownUniqueID, slot.shownName },
-                        SteadyMs(runNow), cause == Telemetry::SlotChange::Upsert);
+                        SteadyMs(runNow));
                 }
 
                 // Challenger ratio, for the changes a margin would govern.
@@ -1001,14 +1005,43 @@ namespace Huginn::Slot
         m_lastSuspendedMs = run.suspendedMs;
         m_wantedClock.Note(wantedItems, nowMs);
 
+        const double recentMs = UpsertRecentMs();
+        const double wantMs = static_cast<double>(m_config.combatWantedSec) * 1000.0;
+        constexpr double kNever = -std::numeric_limits<double>::infinity();
+        // 0.24.29 (review of PR #254): when the pipeline must run again for a
+        // waiting challenger (CombatUpsertWakeDue, PipelineCoordinator::
+        // NeedsForcedRun). The wanted clock moves only on a run, and once the
+        // fight's element is held a quiet fight hash-skips its runs, so a
+        // challenger whose wait matured sat on the memoryless page until some
+        // unrelated change -- the dead keys this upsert exists to fix. Set on
+        // every return below: the earliest time after this run at which a
+        // challenger's time gates all open. `keysOpenAtMs`: when a key may
+        // first take it (-inf: one may now, or this run did not look).
+        const auto scheduleWake = [&](double keysOpenAtMs) {
+            const double pageOpenAt = m_upsertMemory.PageOpenAtMs(Core::kCombatUpsertPageSpacingMs);
+            const double wheelOpenAt = m_wheelClosedAt == std::chrono::steady_clock::time_point{} ? kNever
+                : SteadyMs(m_wheelClosedAt) + Core::WheelCloseHoldMs(run.pressGraceMs);
+            std::vector<double> openAt;
+            openAt.reserve(wantedNow.size());
+            for (const SlotAssignment* c : wantedNow) {
+                const double forMs = m_wantedClock.ForMs(c->formID, c->uniqueID, c->name, nowMs);
+                openAt.push_back(Core::UpsertOpenAtMs(nowMs - forMs + wantMs,
+                    m_upsertMemory.ExcludedUntilMs(c->formID, c->uniqueID, c->name, recentMs), pageOpenAt,
+                    wheelOpenAt, keysOpenAtMs));
+            }
+            m_upsertWakeMs.store(Core::NextUpsertWakeMs(openAt, nowMs), std::memory_order_relaxed);
+        };
+
         // 0.24.29: one line -- the challenger's score must beat the key's item
         // by fCombatChallengerMargin; below 0 the upsert is off.
         const double margin = static_cast<double>(m_config.combatChallengerMargin);
         if (!(margin >= 0.0)) {
+            m_upsertWakeMs.store(std::numeric_limits<double>::infinity(), std::memory_order_relaxed);
             return;
         }
         // One upsert per page per run, kCombatUpsertPageSpacingMs apart.
         if (!m_upsertMemory.PageOpen(nowMs, Core::kCombatUpsertPageSpacingMs)) {
+            scheduleWake(kNever);
             return;
         }
         const auto sinceMs = [now](std::chrono::steady_clock::time_point t) -> double {
@@ -1018,6 +1051,7 @@ namespace Huginn::Slot
         // Nor right after the Wheeler wheel closes: the widget is back and the
         // player reaches for a key (RestartLocks stamps the close).
         if (Core::WheelClosedRecently(sinceMs(m_wheelClosedAt), run.pressGraceMs)) {
+            scheduleWake(kNever);
             return;
         }
 
@@ -1032,6 +1066,8 @@ namespace Huginn::Slot
             const bool nowEmpty = result[i].IsEmpty();
             if (nowEmpty != slot.shownEmpty ||
                 (!nowEmpty && (result[i].formID != slot.shownFormID || result[i].uniqueID != slot.shownUniqueID))) {
+                // A ready challenger waits one run, not for the next change.
+                scheduleWake(nowMs + 1.0);
                 return;
             }
         }
@@ -1042,6 +1078,7 @@ namespace Huginn::Slot
         // that item this run (covered: no lead asked, core/CombatUpsert.h).
         std::vector<std::optional<Core::UpsertKey>> frozen(n);
         bool anyOpen = false;
+        double keyWaitMs = std::numeric_limits<double>::infinity();   // the first key to open on time
         for (size_t i = 0; i < n; ++i) {
             const auto& shown = result[i];
             const auto& slot = m_lockedSlots[i];
@@ -1064,6 +1101,7 @@ namespace Huginn::Slot
             g.cooldownMs = static_cast<double>(m_config.combatUpsertCooldownSec) * 1000.0;
             g.sinceUpsertMs = sinceMs(slot.lastUpsertAt);
             if (Core::DecideCombatUpsertGate(g) != Core::CombatUpsertGate::Open) {
+                keyWaitMs = std::min(keyWaitMs, Core::CombatUpsertGateWaitMs(g));
                 continue;
             }
             const bool covered = run.needCovered && run.needCovered(shown.formID, shown.uniqueID);
@@ -1074,6 +1112,7 @@ namespace Huginn::Slot
             anyOpen = true;
         }
         if (!anyOpen) {
+            scheduleWake(nowMs + keyWaitMs);   // +inf: no key opens on time alone
             return;
         }
 
@@ -1081,8 +1120,6 @@ namespace Huginn::Slot
         std::vector<const SlotAssignment*> pool;
         std::vector<Core::SlotScore> scores;
         std::vector<double> wantedFor;
-        const double recentMs = UpsertRecentMs();
-        const double wantMs = static_cast<double>(m_config.combatWantedSec) * 1000.0;
         for (const SlotAssignment* c : wantedNow) {
             // An item that left a key a moment ago does not come straight back
             // (UpsertRecentMs): that would be two changes on one want.
@@ -1094,6 +1131,7 @@ namespace Huginn::Slot
             wantedFor.push_back(forMs);
         }
         if (pool.empty()) {
+            scheduleWake(kNever);
             return;
         }
         std::vector<std::vector<bool>> fits(n, std::vector<bool>(pool.size(), false));
@@ -1115,7 +1153,7 @@ namespace Huginn::Slot
                 k, result[k].name, next.name, next.score, result[k].score,
                 pick.covered ? std::string("its need is covered") : std::format("lead {:+.3f} > {:.2f}", pick.lead, margin),
                 wantedFor[pick.challenger] / 1000.0);
-            m_upsertMemory.NoteLeft({ result[k].formID, result[k].uniqueID, result[k].name }, nowMs, /*byUpsert=*/false);
+            m_upsertMemory.NoteLeft({ result[k].formID, result[k].uniqueID, result[k].name }, nowMs);
             m_upsertMemory.NoteUpsert(nowMs);
             result[k] = next;
             // Combat-locked on the new item like any other key.
@@ -1125,6 +1163,13 @@ namespace Huginn::Slot
             slot.lastUpsertAt = now;
             slot.releaseCause = Telemetry::SlotChange::Upsert;
         }
+        // After the picks: an upsert moved the page's spacing on.
+        scheduleWake(kNever);
+    }
+
+    bool SlotLocker::CombatUpsertWakeDue(std::chrono::steady_clock::time_point now) const noexcept
+    {
+        return SteadyMs(now) >= m_upsertWakeMs.load(std::memory_order_relaxed);
     }
 
     // =========================================================================
@@ -1290,6 +1335,7 @@ namespace Huginn::Slot
         m_churnBaseline = true;
         m_inCombat = false;
         m_wantedClock.Clear();
+        m_upsertWakeMs.store(std::numeric_limits<double>::infinity(), std::memory_order_relaxed);
         m_upsertMemory.Clear();
         m_wheelClosedAt = {};
         spdlog::info("[SlotLocker] Reset complete");

@@ -541,8 +541,8 @@ static void RunPipelineIfNeeded(float deltaMs, RE::PlayerCharacter* player,
     // NeedsForcedRun() says so: state the GameState hash cannot see -- the
     // need signature moved a 0.05 step since the last run (R8.3: a damage sum
     // decaying, a timer, a continuous need; it replaced the elemental window
-    // here), a fall, a pending reason downgrade (#62), a learner update.
-    // CheckHashSkip consults the same list, but it never gets the chance if
+    // here), a fall, a pending reason downgrade (#62), a learner update, a
+    // combat challenger's wait maturing (0.24.29). CheckHashSkip consults the same list, but it never gets the chance if
     // this gate returns first, and a static scene is precisely where a held
     // label needs ticks to expire on.
     //

@@ -331,6 +331,11 @@ bool PipelineCoordinator::LearnerWeightsChanged() noexcept
            (g_choiceLearner && g_choiceLearner->WeightsChanged());
 }
 
+bool PipelineCoordinator::CombatUpsertWakeDue() noexcept
+{
+    return Slot::SlotLocker::GetSingleton().CombatUpsertWakeDue(std::chrono::steady_clock::now());
+}
+
 bool PipelineCoordinator::NeedSignatureMoved() const noexcept
 {
     return Needs::NeedMonitor::GetSingleton().LatestSignatureHash() !=
