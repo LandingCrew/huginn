@@ -120,6 +120,10 @@ namespace Huginn::Core::Needs
         // --- Ally -----------------------------------------------------------
         bool followerPresent = false;   // a teammate, or the player's own summon or thrall (0.23.41)
         bool followerBleedout = false;  // a follower down on one knee
+        // 0.24.32: 1 - health fraction of the most hurt living teammate (0..1),
+        // the crosshair's included. Fair on LoreRim: TrueHUD draws a teammate's
+        // health bar once they are hit (uInfoBarDisplayTeammates = On Hit).
+        float followerHealthMissing = 0.0f;
 
         // --- Environment ----------------------------------------------------
         float light = 1.0f;           // game light on the player, 0-1, held against flicker (0.23.41, LightHold.h)
@@ -198,6 +202,7 @@ namespace Huginn::Core::Needs
         HUGINN_NEED_FIELD(targetHealth), HUGINN_NEED_FIELD(soleHostileTtk), HUGINN_NEED_FIELD(families),
         HUGINN_NEED_FIELD(hostileSummoned),
         HUGINN_NEED_FIELD(followerPresent), HUGINN_NEED_FIELD(followerBleedout),
+        HUGINN_NEED_FIELD(followerHealthMissing),
         HUGINN_NEED_FIELD(light), HUGINN_NEED_FIELD(openDaylight), HUGINN_NEED_FIELD(underwater),
         HUGINN_NEED_FIELD(submergedFor), HUGINN_NEED_FIELD(swimming), HUGINN_NEED_FIELD(fallDepth),
         HUGINN_NEED_FIELD(dropAhead), HUGINN_NEED_FIELD(waterDepthAhead),

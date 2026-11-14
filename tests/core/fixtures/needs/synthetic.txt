@@ -414,6 +414,24 @@ followerPresent 1
 followerBleedout 1
 end
 
+# 0.24.32: a follower standing at 35% health (input 0.65); one at 90% (0.1);
+# one down whose bar still shows 20% (bleedout reads 1).
+snapshot ally_hurt
+followerPresent 1
+followerHealthMissing 0.65
+end
+
+snapshot ally_scratched
+followerPresent 1
+followerHealthMissing 0.1
+end
+
+snapshot ally_down_with_health
+followerPresent 1
+followerBleedout 1
+followerHealthMissing 0.8
+end
+
 # Underwater 15 s (input 0.75).
 snapshot underwater_deep
 underwater 1

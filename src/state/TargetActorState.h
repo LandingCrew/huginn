@@ -192,7 +192,7 @@ namespace Huginn::State
       // crosshair, or was within Core::Gate::kAllyAimHoldSec. What a spell for
       // someone else waits for (no_ally_aimed).
       bool allyInCrosshair = false;
-      // 0.24.31: a teammate down on one knee (ally_injured's step): a heal for
+      // 0.24.31: a teammate down on one knee (bleedout; ally_injured reads 1 then): a heal for
       // someone else passes no_ally_aimed without the crosshair.
       bool allyDown = false;
 

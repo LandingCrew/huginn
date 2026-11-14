@@ -348,6 +348,7 @@ namespace Huginn::State
       bool changed = false;
       HostileNeeds hostileNeeds;        // R3: this poll's living combat hostiles
       bool followerBleedout = false;    // R3: a teammate down on one knee
+      float followerHealthMissing = 0.0f;   // 0.24.32: the most hurt teammate's 1 - health fraction
       bool playerSummonNear = false;    // R3: the player's own summon or thrall in range (0.23.41)
       bool scoringArcher = false;
       float soleTtk = -1.0f;
@@ -787,7 +788,8 @@ namespace Huginn::State
             m_processedAllies.insert(allyFormID);
 
             // R3 ally_injured, the visible step: a teammate down on one knee.
-            // (The continuous health reading needs a HUD mod's ally bars.)
+            // The continuous reading (0.24.32) is taken below from every
+            // tracked teammate's vitals, the crosshair's included.
             if (isTeammate) {
               if (const auto* allyState = ally->AsActorState(); allyState && allyState->IsBleedingOut()) {
                 followerBleedout = true;
@@ -987,6 +989,17 @@ namespace Huginn::State
 
       m_targets.allyDown = followerBleedout;   // 0.24.31: no_ally_aimed's pass for heals
 
+      // 0.24.32 ally_injured: how hurt the most hurt living teammate is, the one
+      // in the crosshair too (the ally loop skips the primary target). Fair on
+      // LoreRim, whose TrueHUD draws a teammate's health bar once they are hit.
+      {
+        const auto hurt = [](const TargetActorState& t) {
+          return (t.isFollower && !t.isDead) ? std::clamp(1.0f - t.vitals.health, 0.0f, 1.0f) : 0.0f;
+        };
+        for (const auto& t : m_targets.targets) followerHealthMissing = std::max(followerHealthMissing, hurt(t));
+        if (m_targets.primary) followerHealthMissing = std::max(followerHealthMissing, hurt(*m_targets.primary));
+      }
+
       // Change detection: compare lightweight digest against previous
       TargetDigest digest = ComputeTargetDigest();
       changed = !(digest == m_prevTargetDigest);
@@ -1042,6 +1055,7 @@ namespace Huginn::State
         n.hostileSummoned = hostileNeeds.summoned;
         n.targetArcher = scoringArcher;
         n.followerBleedout = followerBleedout;
+        n.followerHealthMissing = followerHealthMissing;
         n.playerSummonNear = playerSummonNear;
         n.soleHostileTtk = soleTtk;
       });
