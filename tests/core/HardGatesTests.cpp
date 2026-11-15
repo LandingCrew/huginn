@@ -359,3 +359,15 @@ TEST_CASE("lock: the crosshair's lock, and which ones lock_in_crosshair counts (
     CHECK_FALSE(Lock::Pickable(Lock::kRequiresKey));
     CHECK_FALSE(Lock::Pickable(Lock::kNoLock));
 }
+
+TEST_CASE("hard gates: a heal goes to a downed or badly hurt teammate without the look (0.24.32)")
+{
+    CHECK(Gate::AllyNeedsHeal(true, 0.0f));                       // down on one knee
+    CHECK(Gate::AllyNeedsHeal(false, Gate::kAllyBadlyHurtMissing)); // a third of the bar left
+    CHECK(Gate::AllyNeedsHeal(false, 0.9f));
+    CHECK_FALSE(Gate::AllyNeedsHeal(false, 0.5f));                // half: waits for the look
+    CHECK_FALSE(Gate::AllyNeedsHeal(false, 0.0f));
+    // Through the gate: the heal passes, a resist for them still waits.
+    CHECK_FALSE(Gate::NotAtAlly(true, false, true, Gate::AllyNeedsHeal(false, 0.75f)));
+    CHECK(Gate::NotAtAlly(true, false, false, Gate::AllyNeedsHeal(false, 0.75f)));
+}

@@ -130,7 +130,11 @@ namespace Huginn::Core::Needs
                 case N::target_element_shock: return FamilyIn(s, Family::ElementShock);
                 case N::target_summoned: return B(s.hostileSummoned);
                 // --- Ally
-                case N::ally_injured: return B(s.followerBleedout);
+                // 0.24.32: how hurt the most hurt teammate is; one down on
+                // one knee reads all the way (a downed follower's health bar
+                // can still show some left).
+                case N::ally_injured:
+                    return s.followerBleedout ? 1.0f : std::clamp(s.followerHealthMissing, 0.0f, 1.0f);
                 case N::follower_present: return B(s.followerPresent);
                 // --- Environment
                 case N::darkness: return s.openDaylight ? 0.0f : 1.0f - s.light;

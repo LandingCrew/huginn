@@ -97,6 +97,7 @@ namespace Huginn::State
       bool targetArcher = false;         // the scoring target holds a bow or crossbow
       float soleHostileTtk = -1.0f;
       bool followerBleedout = false;
+      float followerHealthMissing = 0.0f;   // 0.24.32: the most hurt teammate's 1 - health fraction
       // 0.23.41: a living actor the player commands (a summon, a thrall)
       // within the 2048 detection range. follower_present reads it with the
       // teammates: an ally the spells for others (Oakflesh on Target, Heal

@@ -23,6 +23,7 @@
 #include "core/TargetFamilies.h"
 #include "core/TargetTracking.h"
 #include "core/HardGates.h"     // 0.24.31: AllyAimHeld (no_ally_aimed)
+#include "core/NeedSensorMath.h"   // 0.24.32: WoundFraction (ally_injured)
 
 namespace Huginn::State
 {
@@ -348,6 +349,7 @@ namespace Huginn::State
       bool changed = false;
       HostileNeeds hostileNeeds;        // R3: this poll's living combat hostiles
       bool followerBleedout = false;    // R3: a teammate down on one knee
+      float followerHealthMissing = 0.0f;   // 0.24.32: the share of their health the most hurt teammate is missing
       bool playerSummonNear = false;    // R3: the player's own summon or thrall in range (0.23.41)
       bool scoringArcher = false;
       float soleTtk = -1.0f;
@@ -786,11 +788,19 @@ namespace Huginn::State
             }
             m_processedAllies.insert(allyFormID);
 
-            // R3 ally_injured, the visible step: a teammate down on one knee.
-            // (The continuous health reading needs a HUD mod's ally bars.)
+            // R3 ally_injured: a teammate down on one knee, and (0.24.32) how
+            // much of their health they are missing -- read here, from the
+            // actor, before the primary target (the follower in the
+            // crosshair) is skipped and before the collection can refuse a
+            // full house.
             if (isTeammate) {
               if (const auto* allyState = ally->AsActorState(); allyState && allyState->IsBleedingOut()) {
                 followerBleedout = true;
+              }
+              if (auto* av = ally->AsActorValueOwner()) {
+                followerHealthMissing = std::max(followerHealthMissing,
+                   Core::Needs::WoundFraction(av->GetActorValue(RE::ActorValue::kHealth),
+                      ally->GetActorValueModifier(RE::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kHealth)));
               }
             }
 
@@ -985,7 +995,10 @@ namespace Huginn::State
         soleTtk = m_soleHostileTtk.Update(sole, soleHealth, nowSec);
       }
 
-      m_targets.allyDown = followerBleedout;   // 0.24.31: no_ally_aimed's pass for heals
+      // 0.24.31: no_ally_aimed's pass for heals; 0.24.32: a badly hurt
+      // standing teammate opens it too.
+      m_targets.allyDown = Core::Gate::AllyNeedsHeal(followerBleedout, followerHealthMissing);
+
 
       // Change detection: compare lightweight digest against previous
       TargetDigest digest = ComputeTargetDigest();
@@ -1042,6 +1055,7 @@ namespace Huginn::State
         n.hostileSummoned = hostileNeeds.summoned;
         n.targetArcher = scoringArcher;
         n.followerBleedout = followerBleedout;
+        n.followerHealthMissing = followerHealthMissing;
         n.playerSummonNear = playerSummonNear;
         n.soleHostileTtk = soleTtk;
       });
