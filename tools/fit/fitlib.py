@@ -180,8 +180,10 @@ def obvious_pairs(needs, cols, path=EFFECTS_CSV):
     for r in csv.DictReader(open(path, encoding='utf-8')):
         for t in r['obvious_needs'].split(';'):
             t = t.strip()
+            neg = t.startswith('-')   # 0.24.33: "-need" is a negative pair (heal_slow x in_combat)
+            t = t.lstrip('-').strip()
             if t and t in NI and r['id'] in CI:
-                sign = -1.0 if (t == 'combat_regen_ok' and r['id'] == 'kind_food') else 1.0
+                sign = -1.0 if neg or (t == 'combat_regen_ok' and r['id'] == 'kind_food') else 1.0
                 if r['id'].startswith('overshoot_'):
                     sign = 0.0
                 out[(NI[t], CI[r['id']])] = sign * PAIR_STRENGTH.get((t, r['id']), 1.0)

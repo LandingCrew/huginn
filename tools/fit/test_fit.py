@@ -256,7 +256,7 @@ class NarcoticColumn(TempWork):
         old = v3load.load([self.DEC / 'synthetic_v3_0.24.8.jsonl'])
         new = v3load.load([self.DEC / 'synthetic_v3.jsonl'])
         self.assertEqual(old['heads'][0]['ncols'], 243)
-        self.assertEqual(new['heads'][0]['ncols'], 244)
+        self.assertEqual(new['heads'][0]['ncols'], 250)   # 0.24.33 added heal_slow, 0.24.34 total_restore_* and rate_per_magicka
         self.assertNotIn('narcotic', old['cols'])
         self.assertNotIn('alcohol', new['cols'])
         self.assertEqual(new['cols'].index('narcotic'), new['cols'].index('kind_light') + 1)
@@ -273,7 +273,7 @@ class NarcoticColumn(TempWork):
             if 'launch' in r:
                 r['launch'] = '20261009-110000'
         D = v3load.load([self.write('old.jsonl', edit_lines(old, relaunch)), self.DEC / 'synthetic_v3.jsonl'])
-        self.assertEqual(len(D['cols']), 244)          # the union by name: narcotic appended once
+        self.assertEqual(len(D['cols']), 250)          # the union by name: narcotic and 0.24.33-0.24.34's six appended once
         self.assertEqual(D['stats']['dup_ctx'], 2)      # each file's own second segment, nothing across
         by_launch = {}
         for (launch, cid), ctx in D['ctxs'].items():
@@ -292,8 +292,9 @@ class NarcoticColumn(TempWork):
         self.assertEqual(old['heads'][0]['ncols'], 244)
         at = old['cols'].index('alcohol')
         self.assertNotIn('narcotic', old['cols'])
-        self.assertEqual(new['cols'].index('narcotic'), at)
-        self.assertEqual(old['cols'][:at] + old['cols'][at + 1:], new['cols'][:at] + new['cols'][at + 1:])
+        nc = [c for c in new['cols'] if c not in ('heal_slow', 'total_restore_health', 'total_restore_magicka', 'total_restore_stamina', 'total_restore_health_other', 'rate_per_magicka')]   # 0.24.33-0.24.34's columns, before alcohol's place
+        self.assertEqual(nc.index('narcotic'), at)
+        self.assertEqual(old['cols'][:at] + old['cols'][at + 1:], nc[:at] + nc[at + 1:])
         self.assertEqual(self.named_caps(old), self.named_caps(new))   # the session sets neither column
 
 

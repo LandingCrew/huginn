@@ -72,7 +72,9 @@ namespace
     }
 
     /// "a; b; c" -> {a, b, c}
-    std::set<std::string> SplitIds(const std::string& list)
+    /// The needs of an obvious_needs list; `keepSign` keeps a negative
+    /// pair's leading '-' (0.24.33: "-in_combat").
+    std::set<std::string> SplitIds(const std::string& list, bool keepSign = false)
     {
         std::set<std::string> out;
         std::size_t start = 0;
@@ -81,6 +83,7 @@ namespace
             std::string id = list.substr(start, end - start);
             id.erase(0, id.find_first_not_of(' '));
             id.erase(id.find_last_not_of(' ') + 1);
+            if (!keepSign && !id.empty() && id[0] == '-') id.erase(0, 1);
             if (!id.empty()) out.insert(id);
             start = end + 1;
         }
@@ -178,12 +181,14 @@ TEST_CASE("obvious pairs: every pair names a need, and doc 9's count")
             ++pairs;
         }
     }
-    // docs/architecture/9-context-as-learner-input.md, "Pairs": 266 since
+    // docs/architecture/9-context-as-learner-input.md, "Pairs": 274 since
+    // 0.24.34 added total_restore_* x downtime and rate_per_magicka x
+    // magicka_deficit; 269 since 0.24.33 added heal_slow x combat_onset, downtime and -in_combat; 266 since
     // 0.23.30 added magicka_deficit x kind_weapon and combat_regen_ok x
     // kind_food (a negative one); 264 since 0.23.19 added deep_water_ahead x
     // utility_water_breathing (263 since 0.23.17 dropped cold x resist_frost
     // and cold x armour_warm; 265 before; 266 before 0.23.16).
-    CHECK(pairs == 266);
+    CHECK(pairs == 274);
 }
 
 TEST_CASE("obvious pairs: no eating in combat, unless health regeneration is blocked (0.23.30)")
@@ -222,8 +227,10 @@ TEST_CASE("obvious pairs: core/ObviousPairs.h is effects.csv's obvious_needs, wi
     const auto effects = ReadTable("effects.csv");
     std::set<std::tuple<std::string, std::string, int>> csv;
     for (const auto& [id, row] : effects) {
-        for (const auto& need : SplitIds(row.at("obvious_needs"))) {
-            int sign = (need == "combat_regen_ok" && id == "kind_food") ? -1 : 1;
+        for (auto need : SplitIds(row.at("obvious_needs"), true)) {
+            const bool neg = need[0] == '-';
+            if (neg) need.erase(0, 1);
+            int sign = (neg || (need == "combat_regen_ok" && id == "kind_food")) ? -1 : 1;
             if (id.rfind("overshoot_", 0) == 0) sign = 0;
             csv.emplace(id, need, sign);
         }
@@ -236,6 +243,10 @@ TEST_CASE("obvious pairs: core/ObviousPairs.h is effects.csv's obvious_needs, wi
     CHECK(header.size() == Obvious::kPairCount);   // no pair twice
     CHECK(header == csv);
     CHECK(Obvious::PriorOf(Needs::NeedId::combat_regen_ok, Effect::Col::kind_food).sign == -1);
+    // 0.24.33: a slow heal starts behind mid-fight, ahead at a fight's onset and out of one.
+    CHECK(Obvious::PriorOf(Needs::NeedId::in_combat, Effect::Col::heal_slow).sign == -1);
+    CHECK(Obvious::PriorOf(Needs::NeedId::combat_onset, Effect::Col::heal_slow).sign == 1);
+    CHECK(Obvious::PriorOf(Needs::NeedId::downtime, Effect::Col::heal_slow).sign == 1);
     CHECK(Obvious::PriorOf(Needs::NeedId::health_deficit, Effect::Col::overshoot_health).isObvious);
     CHECK_FALSE(Obvious::PriorOf(Needs::NeedId::health_deficit, Effect::Col::damage).isObvious);
 }

@@ -1,7 +1,7 @@
 #pragma once
 
 // =============================================================================
-// EFFECT MAPPER -- plain item records -> cap(i), the 244 effect columns
+// EFFECT MAPPER -- plain item records -> cap(i), the 250 effect columns
 // =============================================================================
 // Doc 9's extractor rules (effects.csv `how`), in three steps:
 //
@@ -27,7 +27,10 @@
 //     hidden Stagger). Per item and column a visible row beats a hidden one,
 //     and rows of one column combine by max.
 //   - Values: `Amount` columns (restore, damage, absorb) grade the total
-//     magnitude x max(duration, 1); `Level` columns (fortify, resist, regen,
+//     magnitude x max(duration, 1) -- except the player's vital restores
+//     (restore_health / magicka / stamina, 0.24.34), which grade the rate,
+//     the magnitude (per second over time or concentrated, all of it at once
+//     when instant), and carry the total in total_restore_*; `Level` columns (fortify, resist, regen,
 //     defense ...) grade magnitude x min(duration, 3600)/3600 for timed effects
 //     and the magnitude for constant ones; presence columns are 1, times
 //     D(duration) = log1p(min(d,3600))/log1p(3600) where effects.csv says
@@ -198,6 +201,7 @@ namespace Huginn::Core::Effect
         Col col = Col::_Count;
         Col col2 = Col::_Count;
         float raw = 0.0f;   // the quantity graded into a percentile (graded rules)
+        float total = 0.0f; // 0.24.34: a vital restore row's total, mag x max(dur, 1) (raw is its rate)
         float post = 1.0f;  // a factor applied after grading (D(duration)), or the value itself
         bool graded = false;
         bool fullRestore = false;
@@ -211,6 +215,11 @@ namespace Huginn::Core::Effect
         std::uint32_t area = 0;
         School school = School::None;
     };
+
+    /// 0.24.33: a restore_health or regen_health row lasting this long or
+    /// longer makes its item a slow heal (heal_slow, effects.csv): LoreRim's
+    /// Restore Health potions run 20 s, its healing auras 300 s.
+    inline constexpr std::uint32_t kSlowHealSec = 60;
 
     /// An item feature graded within a group (weapon damage within its type ...).
     struct GroupedFeature

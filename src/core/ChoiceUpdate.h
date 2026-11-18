@@ -20,6 +20,25 @@
 //     mu_b        += sigma_b^2 sum_{rows of the item} (y_i - P_i)
 // Every weight's step uses the same P (computed once, before any move), and
 // the precision is raised before the step (the new variance sizes it).
+//
+// Owned rows (0.24.33, kOwnedColumns): a row is on the page only because one
+// need let it through -- a heal for someone else (restore_health_other) while
+// a teammate is hurt (ally_injured, which opens no_ally_aimed's pass) -- so
+// what a pick says about it is about that need. Such a row's share of the
+// gradient, s_i = min(n_owner, 1) of it (chosen: s a_chosen,j; the set:
+// s P_i a_ij), moves the owner need's weights only; every other need's and
+// recent row's weights step on the rest:
+//     G_j      = a_chosen,j - E_j                     (the owner need)
+//     G_j_rest = G_j - (s_ch a_chosen,j - sum_owned s_i P_i a_ij)   (the others)
+// The precision rises by c^2 V_j for every weight as before (the set was
+// seen). Without it, a follower heal passed over in a fight sank across the
+// ten-odd fight needs active at once (in_combat, enemy_casting,
+// target_humanoid, a fire enemy, a Destruction loadout ... x
+// restore_health_other: about 0 in the bootstrap, -0.1 to -0.17 after one
+// evening, 2026-11-14), which together moved more than the one ally_injured
+// weight: "not now" was learned as "never in a fight", -2 to -4 on Healing
+// Aura on Target mid-fight. The strength block splits the same way; b and
+// theta_covered are unchanged (b is per item: no need to blame).
 // kappa and the feature weights do not move (format v1 gives them no
 // precision).
 //
@@ -174,6 +193,38 @@ namespace Huginn::Core::Choice
         return z;
     }
 
+    /// 0.24.33: a column whose rows one need lets onto the page (the header,
+    /// "Owned rows"): a pick's evidence about such a row lands on that need's
+    /// weights, not on every need active beside it.
+    struct OwnedColumn
+    {
+        Effect::Col col;
+        Needs::NeedId need;
+    };
+    inline constexpr std::array<OwnedColumn, 1> kOwnedColumns{ {
+        { Effect::Col::restore_health_other, Needs::NeedId::ally_injured },
+    } };
+
+    /// The owner need of a row under `t` and its share s (0: not owned): the
+    /// first owned column the row carries whose need is active.
+    struct Owner
+    {
+        std::int32_t need = -1;
+        double share = 0.0;
+    };
+    [[nodiscard]] inline Owner OwnerOf(const Tick& t, const Attr& at) noexcept
+    {
+        for (const auto& oc : kOwnedColumns) {
+            const auto j = static_cast<std::uint16_t>(oc.col);
+            const auto k = static_cast<std::size_t>(oc.need);
+            if (k >= t.n.size() || !(t.n[k] > 0.0)) continue;
+            for (const auto& [col, a] : at.a) {
+                if (col == j && a > 0.0) return Owner{ static_cast<std::int32_t>(k), std::min(t.n[k], 1.0) };
+            }
+        }
+        return Owner{};
+    }
+
     namespace Detail
     {
         inline void Step(Weight& w, double c, double V, double g) noexcept
@@ -191,46 +242,65 @@ namespace Huginn::Core::Choice
         res.P = Probabilities(m, t, set);
         res.logpChosen = std::log(std::max(res.P[chosen], 1e-300));
 
-        // E_p a, E_p a^2 per column, both blocks.
-        std::array<double, J> E{}, E2{}, Es{}, Es2{};
+        // E_p a, E_p a^2 per column, both blocks; the owned rows' part
+        // (0.24.33, the header) per column, for the one owner need a tick can
+        // have per column (kOwnedColumns names one).
+        std::array<double, J> E{}, E2{}, Es{}, Es2{}, Eo{}, Eso{};
         std::array<bool, J> touched{}, touchedS{};
+        std::int32_t owner = -1;
         for (std::size_t i = 0; i < set.size(); ++i) {
             const double p = res.P[i];
+            const Owner o = OwnerOf(t, set[i].attr);
+            if (o.need >= 0) owner = o.need;
             for (const auto& [j, a] : set[i].attr.a) {
                 E[j] += p * a;
                 E2[j] += p * a * a;
+                Eo[j] += o.share * p * a;
                 touched[j] = true;
             }
             for (const auto& [j, s] : set[i].attr.s) {
                 Es[j] += p * s;
                 Es2[j] += p * s * s;
+                Eso[j] += o.share * p * s;
                 touchedS[j] = true;
             }
         }
-        std::array<double, J> ach{}, sch{};
-        for (const auto& [j, a] : set[chosen].attr.a) ach[j] = a;
-        for (const auto& [j, s] : set[chosen].attr.s) sch[j] = s;
+        std::array<double, J> ach{}, sch{}, acho{}, scho{};
+        const Owner oc = OwnerOf(t, set[chosen].attr);
+        for (const auto& [j, a] : set[chosen].attr.a) {
+            ach[j] = a;
+            acho[j] = oc.share * a;
+        }
+        for (const auto& [j, s] : set[chosen].attr.s) {
+            sch[j] = s;
+            scho[j] = oc.share * s;
+        }
         std::vector<std::uint16_t> cols, colsS;
-        std::array<double, J> V{}, G{}, Vs{}, Gs{};
+        std::array<double, J> V{}, G{}, Gr{}, Vs{}, Gs{}, Gsr{};
         for (std::size_t j = 0; j < J; ++j) {
             if (touched[j]) {
                 cols.push_back(static_cast<std::uint16_t>(j));
                 V[j] = std::max(E2[j] - E[j] * E[j], 0.0);
                 G[j] = ach[j] - E[j];
+                Gr[j] = G[j] - (acho[j] - Eo[j]);   // the owned rows' part taken out
             }
             if (touchedS[j]) {
                 colsS.push_back(static_cast<std::uint16_t>(j));
                 Vs[j] = std::max(Es2[j] - Es[j] * Es[j], 0.0);
                 Gs[j] = sch[j] - Es[j];
+                Gsr[j] = Gs[j] - (scho[j] - Eso[j]);
             }
         }
         const bool st = m.HasStrength() && m.strength.size() == K * J;
         for (const std::uint16_t k : t.active) {
             const double c = t.n[k];
-            for (const std::uint16_t j : cols) Detail::Step(m.Th(k, j), c, V[j], G[j]);
+            const bool own = static_cast<std::int32_t>(k) == owner;
+            const auto& g = own ? G : Gr;
+            const auto& gs = own ? Gs : Gsr;
+            for (const std::uint16_t j : cols) Detail::Step(m.Th(k, j), c, V[j], g[j]);
             res.weightsMoved += cols.size();
             if (st) {
-                for (const std::uint16_t j : colsS) Detail::Step(m.strength[static_cast<std::size_t>(k) * J + j], c, Vs[j], Gs[j]);
+                for (const std::uint16_t j : colsS) Detail::Step(m.strength[static_cast<std::size_t>(k) * J + j], c, Vs[j], gs[j]);
                 res.weightsMoved += colsS.size();
             }
         }
@@ -238,10 +308,10 @@ namespace Huginn::Core::Choice
             const double c = t.r[f];
             if (c == 0.0) continue;
             auto& rr = m.recent[f];
-            for (const std::uint16_t j : cols) Detail::Step(rr.theta[j], c, V[j], G[j]);
+            for (const std::uint16_t j : cols) Detail::Step(rr.theta[j], c, V[j], Gr[j]);
             res.weightsMoved += cols.size();
             if (st && rr.strength.size() == J) {
-                for (const std::uint16_t j : colsS) Detail::Step(rr.strength[j], c, Vs[j], Gs[j]);
+                for (const std::uint16_t j : colsS) Detail::Step(rr.strength[j], c, Vs[j], Gsr[j]);
                 res.weightsMoved += colsS.size();
             }
         }

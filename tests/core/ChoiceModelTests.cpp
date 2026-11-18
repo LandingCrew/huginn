@@ -538,3 +538,70 @@ TEST_CASE("choice update: sBootstrapBias -- match, always, never")
     CHECK(Bootstrap::UseFileBias(BiasMode::Always, 0, 0));
     CHECK_FALSE(Bootstrap::UseFileBias(BiasMode::Never, mage, mage));
 }
+
+TEST_CASE("choice update: a passed-over heal for someone else moves ally_injured, not the fight's needs (0.24.33)")
+{
+    constexpr auto kALLY = static_cast<std::size_t>(Needs::NeedId::ally_injured);
+    constexpr auto kCOMBAT = static_cast<std::size_t>(Needs::NeedId::in_combat);
+    constexpr auto kRHO = static_cast<std::uint16_t>(Effect::Col::restore_health_other);
+    constexpr auto kRESTO = static_cast<std::uint16_t>(Effect::Col::school_restoration);
+    constexpr auto kDMG = static_cast<std::uint16_t>(Effect::Col::damage);
+    auto setOf = [] {
+        std::vector<Member> set(2);
+        set[0].attr = A(Grading::Graded, { { kDMG, 1.0 } });                  // a fire bolt
+        set[0].form = 20;
+        set[1].attr = A(Grading::Graded, { { kRHO, 1.0 }, { kRESTO, 1.0 } });   // a heal for a follower
+        set[1].form = 21;
+        return set;
+    };
+    const double sig2 = 1.0 / (1.0 + 0.25);   // var 1, c = 1, V = 0.25 (P = 0.5 each)
+
+    SUBCASE("the follower badly hurt: the bolt picked, only ally_injured learns the heal was passed over")
+    {
+        Model m = Blank();
+        std::array<double, K> n{};
+        n[kALLY] = 1.0;
+        n[kCOMBAT] = 1.0;
+        const auto set = setOf();
+        (void)Update(m, MakeTick(m, n, {}), set, 0);
+        CHECK(m.Th(kALLY, kRHO).mu == doctest::Approx(-sig2 * 0.5));
+        CHECK(m.Th(kALLY, kRESTO).mu == doctest::Approx(-sig2 * 0.5));
+        CHECK(m.Th(kCOMBAT, kRHO).mu == doctest::Approx(0.0));     // not "never in a fight"
+        CHECK(m.Th(kCOMBAT, kRESTO).mu == doctest::Approx(0.0));
+        CHECK(m.Th(kCOMBAT, kRHO).var == doctest::Approx(sig2));   // the set was seen
+        // the bolt's own evidence reaches every active need, as before
+        CHECK(m.Th(kCOMBAT, kDMG).mu == doctest::Approx(sig2 * 0.5));
+        CHECK(m.Th(kALLY, kDMG).mu == doctest::Approx(sig2 * 0.5));
+    }
+    SUBCASE("half hurt: the fight's needs take the other half")
+    {
+        Model m = Blank();
+        std::array<double, K> n{};
+        n[kALLY] = 0.5;
+        n[kCOMBAT] = 1.0;
+        const auto set = setOf();
+        (void)Update(m, MakeTick(m, n, {}), set, 0);
+        CHECK(m.Th(kCOMBAT, kRHO).mu == doctest::Approx(-sig2 * 0.25));
+        const double sigA = 1.0 / (1.0 + 0.25 * 0.25);
+        CHECK(m.Th(kALLY, kRHO).mu == doctest::Approx(-sigA * 0.5 * 0.5));
+    }
+    SUBCASE("no follower hurt (looked at, unhurt): no owner, the fight's needs learn as before")
+    {
+        Model m = Blank();
+        const auto set = setOf();
+        (void)Update(m, MakeTick(m, Needs1(kCOMBAT, 1.0), {}), set, 0);
+        CHECK(m.Th(kCOMBAT, kRHO).mu == doctest::Approx(-sig2 * 0.5));
+    }
+    SUBCASE("the heal picked: ally_injured learns it, the fight's needs do not")
+    {
+        Model m = Blank();
+        std::array<double, K> n{};
+        n[kALLY] = 1.0;
+        n[kCOMBAT] = 1.0;
+        const auto set = setOf();
+        (void)Update(m, MakeTick(m, n, {}), set, 1);
+        CHECK(m.Th(kALLY, kRHO).mu == doctest::Approx(sig2 * 0.5));
+        CHECK(m.Th(kCOMBAT, kRHO).mu == doctest::Approx(0.0));
+        CHECK(m.Th(kCOMBAT, kDMG).mu == doctest::Approx(-sig2 * 0.5));   // the bolt passed over
+    }
+}

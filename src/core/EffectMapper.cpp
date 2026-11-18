@@ -255,6 +255,7 @@ namespace Huginn::Core::Effect
         void ApplyChance(KeptRow& k, float chance) noexcept
         {
             if (!(chance < 1.0f)) return;
+            k.total *= chance;
             if (k.graded) k.raw *= chance;
             else k.post *= chance;
         }
@@ -684,7 +685,15 @@ namespace Huginn::Core::Effect
                 case Rule::Amount:
                     k.raw = mag * std::max(d, 1.0f);
                     k.graded = true;
-                    if (VitalIndex(cls.col) >= 0 && row.magnitude >= kFullRestore) k.fullRestore = true;
+                    if (VitalIndex(cls.col) >= 0) {
+                        // 0.24.34: a vital restore grades its rate, the
+                        // magnitude -- per second over time or concentrated,
+                        // all of it at once when instant -- and keeps its
+                        // total for total_restore_* and the overshoot.
+                        k.total = k.raw;
+                        k.raw = mag;
+                        if (row.magnitude >= kFullRestore) k.fullRestore = true;
+                    }
                     break;
                 case Rule::Level:
                     // Timed: graded within the column's timed population
@@ -729,6 +738,7 @@ namespace Huginn::Core::Effect
             // population's size, Populations::GradeGroup; zeros are not in it).
             if (k.graded && !(k.raw > 0.0f) && !k.fullRestore) {
                 k.raw = 0.0f;
+                k.total = 0.0f;
                 if (cls.route != Route::Data) {
                     k.graded = false;
                     k.post *= zeroFactor;
@@ -996,7 +1006,7 @@ namespace Huginn::Core::Effect
                 if (v < 0 || !eligible(r, r.col)) continue;
                 if (castable && r.delivery != kDeliverySelf) continue;
                 if (r.fullRestore) m.fullRestore[static_cast<std::size_t>(v)] = true;
-                else m.restoreAmount[static_cast<std::size_t>(v)] += r.raw;
+                else m.restoreAmount[static_cast<std::size_t>(v)] += r.total;   // 0.24.34: raw is the rate
             }
         }
 
@@ -1114,6 +1124,61 @@ namespace Huginn::Core::Effect
         return m;
     }
 
+    namespace
+    {
+        /// 0.24.34: the totals and the rate per magicka of an item's vital
+        /// restores (effects.csv total_restore_*, rate_per_magicka), as
+        /// Populations::Add and Grade both read them. Slots: the player's
+        /// health, magicka, stamina (the rows Grade puts on restore_*), then
+        /// a heal for someone else (restore_health_other's rows).
+        struct RestoreExtras
+        {
+            std::array<float, 4> total{};
+            std::array<bool, 4> full{};
+            float perMagicka = 0.0f;
+        };
+        constexpr std::array<Col, 4> kTotalCols{ Col::total_restore_health, Col::total_restore_magicka,
+                                                 Col::total_restore_stamina, Col::total_restore_health_other };
+
+        RestoreExtras Extras(const ItemMapping& m)
+        {
+            RestoreExtras x;
+            const Eligibility eligible(m);
+            const bool castable = m.kind == Kind::Spell || m.kind == Kind::Scroll;
+            const bool costed = m.kind == Kind::Spell && m.magickaCost > 0.0f;
+            bool healsOthers = false;
+            for (const auto& r : m.rows) {
+                for (const Col c : { r.col, r.col2 }) {
+                    const int v = VitalIndex(c);
+                    if (v < 0) continue;
+                    // As Grade: any kept heal that reaches others makes the item one.
+                    if (c == Col::restore_health && (r.delivery != kDeliverySelf || r.area > 0)) healsOthers = true;
+                    if (!eligible(r, c)) continue;
+                    if (costed && !r.fullRestore && r.raw > 0.0f) x.perMagicka = std::max(x.perMagicka, r.raw / m.magickaCost);
+                    int slot = v;
+                    if (castable && r.delivery != kDeliverySelf) {
+                        if (c != Col::restore_health) continue;   // magicka or stamina for someone else: family only
+                        slot = 3;
+                    }
+                    const auto s = static_cast<std::size_t>(slot);
+                    if (r.fullRestore) x.full[s] = true;
+                    else x.total[s] += r.total;
+                }
+            }
+            // restore_health_other takes the player's heal too when it reaches
+            // others (an area on a self spell), as Grade values it.
+            if (healsOthers) {
+                x.total[3] = std::max(x.total[3], x.total[0]);
+                x.full[3] = x.full[3] || x.full[0];
+            }
+            else {
+                x.total[3] = 0.0f;
+                x.full[3] = false;
+            }
+            return x;
+        }
+    }
+
     // =========================================================================
     // Populations
     // =========================================================================
@@ -1159,6 +1224,13 @@ namespace Huginn::Core::Effect
             if (g.fallback != 0) pops_[Key(g.col, g.fallback)].push_back(g.raw);
         }
         if (m.kind == Kind::Spell && m.magickaCost > 0.0f) pops_[Key(Col::magicka_cost, 0)].push_back(m.magickaCost);
+        {
+            const auto x = Extras(m);   // 0.24.34
+            for (std::size_t s = 0; s < kTotalCols.size(); ++s) {
+                if (!x.full[s] && x.total[s] > 0.0f) pops_[Key(kTotalCols[s], 0)].push_back(x.total[s]);
+            }
+            if (x.perMagicka > 0.0f) pops_[Key(Col::rate_per_magicka, 0)].push_back(x.perMagicka);
+        }
         if (m.consumable) pops_[Key(Col::gold_value, static_cast<std::uint32_t>(m.kind))].push_back(static_cast<float>(m.value));
         finalized_ = false;
     }
@@ -1272,6 +1344,7 @@ namespace Huginn::Core::Effect
         float othersHeal = 0.0f;
         float othersRegen = 0.0f;
         bool anySummon = false;
+        bool slowHeal = false;   // 0.24.33: heal_slow
         // Only a spell or a scroll is cast where its delivery says, as the
         // overshoot reads it (MapItem): a potion lands on the drinker whatever
         // its effect record says.
@@ -1283,6 +1356,7 @@ namespace Huginn::Core::Effect
                 // an area heals the allies around.
                 if (c == Col::restore_health && (r.delivery != kDeliverySelf || r.area > 0)) healsOthers = true;
                 if (!eligible(r, c)) continue;
+                if ((c == Col::restore_health || c == Col::regen_health) && r.duration >= kSlowHealSec) slowHeal = true;
                 const float v = RowValue(r, c, pops);
                 // 0.24.31: a restore or regeneration cast at someone else (touch,
                 // aimed, at an actor or a location) does not restore the player,
@@ -1360,6 +1434,9 @@ namespace Huginn::Core::Effect
         }
         if (!m.rows.empty()) {
             if (anyFullRestore) put(Col::full_restore, 1.0f);
+            // A slow heal: a constant item heals nobody when used, and a
+            // concentration spell's 1 s rows are recast every second.
+            if (slowHeal && !m.constantItem && Get(m.fixed, Col::concentration) <= 0.0f) put(Col::heal_slow, 1.0f);
             if (val[Index(Col::cure)] > 0.0f && anyCureArchetype) put(Col::cure_instant, 1.0f);
         }
 
@@ -1382,6 +1459,15 @@ namespace Huginn::Core::Effect
         }
         if (m.kind == Kind::Spell && m.magickaCost > 0.0f) {
             put(Col::magicka_cost, pops.Percentile(Col::magicka_cost, 0, m.magickaCost));
+        }
+        {
+            // 0.24.34: the vital restores' totals and the rate per magicka.
+            const auto x = Extras(m);
+            for (std::size_t s = 0; s < kTotalCols.size(); ++s) {
+                if (x.full[s]) put(kTotalCols[s], 1.0f);
+                else if (x.total[s] > 0.0f) put(kTotalCols[s], pops.Percentile(kTotalCols[s], 0, x.total[s]));
+            }
+            if (x.perMagicka > 0.0f) put(Col::rate_per_magicka, pops.Percentile(Col::rate_per_magicka, 0, x.perMagicka));
         }
         if (m.consumable) {
             put(Col::gold_value, pops.Percentile(Col::gold_value, static_cast<std::uint32_t>(m.kind),
