@@ -8,8 +8,11 @@
 #include "override/OverrideConditions.h"
 #include "telemetry/SoakMetrics.h"
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <mutex>
 #include <span>
 
@@ -36,12 +39,16 @@ namespace Huginn::Slot
         // as if combat had ended (core::CombatPresence). 0 = follow the game's
         // combat flag alone. Seconds, 0-60.
         float combatNoEnemyReleaseSec = 5.0f;
-        // Combat upsert (core/CombatUpsert.h): a challenger takes a
-        // combat-locked key when its score beats the key's item by this many
-        // times ln(1 + fChallengerMargin). 0 = off (the freeze is absolute).
-        float combatUpsertMarginMult = 3.0f;
+        // Combat upsert (core/CombatUpsert.h; 0.24.29): a key holds its item
+        // through a fight, and a challenger takes it only when its score beats
+        // the key's item by combatChallengerMargin (fCombatChallengerMargin,
+        // score units, 0-20; below 0 = off: the freeze is absolute) and it has
+        // been on the memoryless page for combatWantedSec (fCombatWantedSec,
+        // 0-30 s): a want that flickers for a second never moves a key.
+        float combatChallengerMargin = 1.0f;
+        float combatWantedSec = 1.5f;
         // At most one upsert per key per this many seconds. 0 = no limit.
-        float combatUpsertCooldownSec = 10.0f;
+        float combatUpsertCooldownSec = 0.0f;
     };
 
     // =============================================================================
@@ -212,9 +219,31 @@ namespace Huginn::Slot
             /// grace, wheel closed, no holds) are what a test harness wants.
             bool wheelOpen = false;          ///< the Wheeler wheel is open: no upsert
             float pressGraceMs = 0.0f;       ///< fPressGraceMs
-            float challengerMargin = 0.5f;   ///< fChallengerMargin: the barrier is a multiple of ln(1 + this)
+            /// R9, the challenger rule's line for the churn telemetry (which
+            /// changes were at or under ln m + z sigma_Delta): z = Phi^-1(tau)
+            /// and ln m, as the allocation read them.
+            double challengerZ = 0.0;
+            double challengerMinGap = 0.0;
+            /// 0.24.29: this run's active-buff filters (Resist Fire with its
+            /// buff running, Invisibility while invisible ...) dropped this
+            /// item: the need it answers is covered, and a combat-locked key
+            /// showing it takes any challenger past the wanted clock
+            /// (core/CombatUpsert.h). Empty = nothing is.
+            std::function<bool(RE::FormID formID, uint16_t uniqueID)> needCovered;
             /// Key i has an active Remembrance hold of its own, or shows one.
             std::array<bool, MAX_SLOTS_PER_PAGE> remembranceHoldOnKey{};
+            /// 0.24.29: the page this run's ranking alone builds (no hold,
+            /// seating, Remembrance or wildcard; SlotAllocator's memorylessOut),
+            /// read only with haveMemorylessPage: the combat upsert's
+            /// challengers and its fCombatWantedSec clock. Without it, the
+            /// allocator's page (`wanted`) stands in.
+            bool haveMemorylessPage = false;
+            SlotAssignments memorylessPage;
+            /// 0.24.29: ms the game has been suspended since launch
+            /// (UpdateHandler::SuspendedMs: alt-tab, the console). The wanted
+            /// clock skips what it gained since the last run: a want the
+            /// player could not see does not ripen. 0 in the in-game test.
+            double suspendedMs = 0.0;
             /// This run's clock for the upsert and the churn record. Epoch (the
             /// default) = steady_clock::now(); the in-game test passes later
             /// times to step past the page spacing without sleeping.
@@ -260,8 +289,18 @@ namespace Huginn::Slot
 
         /// The combat flag SetInCombat last saw: the lock's notion of combat
         /// (CombatPresence-filtered). WildcardManager reads it so no wildcard
-        /// is placed while it is up (core::WildcardMayBePlaced).
+        /// is placed while it is up (StepWildcardsForCombat in core/CombatLock.h,
+        /// stepped in core/WildcardGate.h).
         [[nodiscard]] bool IsInCombat() const;
+
+        /// 0.24.29 (review of PR #254): a waiting combat challenger's time
+        /// gates (its fCombatWantedSec wait, its recent departure, the page's
+        /// spacing, the wheel-close hold) have opened since the last run, so
+        /// the pipeline must run although nothing it hashes changed
+        /// (PipelineCoordinator::NeedsForcedRun). The time is set by each
+        /// combat run (core::NextUpsertWakeMs) and cleared out of combat; a
+        /// run past it sets the next. Lock-free: the skip gates ask every tick.
+        [[nodiscard]] bool CombatUpsertWakeDue(std::chrono::steady_clock::time_point now) const noexcept;
 
         /// Restart every lock's timer at the full duration, as if each key had
         /// just changed. Called when the Wheeler wheel closes: the widget is
@@ -288,9 +327,6 @@ namespace Huginn::Slot
         // =========================================================================
         // MANUAL LOCK CONTROL
         // =========================================================================
-
-        /// Lock a specific slot for a duration
-        void LockSlot(size_t slotIndex, float durationMs);
 
         /// Lock a slot after activation (Sticky post-activation policy)
         /// Uses a longer duration (10s) so the activated item stays visible
@@ -334,19 +370,17 @@ namespace Huginn::Slot
             RE::FormID previousFormID = 0;
             bool hadContent = false;
             bool frozen = false;   ///< no timer (combat freeze): remainingMs means nothing
+            std::string name;      ///< the key's item's display name (the held one while locked); 0.24.6
         };
 
         /// Snapshot all slots' lock state under a SINGLE mutex acquisition.
-        /// Prefer this over per-slot IsSlotLocked/GetRemainingLockTime/WasConfirmed
+        /// Prefer this over per-slot IsSlotLocked/WasConfirmed
         /// when a caller needs several slots' state in one pass (e.g. visual-state
         /// computation), which otherwise takes up to 3 lock/unlock pairs per slot.
         [[nodiscard]] std::array<SlotLockView, MAX_SLOTS_PER_PAGE> GetLockSnapshot() const;
 
         /// Check if a slot is currently locked
         [[nodiscard]] bool IsSlotLocked(size_t slotIndex) const;
-
-        /// Get remaining lock time for a slot (0 if not locked)
-        [[nodiscard]] float GetRemainingLockTime(size_t slotIndex) const;
 
         /// Check if slot content was confirmed (re-evaluated to same FormID)
         [[nodiscard]] bool WasConfirmed(size_t slotIndex, RE::FormID currentFormID) const;
@@ -424,14 +458,26 @@ namespace Huginn::Slot
 
         // The combat flag SetInCombat last saw. Guarded by m_mutex.
         bool m_inCombat = false;
+        // 0.24.29: since when each challenger has been wanted -- on the page
+        // the combat upsert challenges from and on no key -- without a break
+        // (fCombatWantedSec, core::CombatWantedClock). Cleared when combat
+        // ends. Guarded by m_mutex.
+        Core::CombatWantedClock m_wantedClock;
+        /// RunContext::suspendedMs as the last combat run saw it.
+        double m_lastSuspendedMs = 0.0;
 
         // Combat upsert, page-wide (core::CombatUpsertMemory): items that
-        // recently left a key or that an upsert displaced this fight (never
-        // challengers), and the page's last upsert. Guarded by m_mutex.
+        // recently left a key, whatever moved them (never challengers until
+        // UpsertRecentMs has passed), and the page's last upsert. Guarded by
+        // m_mutex.
         Core::CombatUpsertMemory m_upsertMemory;
         // When the Wheeler wheel last closed (RestartLocks): no upsert for
         // max(fPressGraceMs, the press floor) after it. Epoch = not since reset.
         std::chrono::steady_clock::time_point m_wheelClosedAt{};
+        // 0.24.29 (review of PR #254): when a waiting challenger's time gates
+        // next open (steady ms; +inf = none). Written under m_mutex by the
+        // combat run, read lock-free by CombatUpsertWakeDue.
+        std::atomic<double> m_upsertWakeMs{ std::numeric_limits<double>::infinity() };
 
         // =========================================================================
         // INTERNAL HELPERS
@@ -478,13 +524,14 @@ namespace Huginn::Slot
 
         /// Combat upsert (core/CombatUpsert.h), after dedup: a combat-locked
         /// key open to it takes a challenger whose score beats the key's own
-        /// item by fCombatUpsertMarginMult x ln(1 + fChallengerMargin).
-        /// Challengers: what the allocator placed on this page this run
-        /// (`wanted`, ordinary picks only) that no key shows, not equipped, not
-        /// displaced by an upsert this fight nor gone from a key recently, on
-        /// a key the allocator placed it on or whose class it fits. At most one
-        /// per run, kCombatUpsertPageSpacingMs apart. The new item is locked
-        /// like any other. Caller holds m_mutex.
+        /// item by fCombatChallengerMargin -- any challenger, on a key whose
+        /// item's need is covered (RunContext::needCovered) -- once it has been
+        /// wanted for fCombatWantedSec. Challengers: the memoryless page's
+        /// ordinary picks (the allocator's page without it) that no key shows,
+        /// not equipped, nor gone from a key in the last few seconds, on a key
+        /// whose class they fit. At most one per run,
+        /// kCombatUpsertPageSpacingMs apart. The new item is locked like any
+        /// other. Caller holds m_mutex.
         void ApplyCombatUpserts(SlotAssignments& result, const SlotAssignments& wanted, const RunContext& run,
             std::chrono::steady_clock::time_point now);
 

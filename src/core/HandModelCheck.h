@@ -37,6 +37,10 @@
 // fault and leaves a reported one standing: it is not judged again until the
 // weapon is drawn in that view.
 //
+// The watch is a template over what it judges (BasicFaultWatch): FaultWatch
+// for the model, GraphHandWatch (0.24.26, below) for the behaviour graph's
+// hand type against what the hand holds, with the same onset and end rules.
+//
 // Seconds on one monotonic clock (the caller's; the game layer uses the game
 // clock, which stops while paused); nothing here reads a clock.
 //
@@ -134,7 +138,8 @@ namespace Huginn::Core
         return ModelState::Ok;
     }
 
-    class FaultWatch
+    template <class State, State kOk>
+    class BasicFaultWatch
     {
     public:
         static constexpr double kOnsetSec = 2.0;
@@ -150,18 +155,18 @@ namespace Huginn::Core
         struct Event
         {
             EventKind kind = EventKind::None;
-            ModelState state = ModelState::Ok;  // Onset: the fault; Recovered/SwappedOut: the fault that ended
+            State state = kOk;                  // Onset: the fault; Recovered/SwappedOut: the fault that ended
             double faultSec = 0.0;              // Recovered/SwappedOut: since the fault was first seen
             int poseChanges = 0;                // Recovered/SwappedOut: sheathes (drawn -> not drawn) since onset
         };
 
-        FaultWatch() = default;
-        explicit FaultWatch(double onsetSec) noexcept : m_onsetSec(onsetSec) {}
+        BasicFaultWatch() = default;
+        explicit BasicFaultWatch(double onsetSec) noexcept : m_onsetSec(onsetSec) {}
 
         /// One judgement. `formID` 0 = no modelled weapon in the hand (ends
         /// any fault). `view` is which biped was read (the caller's id: first
         /// or third person). `state` is read only when `pose` is Drawn.
-        Event Update(std::uint32_t formID, HandPose pose, std::uint8_t view, ModelState state, double nowSec) noexcept
+        Event Update(std::uint32_t formID, HandPose pose, std::uint8_t view, State state, double nowSec) noexcept
         {
             Event ev;
             if (formID != m_formID) {
@@ -189,13 +194,13 @@ namespace Huginn::Core
 
             if (m_reported) {
                 // Only the check that raised it may end it.
-                if (view != m_view || state != ModelState::Ok) return ev;
+                if (view != m_view || state != kOk) return ev;
                 ev = { EventKind::Recovered, m_state, nowSec - m_since, m_poseChanges };
                 ClearFault();
                 return ev;
             }
             if (m_faulted && view != m_view) ClearFault();  // a view change restarts it
-            if (state == ModelState::Ok) {
+            if (state == kOk) {
                 ClearFault();
                 return ev;
             }
@@ -238,9 +243,9 @@ namespace Huginn::Core
         }
 
     private:
-        void Start(ModelState state, std::uint8_t view, double nowSec) noexcept
+        void Start(State state, std::uint8_t view, double nowSec) noexcept
         {
-            if (state == ModelState::Ok) return;
+            if (state == kOk) return;
             m_faulted = true;
             m_since = nowSec;
             m_state = state;
@@ -260,10 +265,91 @@ namespace Huginn::Core
         std::uint8_t m_view = 0;
         bool m_faulted = false;
         bool m_reported = false;
-        ModelState m_state = ModelState::Ok;
+        State m_state = kOk;
         double m_since = 0.0;
         int m_poseChanges = 0;
     };
+
+    /// The model watch: what JudgePart found, reported at kOnsetSec.
+    using FaultWatch = BasicFaultWatch<ModelState, ModelState::Ok>;
+
+    // -------------------------------------------------------------------------
+    // The behaviour graph against the hand (0.24.26). After the 2026-10-31
+    // 00:38 swap over a charged Fireball (core/HandEquipGate.h) the graph
+    // stopped following equips: Goldbrand was in the right hand, the graph
+    // still read iRightHandType 9 (magic), and the sword stayed on its sheath
+    // node. The model check saw that only once a weapon with a model was
+    // equipped into the stuck graph; this sees the stuck graph itself.
+    //
+    // Only the clear cases of that bug are judged, each against the graph's
+    // hand type (iRightHandType / iLeftHandType: 0 fists, 9 magic):
+    //   - a spell in the hand, the type not 9;
+    //   - a weapon in the hand, the type 9 or 0;
+    //   - an empty hand, the type 9.
+    // Anything else (a scroll, a torch, a shield, the unarmed weapon form,
+    // the left half of a two-hander or bow) is not judged: HandHeld::Other.
+    //
+    // Judged while drawn and settled, not equipping or unequipping (the
+    // caller's pose: Drawn only then). GraphHandWatch reports a mismatch that
+    // held kGraphMismatchOnsetSec on the same hand content, then its end.
+    // -------------------------------------------------------------------------
+    enum class HandHeld : std::uint8_t
+    {
+        Empty,
+        Spell,   // a spell (not a scroll)
+        Weapon,  // a weapon with a hand type of its own (not the unarmed form)
+        Other,   // not judged
+    };
+
+    enum class GraphHand : std::uint8_t
+    {
+        Agrees,           // or not a case judged here
+        SpellNotMagic,    // a spell in the hand, the graph's type is not magic
+        WeaponAsMagic,    // a weapon in the hand, the graph's type is magic
+        WeaponAsFists,    // a weapon in the hand, the graph's type is fists
+        EmptyAsMagic,     // nothing in the hand, the graph's type is magic
+    };
+
+    inline constexpr std::int32_t kGraphHandFists = 0;
+    inline constexpr std::int32_t kGraphHandMagic = 9;
+    inline constexpr double kGraphMismatchOnsetSec = 1.0;
+    /// GraphHandWatch's key for an empty hand (0 means "not judged", as for
+    /// FaultWatch); no form has this ID.
+    inline constexpr std::uint32_t kEmptyHandKey = 0xFFFFFFFFu;
+
+    [[nodiscard]] constexpr GraphHand JudgeGraphHand(HandHeld held, std::int32_t handType) noexcept
+    {
+        switch (held) {
+        case HandHeld::Spell:
+            return handType != kGraphHandMagic ? GraphHand::SpellNotMagic : GraphHand::Agrees;
+        case HandHeld::Weapon:
+            if (handType == kGraphHandMagic) return GraphHand::WeaponAsMagic;
+            if (handType == kGraphHandFists) return GraphHand::WeaponAsFists;
+            return GraphHand::Agrees;
+        case HandHeld::Empty:
+            return handType == kGraphHandMagic ? GraphHand::EmptyAsMagic : GraphHand::Agrees;
+        case HandHeld::Other:
+            return GraphHand::Agrees;
+        }
+        return GraphHand::Agrees;
+    }
+
+    [[nodiscard]] constexpr std::string_view GraphHandName(GraphHand g) noexcept
+    {
+        switch (g) {
+        case GraphHand::Agrees: return "agrees";
+        case GraphHand::SpellNotMagic: return "a spell in the hand, the graph's hand type is not magic (9)";
+        case GraphHand::WeaponAsMagic: return "a weapon in the hand, the graph's hand type is magic (9)";
+        case GraphHand::WeaponAsFists: return "a weapon in the hand, the graph's hand type is fists (0)";
+        case GraphHand::EmptyAsMagic: return "an empty hand, the graph's hand type is magic (9)";
+        }
+        return "?";
+    }
+
+    /// The graph watch: what JudgeGraphHand found. Construct it with
+    /// kGraphMismatchOnsetSec; its key is the hand's form (kEmptyHandKey for
+    /// an empty hand, 0 when not judged) and its view is unused (0).
+    using GraphHandWatch = BasicFaultWatch<GraphHand, GraphHand::Agrees>;
 
     // -------------------------------------------------------------------------
     // A draw or sheathe that never finishes. 2026-10-17, the second sighting:

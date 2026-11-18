@@ -28,6 +28,18 @@ namespace Huginn::State
         default:                 return -1;
       }
       }
+
+      // 0.24.29: when the player was last hurt by fire, frost or shock, for
+      // the element facets a fight holds (Core::Needs::ElementsShown).
+      void MarkElementHurt(NeedSensorState& n, DamageType type, double nowSec) noexcept
+      {
+      switch (type) {
+        case DamageType::Fire:  n.hurtFireAt = nowSec; break;
+        case DamageType::Frost: n.hurtFrostAt = nowSec; break;
+        case DamageType::Shock: n.hurtShockAt = nowSec; break;
+        default: break;
+      }
+      }
    }
 
    // =============================================================================
@@ -186,6 +198,7 @@ namespace Huginn::State
             case DamageType::Unknown:  n.dmgPhysical.Add(nowSec, damageAmount); break;
             default: break;
           }
+          MarkElementHurt(n, damageType, nowSec);
         });
       }
       }
@@ -198,6 +211,9 @@ namespace Huginn::State
         newState.damageHistory.push_back(DamageEvent(gameTime, 0.0f, latestEvent.type));
         logger::trace("[StateManager] Sub-threshold elemental hit recorded: {} (accumulated={:.1f}, threshold={:.1f})"sv,
            GetDamageTypeName(latestEvent.type), m_healthTracker.accumulated, VitalTracking::HEALTH_DAMAGE_THRESHOLD);
+        // 0.24.29: a typed hit under the threshold still showed its element.
+        const double nowSec = NeedClock::Now();
+        UpdateNeedSensors([&](NeedSensorState& n) { MarkElementHurt(n, latestEvent.type, nowSec); });
       }
       }
 
@@ -395,18 +411,6 @@ namespace Huginn::State
       float healingRateChange = newState.healingRate - m_healthTracker.previousSecondaryRate;
       newState.healingIncreasing = healingRateChange > VitalTracking::TREND_CHANGE_THRESHOLD;
       newState.healingDecreasing = healingRateChange < -VitalTracking::TREND_CHANGE_THRESHOLD;
-
-      // Publish the elemental-window flag for the outer pipeline-skip gate
-      // (see IsElementalWindowActive). Uses the freshly computed timers so the
-      // flag is current even when the state comparison below reports no change.
-      {
-      constexpr float kWindow = VitalTracking::ELEMENTAL_DAMAGE_ENRICHMENT_WINDOW;
-      m_elementalWindowActive.store(
-        newState.timeSinceLastFire < kWindow ||
-        newState.timeSinceLastFrost < kWindow ||
-        newState.timeSinceLastShock < kWindow,
-        std::memory_order_relaxed);
-      }
 
       // Update state with change detection
       {

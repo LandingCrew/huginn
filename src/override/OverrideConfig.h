@@ -8,19 +8,21 @@ namespace Huginn::Override
     // =============================================================================
     // DEFAULT VALUES (compile-time constants)
     // =============================================================================
-    // These are the fallback values used if INI loading fails or values are missing.
+    // These are the fallback values used if INI loading fails or values are missing,
+    // and what dMenu Reset to Defaults applies. They equal the shipped
+    // configs/Huginn.ini values.
     // =============================================================================
 
     namespace Defaults
     {
         // Critical Health Override
-        inline constexpr float CRITICAL_HEALTH_THRESHOLD = 0.10f;    // 10% - trigger activation
-        inline constexpr float CRITICAL_HEALTH_HYSTERESIS = 0.15f;   // gap - deactivate at threshold+gap (25%)
+        inline constexpr float CRITICAL_HEALTH_THRESHOLD = 0.35f;    // 35% - trigger activation
+        inline constexpr float CRITICAL_HEALTH_HYSTERESIS = 0.15f;   // gap - deactivate at threshold+gap (50%)
 
         // Weapon Charge Override
         // Activation uses `charge < threshold`, and a drained weapon keeps a
         // sub-cost charge remainder (rarely exactly 0), so the threshold must be
-        // nonzero to ever fire. Matches the shipped configs/Huginn.ini value.
+        // nonzero to ever fire.
         inline constexpr float WEAPON_CHARGE_THRESHOLD = 0.25f;      // 25% - trigger activation
         inline constexpr float WEAPON_CHARGE_HYSTERESIS = 0.05f;     // gap - deactivate at threshold+gap (30%)
 
@@ -29,12 +31,12 @@ namespace Huginn::Override
         inline constexpr float LOW_AMMO_HYSTERESIS = 15.0f;          // gap - deactivate at threshold+gap (25)
 
         // Critical Magicka Override
-        inline constexpr float CRITICAL_MAGICKA_THRESHOLD = 0.10f;   // 10% - trigger activation
-        inline constexpr float CRITICAL_MAGICKA_HYSTERESIS = 0.15f;  // gap - deactivate at threshold+gap (25%)
+        inline constexpr float CRITICAL_MAGICKA_THRESHOLD = 0.35f;   // 35% - trigger activation
+        inline constexpr float CRITICAL_MAGICKA_HYSTERESIS = 0.15f;  // gap - deactivate at threshold+gap (50%)
 
         // Critical Stamina Override
-        inline constexpr float CRITICAL_STAMINA_THRESHOLD = 0.10f;   // 10% - trigger activation
-        inline constexpr float CRITICAL_STAMINA_HYSTERESIS = 0.15f;  // gap - deactivate at threshold+gap (25%)
+        inline constexpr float CRITICAL_STAMINA_THRESHOLD = 0.35f;   // 35% - trigger activation
+        inline constexpr float CRITICAL_STAMINA_HYSTERESIS = 0.15f;  // gap - deactivate at threshold+gap (50%)
 
         // Anti-flicker
         inline constexpr float MIN_OVERRIDE_DURATION_MS = 2000.0f;   // 2 seconds minimum
@@ -52,7 +54,7 @@ namespace Huginn::Override
         inline constexpr bool ALLOW_IMPURE_POTIONS = true;       // Fall back to potions with side effects (Skooma etc.)
         // A critical-vitals override ranks potions by what they restore in
         // this many seconds, so an instant heal and a heal-over-time compare
-        // fairly (ItemData::RestoredWithin). Short on purpose: the player is
+        // fairly (Item::RestoredWithin). Short on purpose: the player is
         // about to die, and 160 health over 20 s is worth less than 50 now.
         inline constexpr float URGENT_RESTORE_WINDOW_SEC = 5.0f;
 
@@ -87,12 +89,9 @@ namespace Huginn::Override
             return instance;
         }
 
-        // Load settings from INI file
-        void LoadFromFile(const std::filesystem::path& iniPath);
+        // Load [Overrides] from the parsed main INI (Settings::LoadMainIni, over
+        // the shipped Huginn.ini, whose values are the defaults)
         void LoadFromIni(const CSimpleIniA& ini);
-
-        // Reset to defaults
-        void ResetToDefaults();
 
         // =========================================================================
         // CRITICAL HEALTH OVERRIDE

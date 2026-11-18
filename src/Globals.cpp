@@ -6,9 +6,14 @@
 #include "override/OverrideManager.h"
 #include "slot/SlotAllocator.h"
 #include "slot/Remembrance.h"
+#include "input/HandEquipGate.h"
 #include "learning/SelectionTracker.h"
 #include "learning/SelectionLogV3.h"
 #include "pipeline/PipelineCoordinator.h"
+#include "learning/legacy/LegacyScorer.h"   // g_legacyScorer's destructor
+#include "core/WildcardGate.h"   // GateSettings: the [Wildcards] clocks' defaults
+#include "core/WildcardPick.h"   // Params: the [Wildcards] odds' defaults
+#include "core/ChallengerRule.h"   // the combat upsert confidence range (0.24.13)
 
 #include <algorithm>
 #include <filesystem>
@@ -32,12 +37,13 @@ std::unique_ptr<Huginn::Learning::FeatureBanditLearner> g_featureBanditLearner;
 
 // Usage memory (v0.13.x) - Short-term situational recall for recency boosting
 std::unique_ptr<Huginn::Learning::UsageMemory> g_usageMemory;
+std::unique_ptr<Huginn::Learning::ChoiceLearner> g_choiceLearner;
 
 // Utility scoring system (v0.9.0) - Unified scorer for all candidate types
 std::unique_ptr<Huginn::Scoring::UtilityScorer> g_utilityScorer;
 
-// Timer for periodic state logging
-std::chrono::steady_clock::time_point g_lastStateLog;
+// R8.4: the legacy scorer (the D2 feature's input; learning/legacy/LegacyScorer.h)
+std::unique_ptr<Huginn::Scoring::Legacy::LegacyScorer> g_legacyScorer;
 
 // Item registry instance (v0.7.4)
 std::unique_ptr<Huginn::Item::ItemRegistry> g_itemRegistry;
@@ -75,9 +81,7 @@ std::atomic<uint32_t> g_loadGeneration{ 0 };
 std::string g_launchStamp;
 std::string g_listName;
 std::atomic<uint64_t> g_activeCharacterID{ 0 };
-
-// Track whether we've shown the welcome notification
-bool g_hasShownWelcomeNotification = false;
+Huginn::Core::LearningClock::Clock g_learningClock;
 
 // Degraded mode flag - tracks if core update system failed to initialize
 // (Issue #4: Silent failure when UpdateHandler::Register() fails leaves plugin non-functional)
@@ -88,8 +92,6 @@ std::atomic<bool> g_updateSystemFailed{false};
 // =============================================================================
 namespace Huginn {
     State::StateEvaluator* GetStateEvaluator() { return g_stateEvaluator.get(); }
-    Learning::FeatureBanditLearner* GetFeatureBanditLearner() { return g_featureBanditLearner.get(); }
-    Learning::UsageMemory* GetUsageMemory() { return g_usageMemory.get(); }
 }
 
 // =============================================================================
@@ -103,6 +105,11 @@ namespace Huginn {
 void ResetPipelineSubsystems() {
     if (g_utilityScorer) g_utilityScorer->Reset();
     if (g_usageMemory) g_usageMemory->Clear();
+    // R8.3: NOT the choice learner. A load restores it from the cosave
+    // (Persist::ResolveLoadedChoice, InitializeGameSystems step 6c, before
+    // this runs at step 8), and `hg reset all` / `hg reset weights` / the
+    // dMenu reset return it to the bootstrap themselves
+    // (SettingsReloader::ResetLearningData).
 
     Override::OverrideManager::GetSingleton().Reset();
     Candidate::CandidateGenerator::GetSingleton().Reset();
@@ -111,11 +118,18 @@ void ResetPipelineSubsystems() {
     // caches so first-time "no candidate"/unplaced-override messages aren't
     // suppressed across a game load.
     Slot::SlotAllocator::GetSingleton().Reset();
-    auto& slotLocker = Slot::SlotLocker::GetSingleton();
-    slotLocker.Reset();
-    slotLocker.SetConfig(LoadSlotLockerConfigFromINI());
+    // The locks only: Reset keeps the [SlotLocker] config, which the caller
+    // owns (InitializeGameSystems loads it from the INI it parsed; a hot
+    // reload or Reset to Defaults sets it). `hg reset all` keeps the config in
+    // force: re-reading Huginn.ini here brought the file's lock settings back
+    // over a Reset to Defaults that could not write it (0.24.18).
+    Slot::SlotLocker::GetSingleton().Reset();
     Slot::Remembrance::GetSingleton().Reset();
 
+    // An equip parked for a busy hand belongs to the abandoned session too
+    // (0.24.26); dropped first, so its selection is withdrawn before the
+    // tracker forgets everything anyway.
+    Input::HandEquipGate::GetSingleton().Drop("reset (a game load or hg reset all)", /*force=*/true);
     // A selection pending across a load belongs to the abandoned session.
     Learning::SelectionTracker::GetSingleton().Clear();
     // R4: the v3 log's episodes, pending picks and menu context likewise.
@@ -132,21 +146,6 @@ void ResetPipelineSubsystems() {
 }
 
 // =============================================================================
-// HELPER: Evaluate Current Game State
-// =============================================================================
-
-EvaluatedGameState EvaluateCurrentGameState() {
-  auto& stateMgr = State::StateManager::GetSingleton();
-  auto playerState = stateMgr.GetPlayerState();
-  auto targets = stateMgr.GetTargets();
-
-  return {
-    g_stateEvaluator->EvaluateCurrentState(playerState, targets),
-    playerState
-  };
-}
-
-// =============================================================================
 // INI Loading Helpers
 // =============================================================================
 
@@ -154,8 +153,12 @@ std::filesystem::path GetMainIniPath() {
   return std::filesystem::path("Data/SKSE/Plugins/Huginn.ini");
 }
 
+std::filesystem::path GetDMenuOwnIniPath() {
+  return std::filesystem::path("Data/SKSE/Plugins/dmenu/customSettings/ini/Huginn.ini");
+}
+
 std::filesystem::path GetDMenuIniPath() {
-  const auto dmenuIniPath = std::filesystem::path("Data/SKSE/Plugins/dmenu/customSettings/ini/Huginn.ini");
+  const auto dmenuIniPath = GetDMenuOwnIniPath();
 
   try {
     if (std::filesystem::exists(dmenuIniPath)) {
@@ -190,13 +193,6 @@ bool LoadIniFile(CSimpleIniA& out, const std::filesystem::path& path, std::strin
   return true;
 }
 
-void LoadCandidateConfigFromINI() {
-  CSimpleIniA ini;
-  if (LoadIniFile(ini, GetMainIniPath(), "CandidateConfig"sv)) {
-    LoadCandidateConfigFromINI(ini);
-  }
-}
-
 void LoadCandidateConfigFromINI(const CSimpleIniA& ini) {
   const char* section = "Candidates";
 
@@ -220,17 +216,16 @@ void LoadCandidateConfigFromINI(const CSimpleIniA& ini) {
   Candidate::g_candidateConfig.enableSoulGemRecharge =
     ini.GetBoolValue(section, "bEnableSoulGemRecharge", true);
 
-  logger::info("[CandidateConfig] Uncastable spell policy: {}, soul gem recharge: {}",
-    Candidate::ToString(Candidate::g_candidateConfig.uncastableSpellPolicy),
-    Candidate::g_candidateConfig.enableSoulGemRecharge ? "enabled" : "disabled");
-}
+  // 0.24.29: which resist potions of one element are offered (core/ResistPotions.h)
+  std::string pick(ini.GetValue(section, "sResistPotionPick", "Greedy"));
+  std::transform(pick.begin(), pick.end(), pick.begin(), ::tolower);
+  Candidate::g_candidateConfig.resistPotionPick =
+    pick == "all" ? Candidate::ResistPotionPick::All : Candidate::ResistPotionPick::Greedy;
 
-Slot::SlotLockConfig LoadSlotLockerConfigFromINI() {
-  CSimpleIniA ini;
-  if (LoadIniFile(ini, GetMainIniPath(), "SlotLockerConfig"sv)) {
-    return LoadSlotLockerConfigFromINI(ini);
-  }
-  return Slot::SlotLockConfig{};  // defaults
+  logger::info("[CandidateConfig] Uncastable spell policy: {}, soul gem recharge: {}, resist potions: {}",
+    Candidate::ToString(Candidate::g_candidateConfig.uncastableSpellPolicy),
+    Candidate::g_candidateConfig.enableSoulGemRecharge ? "enabled" : "disabled",
+    Candidate::ToString(Candidate::g_candidateConfig.resistPotionPick));
 }
 
 Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {
@@ -255,12 +250,16 @@ Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {
     const double noEnemy = ini.GetDoubleValue(section, "fCombatNoEnemyReleaseSec", 5.0);
     config.combatNoEnemyReleaseSec = !std::isfinite(noEnemy) ? 5.0f
       : static_cast<float>(std::clamp(noEnemy, 0.0, 60.0));
-    // Combat upsert (core/CombatUpsert.h): 0-20 (0 = off), cooldown 0-300 s.
-    const double upsertMult = ini.GetDoubleValue(section, "fCombatUpsertMarginMult", 3.0);
-    config.combatUpsertMarginMult = !std::isfinite(upsertMult) ? 3.0f
-      : static_cast<float>(std::clamp(upsertMult, 0.0, 20.0));
-    const double upsertCooldown = ini.GetDoubleValue(section, "fCombatUpsertCooldownSec", 10.0);
-    config.combatUpsertCooldownSec = !std::isfinite(upsertCooldown) ? 10.0f
+    // Combat upsert (core/CombatUpsert.h; 0.24.29): the lead a challenger
+    // needs over a held key's item (below 0 = off), how long it must have
+    // been wanted, and the per-key cooldown (0-300 s).
+    const double upsertMargin = ini.GetDoubleValue(section, "fCombatChallengerMargin", 1.0);
+    config.combatChallengerMargin = !std::isfinite(upsertMargin) ? 1.0f
+      : upsertMargin < 0.0 ? -1.0f : static_cast<float>(std::min(upsertMargin, 20.0));
+    const double wantedSec = ini.GetDoubleValue(section, "fCombatWantedSec", 1.5);
+    config.combatWantedSec = !std::isfinite(wantedSec) ? 1.5f : static_cast<float>(std::clamp(wantedSec, 0.0, 30.0));
+    const double upsertCooldown = ini.GetDoubleValue(section, "fCombatUpsertCooldownSec", 0.0);
+    config.combatUpsertCooldownSec = !std::isfinite(upsertCooldown) ? 0.0f
       : static_cast<float>(std::clamp(upsertCooldown, 0.0, 300.0));
   }
 
@@ -271,9 +270,10 @@ Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {
       : std::format("{:.0f}ms", config.combatLockDurationMs));
   logger::info("[SlotLockerConfig] combat lock lets go after {:.1f}s with no enemy (0 = never)",
     config.combatNoEnemyReleaseSec);
-  if (config.combatUpsertMarginMult > 0.0f) {
-    logger::info("[SlotLockerConfig] combat upsert: a challenger beating a combat-locked key's item by {:.1f} x ln(1 + fChallengerMargin) takes it, at most once per key per {:.0f}s",
-      config.combatUpsertMarginMult, config.combatUpsertCooldownSec);
+  if (config.combatChallengerMargin >= 0.0f) {
+    logger::info("[SlotLockerConfig] combat upsert: a challenger wanted for {:.1f}s that beats a held key's item by "
+      "{:.2f} takes it (one change per 3s on the page; {:.0f}s per key)",
+      config.combatWantedSec, config.combatChallengerMargin, config.combatUpsertCooldownSec);
   } else {
     logger::info("[SlotLockerConfig] combat upsert: off");
   }
@@ -281,26 +281,29 @@ Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {
   return config;
 }
 
-void LoadWildcardConfigFromINI(Scoring::WildcardManager& wildcardMgr) {
-  CSimpleIniA ini;
-  if (LoadIniFile(ini, GetMainIniPath(), "WildcardConfig"sv)) {
-    LoadWildcardConfigFromINI(wildcardMgr, ini);
-  }
-}
-
 void LoadWildcardConfigFromINI(Scoring::WildcardManager& wildcardMgr, const CSimpleIniA& ini) {
   const char* section = "Wildcards";
+  // `ini` is the main INI over the shipped Huginn.ini (Settings::LoadMainIni),
+  // or the shipped file alone on dMenu's Reset to Defaults, so these keys are
+  // always there. The core structs' defaults (equal to the shipped values)
+  // apply only to a key in neither file.
+  constexpr Core::Wildcard::Params odds{};
+  constexpr Core::Wildcard::GateSettings clocks{};
 
   wildcardMgr.SetBaseProbability(static_cast<float>(
-    ini.GetDoubleValue(section, "fBaseProbability", 0.165)));
+    ini.GetDoubleValue(section, "fBaseProbability", odds.baseRoll)));
   wildcardMgr.SetMaxProbability(static_cast<float>(
-    ini.GetDoubleValue(section, "fMaxProbability", 0.5)));
+    ini.GetDoubleValue(section, "fMaxProbability", odds.maxRoll)));
+  // R10: the random term's share of the draw (core/WildcardPick.h).
+  wildcardMgr.SetUniformShare(static_cast<float>(
+    ini.GetDoubleValue(section, "fUniformShare", odds.uniformShare)));
   wildcardMgr.SetCooldown(static_cast<float>(
-    ini.GetDoubleValue(section, "fCooldownSeconds", 30.0)));
+    ini.GetDoubleValue(section, "fCooldownSeconds", clocks.cooldownSec)));
   wildcardMgr.SetRefractoryPeriod(static_cast<float>(
-    ini.GetDoubleValue(section, "fRefractorySeconds", 5.0)));
+    ini.GetDoubleValue(section, "fRefractorySeconds", clocks.refractorySec)));
 
-  logger::info("[WildcardConfig] base={:.3f}, max={:.2f}, cooldown={:.0f}s, refractory={:.0f}s",
-    wildcardMgr.GetBaseProbability(), wildcardMgr.GetMaxProbability(),
+  logger::info("[WildcardConfig] roll {:.3f}..{:.2f} (base..max), uniform share {:.2f}, cooldown={:.0f}s, "
+    "refractory={:.0f}s",
+    wildcardMgr.GetBaseProbability(), wildcardMgr.GetMaxProbability(), wildcardMgr.GetUniformShare(),
     wildcardMgr.GetCooldown(), wildcardMgr.GetRefractoryPeriod());
 }

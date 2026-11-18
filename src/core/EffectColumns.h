@@ -1,14 +1,14 @@
 #pragma once
 
 // =============================================================================
-// EFFECT COLUMNS -- the 243 columns of cap(i), in the order of effects.csv
+// EFFECT COLUMNS -- the 244 columns of cap(i), in the order of effects.csv
 // =============================================================================
 // GENERATED from docs/architecture/9-data/effects.csv (id, level, family);
 // tests/core/EffectColumnsTests.cpp fails if the two drift apart. Each enum
 // name is the CSV id, so a column reads the same in code, dumps and docs.
 //
 // Levels: 26 families (max over their specifics), 136 specifics, 19
-// modifiers, 25 item features, 23 weapon stats, 14 armour stats. Two
+// modifiers, 26 item features, 23 weapon stats, 14 armour stats. Two
 // specifics have no family column: drain_skill and soul_trap.
 //
 // Pure: standard library only (src/core/README.md).
@@ -216,6 +216,7 @@ namespace Huginn::Core::Effect
         kind_armour,
         kind_soulgem,
         kind_light,
+        narcotic,
         school_alteration,
         school_conjuration,
         school_destruction,
@@ -271,7 +272,7 @@ namespace Huginn::Core::Effect
     };
 
     inline constexpr std::size_t kColumnCount = static_cast<std::size_t>(Col::_Count);
-    static_assert(kColumnCount == 243, "effects.csv has 243 columns");
+    static_assert(kColumnCount == 244, "effects.csv has 244 columns");
 
     enum class Level : std::uint8_t { Family, Specific, Modifier, ItemFeature, WeaponStat, ArmourStat };
 
@@ -475,6 +476,7 @@ namespace Huginn::Core::Effect
         { "kind_armour", Level::ItemFeature, Col::_Count },
         { "kind_soulgem", Level::ItemFeature, Col::_Count },
         { "kind_light", Level::ItemFeature, Col::_Count },
+        { "narcotic", Level::ItemFeature, Col::_Count },
         { "school_alteration", Level::ItemFeature, Col::_Count },
         { "school_conjuration", Level::ItemFeature, Col::_Count },
         { "school_destruction", Level::ItemFeature, Col::_Count },
@@ -536,6 +538,13 @@ namespace Huginn::Core::Effect
     }
     [[nodiscard]] constexpr Level LevelOf(Col c) noexcept { return kColumns[Index(c)].level; }
     [[nodiscard]] constexpr Col FamilyOf(Col c) noexcept { return kColumns[Index(c)].family; }
+
+    /// 0.24.31: the deliveries that cast an item at someone else -- touch, aimed
+    /// (a target actor too), at a location. The TargetsOthers facet
+    /// (core/CapFacets.h) and coverage (core/Coverage.h CastAtOthers) read this
+    /// one list.
+    inline constexpr std::array<Col, 3> kCastAtOthersDelivery{ Col::delivery_touch, Col::delivery_aimed,
+                                                               Col::delivery_target_location };
 
     /// The column whose id is `name`, if any (linear: for tests, tools and the console).
     [[nodiscard]] constexpr std::optional<Col> FromName(std::string_view name) noexcept

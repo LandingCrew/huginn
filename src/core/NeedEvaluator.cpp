@@ -1,4 +1,5 @@
 #include "NeedEvaluator.h"
+#include "CombatOnset.h"
 #include "WeaponLoadout.h"
 
 #include <algorithm>
@@ -87,7 +88,7 @@ namespace Huginn::Core::Needs
                     return s.survival ? std::clamp(1.0f - s.warmth / kWarmthHigh, 0.0f, 1.0f) : 0.0f;
                 // --- Enemy
                 case N::in_combat: return B(s.inCombat);
-                case N::combat_onset: return s.inCombat ? s.combatStartAgo : kNever;
+                case N::combat_onset: return CombatOnsetAgo(s.inCombat, s.combatStartAgo);   // core/CombatOnset.h: the discriminator reads the same
                 // 0.23.41: the raw count; the curve (linear 1..5) makes one
                 // hostile 0. enemyCount / 6 through a saturating curve read
                 // 0.34 for every single hostile.
@@ -129,7 +130,11 @@ namespace Huginn::Core::Needs
                 case N::target_element_shock: return FamilyIn(s, Family::ElementShock);
                 case N::target_summoned: return B(s.hostileSummoned);
                 // --- Ally
-                case N::ally_injured: return B(s.followerBleedout);
+                // 0.24.32: how hurt the most hurt teammate is; one down on
+                // one knee reads all the way (a downed follower's health bar
+                // can still show some left).
+                case N::ally_injured:
+                    return s.followerBleedout ? 1.0f : std::clamp(s.followerHealthMissing, 0.0f, 1.0f);
                 case N::follower_present: return B(s.followerPresent);
                 // --- Environment
                 case N::darkness: return s.openDaylight ? 0.0f : 1.0f - s.light;
@@ -219,6 +224,16 @@ namespace Huginn::Core::Needs
         NeedSignature sig{};
         for (std::size_t i = 0; i < kNeedCount; ++i) sig[i] = SignatureLevel(values[i]);
         return sig;
+    }
+
+    std::uint64_t SignatureHash(const NeedSignature& sig) noexcept
+    {
+        std::uint64_t h = 1469598103934665603ull;
+        for (const std::uint8_t level : sig) {
+            h ^= level;
+            h *= 1099511628211ull;
+        }
+        return h;
     }
 
     bool SignatureMoved(const NeedSignature& logged, const NeedSignature& now, int levels) noexcept

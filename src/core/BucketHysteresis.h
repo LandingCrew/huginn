@@ -4,7 +4,7 @@
 // closest-enemy distance band) that feed the GameState hash.
 //
 // Why: the hash is what wakes the pipeline (CheckHashSkip) and what keys
-// UsageMemory's recency boost, so a value sitting on a boundary re-scored the
+// the old learner's recency boost, so a value sitting on a boundary re-scored the
 // whole page every time it wobbled across. In one LoreRim fight (2026-10-11
 // 08:55:40-08:58:00) 91 state transitions fired: 48 MP moves (most of them a
 // cast draining through several levels, some up-and-back pairs as little as

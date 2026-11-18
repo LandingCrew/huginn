@@ -4,6 +4,7 @@
 #include "override/OverrideConditions.h"
 #include "override/OverrideConfig.h"
 #include "telemetry/SoakMetrics.h"
+#include "core/SlotAllocStateless.h"   // 0.24.29: the memoryless page for the combat upsert
 #include "core/StackIdentity.h"
 #include <algorithm>
 #include <format>
@@ -200,15 +201,23 @@ namespace Huginn::Slot
         return (*snap)[pageIndex].slots.size();
     }
 
-    size_t SlotAllocator::GetWildcardSlotCount(size_t pageIndex) const
+    size_t SlotAllocator::GetWildcardSeat(size_t pageIndex) const
     {
         auto snap = GetConfigSnapshot();
         if (pageIndex >= snap->size()) {
-            return 0;
+            return SIZE_MAX;
         }
-        const auto& slots = (*snap)[pageIndex].slots;
-        return static_cast<size_t>(std::count_if(slots.begin(), slots.end(),
-            [](const SlotConfig& c) { return c.wildcardsEnabled; }));
+        // The same rule the allocation runs (the core's SeatOf), on the two
+        // fields it reads.
+        std::vector<Core::SlotAlloc::SlotRec> recs;
+        for (const auto& c : (*snap)[pageIndex].slots) {
+            Core::SlotAlloc::SlotRec r;
+            r.wildcardsEnabled = c.wildcardsEnabled;
+            r.priority = c.priority;
+            recs.push_back(r);
+        }
+        const size_t seat = Core::SlotAlloc::SeatOf(recs);
+        return seat == Core::SlotAlloc::npos ? SIZE_MAX : seat;
     }
 
     bool SlotAllocator::IsRegularSlot(size_t pageIndex, size_t slotIndex) const
@@ -218,16 +227,6 @@ namespace Huginn::Slot
         const auto& slots = (*snap)[pageIndex].slots;
         return slotIndex >= slots.size() ||
                slots[slotIndex].classification == SlotClassification::Regular;
-    }
-
-    SlotConfig SlotAllocator::GetSlotConfig(size_t slotIndex) const
-    {
-        const auto configs = GetSlotConfigs();
-        if (slotIndex >= configs.size()) {
-            SKSE::log::warn("[SlotAllocator] GetSlotConfig: slot {} out of range", slotIndex);
-            return SlotConfig{};
-        }
-        return configs[slotIndex];
     }
 
     std::vector<SlotConfig> SlotAllocator::GetSlotConfigs() const
@@ -273,7 +272,11 @@ namespace Huginn::Slot
         const Scoring::ScoredCandidateList& candidates,
         const Override::OverrideCollection& overrides,
         const State::PlayerActorState& player,
-        const State::WorldState& world) const
+        const State::WorldState& world,
+        const WildcardRequest* wildcard,
+        WildcardResult* wildcardOut,
+        Core::SlotAlloc::Input* inputOut,
+        MemorylessPage* memorylessOut) const
     {
         // Hold the snapshot for the duration of the call so the config refs
         // passed to AllocateSlotsInternal stay valid even across a concurrent reload.
@@ -284,7 +287,7 @@ namespace Huginn::Slot
         }
         const size_t page = pageIndex < snap->size() ? pageIndex : 0;
         return AllocateSlotsInternal(page, generation, (*snap)[page].slots,
-            candidates, overrides, player, world);
+            candidates, overrides, player, world, /*forTest=*/false, wildcard, wildcardOut, inputOut, memorylessOut);
     }
 
     SlotAssignments SlotAllocator::AllocateSlots(
@@ -351,9 +354,16 @@ namespace Huginn::Slot
         const Override::OverrideCollection& overrides,
         const State::PlayerActorState& player,
         [[maybe_unused]] const State::WorldState& world,
-        bool forTest) const
+        bool forTest,
+        const WildcardRequest* wildcard,
+        WildcardResult* wildcardOut,
+        Core::SlotAlloc::Input* inputOut,
+        MemorylessPage* memorylessOut) const
     {
         namespace SA = Core::SlotAlloc;
+        if (wildcardOut) {
+            *wildcardOut = WildcardResult{};
+        }
 
         // One clock reading for the whole pass: home keys measure how long an
         // item was away against it, and departures are stamped with it.
@@ -428,6 +438,32 @@ namespace Huginn::Slot
             &overrideIndex);
         in.memoryAvailable = pageIndex < MAX_PAGES;
 
+        // R10: the wildcard key. The cached wildcard's row in THIS page's list
+        // (a page with a wheel leaves out uid-less gear): its own stack, else
+        // the first row of its form; none when the list no longer has it.
+        bool pinFound = false;
+        if (wildcard) {
+            auto& w = in.wildcard;
+            w.roll = wildcard->roll;
+            w.uRoll = wildcard->uRoll;
+            w.uDraw = wildcard->uDraw;
+            w.params = wildcard->params;
+            w.heldForms.assign(wildcard->heldForms.begin(), wildcard->heldForms.end());
+            w.heldNames = wildcard->heldNames;
+            w.heldKeys = wildcard->heldKeys;
+            if (wildcard->pinForm != 0) {
+                uint32_t first = SA::kNone;
+                for (uint32_t i = 0; i < in.candidates.size(); ++i) {
+                    const auto& c = in.candidates[i];
+                    if (c.isRememberedOnly || c.formID != wildcard->pinForm) continue;
+                    if (c.uniqueID == wildcard->pinUniqueID) { first = i; break; }
+                    if (first == SA::kNone) first = i;
+                }
+                w.pinned = first;
+                pinFound = first != SA::kNone;
+            }
+        }
+
 #ifndef NDEBUG
         // Slot capture (SlotSnapshot.h): this allocation's input and result.
         std::optional<SA::Snapshot> capture;
@@ -478,40 +514,50 @@ namespace Huginn::Slot
             }
         }
 
-        // The page, from the game's candidates.
-        for (size_t i = 0; i < out.slots.size(); ++i) {
-            const auto& s = out.slots[i];
-            const auto cls = slotConfigs[i].classification;
-            switch (s.kind) {
-            case SA::Kind::Empty:
-                assignments.push_back(SlotAssignment::Empty(i, cls));
-                break;
-            case SA::Kind::Override: {
-                // Told apart by its type, never by its score: the score is the
-                // +inf sentinel (the old 1000.0 utility would overflow exp()).
-                Scoring::ScoredCandidate sc;
-                sc.candidate = *overrides.activeOverrides[overrideIndex[s.src]].candidate;
-                sc.isWildcard = false;
-                auto a = SlotAssignment::FromCandidate(i, cls, sc, AssignmentType::Override);
-                a.score = Core::kPinnedScore;
-                assignments.push_back(std::move(a));
-                break;
+        // The page, from the game's candidates. `order` (0.24.29): a
+        // stateless input's re-ordering (candidate k of it is candidates[order[k]]).
+        const auto toAssignments = [&](const SA::Output& o, const std::vector<uint32_t>* order, SlotAssignments& dst) {
+            for (size_t i = 0; i < o.slots.size(); ++i) {
+                const auto& s = o.slots[i];
+                const auto cls = slotConfigs[i].classification;
+                const size_t src = (order && s.kind != SA::Kind::Override && s.src < order->size())
+                    ? (*order)[s.src] : s.src;
+                switch (s.kind) {
+                case SA::Kind::Empty:
+                    dst.push_back(SlotAssignment::Empty(i, cls));
+                    break;
+                case SA::Kind::Override: {
+                    // Told apart by its type, never by its score: the score is the
+                    // +inf sentinel (the old 1000.0 utility would overflow exp()).
+                    Scoring::ScoredCandidate sc;
+                    sc.candidate = *overrides.activeOverrides[overrideIndex[s.src]].candidate;
+                    auto a = SlotAssignment::FromCandidate(i, cls, sc, AssignmentType::Override);
+                    a.score = Core::kPinnedScore;
+                    dst.push_back(std::move(a));
+                    break;
+                }
+                case SA::Kind::Remembered:
+                    dst.push_back(SlotAssignment::FromCandidate(i, cls, candidates[src], AssignmentType::Remembered));
+                    break;
+                default:
+                    dst.push_back(SlotAssignment::FromCandidate(i, cls, candidates[src],
+                        s.kind == SA::Kind::Wildcard ? AssignmentType::Wildcard : AssignmentType::Normal));
+                    break;
+                }
+                dst.back().seatMoved = s.seatMoved;
             }
-            case SA::Kind::Remembered: {
-                Scoring::ScoredCandidate sc = candidates[s.src];
-                sc.isWildcard = false;
-                assignments.push_back(SlotAssignment::FromCandidate(i, cls, sc, AssignmentType::Remembered));
-                break;
-            }
-            default:
-                assignments.push_back(SlotAssignment::FromCandidate(i, cls, candidates[s.src],
-                    s.kind == SA::Kind::Wildcard ? AssignmentType::Wildcard : AssignmentType::Normal));
-                break;
-            }
-            assignments.back().seatMoved = s.seatMoved;
-        }
+        };
+        toAssignments(out, nullptr, assignments);
 
         ReportEvents(pageIndex, slotConfigs, candidates, overrides, overrideIndex, out.events, forTest);
+
+        if (wildcardOut) {
+            wildcardOut->core = out.wildcard;
+            wildcardOut->pinFound = pinFound;
+            if (out.wildcard.drawn != SA::kNone && out.wildcard.drawn < candidates.size()) {
+                wildcardOut->drawn = candidates[out.wildcard.drawn];
+            }
+        }
 
 #ifndef NDEBUG
         // [Seating]: the seat map when it CHANGES -- a steady map is the
@@ -584,6 +630,36 @@ namespace Huginn::Slot
         }
 #endif
 
+        // 0.24.17: the input, for the D2 shadow's stateless pages. Moved out
+        // last: nothing above reads `in` after this point.
+        if (inputOut) {
+            *inputOut = std::move(in);
+        }
+
+        // 0.24.29: the memoryless page, for the combat upsert's challengers
+        // (core/CombatUpsert.h): the same input with the memory taken out,
+        // ranked on the live scores (a remembered-only row is never ranked).
+        // Pure: no seating, events or capture, and the live page above is
+        // unchanged. On the input handed out when there is one -- it is the
+        // shadow's page B, built once -- else on `in`, which nothing reads now.
+        if (memorylessOut) {
+            *memorylessOut = MemorylessPage{};
+            SA::Input& bare = inputOut ? *inputOut : in;
+            std::vector<double> liveScores(bare.candidates.size());
+            for (size_t k = 0; k < bare.candidates.size(); ++k) {
+                const auto& c = bare.candidates[k];
+                liveScores[k] = c.isRememberedOnly ? Core::kUnrankedScore : c.score;
+            }
+            std::vector<uint32_t> order;
+            SA::MakeStateless(bare, liveScores, order);
+            const SA::Output bareOut = SA::Allocate(bare);
+            toAssignments(bareOut, &order, memorylessOut->page);
+            if (inputOut) {
+                memorylessOut->inInput = true;
+                memorylessOut->stateless = SA::StatelessPageOf(bare, bareOut, order);
+                memorylessOut->order = std::move(order);
+            }
+        }
         return assignments;
     }
 
@@ -699,6 +775,25 @@ namespace Huginn::Slot
                 // (ln m), which a negative score cannot turn upside down.
                 const double holder = e.x + e.z;
                 const double challenger = e.y + e.w;
+                if (e.sd >= 0.0) {
+                    // R9: the challenger rule decided (the scorer's beliefs
+                    // were known for both rows): the gap against its line,
+                    // ln m + z sigma_Delta, and P(better) = Phi(gap / sd).
+                    const auto& set = SlotSettings::GetSingleton();
+                    const double z = Core::Challenger::ZForConfidence(set.ChallengerConfidence());
+                    const double minGap = Core::Challenger::ClampMinGap(set.ChallengerMinGap());
+                    const double gap = challenger - holder;
+                    const double p = e.sd > 0.0 ? Core::Challenger::NormalCdf((gap - minGap) / e.sd) : 1.0;
+                    // bTestAllChallengers (0.24.13): e.d higher-ranked
+                    // challengers missed the line before this one cleared it.
+                    SKSE::log::debug("[Hold] Page {} slot {}: '{}' gives way to '{}' (s={:+.3f} vs {:+.3f}{}: "
+                        "{:+.3f} > ln m {:.3f} + z {:.2f} x sd {:.3f}, P {:.2f}{})",
+                        pageIndex, e.a, candidates[e.b].GetName(), candidates[e.c].GetName(), e.y, e.x,
+                        e.capped ? std::format("; class cap {:+.3f} vs {:+.3f}", e.w, e.z) : std::string{},
+                        gap, minGap, z, e.sd, p,
+                        e.d != SA::kNone ? std::format("; {} higher challenger(s) missed the line", e.d) : std::string{});
+                    break;
+                }
                 const double logMargin = Core::LogHoldMargin(SlotSettings::GetSingleton().ChallengerMargin());
                 if (e.capped) {
                     SKSE::log::debug("[Hold] Page {} slot {}: '{}' gives way to '{}' (s={:+.3f} vs {:+.3f}; "

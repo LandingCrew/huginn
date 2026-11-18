@@ -298,41 +298,6 @@ namespace Huginn::Scroll
       topK);
    }
 
-   const InventoryScroll* ScrollRegistry::GetBestDamageScroll() const noexcept
-   {
-      return FindBest(
-      [](const InventoryScroll& s) { return s.data.type == ScrollType::Damage && s.count > 0; },
-      [](const InventoryScroll& s) { return s.data.magnitude; });
-   }
-
-   const InventoryScroll* ScrollRegistry::GetBestHealingScroll() const noexcept
-   {
-      return FindBest(
-      [](const InventoryScroll& s) { return s.data.type == ScrollType::Healing && s.count > 0; },
-      [](const InventoryScroll& s) { return s.data.magnitude; });
-   }
-
-   const InventoryScroll* ScrollRegistry::GetBestFireScroll() const noexcept
-   {
-      return FindBest(
-      [](const InventoryScroll& s) { return HasTag(s.data.tags, ScrollTag::Fire) && s.count > 0; },
-      [](const InventoryScroll& s) { return s.data.magnitude; });
-   }
-
-   const InventoryScroll* ScrollRegistry::GetBestFrostScroll() const noexcept
-   {
-      return FindBest(
-      [](const InventoryScroll& s) { return HasTag(s.data.tags, ScrollTag::Frost) && s.count > 0; },
-      [](const InventoryScroll& s) { return s.data.magnitude; });
-   }
-
-   const InventoryScroll* ScrollRegistry::GetBestShockScroll() const noexcept
-   {
-      return FindBest(
-      [](const InventoryScroll& s) { return HasTag(s.data.tags, ScrollTag::Shock) && s.count > 0; },
-      [](const InventoryScroll& s) { return s.data.magnitude; });
-   }
-
    void ScrollRegistry::LogAllScrolls() const
    {
       std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety

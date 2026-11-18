@@ -101,13 +101,19 @@ namespace Huginn::Slot
             return true;
         }
 
+        AddPendingLocked(page, slot, formID, kind, NowMs());
+        return false;
+    }
+
+    void Remembrance::AddPendingLocked(size_t page, size_t slot, RE::FormID formID, Kind kind, int64_t nowMs)
+    {
         const auto& settings = SlotSettings::GetSingleton();
         if (settings.RemembranceDurationMs() <= 0.0f) {
-            return false;
+            return;
         }
         const auto config = settings.GetSlotConfigs(page);
         if (slot >= config.size() || !config[slot].remembrance) {
-            return false;
+            return;
         }
 
         // Oldest first out when full; four presses inside the match window
@@ -116,8 +122,24 @@ namespace Huginn::Slot
             std::move(m_pending.begin() + 1, m_pending.end(), m_pending.begin());
             --m_pendingCount;
         }
-        m_pending[m_pendingCount++] = { page, slot, formID, kind, NowMs() };
-        return false;
+        m_pending[m_pendingCount++] = { page, slot, formID, kind, nowMs };
+    }
+
+    void Remembrance::RearmCapture(size_t page, size_t slot, RE::FormID formID, Kind kind)
+    {
+        if (page >= MAX_PAGES || slot >= MAX_SLOTS_PER_PAGE || formID == 0) return;
+        std::lock_guard<std::mutex> lock(m_mutex);
+        const int64_t nowMs = NowMs();
+        for (size_t i = 0; i < m_pendingCount; ++i) {
+            auto& p = m_pending[i];
+            if (p.page == page && p.slot == slot && p.formID == formID) {
+                p.createdAtMs = nowMs;
+                return;
+            }
+        }
+        // Expired while the equip waited (Update drops a capture after
+        // kMatchWindowMs): the press's capture again, timed from now.
+        AddPendingLocked(page, slot, formID, kind, nowMs);
     }
 
     void Remembrance::Observe(Track& track, RE::FormID now, int64_t nowMs)

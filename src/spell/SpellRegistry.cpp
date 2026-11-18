@@ -1,5 +1,6 @@
 #include "SpellRegistry.h"
 #include "Config.h"
+#include "learning/EquipCallerTrace.h"
 #include "learning/EquipSourceTracker.h"
 #include "learning/ExternalEquipLearner.h"
 #include "util/AtomicGuard.h"
@@ -31,6 +32,10 @@ namespace Huginn::Spell
       if (!spell) {
       return RE::BSEventNotifyControl::kContinue;  // Not a spell
       }
+
+      // 0.24.26 (debug): a spell or scroll taken out of a hand by something
+      // other than Huginn -- which thread, which call path.
+      Learning::EquipCallerTrace::NoteIfExternal(*event, *form);
 
       // Immediately refresh favorites status when spell equipment changes
       logger::debug("Spell equip event detected: {} ({:08X}) (equipped={})"sv,
@@ -94,6 +99,7 @@ namespace Huginn::Spell
       // Clear existing data
       ClearStoreLocked();
       m_learnedAt.clear();
+      m_newlyLearned.clear();
 
       // Classify and add each spell (AddSpell assumes lock is held by caller)
       for (auto* spell : playerSpells) {
@@ -119,8 +125,9 @@ namespace Huginn::Spell
       // only be answered after a classification pass.
       //
       // It sees the PLAYER'S spells, so an override on a spell they have not
-      // learned reads as unmatched. `hg dump spells` classifies the whole form
-      // array and is the complete check.
+      // learned reads as unmatched. Nothing classifies the whole load order any
+      // more (R11 deleted `hg dump spells` with the other per-type dumps), so a
+      // character who knows the spell is the only complete check.
       m_classifier.ReportOverrideUsage("after rebuild"sv);
 
       ReportWeakClassificationsLocked();
@@ -218,6 +225,7 @@ namespace Huginn::Spell
       // Add to registry (fast in-memory operations only)
       PushEntryLocked(std::move(spellData), formID);
       m_learnedAt[formID] = std::chrono::steady_clock::now();
+      m_newlyLearned.push_back(formID);
       }
 
       logger::info("Dynamically added new spell: {} ({:08X})"sv, spell->GetName(), spell->GetFormID());
@@ -296,6 +304,7 @@ namespace Huginn::Spell
       const RE::FormID formID = data.formID;
       PushEntryLocked(std::move(data), formID);
       m_learnedAt[formID] = now;
+      m_newlyLearned.push_back(formID);
       newSpellsAdded++;
       }
 
@@ -407,6 +416,18 @@ namespace Huginn::Spell
    {
       std::unique_lock lock(m_mutex);
       m_learnedAt.clear();
+      m_newlyLearned.clear();
+   }
+
+   std::vector<RE::FormID> SpellRegistry::TakeNewlyLearned()
+   {
+      {
+         // Every tick asks; almost always empty: no write lock for that.
+         std::shared_lock lock(m_mutex);
+         if (m_newlyLearned.empty()) return {};
+      }
+      std::unique_lock lock(m_mutex);
+      return std::exchange(m_newlyLearned, {});
    }
 
    size_t SpellRegistry::GetSpellCountByType(SpellType type) const

@@ -2,11 +2,13 @@
 
 #include "ScoredCandidate.h"
 #include "core/FilterReason.h"
+#include "core/DecisionLog.h"
 #include "core/OldScore.h"
 #include "slot/SlotAssignment.h"
 #include "slot/SlotClassifier.h"
 #include <chrono>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <shared_mutex>
 #include <string>
@@ -15,6 +17,8 @@
 
 namespace Huginn::Learning
 {
+    struct ShadowRun;   // learning/ChoiceShadow.h (R8.2)
+
     // =========================================================================
     // PIPELINE STATE CACHE
     // =========================================================================
@@ -41,7 +45,14 @@ namespace Huginn::Learning
             return instance;
         }
 
-        // Sentinel rank for candidates beyond the reported prefix (iTopNCandidates).
+        // How many leading rows of the ranked list get a reported rank (the
+        // [Reach] attribution's near / far miss, the rank column of the v2 and
+        // v3 logs). R8.4: a constant of its own, 10 -- what iTopNCandidates
+        // (default and shipped value) gave it before -- so the legacy floors'
+        // key no longer sets it.
+        static constexpr size_t kReportedRankPrefix = 10;
+
+        // Sentinel rank for candidates beyond the reported prefix (kReportedRankPrefix).
         // Until R7 their true rank was unknown (partial_sort left the tail
         // unordered); the list is fully sorted now, but attribution still
         // treats them as far-miss (B-low), never near-miss, as before. Consumers
@@ -57,11 +68,16 @@ namespace Huginn::Learning
             Candidate::SourceType sourceType{};
             Slot::SlotClassification slotClass = Slot::SlotClassification::Regular;  // SlotClassifier::Classify
             size_t rank = 0;            // kUnrankedTail past the sorted prefix
-            float utility = 0.0f;
+            float utility = 0.0f;       // the old engine's (the v2 log only): ranks nothing since R8.3
+            double score = 0.0;         // R8.4: what it ranked on (SlotScore: mu; ln u in the fallback)
             Scoring::ScoreBreakdown breakdown;
             bool isWildcard = false;
             bool isColdStartBoosted = false;
             bool isRememberedOnly = false;
+            // 0.24.19: the old floors kept the row (pass or cold start), so the
+            // old engine scored it: the v2 log writes only these rows, as it
+            // did before R8.3 ranked every candidate.
+            bool legacyScored = false;
         };
 
         /// One filled slot on the current page.
@@ -75,8 +91,8 @@ namespace Huginn::Learning
         };
 
         /// R4: one ELIGIBLE candidate of the run -- every item CandidateGenerator
-        /// produced, before the scorer's floors (fMinimumContextWeight,
-        /// fMinimumUtility) dropped any. One row per item: a weapon stack is
+        /// produced, whatever the old engine's floors said (R8.3: they drop
+        /// nothing from the ranking). One row per item: a weapon stack is
         /// its own row (formID + uniqueID). Copied out of the run for the
         /// selection log v3 (learning/SelectionLogV3); nothing scores from it.
         struct EligibleRow
@@ -92,6 +108,31 @@ namespace Huginn::Learning
             /// 0.23.53: the old engine's score parts for the row, whatever the
             /// floors (PipelineCoordinator::CaptureEligible).
             Core::DecisionLog::OldScore old;
+            /// 0.23.56 (R8.2): the D2 legacy feature off the same pass
+            /// (learning/legacy/LegacyLearnFeature.h): ln learn mult (0 off
+            /// the floors) and util missing.
+            float lnLearnMult = std::numeric_limits<float>::quiet_NaN();
+            int8_t utilMissing = -1;
+            /// 0.23.56 (R8.2): the choice model (R8.3: the ranking's; mu from
+            /// PipelineCoordinator::RankOnChoice, the page's part added by
+            /// LogChoiceRows: the slot feature of the key it landed on): mu,
+            /// its sd and the explanation (need, column; -1 learned, -2 none).
+            /// No logit: kappa is the learner's, applied to a pick's choice set.
+            float shadowMu = std::numeric_limits<float>::quiet_NaN();
+            float shadowSd = std::numeric_limits<float>::quiet_NaN();
+            int16_t exNeed = Core::DecisionLog::kExNone;
+            int16_t exCol = -1;
+            /// 0.24.17: the D2 engine in shadow (PipelineCoordinator::
+            /// ShadowLegacyPages, core/ShadowCompare.h): engine A's mu, the
+            /// row's rank under A and under the live ranking (1 = first, 0 =
+            /// none), and its key on A's and on the live ranking's stateless
+            /// page (-1 off, -2 none). Logged only (the v3 row columns amu, ar,
+            /// br, ak, bk); none when the shadow did not run.
+            float legacyShadowMu = std::numeric_limits<float>::quiet_NaN();
+            int16_t legacyShadowRankA = 0;
+            int16_t legacyShadowRankB = 0;
+            int8_t legacyShadowKeyA = -2;
+            int8_t legacyShadowKeyB0 = -2;
         };
 
         /// 0.23.53: the old engine's view of a run, for the selection log v3
@@ -105,6 +146,11 @@ namespace Huginn::Learning
             Core::DecisionLog::OldRun run;
             uint32_t stateHash = 0;
             std::vector<EligibleRow> dropped;
+            /// 0.23.56 (R8.2): the new model's tick of the same run (its
+            /// snapshot, v and W), so the selection log v3 scores the held rows
+            /// the run never gathered with the same tick as the eligible ones
+            /// (learning/ChoiceShadow.h). Null when the new model is off.
+            std::shared_ptr<const ShadowRun> shadow;
         };
 
         /// R4: the page as shown, without the scored list (cheap; the selection
@@ -145,9 +191,9 @@ namespace Huginn::Learning
         // and the tail was in unspecified order; it sorts the whole list now,
         // but ranks beyond the prefix are still stored as kUnrankedTail, so
         // attribution classifies them as far-miss exactly as before.
-        // NOTE: wildcard swaps run after sorting, so a prefix rank may hold a
-        // wildcard-promoted item — intentional: attribution should see what was
-        // actually surfaced, not the pre-wildcard utility order.
+        // R10: the list is in score order (no wildcard swap); a row is
+        // isWildcard when the page shows its form as the wildcard (the first
+        // row of the form, as the index keeps).
         // R4: `eligible` (moved in) and `pageSlots` are kept for the selection
         // log v3 only; attribution and the v2 log read none of it.
         void Update(
@@ -173,11 +219,17 @@ namespace Huginn::Learning
             m_pageSlots = pageSlots;
             ++m_generation;
 
+            RE::FormID wildForm = 0;
+            for (const auto& a : currentPageAssignments) {
+                if (a.IsWildcard() && !a.IsEmpty()) wildForm = a.formID;
+            }
+
             m_scores.clear();
             m_scores.reserve(scored.size());
             m_index.clear();
             for (size_t i = 0; i < scored.size(); ++i) {
                 const auto& sc = scored[i];
+                const bool firstOfForm = !m_index.contains(sc.GetFormID());
                 // FIRST row wins, as in Snapshot::Find. One FormID can have
                 // several rows (the weapon registry keeps one per stack), and
                 // the first is the best-ranked -- attribution and the selection
@@ -189,10 +241,12 @@ namespace Huginn::Learning
                     .slotClass = Slot::SlotClassifier::Classify(sc),
                     .rank = (i < sortedPrefix) ? i : kUnrankedTail,
                     .utility = sc.utility,
+                    .score = sc.SlotScore(),
                     .breakdown = sc.breakdown,
-                    .isWildcard = sc.isWildcard,
+                    .isWildcard = wildForm != 0 && sc.GetFormID() == wildForm && firstOfForm,
                     .isColdStartBoosted = sc.isColdStartBoosted,
                     .isRememberedOnly = sc.isRememberedOnly,
+                    .legacyScored = sc.legacyScored,
                 });
             }
 
@@ -223,7 +277,7 @@ namespace Huginn::Learning
         {
             bool wasCandidate = false;
             size_t rank = 0;
-            float utility = 0.0f;
+            double score = 0.0;   // R8.4: SlotScore (was the old utility)
             bool wasDisplayed = false;
             size_t displayPage = 0;
         };
@@ -238,7 +292,7 @@ namespace Huginn::Learning
                 const auto& row = m_scores[it->second];
                 info.wasCandidate = true;
                 info.rank = row.rank;
-                info.utility = row.utility;
+                info.score = row.score;
             }
 
             for (const auto& s : m_shown) {

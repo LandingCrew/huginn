@@ -57,11 +57,15 @@ namespace Huginn::Slot
             return instance;
         }
 
-        /// Load settings from INI file
-        void LoadFromFile(const std::filesystem::path& iniPath);
+        /// Load the page layout and the [SlotLocker] keys read here from the
+        /// parsed main INI (Settings::LoadMainIni, over the shipped Huginn.ini,
+        /// whose layout -- its [Pages] -- is the default).
         void LoadFromIni(const CSimpleIniA& ini);
 
-        /// Reset to default configuration
+        /// The state before the first load (the constructor): one page of the
+        /// compiled-in PAGE0_SLOTS. Not the shipped defaults -- those are the
+        /// shipped Huginn.ini, which every load reads under the player's file,
+        /// and which dMenu's Reset to Defaults loads.
         void ResetToDefaults();
 
         /// Get page count
@@ -107,6 +111,33 @@ namespace Huginn::Slot
         [[nodiscard]] float ChallengerMargin() const noexcept
         {
             return m_challengerMargin.load(std::memory_order_acquire);
+        }
+
+        /// R9, the Bayesian challenger rule (core/ChallengerRule.h): the
+        /// posterior probability tau that a challenger must beat the holder
+        /// with, mu_c - mu_i > ln m + Phi^-1(tau) sigma_Delta. 0.5-0.999.
+        /// Rules the hold whenever the scorer's beliefs are known (the choice
+        /// ranking); ChallengerMargin() rules it only in the fallback ranking.
+        /// `[SlotLocker] fChallengerConfidence`.
+        [[nodiscard]] float ChallengerConfidence() const noexcept
+        {
+            return m_challengerConfidence.load(std::memory_order_acquire);
+        }
+
+        /// R9: the rule's minimum gap ln m, in score units (log-odds). 0 =
+        /// confidence alone (doc 9's m = 1). 0-5. `[SlotLocker] fChallengerMinGap`.
+        [[nodiscard]] float ChallengerMinGap() const noexcept
+        {
+            return m_challengerMinGap.load(std::memory_order_acquire);
+        }
+
+        /// 0.24.13: the hold and the combat upsert ask a key's challengers in
+        /// rank order, the first that clears the challenger rule's line taking
+        /// the key; false (default) asks the best one only. Only the rule (the
+        /// choice ranking) tells the two apart. `[SlotLocker] bTestAllChallengers`.
+        [[nodiscard]] bool TestAllChallengers() const noexcept
+        {
+            return m_testAllChallengers.load(std::memory_order_acquire);
         }
 
         /// Home keys: an item back on the page within HomeKeyMemorySec() of
@@ -198,7 +229,7 @@ namespace Huginn::Slot
         }
 
         /// Monotonic generation counter — bumped on every config change
-        /// (LoadFromFile / ResetToDefaults). Consumers can cache config copies
+        /// (LoadFromIni / ResetToDefaults). Consumers can cache config copies
         /// and cheaply detect staleness without re-copying every access.
         [[nodiscard]] uint32_t GetGeneration() const noexcept
         {
@@ -237,6 +268,9 @@ namespace Huginn::Slot
         std::atomic<bool> m_keepSlotPositions{true};
         std::atomic<bool> m_holdSeatedItems{true};
         std::atomic<float> m_challengerMargin{0.5f};
+        std::atomic<float> m_challengerConfidence{0.8f};   // R9
+        std::atomic<float> m_challengerMinGap{0.0f};       // R9
+        std::atomic<bool> m_testAllChallengers{false};     // 0.24.13
         std::atomic<bool> m_returnToHomeKey{true};
         std::atomic<float> m_homeKeyMemorySec{60.0f};
         std::atomic<float> m_classRepeatDiscount{0.5f};

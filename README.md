@@ -9,10 +9,10 @@ Huginn is an SKSE plugin that watches what you can see — health, enemies, envi
 - **Context-aware recommendations** — analyzes health, magicka, stamina, distance, enemy type, combat state, and sneak to suggest relevant equipment
 - **Learns as you play** — observes what you equip in each situation, bootstrapped with sensible defaults
 - **Scaleform HUD widget** — minimal overlay with keybinds, auto-hides outside combat
-- **Wheeler integration** — optional radial menu support via [wheelerAPI](https://github.com/LandingCrew/wheelerAPI) or 
+- **Wheeler integration** — optional radial menu support via [wheelerAPI](https://github.com/LandingCrew/wheelerAPI)
 - **Multi-page slots** — organize recommendations by role (up to 10 pages, 10 slots each)
 - **Workstation awareness** — Fortify Smithing at forges, Fortify Enchanting at enchanters
-- **INI-configurable** — context weights, scoring, slot layout, keybindings, display mode
+- **INI-configurable** — need curves, slot layout, keybindings, display mode
 
 ## Requirements
 
@@ -50,7 +50,7 @@ cmake --build build --config Debug
 
 ### Dependencies (vcpkg)
 
-spdlog, imgui (Win32 + DX11), simpleini, toml11, rapidcsv, freetype, rsm-binary-io
+spdlog, imgui (Win32 + DX11), simpleini, rapidcsv (CommonLibSSE-NG looks for it), doctest (host tests)
 
 ## Compatibility
 

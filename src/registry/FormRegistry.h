@@ -66,7 +66,8 @@ namespace Huginn::Registry
    // CRTP base for the FormID-keyed registries (spells, items, scrolls, weapons).
    // Owns the dual-index storage, the shared_mutex, the loading flag, and the
    // generic query primitives that previously lived — hand-copied — in each
-   // registry. See docs/refactor/form-registry.md for the consolidation plan.
+   // registry. (The consolidation plan, docs/refactor/form-registry.md, was
+   // removed in 326f720.)
    //
    // DERIVED CONTRACT:
    //   static RE::FormID FormIDOf(const Entry&);

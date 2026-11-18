@@ -74,9 +74,9 @@ namespace Huginn::Spell
    // =========================================================================
    // SpellTag has all 32 bits spoken for, and that is the whole reason four
    // context weights sat computed-but-unread for as long as they existed.
-   // ContextRuleEngine raises unlockWeight, slowFallWeight, antiDragonWeight
-   // and waterbreathingWeight; DominantReason names them on the widget; and no
-   // candidate could draw on them because there was no bit left to match
+   // The old context rules raised unlockWeight, slowFallWeight, antiDragonWeight
+   // and waterbreathingWeight; the old reason label named them on the widget;
+   // and no candidate could draw on them because there was no bit left to match
    // against. The contexts fired, labelled themselves, and moved no ranking.
    //
    // A second field rather than widening SpellTag to uint64_t: ItemTagExt
@@ -266,9 +266,9 @@ namespace Huginn::Spell
       case TypeEvidence::Archetype:    return "effect data";
       case TypeEvidence::Applied:      return "the spell it applies";
       case TypeEvidence::SchoolOnly:   return "school only";
-      // No comma: this string is written as a field in `hg dump spells`,
-      // and the one that used to be here split 52 rows and shifted every
-      // column after it.
+      // No comma: this string was written as a CSV field by `hg dump spells`
+      // (deleted in R11), and the one that used to be here split 52 rows and
+      // shifted every column after it. Kept comma-free for any CSV it reaches.
       case TypeEvidence::SchoolGuess:  return "school guess";
       case TypeEvidence::Tags:         return "tags";
       case TypeEvidence::Name:         return "name only";

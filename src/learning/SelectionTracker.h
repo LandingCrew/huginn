@@ -3,6 +3,7 @@
 #include <unordered_map>
 
 #include "EquipEvent.h"
+#include "core/SelectionGate.h"
 #include "core/WheelAttributionHold.h"
 #include <chrono>
 #include <mutex>
@@ -41,7 +42,9 @@ namespace Huginn::Learning
     // sinks; OnConsumed and Update from the update loop. Game threads, not
     // one: the input sink and the update loop run on job threads in
     // gameplay and the main thread in menus (UpdateLoop.cpp, THREADS above
-    // OnUpdate). Hence the mutex; Dispatch always runs outside it.
+    // OnUpdate); GateHold / GateRelease from the hand equip gate (the input
+    // sink, and the main thread's PlayerCharacter::Update hook). Hence the
+    // mutex; Dispatch always runs outside it.
     // =========================================================================
     class SelectionTracker
     {
@@ -54,8 +57,20 @@ namespace Huginn::Learning
 
         /// The player selected `formID`. `via` says how ("key s3", "inventory
         /// menu"...); `attribution` is the external A-E case label, if any.
-        void Select(RE::FormID formID, EquipSource source, std::string via,
+        /// @return true when this call opened a new pending record (0.24.26:
+        ///   the hand equip gate withdraws only a record its press opened).
+        bool Select(RE::FormID formID, EquipSource source, std::string via,
                     std::string attribution = {});
+
+        /// The hand equip gate parked an equip of `formID` (0.24.26): hold its
+        /// pending record, if one exists -- nothing about it is decided while
+        /// held (core/SelectionGate.h). Returns whether a record was held.
+        bool GateHold(RE::FormID formID);
+
+        /// The parked equip left the gate: release its hold. `retime` (the
+        /// equip went through): when it was the last hold, the confirm
+        /// window restarts from now.
+        void GateRelease(RE::FormID formID, bool retime);
 
         /// A real consumption of `formID` (count dropped, not a drop/sell/store).
         /// Confirms a pending selection of it; returns false when there was none,
@@ -100,6 +115,8 @@ namespace Huginn::Learning
             // whose callback lands just after the equip event: held unannounced
             // and unconfirmed until that callback or HOLD_MS (WheelAttributionHold).
             Core::WheelAttributionHold hold;
+            // Held while the hand equip gate has its equip parked (0.24.26).
+            Core::SelectionGate gate;
         };
 
         static void LogPending(const EquipEvent& event);

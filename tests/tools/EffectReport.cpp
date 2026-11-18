@@ -10,6 +10,8 @@
 //     --name <label>            label for the report (default: the file name)
 //     --min-coverage <pct>      exit 1 if coverage is below
 //     --classes <csv>           legacy slot classes: formID,kind,slotClass rows
+//                               (a dump from 0.24.4 on has R11 classes, derived from cap
+//                               itself, so the diff is meaningful only for older dumps)
 //                               (when the dump has no slotClass column)
 //     --diff-out <csv>          write the coverage diff (one row per item)
 //     --mgef-out <csv>          write every MGEF's column and route

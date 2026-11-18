@@ -186,6 +186,8 @@ def validate(doc):
     if rec is not None:
         if not _isnum(rec.get('window_s')) or not isinstance(rec.get('taus_s'), list):
             errs.append('recent: window_s and taus_s expected')
+        elif rec['taus_s'] and all(_isnum(t) for t in rec['taus_s']) and rec['window_s'] != max(rec['taus_s']):
+            errs.append('recent.window_s: the largest of taus_s')     # fitlib.recent_families: window = max(taus)
         for i, f in enumerate(rec.get('features') or []):
             if not isinstance(f.get('family'), str) or f['family'] not in cols:
                 errs.append(f'recent.features[{i}].family: a name from cols')

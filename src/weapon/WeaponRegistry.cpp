@@ -802,13 +802,6 @@ namespace Huginn::Weapon
       [](const InventoryWeapon& w) { return HasTag(w.data.tags, WeaponTag::NeedsCharge); });
    }
 
-   std::vector<const InventoryWeapon*> WeaponRegistry::GetWeaponsWithTag(WeaponTag tag) const
-   {
-      std::shared_lock lock(m_mutex);
-      return Registry::CollectLocked(m_weapons,
-      [tag](const InventoryWeapon& w) { return HasTag(w.data.tags, tag); });
-   }
-
    // =============================================================================
    // CONVENIENCE "BEST" ACCESSORS
    // =============================================================================
@@ -829,27 +822,9 @@ namespace Huginn::Weapon
       [](const InventoryWeapon& w) { return w.data.damage; });
    }
 
-   const InventoryWeapon* WeaponRegistry::GetBestSilveredWeapon() const noexcept
-   {
-      std::shared_lock lock(m_mutex);
-      return Registry::FindBestLocked(m_weapons,
-      [](const InventoryWeapon& w) { return HasTag(w.data.tags, WeaponTag::Silver); },
-      [](const InventoryWeapon& w) { return w.data.damage; });
-   }
-
    // =============================================================================
    // AMMO ACCESSORS
    // =============================================================================
-
-   const InventoryAmmo* WeaponRegistry::GetAmmo(RE::FormID formID) const
-   {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      auto it = m_ammoIndex.find(formID);
-      if (it == m_ammoIndex.end()) {
-      return nullptr;
-      }
-      return &m_ammo[it->second];
-   }
 
    std::vector<const InventoryAmmo*> WeaponRegistry::GetArrows(size_t topK) const
    {
@@ -874,29 +849,11 @@ namespace Huginn::Weapon
       [](const InventoryAmmo& a) { return a.data.hasEnchantment && a.count > 0; });
    }
 
-   std::vector<const InventoryAmmo*> WeaponRegistry::GetSilverAmmo(size_t topK) const
-   {
-      std::shared_lock lock(m_mutex);
-      return Registry::QueryTopKLocked(m_ammo,
-      [](const InventoryAmmo& a) { return HasTag(a.data.tags, WeaponTag::Silver) && a.count > 0; },
-      [](const InventoryAmmo& a) { return a.data.baseDamage; }, topK);
-   }
-
    const InventoryAmmo* WeaponRegistry::GetBestArrow() const noexcept
    {
       std::shared_lock lock(m_mutex);
       return Registry::FindBestLocked(m_ammo,
       [](const InventoryAmmo& a) { return a.data.type == AmmoType::Arrow && a.count > 0; },
-      [](const InventoryAmmo& a) { return a.data.baseDamage; });
-   }
-
-   const InventoryAmmo* WeaponRegistry::GetBestSilverArrow() const noexcept
-   {
-      std::shared_lock lock(m_mutex);
-      return Registry::FindBestLocked(m_ammo,
-      [](const InventoryAmmo& a) {
-        return a.data.type == AmmoType::Arrow && HasTag(a.data.tags, WeaponTag::Silver) && a.count > 0;
-      },
       [](const InventoryAmmo& a) { return a.data.baseDamage; });
    }
 
@@ -1531,11 +1488,5 @@ namespace Huginn::Weapon
    {
       std::shared_lock lock(m_mutex);
       return m_weapons;  // Returns copy for thread safety
-   }
-
-   std::vector<InventoryAmmo> WeaponRegistry::GetAllAmmo() const
-   {
-      std::shared_lock lock(m_mutex);
-      return m_ammo;  // Returns copy for thread safety
    }
 }

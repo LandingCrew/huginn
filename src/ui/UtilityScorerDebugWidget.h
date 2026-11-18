@@ -5,8 +5,6 @@
 
 #include "ImGuiCommon.h"
 #include "../learning/ScoredCandidate.h"
-#include "../learning/UsageMemory.h"
-#include "../learning/UtilityScorer.h"
 #include "../slot/SlotAssignment.h"
 #include "../slot/SlotClassifier.h"
 #include "../slot/SlotConfig.h"
@@ -19,9 +17,11 @@ namespace Huginn::UI
      *
      * Shows the active page's slot assignments with per-slot candidate breakdown:
      *   - Collapsible sections per slot (classification, winner, runners-up)
-     *   - Score breakdown (context, Q, prior, UCB, correlation, multipliers)
+     *   - R8.4: the choice score per candidate -- mu (and sd), the top three
+     *     theta n cap terms (the first is the explanation), b, and the D2
+     *     legacy feature (lm, or "um" under the old floors); the old utility
+     *     breakdown and the recency event buffer are gone
      *   - Color-coded headers by assignment type (override/wildcard/normal/empty)
-     *   - Event buffer with context hash matching
      *
      * USAGE:
      *   - Call UpdateSlotData() after slot allocation to cache results
@@ -51,7 +51,7 @@ namespace Huginn::UI
          * @param pageIndex Current page index (0-based)
          * @param pageName Current page display name
          * @param pageCount Total number of pages
-         * @param coldStartBoostedCount Number of candidates with cold-start UCB boost
+         * @param coldStartBoostedCount Rows the legacy floors kept through the cold start
          */
         void UpdateSlotData(const Scoring::ScoredCandidateList& candidates,
                             const Slot::SlotAssignments& assignments,
@@ -59,14 +59,6 @@ namespace Huginn::UI
                             const std::string& pageName,
                             size_t pageCount,
                             size_t coldStartBoostedCount = 0);
-
-        /**
-         * @brief Update cached usage memory snapshot for event buffer display
-         * @param snapshot Copy of the UsageMemory ring buffer
-         * @param currentContextHash Current GameState hash for highlighting matching events
-         */
-        void UpdateUsageMemory(std::vector<Learning::UsageEvent> snapshot,
-                               uint32_t currentContextHash);
 
         /**
          * @brief Draw the debug widget (called each frame)
@@ -88,11 +80,6 @@ namespace Huginn::UI
          */
         void ToggleVisible() { m_isVisible = !m_isVisible; }
 
-        /**
-         * @brief Set max candidates to cache (total across all slots)
-         */
-        void SetMaxDisplay(size_t count) { m_maxDisplay = count; }
-
     private:
         UtilityScorerDebugWidget() = default;
         ~UtilityScorerDebugWidget() = default;
@@ -104,8 +91,8 @@ namespace Huginn::UI
                              size_t slotIdx);
         void DrawCandidateCard(const Scoring::ScoredCandidate& candidate,
                                const std::string& name, size_t rank);
-        void DrawScoreSummary(const Scoring::ScoreBreakdown& breakdown);
-        void DrawUtilityBar(float utility, float maxUtility);
+        void DrawChoiceSummary(const Scoring::ScoredCandidate& candidate);
+        void DrawScoreBar(const Scoring::ScoredCandidate& candidate);
 
         // Helpers
         [[nodiscard]] const char* GetSourceTypeName(Candidate::SourceType type) const;
@@ -128,9 +115,6 @@ namespace Huginn::UI
         std::string m_cachedPageName;                              // GUARDED_BY(m_mutex)
         size_t m_pageCount = 0;                                    // GUARDED_BY(m_mutex)
         size_t m_coldStartBoostedCount = 0;                        // GUARDED_BY(m_mutex)
-        std::vector<Learning::UsageEvent> m_cachedUsageSnapshot;   // GUARDED_BY(m_mutex)
-        std::vector<std::string> m_cachedUsageNames;               // GUARDED_BY(m_mutex) owned, index-aligned with m_cachedUsageSnapshot
-        uint32_t m_cachedContextHash = 0;                          // GUARDED_BY(m_mutex)
         bool m_isVisible = false;  // OFF until DebugSettings says otherwise.
         // Must match DebugDefaults::UTILITY_SCORER_VISIBLE. It did not: the
         // default here was true while the setting default was false, so the

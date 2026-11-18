@@ -160,7 +160,7 @@ namespace Huginn::UI
 
    // Names taken from SurvivalThreshold's own constants, which this table used
    // to contradict: ranks 2 and 3 were swapped, so FATIGUE_TIRED printed
-   // "Weary" and FATIGUE_WEARY -- the rank IsExhausted() gates on -- printed
+   // "Weary" and FATIGUE_WEARY -- the Weary rank itself -- printed
    // "Tired". FATIGUE_DEBILITATED, the critical state, printed "Very Tired",
    // and case 5 was dead code because the vanilla path tops out at 4.
    //
@@ -173,7 +173,7 @@ namespace Huginn::UI
    {
       switch (level) {
          case 4: return "Debilitated";     // FATIGUE_DEBILITATED - critical
-         case 3: return "Weary";           // FATIGUE_WEARY - IsExhausted()
+         case 3: return "Weary";           // FATIGUE_WEARY
          case 2: return "Tired";           // FATIGUE_TIRED
          case 1: return "Slightly Tired";  // FATIGUE_SLIGHTLY_TIRED
          case 0: return "Refreshed";       // FATIGUE_REFRESHED

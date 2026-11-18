@@ -29,14 +29,14 @@ namespace Huginn::Input
    using CycleCallback = std::function<void(bool isPrevious, bool isHold)>;
 
    /**
-    * @brief Callback when the widget-visibility toggle key is pressed
+    * @brief Callback when the widget reset key is pressed
     *
     * Fires once per press (on key-down). No tap/hold/double-tap decoding: a
-    * show/hide toggle has exactly one gesture, and routing it through the
-    * tap-vs-hold machinery would add a hold-threshold delay to a key whose
-    * whole point is an instant response.
+    * reset has exactly one gesture, and routing it through the tap-vs-hold
+    * machinery would add a hold-threshold delay to a key whose whole point is
+    * an instant response. 0.24.28: was the show/hide toggle.
     */
-   using ToggleCallback = std::function<void()>;
+   using ResetCallback = std::function<void()>;
 
    /**
     * @brief Input handler for widget keybindings
@@ -80,9 +80,9 @@ namespace Huginn::Input
       void SetCycleCallback(CycleCallback callback) { m_cycleCallback = std::move(callback); }
 
       /**
-       * @brief Set callback for the widget-visibility toggle key
+       * @brief Set callback for the widget reset key
        */
-      void SetToggleCallback(ToggleCallback callback) { m_toggleCallback = std::move(callback); }
+      void SetResetCallback(ResetCallback callback) { m_resetCallback = std::move(callback); }
 
       /**
        * @brief Enable or disable input handling
@@ -97,28 +97,16 @@ namespace Huginn::Input
       bool IsEnabled() const { return m_enabled; }
 
       /**
-       * @brief Set hold threshold for equip keys
-       * @param seconds Time in seconds to trigger hold action
-       */
-      void SetHoldThreshold(float seconds) { m_holdThreshold = seconds; }
-
-      /**
-       * @brief Set double-tap window
-       * @param seconds Maximum time between taps for double-tap
-       */
-      void SetDoubleTapWindow(float seconds) { m_doubleTapWindow = seconds; }
-
-      /**
        * @brief Set the key codes for each action from keybinding settings
        */
       void SetKeyCodes(const KeybindingSettings& settings);
 
       /// Read-only mode: the equip keys stop acting, everything else stays.
       ///
-      /// Deliberately NOT the whole keyboard. Page cycling and the visibility
-      /// toggle are ways of looking at the widget, not ways of using it, and a
+      /// Deliberately NOT the whole keyboard. Page cycling and the widget
+      /// reset are ways of looking at the widget, not ways of using it, and a
       /// player who has handed selection to Wheeler still wants to page through
-      /// the recommendations and still wants to be able to hide the thing.
+      /// the recommendations and still wants to be able to reset the widget.
       /// Only slots 0-9 — the keys that actually equip — are suppressed.
       ///
       /// Atomic rather than mutex-guarded: it is one bool read once per matched
@@ -130,13 +118,12 @@ namespace Huginn::Input
       [[nodiscard]] bool IsReadOnly() const noexcept { return m_readOnly.load(std::memory_order_relaxed); }
 
       /**
-       * @brief Get the current keybinding settings (copy-out for thread safety)
-       */
-      [[nodiscard]] KeybindingSettings GetKeybindings() const;
-
-      /**
        * @brief Called each frame to handle deferred double-tap detection
-       * Must be called from the update loop
+       * Must be called from the update loop. Runs on UpdateHandler's
+       * InputEvent sink, as ProcessButton does: a game job thread in
+       * gameplay, the main thread in paused menus, a loading-screen thread
+       * in a load (UpdateLoop.cpp, THREADS above OnUpdate). A tap's slot
+       * callback (EquipManager::EquipSlot) fires from here.
        */
       void Update();
 
@@ -152,6 +139,14 @@ namespace Huginn::Input
       /// Process cycle key (4 or 5)
       void HandleCycleKey(int index, RE::ButtonEvent* button);
 
+      /// Whether the slot keys may act now (0.24.26): not in a loading
+      /// screen, the main menu, a pausing menu or a menu that takes the
+      /// controls, and the player has 3D
+      /// (HandEquipGate.h, SlotKeysBlockedBy). As such a state begins, the
+      /// pending taps and the hand equip gate's pending equip are dropped.
+      /// Transitions logged at debug (a drop at info). Input sink only.
+      bool SlotKeysLive();
+
       /// Perform a pending press-state reset (requested by SetKeyCodes).
       /// Must only run from ProcessButton/Update, i.e. from UpdateHandler's
       /// InputEvent sink — the state arrays are touched only there and are
@@ -163,13 +158,13 @@ namespace Huginn::Input
       /// Callbacks
       SlotCallback m_slotCallback;
       CycleCallback m_cycleCallback;
-      ToggleCallback m_toggleCallback;
+      ResetCallback m_resetCallback;
 
       /// Enabled state
       bool m_enabled = true;
 
       /// Key codes for each action (derived from m_keybindings for fast scan)
-      std::array<uint32_t, 13> m_keyCodes;  // [0-9] slots, [10-11] cycle, [12] visibility toggle
+      std::array<uint32_t, 13> m_keyCodes;  // [0-9] slots, [10-11] cycle, [12] widget reset
 
       /// Authoritative keybinding settings
       KeybindingSettings m_keybindings;
@@ -225,5 +220,10 @@ namespace Huginn::Input
       // Last text-entry gate state seen by ProcessButton, for its transition
       // log. Input thread only.
       bool m_textEntryGated = false;
+
+      // Why the slot keys are off ("" = on): SlotKeysLive's last reading, for
+      // its transitions. Input thread only. Starts "on", so the first reading
+      // at the main menu logs (and drops nothing).
+      std::string_view m_slotKeysBlockedBy;
    };
 }

@@ -1,6 +1,5 @@
 #include "IntuitionMenu.h"
 
-#include "Globals.h"  // GetDMenuIniPath
 #include "IntuitionSettings.h"
 #include "HudVisibilityManager.h"
 #include "slot/SlotAssignment.h"
@@ -8,6 +7,9 @@
 #include "state/PlayerActorState.h"
 #include "weapon/WeaponData.h"
 #include "slot/SlotAllocator.h"
+#include "wheeler/WheelerClient.h"
+#include "core/EffectColumns.h"   // Verbose: the explanation's column name (R8.4)
+#include "core/NeedIds.h"         // ... and need name
 
 #include <algorithm>
 #include <atomic>
@@ -71,7 +73,8 @@ namespace Huginn::UI
 
             const auto* self = IntuitionMenu::GetSingleton();
             const auto it = ui->menuMap.find(RE::BSFixedString(IntuitionMenu::MENU_NAME));
-            if (it == ui->menuMap.end()) {
+            const bool unregistered = it == ui->menuMap.end();
+            if (unregistered) {
                 logger::warn("[Intuition] UI dump (#{}): IntuitionMenu not in menuMap"sv, a_unanswered);
             } else {
                 const RE::IMenu* entryMenu = it->second.menu.get();
@@ -97,6 +100,44 @@ namespace Huginn::UI
             logger::warn("[Intuition] UI dump (#{}): menuSystemVisible={} closingAllMenus={} pauseCount={} modal={}"sv,
                 a_unanswered, ui->menuSystemVisible, ui->closingAllMenus,
                 ui->numPausesGame, ui->modal);
+
+            // 2026-11-01 11:06: after a load door the menu's entry was gone
+            // from menuMap (first dump of this fault; every later kShow,
+            // the dMenu reset's included, was dropped, since RE::UI ignores
+            // a kShow for a name it does not know). Who removed it is not
+            // known. Put the entry back and queue a fresh kShow; this runs
+            // on the main thread, where menuMap is mutated.
+            //
+            // Only with no instance left anywhere (none on the stack, the
+            // singleton cleared by the destructor): the new entry starts
+            // with no menu, so a kShow builds a fresh instance, and an old
+            // one still drawing would end up beside it with no entry to hide
+            // it through. At most kMaxReRegisters per session: if whatever
+            // removes the entry keeps doing it, the warnings stop instead of
+            // repeating every 2 s, and the dumps go on saying so.
+            static int s_reRegisters = 0;
+            constexpr int kMaxReRegisters = 3;
+            if (unregistered && selfIndex < 0 && self == nullptr) {
+                if (s_reRegisters >= kMaxReRegisters) {
+                    if (s_reRegisters++ == kMaxReRegisters) {
+                        logger::warn("[Intuition] Not re-registering IntuitionMenu again: the entry went missing {} times this session"sv,
+                            kMaxReRegisters + 1);
+                    }
+                    return;
+                }
+                ++s_reRegisters;
+                ui->Register(IntuitionMenu::MENU_NAME, &IntuitionMenu::CreateInstance);
+                const bool back = ui->menuMap.find(RE::BSFixedString(IntuitionMenu::MENU_NAME)) != ui->menuMap.end();
+                logger::warn("[Intuition] Re-registered IntuitionMenu with RE::UI ({}, {} of {} this session); showing again"sv,
+                    back ? "entry back" : "STILL MISSING", s_reRegisters, kMaxReRegisters);
+                if (back) {
+                    g_showQueuedMs.store(0, std::memory_order_release);
+                    IntuitionMenu::Show();
+                }
+            } else if (unregistered) {
+                logger::warn("[Intuition] Not re-registering IntuitionMenu: an instance still exists ({})"sv,
+                    selfIndex >= 0 ? "on the stack" : "the singleton is set");
+            }
         }
 
         // One warning per unanswered kShow (queued at a_queuedAt), plus the
@@ -140,19 +181,6 @@ namespace Huginn::UI
     {
         if (!IntuitionSettings::GetSingleton().IsEnabled()) {
             logger::info("IntuitionMenu::Show() - disabled via INI, skipping"sv);
-            return;
-        }
-
-        // The hide latch has to be honoured HERE, not only in SetVisible.
-        // Skyrim destroys the menu across a cell transition, so on LoadingMenu
-        // close HudVisibilityManager reopens it through this path. The
-        // UpdateVisibility() that follows cannot correct it: GetSingleton() is
-        // still null because kShow is only queued, so it early-returns and no
-        // SetVisible(false) ever lands. The widget would come back through a
-        // doorway while the latch still read "hidden", leaving the next
-        // keypress dead — the same desync fixed for markPageDirty in 591b58d.
-        if (IsUserHidden()) {
-            logger::info("IntuitionMenu::Show() - hidden by hotkey, skipping"sv);
             return;
         }
 
@@ -313,6 +341,7 @@ namespace Huginn::UI
             RE::GFxValue arg{ static_cast<double>(a_interval) };
             m_widget.Invoke("tick", nullptr, &arg, 1);
         }
+        FollowHudAlpha(a_interval);
     }
 
     // ─── Public API ──────────────────────────────────────────
@@ -348,20 +377,6 @@ namespace Huginn::UI
 
                 self->m_widget.Invoke("setSlot", nullptr, args.data(), args.size());
             });
-    }
-
-    void IntuitionMenu::ClearSlot(int index)
-    {
-        auto* tasks = SKSE::GetTaskInterface();
-        if (!tasks) return;
-
-        tasks->AddUITask([index]() {
-            auto* self = GetSingleton();
-            if (!self || !self->m_widget.IsObject()) return;
-
-            RE::GFxValue arg{ static_cast<double>(index) };
-            self->m_widget.Invoke("clearSlot", nullptr, &arg, 1);
-        });
     }
 
     void IntuitionMenu::SetSlotCount(int count)
@@ -452,50 +467,92 @@ namespace Huginn::UI
 
     namespace
     {
-        /// Written from the input thread (ProcessButton), read from the UI and
-        /// pipeline threads, so atomic rather than a plain bool.
-        std::atomic<bool> g_userHidden{false};
+        /// Set by ResetWidget (input thread), consumed by FollowHudAlpha (UI
+        /// thread): re-apply the HUD's alpha on the next poll even if it has
+        /// not changed, in case something else wrote ours.
+        std::atomic<bool> g_hudAlphaReapply{ false };
+
+        constexpr float HUD_ALPHA_POLL_SEC = 0.05f;
     }
 
-    bool IntuitionMenu::IsUserHidden() noexcept
+    void IntuitionMenu::ResetWidget()
     {
-        return g_userHidden.load(std::memory_order_acquire);
-    }
-
-    void IntuitionMenu::ResetUserHidden() noexcept
-    {
-        g_userHidden.store(false, std::memory_order_release);
-    }
-
-    bool IntuitionMenu::ToggleUserHidden()
-    {
-        const bool nowHidden = !g_userHidden.load(std::memory_order_acquire);
-        g_userHidden.store(nowHidden, std::memory_order_release);
         auto* ui = RE::UI::GetSingleton();
         const bool menuOpen = ui && ui->IsMenuOpen(MENU_NAME);
-        logger::info("[Intuition] Widget {} (menu open={})"sv, nowHidden ? "hidden" : "shown", menuOpen);
+        logger::info("[Intuition] Widget reset (menu open={})"sv, menuOpen);
 
-        // Un-hiding a menu RE::UI has closed would only flip _root on a movie
-        // nobody draws. Reopen it: the hotkey is the player's way back from
-        // a widget that went missing, so it has to work from any state.
-        if (!nowHidden && !menuOpen) {
-            logger::warn("[Intuition] Widget un-hidden while the menu is closed -- reopening"sv);
+        // A menu RE::UI has closed draws nothing whatever we set on it: reopen
+        // it. Show() keeps its one-kShow-at-a-time guard.
+        if (!menuOpen) {
             Show();
         }
 
-        // Apply immediately rather than waiting for the next menu event or
-        // pipeline push — the player pressed a key and expects a response now.
-        // Re-show goes through UpdateVisibility rather than SetVisible(true) so a
-        // paused game or a disabled widget still wins: un-hiding must not force
-        // the widget up in a state that legitimately hides it.
-        if (nowHidden) {
-            if (auto* self = GetSingleton()) {
-                self->SetVisible(false);
-            }
-        } else {
+        // The whole bar again on the next push. No forced pipeline run here:
+        // the key is the HUD-toggle mod's too, so every HUD toggle comes
+        // through, and a forced run can re-draw the wildcard key mid-fight
+        // (/code-review #253). A closed menu gets its run from Show().
+        RequestResync();
+        g_hudAlphaReapply.store(true, std::memory_order_release);
+
+        // Through UpdateVisibility, not SetVisible(true): a paused game, an
+        // open dialogue or a disabled widget still hides it. Not while a
+        // Wheeler wheel the widget hides behind is up: UpdateVisibility would
+        // show it over the wheel until the backend's next push hid it again.
+        auto& wheeler = Wheeler::WheelerClient::GetSingleton();
+        const bool behindWheel = wheeler.HasRecommendationWheel() && wheeler.IsWheelOpen() &&
+                                 IntuitionSettings::GetSingleton().HideWhileWheelOpen();
+        if (!behindWheel) {
             HudVisibilityManager::GetSingleton().UpdateVisibility();
         }
-        return nowHidden;
+    }
+
+    void IntuitionMenu::FollowHudAlpha(float a_interval)
+    {
+        const bool reapply = g_hudAlphaReapply.exchange(false, std::memory_order_acq_rel);
+        m_hudPollAccumSec += a_interval;
+        if (!reapply && m_hudPollAccumSec < HUD_ALPHA_POLL_SEC) {
+            return;
+        }
+        m_hudPollAccumSec = 0.0f;
+        if (!uiMovie) {
+            return;
+        }
+
+        // No HUD Menu (a mod that replaces it, or not built yet): full alpha,
+        // the old behaviour, rather than a widget that can never show.
+        double hudAlpha = 100.0;
+        if (auto* ui = RE::UI::GetSingleton()) {
+            if (const auto hud = ui->GetMenu(RE::HUDMenu::MENU_NAME); hud && hud->uiMovie) {
+                RE::GFxValue alpha;
+                if (hud->uiMovie->GetVariable(&alpha, "_root._alpha") && alpha.IsNumber()) {
+                    hudAlpha = std::clamp(alpha.GetNumber(), 0.0, 100.0);
+                }
+            }
+        }
+
+        if (!reapply && hudAlpha == m_hudAlphaApplied) {
+            return;
+        }
+
+        RE::GFxValue root;
+        uiMovie->GetVariable(&root, "_root");
+        if (!root.IsObject()) {
+            return;
+        }
+        RE::GFxValue::DisplayInfo di;
+        root.GetDisplayInfo(&di);
+        di.SetAlpha(hudAlpha);
+        root.SetDisplayInfo(di);
+
+        // Transitions to and from fully hidden only: a fading HUD would
+        // otherwise log every step.
+        const bool wasHidden = m_hudAlphaApplied == 0.0;
+        const bool nowHidden = hudAlpha == 0.0;
+        if (m_hudAlphaApplied < 0.0 || wasHidden != nowHidden) {
+            logger::info("[Intuition] Following the HUD: {} (HUD alpha {:.0f})"sv,
+                nowHidden ? "hidden" : "shown", hudAlpha);
+        }
+        m_hudAlphaApplied = hudAlpha;
     }
 
 
@@ -520,13 +577,18 @@ namespace Huginn::UI
         auto* tasks = SKSE::GetTaskInterface();
         if (!tasks) return;
 
-        // The latch is enforced HERE, not only at the call sites, because several
-        // independent paths re-show the widget (HudVisibilityManager on every menu
-        // event, IntuitionBackend when a Wheeler wheel closes, ReapplySettings on
-        // hot-reload). Gating one of them would leave the others able to undo the
-        // player's hide. A hide is always allowed through.
-        if (a_visible && IsUserHidden()) {
-            return;
+        // Dialogue does not pause the game, so the paused-game rule in
+        // HudVisibilityManager lets the widget sit over the conversation. A
+        // show during dialogue becomes a hide, here rather than at the call
+        // sites because several independent paths re-show the widget
+        // (HudVisibilityManager on every menu event, IntuitionBackend when a
+        // Wheeler wheel closes, ReapplySettings on hot-reload). The dialogue menu's
+        // close is a menu event, and HudVisibilityManager shows it again then.
+        if (a_visible) {
+            auto* ui = RE::UI::GetSingleton();
+            if (ui && ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME)) {
+                a_visible = false;
+            }
         }
 
         // Every re-show re-sends the whole bar and forces one pipeline run.
@@ -572,17 +634,6 @@ namespace Huginn::UI
     }
 
     // ─── Hot Reload ─────────────────────────────────────────
-
-    void IntuitionMenu::ReapplySettings()
-    {
-        // Re-read INI on calling thread (file I/O is thread-safe), then delegate.
-        // MUST use GetDMenuIniPath(): dMenu owns [Widget] and the main Huginn.ini
-        // no longer defines it, so reading the main INI here would silently reset
-        // every widget setting to its compile-time default.
-        auto& settings = IntuitionSettings::GetSingleton();
-        settings.LoadFromFile(GetDMenuIniPath());
-        ReapplySettings(settings.BuildConfig());
-    }
 
     void IntuitionMenu::ReapplySettings(const IntuitionConfig& config)
     {
@@ -787,13 +838,33 @@ namespace Huginn::UI
             }
         }
 
-        // === Verbose mode: append score breakdown ===
-        if (mode == DisplayMode::Verbose) {
-            const auto& b = scored.breakdown;
-            std::string scores = std::format("ctx:{:.1f} est:{:.1f} p:{:.1f}",
-                b.contextWeight, b.rewardEstimate, b.prior);
-            if (b.recencyBoost > 0.0f) {
-                scores += std::format(" rec:{:.1f}", b.recencyBoost);
+        // === Verbose mode: append the score and its explanation ===
+        // R8.4 (0.24.1): the choice score mu and the explanation term (the
+        // largest theta n cap term, need x column), or "learned" when no need
+        // term is positive; the old engine's context / estimate / prior
+        // breakdown is gone. An override shows no score (pinned); a row the
+        // Remembrance hold placed was never ranked (no score); the fallback
+        // ranking (no bootstrap) shows its s = ln u, labelled s, with no
+        // explanation.
+        if (mode == DisplayMode::Verbose && !assignment.IsOverride() && !scored.isRememberedOnly) {
+            const auto& t = scored.choice.top[0];
+            // The assignment's score, not the held candidate's. The two differ
+            // only on a pinned key refreshed from a ranked row: SlotLocker takes
+            // the whole row (this run's score with it) but keeps the pinned
+            // slot score. Elsewhere they are equal (a Remembrance-only row or
+            // the pre-filter lookup replaces only the item data). Display only.
+            const double s = assignment.score;
+            std::string scores;
+            if (scored.fallbackRanked) {
+                scores = std::format("s:{:+.1f} fallback", s);
+            } else if (t.need >= 0) {
+                const auto ni = static_cast<size_t>(t.need);
+                const auto ci = static_cast<size_t>(t.col);
+                scores = std::format("mu:{:+.1f} {}x{}", s,
+                    ni < Core::Needs::kNeedCount ? Core::Needs::kNeeds[ni].id : std::string_view("?"),
+                    ci < Core::Effect::kColumnCount ? Core::Effect::kColumns[ci].id : std::string_view("?"));
+            } else {
+                scores = std::format("mu:{:+.1f} learned", s);
             }
             if (!detail.empty()) {
                 detail += std::format(" \xC2\xB7 {}", scores);

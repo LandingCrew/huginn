@@ -8,9 +8,14 @@ needs.csv (docs/architecture/9-data/) is the source: id, group, priority,
 curve_kind, curve_p1, curve_p2, r3_input. A need whose r3_input starts with
 "0 (deferred" has no sensor yet (it always reads input 0). The host test
 tests/core/NeedIdsTests.cpp checks NeedIds.h against the csv on every build;
---check also compares the [Needs] block in configs/Huginn.ini.
+--check also compares the [Needs] block in configs/Huginn.ini. R8.3: a need
+the shipped bootstrap (configs/Huginn_Bootstrap.json `curves`) gives a curve
+gets that curve in the block, with a comment naming the csv default: the
+plugin applies the bootstrap's curve over the line anyway (theta was fitted
+with it), and the INI says the same.
 """
 import csv
+import json
 import os
 import sys
 
@@ -18,6 +23,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 CSV = os.path.join(ROOT, "docs", "architecture", "9-data", "needs.csv")
 HEADER = os.path.join(ROOT, "src", "core", "NeedIds.h")
 INI = os.path.join(ROOT, "configs", "Huginn.ini")
+BOOTSTRAP = os.path.join(ROOT, "configs", "Huginn_Bootstrap.json")
 KINDS = {"logistic": "Logistic", "linear": "Linear", "quadratic": "Quadratic",
          "saturating": "Saturating", "gaussian": "Gaussian", "step": "Step", "decay": "Decay"}
 
@@ -123,19 +129,33 @@ def make_header(rows):
     return "\n".join(out)
 
 
+def bootstrap_curves():
+    """{need: (kind, p1, p2)} from the shipped bootstrap's `curves`, or {}."""
+    if not os.path.exists(BOOTSTRAP):
+        return {}
+    with open(BOOTSTRAP, encoding="utf-8") as f:
+        doc = json.load(f)
+    return {k: (v[0], v[1], v[2]) for k, v in (doc.get("curves") or {}).items()}
+
+
 def make_ini(rows):
+    boot = bootstrap_curves()
     out = []
     w = out.append
     w("[Needs]")
     w("; R3 (0.23.14): the need vector -- one value per need in")
-    w(";   docs/architecture/9-data/needs.csv, computed each tick and LOGGED ONLY: no")
-    w(";   score reads it yet. `hg needs` prints it. One key per need, the need's id:")
+    w(";   docs/architecture/9-data/needs.csv, computed each tick. From 0.24.0 (R8.3)")
+    w(";   the ranking reads it, and a need moving a 0.05 step re-scores the page.")
+    w(";   `hg needs` prints it, with where each curve came from. A curve the")
+    w(";   bootstrap (Huginn_Bootstrap.json) carries REPLACES the line here, because")
+    w(";   the model was fitted with it. One key per need, the need's id:")
     w(";     <need> = <kind> <p1> <p2>")
     w(";   kinds: logistic (centre, slope; a negative slope falls), linear and")
     w(";   quadratic (x0, x1: 0 at x0, 1 at x1), saturating (s > 0), gaussian")
     w(";   (centre, width > 0), step (edge), decay (tau > 0). The values below are")
-    w(";   the csv's defaults (curve_kind, curve_p1, curve_p2); a key left out or")
-    w(";   unreadable keeps its default. Hot-reloadable (hg reload / dMenu).")
+    w(";   the csv's defaults (curve_kind, curve_p1, curve_p2); a key left out reads")
+    w(";   the line shipped here, an unreadable one keeps the csv's default.")
+    w(";   Hot-reloadable (hg reload / dMenu).")
     w(";   darkness's centre mirrors 1 - [ContextWeights] fDarkLightLevel.")
     w(";   time_to_edge and edge_approach read drop_ahead's csv curve (466), not")
     w(";   a drop_ahead line here: overriding drop_ahead leaves them as they are.")
@@ -148,6 +168,13 @@ def make_ini(rows):
         p2 = r["curve_p2"]
         if deferred(r):
             w(f"; {r['id']}: deferred, no sensor yet (reads input 0)")
+        if r["id"] in boot:
+            kind, b1, b2 = boot[r["id"]]
+            w(f"; {r['id']}: the R6 bootstrap's fitted curve (Huginn_Bootstrap.json")
+            w(";   `curves`, which wins over this line while that file is installed); the")
+            w(f";   csv default was {r['curve_kind']} {p1} {p2}.")
+            w(f"{r['id']} = {kind} {b1:g} {b2:g}")
+            continue
         w(f"{r['id']} = {r['curve_kind']} {p1} {p2}")
     return "\n".join(out) + "\n"
 

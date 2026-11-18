@@ -1,5 +1,7 @@
 # Huginn State Model
 
+> **R11 (0.24.4):** the state model below is current except where a passage is marked as history (the combat latch, the elemental window and the label signals went in R8.1-R8.4; the Pipeline Skip section was rewritten for 0.24.5); what reads it changed. Since R8.3 the hand-tuned engine (context weights × the bandit's learning score × multipliers) no longer ranks: every candidate is ranked on the choice score μ (θ over need × effect columns, b per item; doc 9, [9-implementation-map.md](9-implementation-map.md)), and the old engine runs only for the D2 feature `ln learn mult` (`[Scoring] bLegacyLearnFeature`, confined by `tools/prune/r8_check.py`). The states feed the need vector (NeedMonitor, `core/NeedEvaluator.h`) and the hard gates (`context/ContextFacts.h`); the context rules that turned them into weights are D2's input only.
+
 This document describes the state management architecture using the StateManager
 system. **Verified against `src/` at v0.19.10 (2026-08-29).** The state layer has
 been structurally stable since v0.6.x; the drift since the v0.13.x snapshot is in
@@ -64,7 +66,7 @@ The StateManager implementation is split across multiple files for maintainabili
 | File | Contents | Notes |
 |------|----------|-------|
 | `StateManager.h` | Class interface, all declarations | Single public interface |
-| `StateManager.cpp` | Constructor, poll table, Update(), PollAll(), ForceUpdate(), ResetTrackingState(), accessors | Core logic |
+| `StateManager.cpp` | Constructor, poll table, Update(), ForceUpdate(), ResetTrackingState(), accessors | Core logic |
 | `StateManager_World.cpp` | `PollWorldObjects()`, crosshair helpers | Locks, ore veins, workstations, time, light |
 | `StateManager_Vitals.cpp` | `PollPlayerVitals()` | Health/magicka/stamina |
 | `StateManager_MagicEffects.cpp` | `PollPlayerMagicEffects()`, `CacheRaceFormIDs()` | Effects + buffs classification, transformation |
@@ -93,7 +95,7 @@ target tracking config), [`core/FallTracker.h`](../../src/core/FallTracker.h), a
 
 The poll loop itself is data-driven: `GetPollTable()` returns
 `std::array<PollEntry, 11>` of `{timer, interval, member-fn}` triples, and
-`Update()`, `PollAll()`, `ForceUpdate()` and `ResetTrackingState()` all iterate it.
+`Update()`, `ForceUpdate()` and `ResetTrackingState()` all iterate it.
 Adding a poll means adding one row.
 
 ---
@@ -280,7 +282,6 @@ graph TB
 | `hasFortifyRestoration` | `bool` | Fortify Restoration school (v0.8.x) | 100ms |
 | `hasFortifyAlteration` | `bool` | Fortify Alteration school (v0.8.x) | 100ms |
 | `hasFortifyIllusion` | `bool` | Fortify Illusion school (v0.8.x) | 100ms |
-| `hasFortifyEnchanting` | `bool` | Fortify Enchanting (v0.8.x) — not a school, same pattern | 100ms |
 
 **Poll Method:** `PollPlayerMagicEffects()` at 100ms interval (combined with effects)
 
@@ -295,7 +296,6 @@ active, spells of that school get a correlation bonus in scoring (see
 | `rightHandSpell`, `leftHandSpell` | `RE::FormID` | Equipped spell form IDs (0=none) | 100ms |
 | `equippedShield` | `RE::FormID` | Shield form ID | 100ms |
 | `weaponChargePercent` | `float` | 0.0-1.0 charge | 100ms |
-| `weaponChargeMax` | `float` | Max charge value | 100ms |
 | `hasEnchantedWeapon` | `bool` | Equipped weapon has enchantment (staves count) | 100ms |
 | `arrowCount`, `boltCount` | `std::int32_t` | Ammo count | 100ms |
 | `hasBowEquipped` | `bool` | Bow equipped | 100ms |
@@ -377,9 +377,10 @@ Two v0.19.x corrections live here:
   was wrong wherever local water is a placed object — rivers and ponds, not just
   interiors. Still head-relative (`z + HEAD_HEIGHT`), so ankle-deep does not count.
 
-This poll also owns the combat-transition latch: it sets `m_isInCombat` and
-`m_combatTransition` (`None`/`Entered`/`Exited`) so the update loop can observe a
-combat edge without copying the whole `PlayerActorState`.
+This poll also sets `m_isInCombat`, so a caller can ask `IsInCombat()` without
+copying the whole `PlayerActorState`. (The combat-transition latch beside it,
+`m_combatTransition` `None`/`Entered`/`Exited`, went in R8.1 with the potion
+multiplier's own combat timer.)
 
 #### Resistances (`ActorResistances`, v0.6.6)
 | Field | Type | Description | Poll |
@@ -621,9 +622,8 @@ the total crosses the threshold — which is what catches chip damage in
 high-resistance scenarios that per-tick thresholding would drop entirely.
 
 **Enrichment:** queued events from `DamageEventSink` (instant elemental hits) are
-drained and merged with health-delta polling. `PollHealthTracking()` also
-maintains `m_elementalWindowActive` — a flag the *outer* pipeline-skip gate reads,
-because the elemental window decays on wall-clock time with no state delta at all.
+drained and merged with health-delta polling. (The elemental window flag the
+outer skip gate once read went in R8.3: the need signature replaced it.)
 `PipelineCoordinator::EnrichElementalDamage()` then bridges the elemental timers
 into `PlayerActorState.effects` flags before scoring. The window is
 `VitalTracking::ELEMENTAL_DAMAGE_ENRICHMENT_WINDOW` = 5.0s.
@@ -866,18 +866,14 @@ graph TB
 | `GetWorldState()` | `WorldState` | `shared_lock(m_worldMutex)` copy-out |
 | `GetPlayerState()` | `PlayerActorState` | `shared_lock(m_playerMutex)` copy-out |
 | `GetTargets()` | `TargetCollection` | `shared_lock(m_targetsMutex)` copy-out |
-| `GetPrimaryTarget()` | `std::optional<TargetActorState>` | `shared_lock(m_targetsMutex)` copy-out |
 | `GetHealthTracking()` | `HealthTrackingState` | `shared_lock(m_trackingMutex)` copy-out |
 | `GetStaminaTracking()` | `StaminaTrackingState` | `shared_lock(m_trackingMutex)` copy-out |
 | `GetMagickaTracking()` | `MagickaTrackingState` | `shared_lock(m_trackingMutex)` copy-out |
 | `Update(float deltaMs)` | void | Walks the poll table, records `m_lastUpdateChanged` |
 | `ForceUpdate()` | void | Polls everything and resets timers |
 | `ResetTrackingState()` | void | Resets all accumulated state on save load / new game |
-| `PollAll()` | `bool` | Forces all polls, returns true if any changed |
 | `DidLastUpdateChangeState()` | `bool` | Tier-1 pipeline skip check |
-| `IsElementalWindowActive()` | `bool` | Outer-gate bypass while an elemental window is open |
 | `IsInCombat()` | `bool` | Lightweight combat check (no `PlayerActorState` copy) |
-| `ConsumeCombatTransition()` | `CombatTransition` | Destructive read of the combat edge |
 
 ---
 
@@ -967,7 +963,7 @@ uint32_t stateHash = gameState.GetHash();  // 0-48,383
 There is **no tabular Q-table**. The hash exists for two things only: the
 pipeline's hash-skip gate, and `LogStateTransition`'s change diff. Learning is
 keyed on the continuous `StateFeatures` vector instead — see
-[4-contextual-bandits.md](4-contextual-bandits.md).
+[archive/4-contextual-bandits.md](archive/4-contextual-bandits.md).
 
 **Combined Utility** (`UtilityScorer::ComputeUtility`, the single source of truth
 for the formula):
@@ -1055,10 +1051,12 @@ add states that change no decision, and it can be excluded outright.
 `allyStatus` looks like the same case and is not, which is worth spelling out
 because the first attempt at this excluded it outright and was wrong. Nothing
 reads the FIELD: `StateEvaluator` writes it and only `ToString`/`Diff` consume
-it. But the fact it encodes is read through a different accessor —
-`ScoreCandidates` builds `ContextReasonSignals{.allyInjured =
-targets.HasInjuredFollower()}`, which becomes the "Ally Hurt" label — and all of
-that runs BELOW `CheckHashSkip`. A gate blind to an ally becoming injured never
+it. But the fact it encodes was read through a different accessor —
+`ScoreCandidates` built `ContextReasonSignals{.allyInjured =
+targets.HasInjuredFollower()}`, which became the "Ally Hurt" label — and all of
+that ran BELOW `CheckHashSkip`. (History: that label path went in R8.4, and the
+label now comes from the page's explanations; the injured bit stays hashed so
+D2's floors do not go stale, `GameState.h`.) A gate blind to an ally becoming injured never
 produces the label: a follower taking fall damage beside an idle player at full
 vitals moves no other bucket. So the injured bit has to stay hashed; only the
 None/Present half can go, which is all of the observed flapping anyway.
@@ -1091,9 +1089,11 @@ in `ToArray()` order — which is also the cosave wire order:
 | 17 | `bias` | Always 1.0 (intercept) |
 
 `NUM_FEATURES = 18`, asserted inside `ToArray()`. The layout is **append-only**:
-`BanditSerializer` migrates saved `BNDW` weights positionally, so a new feature
-goes at the end and a retired feature keeps its slot fed with a constant 0.
-Reordering silently reassigns every player's learned weights.
+the order is the `BNDW` wire order, so a new feature goes at the end and a
+retired feature keeps its slot fed with a constant 0. A changed count makes
+`BanditSerializer` skip the saved record (no migration since 0.24.8: the old
+learner starts empty); reordering at the same count silently reassigns every
+player's learned weights.
 
 Note that index 5 and indices 6-12 can describe *different actors*: distance comes
 from the closest enemy, the one-hot from the crosshair/combat primary. That is
@@ -1250,8 +1250,7 @@ The transient per-resource state (`m_healthTracker`, `m_staminaTracker`,
 `m_magickaTracker`, `m_fallTracker`, `m_wasInCombat`, `m_prevTargetDigest`) is
 **single-writer** — only mutated from its own poll method on the update thread —
 and therefore unlocked. The cross-thread signals out of the poll layer are
-`std::atomic`: `m_lastUpdateChanged`, `m_elementalWindowActive`,
-`m_combatTransition`, `m_isInCombat`.
+`std::atomic`: `m_lastUpdateChanged`, `m_isInCombat`.
 
 ---
 
@@ -1364,9 +1363,9 @@ source of TargetSource::Crosshair. -->
 | **Pipeline Skip** | Two-tier: sensor dirty flag + hash comparison, with unhashed-state bypasses | Implemented | ✅ Complete |
 | **State Space** | 48,384 hashed states (18× reduction from the un-reduced 870,912) | Skip gate + potion discrimination only | ✅ Complete |
 | **Memory Usage** | ~6 KB (hand-computed) | Within the 10 KB budget | ✅ Complete |
-| **Learning Persistence** | SKSE cosave, `BNDW` records, positional feature migration | Per-character persistence | ✅ Complete |
+| **Learning Persistence** | SKSE cosave, `BNDW` records (v4 at the compiled feature count only) | Per-character persistence | ✅ Complete |
 | **Pipeline State Cache** | Caches scored candidates per cycle; timestamp refreshed even on a skip | External equip attribution | ✅ Complete |
-| **Feature Learning** | `FeatureBanditLearner`, 18-float linear model — the only learner | No tabular fallback remains | ✅ Complete |
+| **Feature Learning** | `ChoiceLearner` (θ over need × effect columns, b per item) is the live learner; `FeatureBanditLearner` (18-float linear model) runs only as D2's input | No tabular fallback remains | ✅ Complete |
 
 ### Pipeline Skip Optimization
 
@@ -1374,45 +1373,53 @@ A two-tier skip system prevents unnecessary pipeline work.
 
 **Tier 1 — sensor-level** (`RunPipelineIfNeeded` in
 [UpdateLoop.cpp](../../src/UpdateLoop.cpp)): `StateManager` records whether any
-poll method detected a change. If nothing changed, no page was cycled, no
-elemental window is open and the coordinator has no forced run pending, the
-entire recommendation pipeline is skipped.
+poll method detected a change. If nothing changed, no page was cycled and the
+coordinator has no forced run pending, the entire recommendation pipeline is
+skipped.
 
 **Tier 2 — hash-level** (`PipelineCoordinator::CheckHashSkip`): even when raw
 sensor values change (health 85.1% → 85.2%), the discretized `GameState` hash may
-be identical (both `VeryHigh`). Scoring is skipped when the hash is unchanged.
+be identical (both `VeryHigh`). Scoring is skipped when the hash is unchanged and
+no signature moved.
 
-Both tiers need escape hatches for state the hash cannot see:
+Both tiers need escape hatches for state the hash cannot see (as of 0.24.5):
 
 ```cpp
 // Tier 1 (UpdateLoop.cpp)
-if (!stateChanged && !pageChanged && !stateManager.IsElementalWindowActive() &&
-    !PipelineCoordinator::GetSingleton().NeedsForcedRun()) {
+if (!stateChanged && !pageChanged &&
+    !Pipeline::PipelineCoordinator::GetSingleton().NeedsForcedRun()) {
     Learning::PipelineStateCache::GetSingleton().RefreshTimestamp();
-    return;  // Huge win when idle
+    return;
 }
 
 // Tier 2 (PipelineCoordinator::CheckHashSkip)
-const bool unhashedStateActive = ctx.elementalDamageActive || ctx.fallingActive ||
-                                 ctx.underwaterActive;
+const bool unhashedStateActive = ctx.fallingActive || ctx.underwaterActive || ctx.workstationActive;
+const bool signatureChanged = ctx.needSignature != m_lastNeedSignature ||
+                              ctx.overrideSignature != m_lastOverrideSignature ||
+                              ctx.refreshDue != m_lastRefreshDue;
 if (ctx.stateHash == m_lastPipelineHash && !pageChanged &&
-    !unhashedStateActive && !NeedsForcedRun()) {
+    !unhashedStateActive && !signatureChanged && !NeedsForcedRun()) {
     Learning::PipelineStateCache::GetSingleton().RefreshTimestamp();
-    return true;  // Skip — catches within-bucket shifts
+    return true;  // Skip
 }
 ```
 
-Three conditions bypass the hash gate because they change no hashed bucket:
+Three states bypass the hash gate because they change no hashed bucket:
 
-- **Elemental damage window** (5s, decays on wall-clock time — no state delta at
-  all, so Tier 1 needs a live query and Tier 2 a rising-edge check)
 - **Falling** (#60) — stepping off a ledge changes no bucket
 - **Underwater** (#61) — submerging is not sneaking, combat, or a target
+- **At a workstation** (#63/#65) — a bench whose craft the old mapping knows
+  (`CraftSkillForWorkstation`)
 
-Their *falling* edges live in `NeedsForcedRun()`, which grants one further run so
-stale fire/slow-fall scoring clears; a pending reason downgrade (#62) rides along
-there too. All three are bounded: a fall ends in about a second, the elemental
-window is fixed-length, and a reason hold expires within
+And three signatures re-run it on any change: the need signature (R8.3: any need
+moving a 0.05 step; it replaced the ambient signature and the elemental window),
+the override signature (a vital crossing an override threshold) and `refreshDue`
+(R8.1: a buff entering or leaving its refresh window).
+
+`NeedsForcedRun()` (asked by both tiers) holds the one further run after a fall
+or a dive ends, a pending reason downgrade (#62), a learner update and a need
+signature that moved since the last committed run. All bounded: a fall ends in
+about a second, and a reason hold expires within
 `REASON_HOLD_MS / UPDATE_INTERVAL_MS` runs.
 
 Note that both tiers still call `PipelineStateCache::RefreshTimestamp()` on the
@@ -1425,7 +1432,7 @@ scene.
 
 - [0-pipeline.md](0-pipeline.md) - Recommendation pipeline using state models
 - [2-classifiers.md](2-classifiers.md) - How candidates are typed and classified
-- [4-contextual-bandits.md](4-contextual-bandits.md) - `StateFeatures` and the learning update rule
+- [archive/4-contextual-bandits.md](archive/4-contextual-bandits.md) - `StateFeatures` and the learning update rule
 - [5-slots.md](5-slots.md) - Slot allocation and locking
 - [../README.md](../README.md) - Overall system design
 - [../profiling/tracy-traces.md](../profiling/tracy-traces.md) - Measured poll costs

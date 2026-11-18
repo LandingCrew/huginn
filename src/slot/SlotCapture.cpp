@@ -145,8 +145,11 @@ namespace Huginn::Slot::Capture
             const size_t count = allocator.GetSlotCount();
             if (count == 0) return;
             const size_t slot = r % count;
-            const bool ok = Input::EquipManager::GetSingleton().EquipSlot(slot, Input::EquipHand::Right);
-            SKSE::log::info("[SlotCapture] pressed slot {} ({})", slot, ok ? "equipped" : "nothing to equip");
+            bool parked = false;
+            const bool ok = Input::EquipManager::GetSingleton().EquipSlot(
+                slot, Input::EquipHand::Right, std::nullopt, &parked);
+            SKSE::log::info("[SlotCapture] pressed slot {} ({})", slot,
+                !ok ? "nothing to equip" : parked ? "parked at the hand equip gate" : "equipped");
         }
 
         // --- [SlotLocker] settings variants --------------------------------
@@ -273,7 +276,6 @@ namespace Huginn::Slot::Capture
             for (const auto& c : base) {
                 if (c.isRememberedOnly) continue;
                 auto copy = c;
-                copy.isWildcard = false;
                 (d100(rng) < keepPercent ? list : dropped).push_back(std::move(copy));
             }
 
@@ -281,17 +283,17 @@ namespace Huginn::Slot::Capture
             for (auto& c : list) {
                 switch (mode) {
                 case 0: break;                                                          // as scored
-                case 1: c.utility = 0.05f + 2.95f * unit(rng); break;                   // anything
-                case 2: c.utility = kRound[static_cast<size_t>(d100(rng)) % 10]; break;  // ties, 2x, 1.5x
-                case 3: c.utility *= 0.7f + 0.7f * unit(rng); break;                    // nudges around the hold
+                case 1: c.RankOnUtility(0.05f + 2.95f * unit(rng)); break;                   // anything
+                case 2: c.RankOnUtility(kRound[static_cast<size_t>(d100(rng)) % 10]); break;  // ties, 2x, 1.5x
+                case 3: c.RankOnUtility(c.utility * (0.7f + 0.7f * unit(rng))); break;                    // nudges around the hold
                 case 4: {                                                               // zeros and dust
                     const int r = d100(rng);
-                    if (r < 20) c.utility = 0.0f;
-                    else if (r < 30) c.utility = 1e-30f;
+                    if (r < 20) c.RankOnUtility(0.0f);
+                    else if (r < 30) c.RankOnUtility(1e-30f);
                     break;
                 }
-                case 5: if (d100(rng) < 50) c.utility *= 0.5f; break;                   // halves: the cap's 0.5
-                default: if (d100(rng) < 40) c.utility *= 1.5f; break;                  // the hold's 1.5
+                case 5: if (d100(rng) < 50) c.RankOnUtility(c.utility * 0.5f); break;                   // halves: the cap's 0.5
+                default: if (d100(rng) < 40) c.RankOnUtility(c.utility * 1.5f); break;                  // the hold's 1.5
                 }
             }
 
@@ -308,16 +310,10 @@ namespace Huginn::Slot::Capture
                 }
             }
 
-            // Wildcards swapped up into a rank position, as WildcardManager does.
-            if (list.size() > 3 && d100(rng) < 30) {
-                const int n = 1 + d100(rng) % 2;
-                for (int k = 0; k < n; ++k) {
-                    const size_t from = 2 + static_cast<size_t>(d100(rng)) % (list.size() - 2);
-                    const size_t to = 1 + static_cast<size_t>(d100(rng)) % std::min<size_t>(5, from);
-                    list[from].isWildcard = true;
-                    std::swap(list[from], list[to]);
-                }
-            }
+            // R10: no wildcard swap here any more -- the wildcard is placed
+            // on its own key by the allocation (a WildcardRequest), which
+            // AllocateForTest does not make; the host tests cover it
+            // (tests/core/WildcardTests.cpp, the synthetic generator).
 
             // Remembered-only rows, at the end, as PipelineCoordinator adds them.
             if (!dropped.empty() && d100(rng) < 30) {

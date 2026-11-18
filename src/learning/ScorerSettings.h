@@ -32,7 +32,6 @@ namespace Huginn::Scoring
         inline constexpr float COMBAT_START_WINDOW = 10.0f;
         inline constexpr float REGEN_POTION_COMBAT_START_MULT = 1.5f;
         inline constexpr float FLAT_RESTORE_LOW_RESOURCE_MULT = 1.5f;
-        inline constexpr const char* POTION_TIER_PREFERENCE = "Higher";
 
         // Thresholds
         inline constexpr float MINIMUM_UTILITY = 0.1f;
@@ -42,9 +41,14 @@ namespace Huginn::Scoring
         // Performance
         inline constexpr size_t TOP_N_CANDIDATES = 10;
 
+        // R8.1 (0.23.55): the refresh pass (doc 11 decision 4). An active-buff
+        // filter lets its item through in the buff's last N seconds, and
+        // covered(i)'s left(r) prior is centred there. 0 turns the pass off.
+        inline constexpr float REFRESH_PRIOR_SEC = 5.0f;
+        inline constexpr float REFRESH_PRIOR_SEC_MAX = 120.0f;
+
         // Favorites
         inline constexpr const char* FAVORITES_MODE = "Boost";
-        inline constexpr float FAVORITES_BOOST_MIN = 1.3f;
         inline constexpr float FAVORITES_BOOST_MAX = 2.5f;
 
     }
@@ -54,7 +58,11 @@ namespace Huginn::Scoring
     // =========================================================================
     // Singleton that loads scoring parameters from Data/SKSE/Plugins/Huginn.ini.
     // Reads [Scoring] section (core, correlations, potion discrimination,
-    // thresholds, performance) and [Favorites] section (mode, boost range).
+    // thresholds, performance, the refresh pass) and [Favorites] section
+    // (mode, boost). R8.4 (0.24.1): everything here but the refresh pass and
+    // the favourites mode feeds only the D2 legacy feature
+    // (learning/legacy/LegacyLearnFeature.h): which rows the old floors keep
+    // and their ln learn mult. Nothing ranks on the old utility.
     //
     // Call BuildConfig() to produce a ScorerConfig struct suitable for
     // UtilityScorer::SetConfig().
@@ -69,12 +77,10 @@ namespace Huginn::Scoring
             return instance;
         }
 
-        // Parse `iniPath` from disk, then load [Scoring]/[Favorites]. Thin wrapper
-        // over LoadFromIni for standalone callers.
-        void LoadFromFile(const std::filesystem::path& iniPath);
-        // Load [Scoring]/[Favorites] from an already-parsed INI (parse-once path).
+        // Load [Scoring]/[Favorites] from an already-parsed INI (parse-once path;
+        // Settings::LoadMainIni, over the shipped Huginn.ini, whose values are
+        // the defaults).
         void LoadFromIni(const CSimpleIniA& ini);
-        void ResetToDefaults();
 
         // Build a ScorerConfig struct from current settings
         [[nodiscard]] ScorerConfig BuildConfig() const;
@@ -87,7 +93,6 @@ namespace Huginn::Scoring
 
         // Helper: parse string to FavoritesMode enum
         [[nodiscard]] static FavoritesMode ParseFavoritesMode(const char* str);
-        [[nodiscard]] static PotionTierPreference ParsePotionTierPreference(const char* str);
 
         // --- Core Scoring ---
         float lambdaMin = ScorerDefaults::LAMBDA_MIN;
@@ -107,7 +112,6 @@ namespace Huginn::Scoring
         float combatStartWindow = ScorerDefaults::COMBAT_START_WINDOW;
         float regenPotionCombatStartMult = ScorerDefaults::REGEN_POTION_COMBAT_START_MULT;
         float flatRestoreLowResourceMult = ScorerDefaults::FLAT_RESTORE_LOW_RESOURCE_MULT;
-        PotionTierPreference potionTierPreference = PotionTierPreference::Higher;
 
         // --- Thresholds ---
         float minimumUtility = ScorerDefaults::MINIMUM_UTILITY;
@@ -117,9 +121,12 @@ namespace Huginn::Scoring
         // --- Performance ---
         size_t topNCandidates = ScorerDefaults::TOP_N_CANDIDATES;
 
+        // --- Refresh pass (R8.1) --- pushed into StateManager on every load
+        // (SetRefreshPriorSec), which computes the filters' bits with it.
+        float refreshPriorSec = ScorerDefaults::REFRESH_PRIOR_SEC;
+
         // --- Favorites ---
         FavoritesMode favoritesMode = FavoritesMode::Boost;
-        float favoritesBoostMin = ScorerDefaults::FAVORITES_BOOST_MIN;
         float favoritesBoostMax = ScorerDefaults::FAVORITES_BOOST_MAX;
 
     };

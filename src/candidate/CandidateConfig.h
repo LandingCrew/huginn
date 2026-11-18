@@ -8,7 +8,7 @@ namespace Huginn::Candidate
     enum class SourceType : uint8_t;
 
     /// Policy for handling spells the player can't currently afford (insufficient magicka).
-    /// Disallow removes them in PassesAffordabilityFilter(); Allow keeps them.
+    /// Disallow removes them in the filter visitor (RunVisitorFilters, Reason::affordability); Allow keeps them.
     /// A legacy INI value of "Penalize" loads as Allow -- it never had a penalty behind it.
     enum class UncastableSpellPolicy : uint8_t {
         Disallow,   // Filter out uncastable spells (current behavior)
@@ -20,6 +20,21 @@ namespace Huginn::Candidate
         switch (policy) {
             case UncastableSpellPolicy::Disallow:  return "Disallow";
             case UncastableSpellPolicy::Allow:     return "Allow";
+            default: return "Unknown";
+        }
+    }
+
+    /// 0.24.29: which resist potions of one element are offered when no
+    /// potion's resist runs (core/ResistPotions.h). They do not stack.
+    enum class ResistPotionPick : uint8_t {
+        Greedy,   // only the strongest on hand (default)
+        All       // every one; the score decides
+    };
+
+    [[nodiscard]] constexpr const char* ToString(ResistPotionPick pick) noexcept {
+        switch (pick) {
+            case ResistPotionPick::Greedy: return "Greedy";
+            case ResistPotionPick::All:    return "All";
             default: return "Unknown";
         }
     }
@@ -44,13 +59,17 @@ namespace Huginn::Candidate
         // Controls filtering of items whose effects are already active.
         // =============================================================================
 
-        /// Filter out resist items (potions AND spells) if player already has high resistance.
-        /// Prevents recommending "Resist Fire" when player has 75% fire resist.
+        /// Filter resist items that would not stack (core/ResistPotions.h): a
+        /// resist potion while a potion's resist to its element runs, a resist
+        /// spell while its own effect runs, and the weaker potions of an
+        /// element (sResistPotionPick = Greedy). 0.24.29 removed the 50 %
+        /// threshold on the player's total resistance.
         bool filterRedundantResists = true;
 
-        /// Resistance threshold (percentage) above which resist items are filtered.
-        /// If fire resist >= this value, don't recommend more fire resist items.
-        float resistThresholdToFilter = 50.0f;
+        /// 0.24.29 ([Candidates] sResistPotionPick): Greedy offers only the
+        /// strongest resist potion per element. Either way, none while a
+        /// potion's resist to that element runs.
+        ResistPotionPick resistPotionPick = ResistPotionPick::Greedy;
 
         /// Filter items whose buff is already active on player.
         /// Examples: waterbreathing, invisibility, muffle
@@ -120,28 +139,6 @@ namespace Huginn::Candidate
         // =============================================================================
         // METHODS
         // =============================================================================
-
-        /// Get cooldown duration for a specific source type (type-safe version)
-        [[nodiscard]] float GetCooldownForSourceType(SourceType sourceType) const noexcept
-        {
-            switch (sourceType) {
-                case SourceType::Spell:   return spellCooldown;
-                case SourceType::Potion:  return potionCooldown;
-                case SourceType::Scroll:  return scrollCooldown;
-                case SourceType::Weapon:  return weaponCooldown;
-                case SourceType::Ammo:    return ammoCooldown;
-                case SourceType::SoulGem: return soulGemCooldown;
-                case SourceType::Food:    return foodCooldown;
-                case SourceType::Staff:   return spellCooldown;  // Staff uses spell cooldown
-                default: return 2.0f;  // Fallback for _Count or unknown
-            }
-        }
-
-        /// Reset all settings to defaults
-        void ResetToDefaults()
-        {
-            *this = CandidateConfig{};
-        }
 
         // Future: Load from INI file
         // static CandidateConfig LoadFromINI(const char* path);

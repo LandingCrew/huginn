@@ -4,6 +4,7 @@
 #include "NeedSettings.h"
 #include "Profiling.h"
 #include "core/BenchKind.h"
+#include "core/LockReach.h"
 #include "state/StateManager.h"
 
 namespace Huginn::Needs
@@ -32,7 +33,9 @@ namespace Huginn::Needs
       // The bench by its workbench keyword (StateManager::BenchKindOf), not
       // the old engine's CraftSkillForWorkstation, which reads every
       // create-object bench (forge, cooking pot and spit, smelter, tanning
-      // rack) as smithing and still feeds scoring that way (frozen).
+      // rack) as smithing. That mapping still feeds the no_workstation hard
+      // gate and the skip gate's workstation flag (and D2's rules), kept so
+      // the gate drops exactly what the old weight zeroed.
       int WorkstationOf(const State::NeedSensorState& n)
       {
          return Core::Needs::NeedWorkstation(static_cast<Core::Needs::BenchKind>(n.bench));
@@ -138,10 +141,12 @@ namespace Huginn::Needs
 
       // Ally
       // A teammate, or the player's own summon or thrall (0.23.41): someone
-      // near to cast the spells for others on. ally_injured stays the
-      // teammate's bleedout: a summon does not kneel, it dies.
+      // near to cast the spells for others on. ally_injured reads teammates
+      // only: their bleedout, and (0.24.32) how much of their health they are
+      // missing.
       s.followerPresent = src.targets.GetFollowerCount() > 0 || n.playerSummonNear;
       s.followerBleedout = n.followerBleedout;
+      s.followerHealthMissing = n.followerHealthMissing;
 
       // Environment
       // The light held against torchlight and shadow flicker (0.23.41,
@@ -157,7 +162,10 @@ namespace Huginn::Needs
       s.edgeDistance = n.edgeDistance;
       s.edgeSpeed = n.edgeSpeed;
       s.edgeApproach = n.edgeApproach;
-      s.lock = src.world.isLookingAtLock;
+      // 0.24.29: a lock that requires a key reads 0 (needs.csv): no spell,
+      // scroll or lockpicking potion answers it. It read 1 before, which
+      // raised every Open Lock spell at a door only a key opens.
+      s.lock = Core::Lock::Pickable(Core::Lock::CrosshairLock(src.world.isLookingAtLock, src.world.lockLevel));
       s.workstation = WorkstationOf(n);
       s.oreVein = src.world.isLookingAtOreVein;
       s.merchant = n.merchant;
@@ -209,11 +217,16 @@ namespace Huginn::Needs
 
    std::vector<std::string> FormatNeeds(const Core::Needs::NeedVector& v)
    {
+      // R8.3: each line says where its curve came from: the csv default, a
+      // [Needs] line, or the bootstrap (which overrides the line: theta was
+      // fitted with it).
+      const auto& settings = NeedSettings::GetSingleton();
       std::vector<std::string> lines;
       for (std::size_t i = 0; i < Core::Needs::kNeedCount; ++i) {
          if (Core::Needs::SignatureLevel(v.value[i]) == 0) continue;
          const auto& info = Core::Needs::kNeeds[i];
-         lines.push_back(fmt::format("{:<24} {:.2f}  (input {:g}){}", info.id, v.value[i], v.input[i],
+         lines.push_back(fmt::format("{:<24} {:.2f}  (input {:g}) curve {}{}", info.id, v.value[i], v.input[i],
+            NeedSettings::SourceName(settings.CurveSource(i)),
             info.deferred ? "  [deferred: no sensor]" : ""));
       }
       return lines;

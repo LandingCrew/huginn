@@ -286,9 +286,9 @@ namespace Huginn::Spell
       // it sends an author hunting a typo in a correct file.
       logger::warn("[SpellOverrides] {}: {} of {} override(s) matched a spell in THIS pass. "
                    "Not consulted: {}. A rebuild only sees the player's own spells, so an "
-                   "override for one they have not learned reads as unmatched here -- "
-                   "`hg dump spells` classifies the whole load order and is the real check. "
-                   "If it is missing there too: names must match the display name exactly "
+                   "override for one they have not learned reads as unmatched here; a character "
+                   "who knows the spell is the real check (`hg rebuild` reruns it). "
+                   "If it is unmatched there too: names must match the display name exactly "
                    "(case included), and a FormID must be the runtime id the dump prints"sv,
       context, matched, total, list);
    }

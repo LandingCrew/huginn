@@ -14,7 +14,7 @@
 // docs/architecture/9-selection-log-v3.md (row columns est..wu, fl).
 //
 // LOGGING ONLY: the scorer decides exactly as before; these are read off it
-// (PipelineCoordinator::CaptureEligible, UtilityScorer::ExplainCandidate).
+// (Legacy::OldScoreCapture, LegacyScorer::ExplainCandidate; R8.4).
 //
 // Pure: standard library only (src/core/README.md).
 // =============================================================================

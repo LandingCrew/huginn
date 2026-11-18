@@ -69,14 +69,13 @@ namespace Huginn::UI
 
         // Widget visible when no game-pausing menu is open AND the master enable
         // toggle is on. Console and Favorites don't set kPausesGame, so the widget
-        // correctly stays visible during those overlays. The IsEnabled() gate is
-        // what keeps a user-disabled widget from being re-shown on every unpause.
-        // IsUserHidden() is also enforced inside SetVisible(), so this line is
-        // belt-and-braces — but computing it here keeps the predicate honest for
-        // anyone reading UpdateVisibility to find out when the widget shows.
+        // correctly stays visible during those overlays. Dialogue does not
+        // pause either: SetVisible() turns a show into a hide while it is open.
+        // The IsEnabled() gate is what keeps a user-disabled widget from being
+        // re-shown on every unpause. A HUD-hiding mod is followed separately,
+        // through the HUD's alpha (IntuitionMenu::FollowHudAlpha), not here.
         bool visible = !ui->GameIsPaused()
-                    && IntuitionSettings::GetSingleton().IsEnabled()
-                    && !IntuitionMenu::IsUserHidden();
+                    && IntuitionSettings::GetSingleton().IsEnabled();
 
         // SetVisible already defers the GFx work via AddUITask internally, so
         // call it directly — wrapping it in another AddUITask here would add a

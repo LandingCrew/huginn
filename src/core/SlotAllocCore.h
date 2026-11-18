@@ -3,24 +3,28 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <set>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "core/ChallengerRule.h"
 #include "core/SlotClassCapMath.h"
 #include "core/SlotScoreMath.h"
+#include "core/WildcardPick.h"
 
 // =============================================================================
 // SLOT ALLOCATION CORE (pure; host-tested in tests/core/SlotAlloc*Tests.cpp)
 // =============================================================================
 // The decision logic of Slot::SlotAllocator (src/slot/SlotAllocator.cpp) over
-// plain records: overrides, Remembrance holds, the slot hold, the rank-ordered
-// fill, the class cap, seating and home keys, filling job keys from Regular
-// keys. SlotAllocator builds an Input from the game's types (SlotSnapshot.h),
+// plain records: overrides, Remembrance holds, the wildcard key (R10), the
+// slot hold, the rank-ordered fill, the class cap, seating and home keys,
+// filling job keys from Regular keys. SlotAllocator builds an Input from the game's types (SlotSnapshot.h),
 // runs this, and turns the Output back into SlotAssignments; logging,
 // telemetry and the Remembrance side effects stay on the game side, fed by the
 // Output's events.
@@ -51,6 +55,10 @@
 //   bool  RawGreater(Score a, Score b); strict order on raw scores (sorts, best stack)
 //   bool  Exceeds(Score c, Score h);    the slot hold: c beats h by the margin
 //   double ToDouble(Score), ToDouble(Cap);   for the events (logs)
+// and optionally (R9, LogScorePolicy):
+//   bool  ExceedsBelief(Score c, Score h, double sigmaDelta);   the Bayesian
+//         challenger rule (core/ChallengerRule.h), used by the hold when the
+//         Input carries the scorer's beliefs for both rows
 // =============================================================================
 
 namespace Huginn::Core::SlotAlloc
@@ -91,12 +99,16 @@ namespace Huginn::Core::SlotAlloc
         float utility = 0.0f;             // the old engine's value (the legacy policy, logs)
         SlotScore score = 0.0;            // what the slot code ranks on
         float tieBreak = 0.0f;            // ScoredCandidate::TieBreakDps (the scorer's sort only)
-        bool isWildcard = false;
+        double sd = 0.0;                  // the score's sd (choice posterior; 0 in the fallback): the wildcard draw (R10)
         bool isRememberedOnly = false;
         bool isEquipped = false;          // CandidateBase::isEquipped
         bool playerEquipped = false;      // player->IsItemEquipped(formID)
         std::uint32_t matchMask = 0;      // bit k: SlotClassifier::Matches(c, k), for the layout's classes
         std::uint8_t capClass = 0;        // SlotClassCap::ClassOf(c)
+        /// R9: this row's index in Input::beliefs (the ranking run's belief
+        /// table); kNone = no belief (the fallback ranking, a remembered-only
+        /// row, a test that states utilities). Not in the snapshot format.
+        std::uint32_t beliefRow = kNone;
     };
 
     struct OverrideRec
@@ -132,6 +144,20 @@ namespace Huginn::Core::SlotAlloc
         float homeKeyMemorySec = 60.0f;
         bool returnToHomeKey = true;
         bool remembranceToJob = false;
+        /// R9, the challenger rule with beliefs (core/ChallengerRule.h):
+        /// tau (fChallengerConfidence) and ln m (fChallengerMinGap). Not in
+        /// the snapshot format: the recorded snapshots carry no beliefs, so
+        /// their hold is the fixed margin above, which these do not touch.
+        float challengerConfidence = static_cast<float>(Challenger::kDefaultConfidence);
+        float challengerMinGap = 0.0f;
+        /// 0.24.13, `[SlotLocker] bTestAllChallengers`: the hold asks a held
+        /// key's challengers in rank order and the first that clears the
+        /// challenger rule's line takes the key; false (the default) asks the
+        /// best one only. Only the rule can tell the two apart (a sigma_Delta
+        /// per pair); under the fixed margin a lower challenger never clears
+        /// a line the best one missed, so the hold stops at the best one there
+        /// either way. Not in the snapshot format (as the two above).
+        bool testAllChallengers = false;
     };
 
     struct Departure
@@ -165,6 +191,40 @@ namespace Huginn::Core::SlotAlloc
         std::vector<OverrideRec> overrides;     // active overrides that carry a candidate, in order
         std::array<HoldRec, kMaxSlots> holds{};
         PageMemory memory;
+
+        /// R10: the page's wildcard key (the seat: SeatOf). WildcardManager
+        /// keeps the cache and the clocks; the allocation places and draws.
+        struct WildcardIn
+        {
+            std::uint32_t pinned = kNone;   // the cached wildcard's row (a candidate index), shown on the seat
+            bool roll = false;              // nothing cached and the clocks allow a roll: roll for one
+            double uRoll = 1.0;             // uniforms in [0, 1): the roll, then the draw
+            double uDraw = 0.0;
+            Core::Wildcard::Params params;
+            /// Forms a slot lock holds on some key of this page (SlotLocker:
+            /// a lock shows its item whatever the allocation says). Never
+            /// drawn: the post-lock dedup would clear the wildcard as a second
+            /// copy, and the rows just under the cut -- the likeliest draws --
+            /// are the ones that just left a key and are still held there.
+            std::vector<std::uint32_t> heldForms;
+            /// ...and their display names (0.24.6). SlotLocker's post-lock
+            /// dedup is by NAME (core/DedupRules.h): a locked key showing
+            /// another form of the drawn row's name clears the wildcard just
+            /// the same, so a row named like a lock's item is not drawn either.
+            std::vector<std::string> heldNames;
+            /// Keys a slot lock holds on this page, bit j for key j. The seat's
+            /// displaced row never moves onto one (RehomeFor): ApplyLocks keeps
+            /// the locked item there, whatever row the allocation put on it,
+            /// and the moved row would be shown nowhere until the lock let go.
+            std::uint32_t heldKeys = 0;
+        } wildcard;
+
+        /// R9: the ranking run's beliefs, which CandidateRec::beliefRow
+        /// indexes. Null (the fallback ranking, the golden snapshots): the
+        /// hold is the fixed margin, ln(1 + challengerMargin). Not owned; the
+        /// caller keeps it alive for the allocation (SlotSnapshot.cpp: the
+        /// scored list holds it).
+        const Challenger::BeliefSource* beliefs = nullptr;
     };
 
     struct SlotState
@@ -175,7 +235,46 @@ namespace Huginn::Core::SlotAlloc
         friend bool operator==(const SlotState&, const SlotState&) = default;
 
         [[nodiscard]] bool IsEmpty() const noexcept { return kind == Kind::Empty; }
-        [[nodiscard]] bool IsPinned() const noexcept { return kind == Kind::Override || kind == Kind::Remembered; }
+        /// Placed by a rule for its slot, not by rank: an override, a
+        /// Remembrance hold, and (R10) the wildcard on its seat. Seating never
+        /// moves one, and one claims no seat (RecordSeating).
+        [[nodiscard]] bool IsPinned() const noexcept
+        {
+            return kind == Kind::Override || kind == Kind::Remembered || kind == Kind::Wildcard;
+        }
+    };
+
+    /// What became of the cached wildcard (Input::WildcardIn::pinned).
+    enum class PinFate : std::uint8_t
+    {
+        None,       // nothing was pinned
+        Placed,     // shown on the seat
+        SeatBusy,   // the seat (or the item) is taken by an override or a Remembrance hold this run: kept
+        Refused,    // the seat no longer takes it (its class, or it is equipped under skip-equipped): drop it
+    };
+
+    /// R10: the wildcard pass's result.
+    struct WildcardOut
+    {
+        std::size_t seat = npos;          // the page's wildcard key, npos when it has none
+        PinFate pin = PinFate::None;
+        bool rollAsked = false;           // Input::WildcardIn::roll, and the seat showed a ranked row (or none)
+        bool rolled = false;              // ...and uRoll came up under pRoll
+        std::uint32_t drawn = kNone;      // the row drawn and shown on the seat (rolled with a pool)
+        // The seat's displaced row, when it outranked the weakest ranked row
+        // on another key that takes it: it moved to that key (RehomeFor) and
+        // that row left the page instead. npos / kNone when nothing moved.
+        std::size_t movedTo = npos;       // the key the displaced row moved to
+        std::uint32_t moved = kNone;      // the displaced row (a candidate index)
+        std::uint32_t left = kNone;       // the row that left the page in its place
+        std::uint32_t pool = 0;           // rows it was drawn from
+        double pRoll = 0.0;               // P(roll) this run (WildcardPick RollProbability)
+        double pDraw = 0.0;               // P(the draw shows the drawn row's form | rolled)
+        double weight = 0.0;              // the drawn row's w, rel and sd
+        double rel = 0.0;
+        double sd = 0.0;
+        double topWeight = 0.0;           // the pool's largest w
+        [[nodiscard]] double Propensity() const noexcept { return pRoll * pDraw; }
     };
 
     enum class EventKind : std::uint8_t
@@ -188,7 +287,8 @@ namespace Huginn::Core::SlotAlloc
         HoldNotCandidate,         // a: slot pressed, b: formID -- a Remembrance hold whose item is not a candidate
         HoldShown,                // a: slot pressed, b: slot shown on, c: 1 = its class does not fit there
         NoCandidate,              // a: slot
-        HoldGaveWay,              // a: slot, b: holder, c: challenger; x/y: their raw scores, z/w: their caps; capped
+        HoldGaveWay,              // a: slot, b: holder, c: challenger; x/y: their raw scores, z/w: their caps; capped; sd (R9);
+                                  //   d: higher challengers that missed the line first (bTestAllChallengers; kNone = the best one won)
         PulledToJobKey,           // a: job slot, b: from Regular slot, c: candidate
         Returner,                 // a: candidate now showing it, b: home slot, c: slot now, f: away s, why, key, d/e: displaced cand/slot
     };
@@ -202,6 +302,7 @@ namespace Huginn::Core::SlotAlloc
         std::uint32_t a = 0, b = 0, c = 0, d = kNone, e = kNone;
         double x = 0.0, y = 0.0, z = 0.0, w = 0.0;
         float f = 0.0f;
+        double sd = -1.0;                 // HoldGaveWay: sigma_Delta under the challenger rule; < 0 = the fixed margin decided
         bool capped = false;
         Away why = Away::None;
         std::uint64_t key = 0;
@@ -217,6 +318,7 @@ namespace Huginn::Core::SlotAlloc
         std::array<std::uint64_t, kMaxSlots> seatsBeforeRecord{};   // for the [Seating] change log
         std::vector<std::uint32_t> skipped;   // candidates the class cap passed over (SlotClassCap's notes)
         std::vector<Event> events;
+        WildcardOut wildcard;
     };
 
     // =========================================================================
@@ -230,10 +332,14 @@ namespace Huginn::Core::SlotAlloc
         float discount = 1.0f;
         std::uint32_t freePerClass = 0;
         double logMargin = 0.0;
+        double minGap = 0.0;   // R9: ln m of the challenger rule
+        double z = 0.0;        // R9: Phi^-1(tau)
 
         [[nodiscard]] static LogScorePolicy From(const Settings& s) noexcept
         {
-            return { ClampClassCapDiscount(s.classDiscount), s.classFree, LogHoldMargin(s.challengerMargin) };
+            return { ClampClassCapDiscount(s.classDiscount), s.classFree, LogHoldMargin(s.challengerMargin),
+                Challenger::ClampMinGap(static_cast<double>(s.challengerMinGap)),
+                Challenger::ZForConfidence(static_cast<double>(s.challengerConfidence)) };
         }
         [[nodiscard]] bool CapActive() const noexcept { return ClassCapActive(discount); }
         [[nodiscard]] Score Raw(const CandidateRec& c) const noexcept { return c.score; }
@@ -244,6 +350,10 @@ namespace Huginn::Core::SlotAlloc
         [[nodiscard]] bool Greater(Score a, Score b) const noexcept { return ScoreGreater(a, b); }
         [[nodiscard]] bool RawGreater(Score a, Score b) const noexcept { return a > b; }
         [[nodiscard]] bool Exceeds(Score c, Score h) const noexcept { return ScoreExceedsByMargin(c, h, logMargin); }
+        [[nodiscard]] bool ExceedsBelief(Score c, Score h, double sigmaDelta) const noexcept
+        {
+            return Challenger::Exceeds(c, h, sigmaDelta, minGap, z);
+        }
         [[nodiscard]] static double ToDouble(double v) noexcept { return v; }
     };
 
@@ -257,6 +367,25 @@ namespace Huginn::Core::SlotAlloc
         std::stable_sort(order.begin(), order.begin() + static_cast<std::ptrdiff_t>(n),
             [&slots](std::size_t a, std::size_t b) { return slots[a].priority > slots[b].priority; });
         return n;
+    }
+
+    /// R10: the page's wildcard key (map Phase 8: "a reserved wildcard slot
+    /// per page, placed explicitly instead of a rank swap"). The LAST key in
+    /// fill order (PriorityOrder: lowest iPriority, ties to the highest slot
+    /// index) of those with bWildcardsEnabled -- on the shipped layouts key 8,
+    /// the "Wildcard" key the Jobs page already names. Never the first key in
+    /// fill order (the old "slot 0 is never a wildcard" rule): a page whose
+    /// only wildcard-enabled key is its top one, or a one-key page, has none.
+    /// npos when there is none. A player picks the key by turning
+    /// bWildcardsEnabled off on the keys after it, or off everywhere.
+    [[nodiscard]] inline std::size_t SeatOf(const std::vector<SlotRec>& slots)
+    {
+        std::array<std::size_t, kMaxSlots> order{};
+        const std::size_t n = PriorityOrder(slots, order);
+        for (std::size_t k = n; k-- > 1;) {
+            if (slots[order[k]].wildcardsEnabled) return order[k];
+        }
+        return npos;
     }
 
     // =========================================================================
@@ -291,6 +420,7 @@ namespace Huginn::Core::SlotAlloc
                 m_out.memory = in.memory;
                 m_out.generationMatches = in.generationMatches;
                 m_state.assign(in.slots.size(), SlotState{});
+                MarkShadowed();
             }
 
             Output Run();
@@ -342,9 +472,9 @@ namespace Huginn::Core::SlotAlloc
                     v = { o.formID, &o.name, o.dedupKey, o.matchMask, o.capClass, false, o.isEquipped, o.playerEquipped };
                 } else {
                     const auto& c = m_in.candidates[s.src];
-                    // A remembered copy is placed with isWildcard cleared.
+                    // R10: a wildcard is a placement (the seat), not a row's flag.
                     v = { c.formID, &c.name, c.dedupKey, c.matchMask, c.capClass,
-                        s.kind == Kind::Remembered ? false : c.isWildcard, c.isEquipped, c.playerEquipped };
+                        s.kind == Kind::Wildcard, c.isEquipped, c.playerEquipped };
                 }
                 return v;
             }
@@ -374,6 +504,54 @@ namespace Huginn::Core::SlotAlloc
 
             void Note(Event e) { m_out.events.push_back(e); }
 
+            // --- one owner per dedup key (0.24.6) ----------------------------
+            // A seat, a last placement, a home claim and a departure name an
+            // item by its dedup key, so a key must name ONE row. Two rows with
+            // one key made every "the row with this key" lookup take whichever
+            // came first while the fill could place the other: a key the page
+            // showed read as free, and pages churned with nothing moving
+            // (perpetual HoldGaveWay, A->B->A; R9's verifier, on synthetic
+            // pages). The game's list never has two (CandidateFilters drops a
+            // second candidate of a key as `duplicate`, and a Remembrance row
+            // is added only for a form no ranked row has; docs/architecture/
+            // 5-slots.md); this makes the allocation unambiguous whatever its
+            // caller hands it. The key's row is the first ranked row with it in
+            // list order (the scorer's rank order, so its best), else the first
+            // remembered-only row; every other row with the key is SHADOWED:
+            // no pass places it, finds it or draws it, as if it were not in
+            // the list. Key 0 names nothing (an empty seat) and shadows nothing.
+            void MarkShadowed()
+            {
+                const auto& cands = m_in.candidates;
+                m_shadowed.assign(cands.size(), false);
+                std::set<std::uint64_t> seen;
+                for (const bool remembered : { false, true }) {
+                    for (std::size_t i = 0; i < cands.size(); ++i) {
+                        const auto& c = cands[i];
+                        if (c.isRememberedOnly != remembered || c.dedupKey == 0) continue;
+                        if (!seen.insert(c.dedupKey).second) m_shadowed[i] = true;
+                    }
+                }
+            }
+
+            [[nodiscard]] bool Shadowed(std::uint32_t i) const noexcept
+            {
+                return i < m_shadowed.size() && m_shadowed[i];
+            }
+
+            /// The one row `key` names (see MarkShadowed), or kNone. With
+            /// `rankedOnly`, kNone when that row is a remembered-only one.
+            [[nodiscard]] std::uint32_t OwnerOf(std::uint64_t key, bool rankedOnly) const
+            {
+                if (key == 0) return kNone;
+                const auto& cands = m_in.candidates;
+                for (std::uint32_t i = 0; i < cands.size(); ++i) {
+                    if (cands[i].dedupKey != key || Shadowed(i)) continue;
+                    return rankedOnly && cands[i].isRememberedOnly ? kNone : i;
+                }
+                return kNone;
+            }
+
             void Recount()
             {
                 if (!m_cap.active) return;
@@ -399,14 +577,15 @@ namespace Huginn::Core::SlotAlloc
             }
 
             /// SlotClassCap::DropSkipsSince: keep a note only if the skipped
-            /// item, uncapped, would have taken the slot from the holder.
-            void DropSkipsSince(std::size_t mark, Score holderScore)
+            /// item, uncapped, would have taken the slot from the holder
+            /// (under the hold's own test, TakesKey).
+            void DropSkipsSince(std::size_t mark, std::uint32_t holder, Score holderScore)
             {
                 if (mark >= m_cap.skipped.size()) return;
                 std::size_t w = mark;
                 for (std::size_t r = mark; r < m_cap.skipped.size(); ++r) {
                     const std::uint32_t i = m_cap.skipped[r];
-                    if (m_p.Exceeds(m_p.Raw(m_in.candidates[i]), holderScore)) {
+                    if (TakesKey(i, m_p.Raw(m_in.candidates[i]), holder, holderScore, nullptr)) {
                         m_cap.skipped[w] = m_cap.skipped[r];
                         m_cap.skippedIDs[w] = m_cap.skippedIDs[r];
                         ++w;
@@ -414,6 +593,33 @@ namespace Huginn::Core::SlotAlloc
                 }
                 m_cap.skipped.resize(w);
                 m_cap.skippedIDs.resize(w);
+            }
+
+            /// The slot hold's test: does challenger c (at score cs, its cap
+            /// applied) take the key of holder h (at hs)? R9: when the Input
+            /// carries the scorer's beliefs for both rows, the Bayesian
+            /// challenger rule, mu_c - mu_i > ln m + z sigma_Delta
+            /// (core/ChallengerRule.h), and *sd receives sigma_Delta; else
+            /// (the fallback ranking, the golden snapshots, a policy without
+            /// the rule) the fixed margin, c - h > ln(1 + fChallengerMargin).
+            /// The class cap's terms are deterministic: they shift the two
+            /// scores and add nothing to sigma_Delta.
+            [[nodiscard]] bool TakesKey(std::uint32_t c, Score cs, std::uint32_t h, Score hs, double* sd) const
+            {
+                if constexpr (requires(const Policy& p, Score a, double v) { p.ExceedsBelief(a, a, v); }) {
+                    if (m_in.beliefs) {
+                        const std::uint32_t rc = m_in.candidates[c].beliefRow;
+                        const std::uint32_t rh = m_in.candidates[h].beliefRow;
+                        if (rc != kNone && rh != kNone) {
+                            const double s = Challenger::SigmaDelta(m_in.beliefs->DeltaVar(rc, rh));
+                            if (s == s) {
+                                if (sd) *sd = s;
+                                return m_p.ExceedsBelief(cs, hs, s);
+                            }
+                        }
+                    }
+                }
+                return m_p.Exceeds(cs, hs);
             }
 
             std::size_t ComputePriorityOrder() { return PriorityOrder(m_in.slots, m_order); }
@@ -425,15 +631,21 @@ namespace Huginn::Core::SlotAlloc
             /// scorer sorts the WHOLE list since R7 (past a top-10 prefix the
             /// first match was not the best one).
             ///
-            /// Checks, in order: wildcards when the slot refuses them; rows
-            /// only a Remembrance hold may place; anything already shown, by
-            /// formID and by NAME (two enchanted copies with different formIDs
-            /// and one name); the slot's class; and, under skipEquipped, both
-            /// the candidate's own isEquipped (registry scan) and the player
-            /// state's 100 ms equipment poll, to cover the gap between the two.
+            /// Checks, in order: rows only a Remembrance hold may place, and
+            /// rows another of their dedup key shadows (MarkShadowed);
+            /// anything already shown, by formID and by NAME (two enchanted
+            /// copies with different formIDs and one name); the slot's class;
+            /// and, under skipEquipped, both the candidate's own isEquipped
+            /// (registry scan) and the player state's 100 ms equipment poll, to
+            /// cover the gap between the two. R10: no wildcard rule here any
+            /// more -- the wildcard is placed on its seat by its own pass
+            /// (PlaceCachedWildcard, DrawWildcard), never found by rank.
+            ///
+            /// `noteSkips` false: a hypothetical search that leaves no class-cap
+            /// note (the hold's further challengers under bTestAllChallengers).
             [[nodiscard]] std::optional<std::uint32_t> FindBest(const SlotRec& slot,
                 const std::set<std::uint32_t>& ids, const std::set<std::string_view>& names,
-                bool skipEquipped, bool skipWildcards, bool useCap)
+                bool skipEquipped, bool useCap, bool noteSkips = true)
             {
                 const bool capped = useCap && m_cap.active && slot.regular;
                 std::uint32_t first = kNone;
@@ -442,8 +654,7 @@ namespace Huginn::Core::SlotAlloc
                 const auto& cands = m_in.candidates;
                 for (std::uint32_t i = 0; i < cands.size(); ++i) {
                     const auto& c = cands[i];
-                    if (skipWildcards && c.isWildcard) continue;
-                    if (c.isRememberedOnly) continue;
+                    if (c.isRememberedOnly || Shadowed(i)) continue;
                     if (ids.contains(c.formID)) continue;
                     if (names.contains(c.name)) continue;
                     if (!MaskMatches(c.matchMask, slot)) continue;
@@ -454,19 +665,16 @@ namespace Huginn::Core::SlotAlloc
                     // Under the class cap: the first match wins outright
                     // unless its class is already full on the page; then
                     // every later match is weighed with its own cap term, to
-                    // the end of the list. A wildcard keeps its POSITION
-                    // semantics (see HoldIncumbents): it wins only as the
-                    // first match, and is never weighed against capped items.
+                    // the end of the list.
                     if (best == kNone) {
                         const Cap cap = CapOf(c.capClass);
-                        if (c.isWildcard || !m_p.IsCapped(cap)) {
+                        if (!m_p.IsCapped(cap)) {
                             return i;
                         }
                         first = best = i;
                         bestScore = m_p.Apply(m_p.Raw(c), cap);
                         continue;
                     }
-                    if (c.isWildcard) continue;
                     const Score effective = m_p.Apply(m_p.Raw(c), CapOf(c.capClass));
                     if (m_p.Greater(effective, bestScore)) {
                         best = i;
@@ -476,7 +684,7 @@ namespace Huginn::Core::SlotAlloc
                 if (best == kNone) {
                     return std::nullopt;
                 }
-                if (best != first) {
+                if (best != first && noteSkips) {
                     NoteSkipped(first);
                 }
                 return best;
@@ -518,6 +726,11 @@ namespace Huginn::Core::SlotAlloc
             void ApplySeating();
             void RecordSeating();
             void PullIntoEmptyJobKeys(std::size_t priorityCount);
+            void PlaceCachedWildcard();
+            void RehomeSeatOwner();
+            void DrawWildcard();
+            /// The key the seat's displaced row `d` should move to, or npos.
+            [[nodiscard]] std::size_t RehomeFor(std::uint32_t d);
 
             const Input& m_in;
             const Policy& m_p;
@@ -527,6 +740,7 @@ namespace Huginn::Core::SlotAlloc
             std::array<std::size_t, kMaxSlots> m_order{};
             std::set<std::uint32_t> m_ids;
             std::set<std::string_view> m_names;
+            std::vector<bool> m_shadowed;   // MarkShadowed: a row whose dedup key an earlier row owns
         };
 
         // ---------------------------------------------------------------------
@@ -552,7 +766,14 @@ namespace Huginn::Core::SlotAlloc
             // PASS 1a: Remembrance.
             PassRemembrance(priorityCount);
 
-            // The class cap counts what overrides and Remembrance placed.
+            // PASS 1w (R10): the cached wildcard on its seat, pinned like a
+            // Remembrance hold -- after the overrides and holds, which outrank
+            // it, before the slot hold and the fill, which then never see the
+            // seat or the item. Replaces the rank swap and its special cases
+            // in the hold and the fill (map Phase 8).
+            PlaceCachedWildcard();
+
+            // The class cap counts what overrides, Remembrance and the wildcard placed.
             Recount();
 
             // PASS 1c: the slot hold.
@@ -569,6 +790,10 @@ namespace Huginn::Core::SlotAlloc
                 PullIntoEmptyJobKeys(priorityCount);
                 Recount();
                 Fill(priorityCount, /*refill=*/true);
+            }
+            if (!set.keepSlotPositions) {
+                // PASS 4w (R10): no seating below; the page is final here.
+                DrawWildcard();
             }
 
             // PASS 3: seat returning items where they were (anti-juggling).
@@ -592,6 +817,15 @@ namespace Huginn::Core::SlotAlloc
                 // pass 2's, so this cannot re-place an item already shown.
                 Recount();
                 Fill(priorityCount, /*refill=*/true);
+                // PASS 4p (R10): the pinned wildcard does not push the seat's
+                // owner off the page when it outranks the weakest row shown.
+                RehomeSeatOwner();
+                // PASS 4w (R10): a roll draws the wildcard from what the
+                // finished page does not show and puts it on the seat. Before
+                // the record, so the seat's displaced owner is remembered as
+                // departed (home keys bring it back when the wildcard ends)
+                // and the wildcard, pinned, claims no seat.
+                DrawWildcard();
                 // PASS 5: remember the result for next time.
                 RecordSeating();
             }
@@ -608,7 +842,11 @@ namespace Huginn::Core::SlotAlloc
             const auto& ovs = m_in.overrides;
             for (std::uint32_t o = 0; o < ovs.size(); ++o) {
                 const auto& ov = ovs[o];
-                if (m_ids.contains(ov.formID)) continue;
+                // One item per form, and one per NAME (0.24.6): two forms with
+                // one display name read as the same item to the player, so a
+                // second override of a name already placed waits, as a second
+                // override of its form does.
+                if (m_ids.contains(ov.formID) || m_names.contains(ov.name)) continue;
 
                 // If the item is ALREADY on this page, the override marks that
                 // slot -- label and pulse on the key the player already knows
@@ -654,7 +892,7 @@ namespace Huginn::Core::SlotAlloc
             // PASS 1b: the first empty slot that accepts the category.
             for (std::uint32_t o = 0; o < ovs.size(); ++o) {
                 const auto& ov = ovs[o];
-                if (m_ids.contains(ov.formID)) continue;
+                if (m_ids.contains(ov.formID) || m_names.contains(ov.name)) continue;
                 bool placed = false;
                 bool sawAcceptingSlot = false;
                 for (std::size_t k = 0; k < priorityCount; ++k) {
@@ -696,10 +934,12 @@ namespace Huginn::Core::SlotAlloc
                     if (!entry.active || !slots[j].remembrance) continue;
                     if (m_ids.contains(entry.formID)) continue;
 
-                    // The best-scoring stack of a form owned twice.
+                    // The best-scoring stack of a form owned twice (never a
+                    // row another of its key shadows).
                     std::uint32_t found = kNone;
                     for (std::uint32_t i = 0; i < m_in.candidates.size(); ++i) {
                         const auto& c = m_in.candidates[i];
+                        if (Shadowed(i)) continue;
                         if (c.formID == entry.formID &&
                             (found == kNone || m_p.RawGreater(m_p.Raw(c), m_p.Raw(m_in.candidates[found])))) {
                             found = i;
@@ -710,6 +950,11 @@ namespace Huginn::Core::SlotAlloc
                         continue;
                     }
                     const auto& fc = m_in.candidates[found];
+                    // A name the page already shows (an override's, or another
+                    // hold's item of another form with the same name): the
+                    // player cannot tell the two apart, so this hold waits, as
+                    // one whose form is shown does (0.24.6).
+                    if (m_names.contains(fc.name)) continue;
                     auto fits = [&](std::size_t k) {
                         return slots[k].regular || MaskMatches(fc.matchMask, slots[k]);
                     };
@@ -744,8 +989,19 @@ namespace Huginn::Core::SlotAlloc
 
         // PASS 1c: the slot hold. Before the rank-ordered fill, keep each
         // seated item in its own seat unless the slot no longer accepts it or
-        // the best challenger FOR THAT SLOT beats it by the margin: score
-        // difference > ln m (m = 1 + fChallengerMargin; the old u_c > m u_i).
+        // the best challenger FOR THAT SLOT beats it (TakesKey): from R9 by
+        // the Bayesian challenger rule, mu_c - mu_i > ln m + z sigma_Delta,
+        // when the scorer's beliefs are known; else by the fixed margin,
+        // score difference > ln(1 + fChallengerMargin) (the old u_c > m u_i).
+        // By default only the best challenger is asked, as before R9: a lower
+        // one with a narrower sigma_Delta that would clear the line waits
+        // until the best one stops standing in its way (the conservative
+        // reading). bTestAllChallengers (0.24.13) asks the rest in rank order
+        // when the best one misses the RULE's line, and the first that clears
+        // it takes the key; under the fixed margin it stops at the best one
+        // too (a lower score cannot clear the same line). The no-swap-back
+        // argument holds either way: every accepted swap clears a line >= 0
+        // that is symmetric in its pair, whichever challenger it was.
         //
         // Two problems, one pass. Near-tied items were trading slots every
         // time a lock expired -- most slot changes in play were under 10%
@@ -771,11 +1027,17 @@ namespace Huginn::Core::SlotAlloc
             std::size_t tentativeCount = 0;
             std::set<std::uint32_t> excludedIDs = m_ids;
             std::set<std::string_view> excludedNames = m_names;
+            // What the page will show if every tentative holder stays: what
+            // the overrides and holds placed, plus each holder accepted so
+            // far. A displaced owner standing as a guest is judged against
+            // this, not against the exclusion (which holds the guest itself).
+            std::set<std::uint32_t> shownIDs = m_ids;
+            std::set<std::string_view> shownNames = m_names;
 
             // Phase A: which seat owners are still candidates, and still
             // allowed in their seat? An item the slot has given up -- now
-            // equipped under skip-equipped, a wildcard in a slot that refuses
-            // them -- is not held, however well it scores: holding it would
+            // equipped under skip-equipped, or no longer of its class -- is
+            // not held, however well it scores: holding it would
             // keep something the slot itself just rejected. Priority order,
             // the order the fill uses: when two held slots want the same
             // challenger, the one the fill would have served first gets it.
@@ -783,17 +1045,25 @@ namespace Huginn::Core::SlotAlloc
                 const std::size_t j = m_order[k];
                 if (j >= slotCount) continue;
                 if (!m_state[j].IsEmpty() || seats[j] == 0) continue;
-                std::uint32_t owner = kNone;
-                for (std::uint32_t i = 0; i < cands.size(); ++i) {
-                    if (!cands[i].isRememberedOnly && cands[i].dedupKey == seats[j]) { owner = i; break; }
-                }
-                if (owner == kNone || m_ids.contains(cands[owner].formID) || m_names.contains(cands[owner].name)) {
+                const std::uint32_t owner = OwnerOf(seats[j], /*rankedOnly=*/true);
+                // Against every owner already held too, not only what the
+                // overrides and holds placed (0.24.6): two seats whose owners
+                // share a form (two stacks) or a NAME (two enchanted copies)
+                // were both held, and the page showed one name twice -- the
+                // fill's own name dedup never saw them (R10's synthetic seeds
+                // 409, 459). The owner the fill would serve first keeps its
+                // seat; the other is an ordinary row again, and the name
+                // dedup keeps it off this page.
+                if (owner == kNone || excludedIDs.contains(cands[owner].formID) ||
+                    excludedNames.contains(cands[owner].name)) {
                     continue;
                 }
                 if (!SlotAccepts(slots[j], SlotState{ Kind::Normal, owner, false })) continue;
                 tentative[tentativeCount++] = { j, owner };
                 excludedIDs.insert(cands[owner].formID);
                 excludedNames.insert(cands[owner].name);
+                shownIDs.insert(cands[owner].formID);
+                shownNames.insert(cands[owner].name);
             }
 
             // Owners whose seat an override (or a remembered item) is sitting
@@ -802,18 +1072,18 @@ namespace Huginn::Core::SlotAlloc
             // Sparks landed in slot 3, and it all ran backwards when the
             // override ended -- one override, six slot changes (2026-09-27
             // 19:08:30-37). It is still held where it stands (the guests
-            // below), and goes home when the override ends.
+            // below), and goes home when the override ends. R10: the pinned
+            // wildcard displaces its seat's owner the same way; an owner it
+            // keeps off the page entirely is put back, in place of the weakest
+            // row shown, by RehomeSeatOwner (pass 4p) when it outranks it.
             std::set<std::uint32_t> displacedOwners;
             for (std::size_t j = 0; j < slotCount; ++j) {
                 if (!m_state[j].IsPinned() || seats[j] == 0) continue;
                 if (KeyOf(m_state[j]) == seats[j]) continue;
-                for (std::uint32_t i = 0; i < cands.size(); ++i) {
-                    if (cands[i].dedupKey == seats[j]) {
-                        excludedIDs.insert(cands[i].formID);
-                        excludedNames.insert(cands[i].name);
-                        displacedOwners.insert(cands[i].formID);
-                        break;
-                    }
+                if (const std::uint32_t i = OwnerOf(seats[j], /*rankedOnly=*/false); i != kNone) {
+                    excludedIDs.insert(cands[i].formID);
+                    excludedNames.insert(cands[i].name);
+                    displacedOwners.insert(cands[i].formID);
                 }
             }
 
@@ -827,6 +1097,11 @@ namespace Huginn::Core::SlotAlloc
             // items, and are in the excluded sets: a guest is judged against
             // what is SHOWN, not against the exclusion (Raw Crab Meat waiting
             // for an override on its home key, LoreRim 2026-10-06 21:07:58).
+            // What is shown includes the holders accepted before it (0.24.6):
+            // checked against the overrides and holds alone, a guest sharing
+            // a NAME or a FORM with a seat owner held in Phase A stood beside
+            // it -- [Twin] [override] [Twin], or one form on two keys when
+            // the two were stacks.
             for (std::size_t k = 0; k < priorityCount; ++k) {
                 const std::size_t j = m_order[k];
                 if (j >= slotCount || !m_state[j].IsEmpty() || placed[j] == 0) continue;
@@ -835,14 +1110,11 @@ namespace Huginn::Core::SlotAlloc
                     taken = taken || tentative[t].slot == j;
                 }
                 if (taken) continue;
-                std::uint32_t guest = kNone;
-                for (std::uint32_t i = 0; i < cands.size(); ++i) {
-                    if (!cands[i].isRememberedOnly && cands[i].dedupKey == placed[j]) { guest = i; break; }
-                }
+                const std::uint32_t guest = OwnerOf(placed[j], /*rankedOnly=*/true);
                 if (guest == kNone) continue;
                 const auto& g = cands[guest];
                 if (displacedOwners.contains(g.formID)) {
-                    if (m_ids.contains(g.formID) || m_names.contains(g.name)) continue;
+                    if (shownIDs.contains(g.formID) || shownNames.contains(g.name)) continue;
                 } else if (excludedIDs.contains(g.formID) || excludedNames.contains(g.name)) {
                     continue;
                 }
@@ -850,6 +1122,8 @@ namespace Huginn::Core::SlotAlloc
                 tentative[tentativeCount++] = { j, guest };
                 excludedIDs.insert(g.formID);
                 excludedNames.insert(g.name);
+                shownIDs.insert(g.formID);
+                shownNames.insert(g.name);
             }
 
             // One slot-priority order for owners and guests.
@@ -899,17 +1173,11 @@ namespace Huginn::Core::SlotAlloc
                 const auto& config = slots[j];
                 const auto& it = cands[item];
 
-                // A wildcard is not challenged on score: WildcardManager
-                // swaps it into a rank POSITION and leaves its own low score,
-                // so a score comparison always finds it beaten and it was
-                // released and re-placed elsewhere every pass (2026-09-27
-                // 19:02:40-46). It stays until WildcardManager ends it or the
-                // slot stops accepting it (Phase A).
-                if (it.isWildcard) {
-                    Place(j, Kind::Wildcard, item);
-                    Assign(it.formID, it.name);
-                    continue;
-                }
+                // R10: no wildcard case here. The wildcard is pinned on its
+                // seat (pass 1w) before this pass, so it is never a holder or
+                // a challenger: the old rank-swapped wildcard, low-scored by
+                // design, needed an exemption from this comparison (2026-09-27
+                // 19:02:40-46), and the pinned one cannot reach it.
 
                 // On a Regular key both sides are weighed after the class cap:
                 // a holder past its class's free count holds at its capped
@@ -917,27 +1185,67 @@ namespace Huginn::Core::SlotAlloc
                 // be held there for good.
                 m_cap.Remove(it.capClass);
                 const std::size_t skipMark = m_cap.skipped.size();
-                const auto challenger = FindBest(config, excludedIDs, excludedNames, config.skipEquipped,
-                    /*skipWildcards=*/!config.wildcardsEnabled, /*useCap=*/true);
+                auto challenger = FindBest(config, excludedIDs, excludedNames, config.skipEquipped,
+                    /*useCap=*/true);
                 const bool capped = config.regular;
                 const Cap itemCap = capped ? holderCap[t] : m_p.NoCap();
-                const Cap challengerCap = capped && challenger ? CapOf(cands[*challenger].capClass) : m_p.NoCap();
                 const Score itemScore = m_p.Apply(m_p.Raw(it), itemCap);
 
-                if (challenger) {
+                // bTestAllChallengers: the challengers already asked, kept out
+                // of the next search only (they stay free for the fill).
+                std::set<std::uint32_t> askedIDs;
+                std::set<std::string_view> askedNames;
+                std::uint32_t passedOver = 0;
+                bool gaveWay = false;
+                while (challenger) {
                     const auto& ch = cands[*challenger];
+                    const Cap challengerCap = capped ? CapOf(ch.capClass) : m_p.NoCap();
                     const Score challengerScore = m_p.Apply(m_p.Raw(ch), challengerCap);
-                    if (m_p.Exceeds(challengerScore, itemScore)) {
+                    double sd = -1.0;
+                    if (!TakesKey(*challenger, challengerScore, item, itemScore, &sd)) {
+                        // Off (the default): the best challenger only. On:
+                        // the next one in the order the fill serves them --
+                        // but only past a miss of the RULE's line (sd >= 0):
+                        // the fixed margin's line is the same for every
+                        // challenger, and the next one scores no higher
+                        // (the list is in score order; under the class cap
+                        // FindBest takes the best capped score). For the
+                        // same reason nothing below a challenger that does
+                        // not even outscore the holder can clear a line >= 0.
+                        if (!m_in.settings.testAllChallengers || sd < 0.0 ||
+                            !m_p.Greater(challengerScore, itemScore)) {
+                            break;
+                        }
+                        if (passedOver == 0) {
+                            // The first search's class-cap note is kept only
+                            // if, uncapped, it would take the key from this
+                            // holder -- what the holder staying would leave
+                            // (below); the further searches note nothing.
+                            DropSkipsSince(skipMark, item, itemScore);
+                            askedIDs = excludedIDs;
+                            askedNames = excludedNames;
+                        }
+                        askedIDs.insert(ch.formID);
+                        askedNames.insert(ch.name);
+                        ++passedOver;
+                        challenger = FindBest(config, askedIDs, askedNames, config.skipEquipped,
+                            /*useCap=*/true, /*noteSkips=*/false);
+                        continue;
+                    }
+                    {
+                        gaveWay = true;
                         m_cap.Add(ch.capClass);
                         Event e{ EventKind::HoldGaveWay, static_cast<std::uint32_t>(j), item, *challenger };
                         e.x = Policy::ToDouble(m_p.Raw(it));
                         e.y = Policy::ToDouble(m_p.Raw(ch));
                         e.z = Policy::ToDouble(itemCap);
                         e.w = Policy::ToDouble(challengerCap);
+                        e.sd = sd;
                         e.capped = m_p.IsCapped(itemCap) || m_p.IsCapped(challengerCap);
+                        if (passedOver > 0) e.d = passedOver;   // bTestAllChallengers: higher ones that missed
                         Note(e);
 
-                        Place(j, ch.isWildcard ? Kind::Wildcard : Kind::Normal, *challenger);
+                        Place(j, Kind::Normal, *challenger);
                         Assign(ch.formID, ch.name);
                         excludedIDs.insert(ch.formID);
                         excludedNames.insert(ch.name);
@@ -947,6 +1255,13 @@ namespace Huginn::Core::SlotAlloc
                         // seat is somewhere else and not its to give up. An
                         // owner an override displaced stays out of the
                         // challengers even so (code review of #179).
+                        // A loser sharing a displaced owner's form keeps it
+                        // excluded (displacedOwners is by form); one sharing
+                        // only its NAME erases the name, but the displaced
+                        // owner's form stays in excludedIDs and FindBest
+                        // skips a row on either, so it does not come back
+                        // as a challenger. The fill reads m_ids/m_names,
+                        // not these sets (verification of #232).
                         if (!displacedOwners.contains(it.formID)) {
                             excludedIDs.erase(it.formID);
                             excludedNames.erase(it.name);
@@ -955,11 +1270,12 @@ namespace Huginn::Core::SlotAlloc
                         if (seats[j] == loserKey && m_out.generationMatches && m_out.memory.seats[j] == loserKey) {
                             m_out.memory.seats[j] = 0;
                         }
-                        continue;
+                        break;
                     }
                 }
+                if (gaveWay) continue;
 
-                Place(j, it.isWildcard ? Kind::Wildcard : Kind::Normal, item);
+                Place(j, Kind::Normal, item);
                 // A home claimant arriving at its key from where it waited:
                 // the lock still showing it there may let go (SlotLocker).
                 {
@@ -971,7 +1287,7 @@ namespace Huginn::Core::SlotAlloc
                 // The search was hypothetical: an item it passed for the cap
                 // was kept off by the cap only if, uncapped, it would have
                 // taken the slot from this holder.
-                DropSkipsSince(skipMark, itemScore);
+                DropSkipsSince(skipMark, item, itemScore);
             }
         }
 
@@ -984,37 +1300,18 @@ namespace Huginn::Core::SlotAlloc
                 const auto& config = slots[idx];
                 if (!m_state[idx].IsEmpty()) continue;
 
-                if (refill) {
-                    // Passes 2b and 4: wildcards only where the slot takes them.
-                    const auto pick = FindBest(config, m_ids, m_names, config.skipEquipped,
-                        /*skipWildcards=*/!config.wildcardsEnabled, /*useCap=*/true);
-                    if (!pick) continue;
-                    const auto& c = m_in.candidates[*pick];
-                    Place(idx, c.isWildcard ? Kind::Wildcard : Kind::Normal, *pick);
-                    Assign(c.formID, c.name);
-                    m_cap.Add(c.capClass);
-                    continue;
-                }
-
-                auto best = FindBest(config, m_ids, m_names, config.skipEquipped, /*skipWildcards=*/false, /*useCap=*/true);
+                // Passes 2b and 4 (refill) note nothing; pass 2 notes a key
+                // nothing fits. R10: no wildcard re-run -- the fill places
+                // ranked rows only (the wildcard has its own passes).
+                const auto best = FindBest(config, m_ids, m_names, config.skipEquipped, /*useCap=*/true);
                 if (!best) {
-                    Note({ EventKind::NoCandidate, static_cast<std::uint32_t>(idx) });
+                    if (!refill) Note({ EventKind::NoCandidate, static_cast<std::uint32_t>(idx) });
                     continue;
                 }
-                Kind kind = m_in.candidates[*best].isWildcard ? Kind::Wildcard : Kind::Normal;
-                // A slot that forbids wildcards re-runs the search without
-                // them (still honouring skipEquipped), and stays empty when
-                // nothing else fits: a wildcard is never left in such a slot.
-                if (kind == Kind::Wildcard && !config.wildcardsEnabled) {
-                    best = FindBest(config, m_ids, m_names, config.skipEquipped, /*skipWildcards=*/true, /*useCap=*/true);
-                    kind = Kind::Normal;
-                }
-                if (best) {
-                    const auto& c = m_in.candidates[*best];
-                    Place(idx, kind, *best);
-                    Assign(c.formID, c.name);
-                    m_cap.Add(c.capClass);
-                }
+                const auto& c = m_in.candidates[*best];
+                Place(idx, Kind::Normal, *best);
+                Assign(c.formID, c.name);
+                m_cap.Add(c.capClass);
             }
         }
 
@@ -1394,6 +1691,223 @@ namespace Huginn::Core::SlotAlloc
                 m_state[i] = m_state[from];
                 m_state[from] = SlotState{};
             }
+        }
+
+        // PASS 1w (R10): the cached wildcard on its seat. WildcardManager
+        // holds which item it is (for fCooldownSeconds) and names its row; this
+        // places it, pinned, where the seat is still free. It does not place a
+        // row the seat no longer takes (its class; equipped under
+        // skip-equipped: the player has it in hand, so the exploration is
+        // over) -- PinFate::Refused, and the manager drops it rather than let
+        // a cache nothing can show block the next roll. An override or a
+        // Remembrance hold on the seat, or showing the item, wins for this run
+        // (SeatBusy): the manager keeps the wildcard for when they let go.
+        // The seat's owner is not pushed off the page by it while it outranks
+        // the weakest row shown (RehomeSeatOwner, after the refill).
+        template <class Policy>
+        void Engine<Policy>::PlaceCachedWildcard()
+        {
+            auto& w = m_out.wildcard;
+            w.seat = SeatOf(m_in.slots);
+            const auto& wi = m_in.wildcard;
+            if (wi.pinned == kNone) return;
+            if (w.seat == npos || w.seat >= m_state.size() || wi.pinned >= m_in.candidates.size()) {
+                w.pin = PinFate::Refused;
+                return;
+            }
+            // A row another of its key shadows stands for that key's row (the
+            // one the rest of the allocation knows the item by).
+            std::uint32_t pinned = wi.pinned;
+            if (Shadowed(pinned)) pinned = OwnerOf(m_in.candidates[pinned].dedupKey, /*rankedOnly=*/false);
+            if (pinned == kNone) {
+                w.pin = PinFate::Refused;
+                return;
+            }
+            const auto& c = m_in.candidates[pinned];
+            if (!m_state[w.seat].IsEmpty() || m_ids.contains(c.formID) || m_names.contains(c.name)) {
+                w.pin = PinFate::SeatBusy;
+                return;
+            }
+            const SlotState s{ Kind::Wildcard, pinned, false };
+            if (c.isRememberedOnly || !SlotAccepts(m_in.slots[w.seat], s)) {
+                w.pin = PinFate::Refused;
+                return;
+            }
+            Place(w.seat, Kind::Wildcard, pinned);
+            Assign(c.formID, c.name);
+            w.pin = PinFate::Placed;
+        }
+
+        // The key the seat's displaced row d moves to, or npos (it leaves the
+        // page). The wildcard takes the seat, not the place of whatever row
+        // happens to sit there: with seating, the seat's owner is whoever got
+        // there first and the challenger rule keeps it (R9), so it can be the
+        // page's best row -- which the old engine never let a wildcard take
+        // ("slot 0 is always excluded (top-scored pick)"). So d moves to the
+        // key of the weakest ranked row that takes it, and that row leaves
+        // instead, when d outranks it (each after the class cap, with both
+        // out of the count, as the slot hold weighs a holder). One key
+        // changes besides the seat, and the page loses its weakest row, not
+        // an arbitrary one. A key a slot lock holds (WildcardIn::heldKeys)
+        // is passed over, and so is a key whose row's form a lock holds on
+        // some key (WildcardIn::heldForms): the lock shows its own item on
+        // its key whatever the allocation puts there, so d would be shown
+        // nowhere until it let go.
+        template <class Policy>
+        std::size_t Engine<Policy>::RehomeFor(std::uint32_t d)
+        {
+            const auto& w = m_out.wildcard;
+            const auto& slots = m_in.slots;
+            const auto& cands = m_in.candidates;
+            const std::size_t slotCount = std::min(m_state.size(), std::min(slots.size(), kMaxSlots));
+            if (d >= cands.size()) return npos;
+            const SlotState moving{ Kind::Normal, d, false };
+            const auto& held = m_in.wildcard.heldForms;
+
+            // The weakest: lowest raw score; ties to the key filled later.
+            std::size_t to = npos;
+            for (std::size_t k = slotCount; k-- > 0;) {
+                const std::size_t j = m_order[k];
+                if (j >= slotCount || j == w.seat || m_state[j].kind != Kind::Normal) continue;
+                if (j < 32 && ((m_in.wildcard.heldKeys >> j) & 1u) != 0) continue;
+                const auto& row = cands[m_state[j].src];
+                if (std::find(held.begin(), held.end(), row.formID) != held.end()) continue;
+                if (!SlotAccepts(slots[j], moving)) continue;
+                if (to == npos || m_p.RawGreater(m_p.Raw(cands[m_state[to].src]), m_p.Raw(row))) to = j;
+            }
+            if (to == npos) return npos;
+
+            const auto& dc = cands[d];
+            const auto& wc = cands[m_state[to].src];
+            Recount();
+            const bool dOnPage = m_state[w.seat].kind == Kind::Normal && m_state[w.seat].src == d;
+            m_cap.Remove(wc.capClass);
+            if (dOnPage) m_cap.Remove(dc.capClass);
+            const bool capped = slots[to].regular;
+            const Cap dCap = capped ? CapOf(dc.capClass) : m_p.NoCap();
+            const Cap wCap = capped ? CapOf(wc.capClass) : m_p.NoCap();
+            Recount();
+            return m_p.Greater(m_p.Apply(m_p.Raw(dc), dCap), m_p.Apply(m_p.Raw(wc), wCap)) ? to : npos;
+        }
+
+        // PASS 4p (R10): the pinned wildcard and the seat's owner. Pinned
+        // before the hold, the wildcard keeps the seat's owner out of it, and
+        // the hold keeps that owner from challenging any other key (an owner
+        // whose seat is pinned is a displaced owner, HoldIncumbents): with
+        // the other keys held, it had no way back on the page, best row or
+        // not. On the run a roll draws, DrawWildcard moves it itself, and on
+        // later runs it is held where it moved to (a guest); this catches the
+        // rest -- the owner the page does not show, while it outranks the
+        // weakest row shown. Seating only: without it there is no owner, and
+        // the fill already gave the other keys the best rows.
+        template <class Policy>
+        void Engine<Policy>::RehomeSeatOwner()
+        {
+            auto& w = m_out.wildcard;
+            if (w.pin != PinFate::Placed || w.seat >= kMaxSlots) return;
+            if (!m_in.memoryAvailable || !m_out.generationMatches) return;
+            const std::uint64_t key = m_out.memory.seats[w.seat];
+            if (key == 0) return;
+            const auto& cands = m_in.candidates;
+            const std::uint32_t d = OwnerOf(key, /*rankedOnly=*/true);
+            if (d == kNone || m_ids.contains(cands[d].formID) || m_names.contains(cands[d].name)) return;
+            const std::size_t to = RehomeFor(d);
+            if (to == npos) return;
+            w.movedTo = to;
+            w.moved = d;
+            w.left = m_state[to].src;
+            Place(to, Kind::Normal, d);
+            Assign(cands[d].formID, cands[d].name);
+        }
+
+        // PASS 4w (R10): the roll. With nothing cached and the clocks open
+        // (WildcardManager), on a finished page whose seat shows a ranked row
+        // or nothing: the pool is every ranked row the page does not show
+        // (by formID and by name, as the fill dedups) that the seat takes,
+        // less what a slot lock holds (WildcardIn::heldForms, and since 0.24.6
+        // heldNames: the post-lock dedup compares names). Each weighs
+        // rel x sd against the row the wildcard puts off the page: the seat's
+        // occupant, or the weaker row whose key the occupant moves to
+        // (RehomeFor) (core/WildcardPick.h). The roll comes up with P(roll)
+        // from the pool's top weight, and the draw puts the row it picks on
+        // the seat. The scores the weights read are the rows' own (mu), never
+        // the policy's capped ones: the class cap shapes the page, not the
+        // wildcard's odds.
+        template <class Policy>
+        void Engine<Policy>::DrawWildcard()
+        {
+            auto& w = m_out.wildcard;
+            const auto& wi = m_in.wildcard;
+            if (!wi.roll || w.seat == npos || w.seat >= m_state.size() || w.pin == PinFate::Placed) return;
+            const SlotState occupant = m_state[w.seat];
+            if (occupant.IsPinned()) return;   // an override or a hold has the seat: roll on a later run
+            w.rollAsked = true;
+
+            constexpr double kHuge = std::numeric_limits<double>::infinity();
+            double muCut = -kHuge;   // an empty seat with nothing ranked shown: no cut
+            std::size_t moveTo = npos;
+            if (occupant.kind == Kind::Normal) {
+                moveTo = RehomeFor(occupant.src);
+                const std::uint32_t leaving = moveTo == npos ? occupant.src : m_state[moveTo].src;
+                muCut = m_in.candidates[leaving].score;
+            } else {
+                double lowest = kHuge;
+                for (const auto& s : m_state) {
+                    if (s.kind == Kind::Normal) lowest = std::min(lowest, m_in.candidates[s.src].score);
+                }
+                if (lowest < kHuge) muCut = lowest;
+            }
+
+            std::set<std::uint32_t> shownIDs;
+            std::set<std::string_view> shownNames;
+            for (const auto& s : m_state) {
+                if (s.IsEmpty()) continue;
+                const ItemView v = View(s);
+                shownIDs.insert(v.formID);
+                shownNames.insert(*v.name);
+            }
+            const auto& held = wi.heldForms;
+            const auto& heldNames = wi.heldNames;
+
+            const auto& seat = m_in.slots[w.seat];
+            std::vector<std::uint32_t> rows;
+            std::vector<std::uint32_t> forms;
+            std::vector<double> rels;
+            std::vector<double> weights;
+            for (std::uint32_t i = 0; i < m_in.candidates.size(); ++i) {
+                const auto& c = m_in.candidates[i];
+                if (c.isRememberedOnly || Shadowed(i) || !std::isfinite(c.score)) continue;
+                if (shownIDs.contains(c.formID) || shownNames.contains(c.name)) continue;
+                if (std::find(held.begin(), held.end(), c.formID) != held.end()) continue;
+                if (std::find(heldNames.begin(), heldNames.end(), c.name) != heldNames.end()) continue;
+                if (!SlotAccepts(seat, SlotState{ Kind::Normal, i, false })) continue;
+                const double rel = Core::Wildcard::Relevance(c.score, muCut);
+                rows.push_back(i);
+                forms.push_back(c.formID);
+                rels.push_back(rel);
+                weights.push_back(Core::Wildcard::Weight(rel, c.sd));
+            }
+            for (const double x : weights) w.topWeight = std::max(w.topWeight, x);
+            w.pool = static_cast<std::uint32_t>(rows.size());
+            w.pRoll = Core::Wildcard::RollProbability(wi.params, w.topWeight);
+            w.rolled = wi.uRoll < w.pRoll;
+            if (!w.rolled || rows.empty()) return;
+
+            const auto probs = Core::Wildcard::Distribution(weights, wi.params.uniformShare);
+            const std::size_t k = Core::Wildcard::Draw(probs, wi.uDraw);
+            if (k >= rows.size()) return;
+            w.drawn = rows[k];
+            w.pDraw = Core::Wildcard::FormShare(probs, forms, forms[k]);
+            w.weight = weights[k];
+            w.rel = rels[k];
+            w.sd = m_in.candidates[rows[k]].sd;
+            if (moveTo != npos) {
+                w.movedTo = moveTo;
+                w.moved = occupant.src;
+                w.left = m_state[moveTo].src;
+                Place(moveTo, Kind::Normal, occupant.src);
+            }
+            Place(w.seat, Kind::Wildcard, rows[k]);
         }
     }  // namespace Detail
 

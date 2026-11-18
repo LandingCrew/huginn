@@ -96,7 +96,13 @@ slot hold, the fill under the class cap, seating and home keys -- templated on
 the score arithmetic. The game runs `LogScorePolicy` (scores of any sign,
 `SlotScoreMath.h`); `SlotAllocator` builds the input (`src/slot/SlotSnapshot.*`),
 keeps the seating memory and turns the events into logs and telemetry.
-`SlotSnapshotIO.*` is the text record of one allocation. The tests:
+`SlotSnapshotIO.*` is the text record of one allocation. The wildcard key
+(R10): `SlotAllocCore.h` places the cached wildcard on the page's wildcard key
+(`SeatOf`) and draws a new one there; `WildcardPick.h` is the draw's math
+(relevance x sd, the mixture with a uniform share, P(roll), the exact
+propensity); `WildcardGate.h` is each page's cached wildcard and its clocks
+(one roll per refractory window, only the displayed page rolls, combat,
+reshape, refusal), which `Scoring::WildcardManager` wraps. The tests:
 
 | File | What it proves |
 |------|----------------|
@@ -104,6 +110,7 @@ keeps the seating memory and turns the events into logs and telemetry.
 | `SlotAllocAdversarialTests.cpp` | named cases: ties, zeros, the cap's 2x tie, overrides, remembered-only rows, the sort, negative scores, the hold's tie band (a challenger on the margin holds), and the float-rounding boundaries where the arithmetics can still part (the cap's scan at any discount, underflow) |
 | `SlotScoreMathTests.cpp` | the bridge, the cap term, the margin, the sentinels, the churn buckets |
 | `SlotSnapshotIOTests.cpp` | the snapshot format round-trips |
+| `WildcardTests.cpp` | R10: the draw's math, the wildcard key in the allocation (pinned and never moved by seating, the roll's pool and propensity with seating on and off, name twins kept out), and the gate's rules |
 
 Recorded snapshots live in `tests/core/fixtures/slots/` (`*-old.txt` from the
 old code, `*-new.txt` from the new). The old code's were recorded by branch
@@ -162,3 +169,83 @@ the need vector reads it as `loadout_quarterstaff` instead of
 `loadout_two_handed`. The game side
 (`learning/SelectionLogV3*`) builds the records and writes the lines on a
 background thread. Schema: docs/architecture/9-selection-log-v3.md.
+
+The new model (R8.2, 0.23.56, in shadow then; it ranks since R8.3, 0.24.0):
+
+- `MiniJson.*`: a strict JSON reader in MiniRegex's pattern (vcpkg.json has
+  no JSON library and this folder is standard library only). Numbers parse with
+  `std::from_chars` (correctly rounded: the same double Python's `float()`
+  reads); strings, arrays and objects keep their contents behind one pointer,
+  so the bootstrap's ~70k numbers own no container (0.7 s to 0.12 s in a
+  Debug build).
+- `Bootstrap.*`: the reader of the R8 bootstrap file, format version 1
+  (docs/architecture/9-bootstrap-format.md): reader rules 1-10 exactly as
+  `tools/fit/bootstrap.validate` checks them; names mapped to the build (an
+  unknown name skipped, a missing pair at its effects.csv prior from
+  `ObviousPairs.h`, the same for recent rows, u0 and curves); items resolved
+  through the caller's resolver with the kind and name cross-check;
+  `[Learning] sBootstrapBias` (`UseFileBias`); the stable keys the learner's
+  entries carry (`StableKey`: a hash of names, never a position).
+- `ObviousPairs.h`: GENERATED (`tools/effects/make_obvious_pairs.py`) from
+  effects.csv's `obvious_needs`, with fitlib's signs.
+- `ChoiceScore.h`: the score -- v = theta^T n once per tick, mu_i over a(i)
+  (graded, presence, presence+strength), b, the features, theta_covered,
+  kappa off the page, sigma_i^2 under the diagonal approximation, the
+  explanation (the largest theta n cap term), doc 11's greedy upgrade gate,
+  and the live recent_<family> tracker.
+- `ChoiceUpdate.h`: the update in fitlib.Model.info's form (precision +=
+  n_k^2 Var_p, step = variance), fitlib.build's choice set with Plackett-Luce
+  removal, the per-item b moves, the b battery, the onset counter.
+- `Battery.h`: the useful-life curve, moved here from FeatureBanditLearner
+  (which calls it with the same arithmetic) and shared with b.
+- `Sha256.h`: the bootstrap's digest for the v3 head.
+- `ChoiceCosave.*`: the cosave records THTA (theta by stable key), BIAS (b
+  per item) and DISC (the discovery boost's sets, 0.24.14) as byte blobs, and
+  the load's merge of THTA onto the bootstrap.
+- `DiscoveryBoost.h` (0.24.14): a newly gained spell or item reads b's
+  variance x m(age) in the wildcard draw only (m decays by a half-life of
+  play, ends at the first pick); the tracker of what the character has held
+  (present at a load: never boosted) and what it gained since.
+- `LearningClock.h` (0.24.22): the one learning clock both learners and the
+  resets tick (saved in HCID), the table of which learning events tick it
+  (what play taught and the resets; not the forget sweep, whose erasures
+  re-occur on their own), and the load's keep-or-replace decision
+  (`DecideLoad`).
+
+Their tests: `MiniJsonTests.cpp`, `BootstrapTests.cpp` (the golden fixtures, a
+negative case per reader rule, the prior fill), `ChoiceModelTests.cpp` (the
+score per grading, kappa, the explanation, recent and its exclusions, covered
+and the gate, the update, Plackett-Luce, onsets, the battery, the bias modes),
+`DiscoveryBoostTests.cpp` (the boost's math and decay, the tracker's rules
+-- an item present at load gets no boost --, the DISC codec),
+`LearningClockTests.cpp` (ticks under threads, the table, every decision,
+the choice-only-change regression, a load's steps adding no ticks, a forget
+sweep adding none, a reset holding over an older save),
+`ChoiceReplayTests.cpp` (fitlib's per-row logits under the shipped bootstrap
+to 1e-5, from `tools/fit/export_scores.py`'s fixture; the real log through
+`HUGINN_REPLAY_FIXTURE`), `ChoiceCostTests.cpp` (the parse and one 500-row
+pass, reported), and `LegacyFloorPassTests.cpp` (the old floor loop moved to
+`learning/legacy/LegacyLearnFeature.h` builds R8.1's list bit for bit; that
+header is not core, but it is a template over plain types and compiles here).
+
+The classifiers retired from the live engine (R11, 0.24.4):
+
+- `CapFacets.h`: the facets -- each yes/no question the live engine asks of an
+  item ("restores health?", "for someone else?", "has a side effect?"), read
+  off the nonzero columns of cap(i) -- and the 24 slot classes' `Matches` and
+  `Classify` order over them. The slot classes, the candidate filters, the
+  override finders, the label and the widget styling all ask here; the game
+  side is `effect/Facets.h`.
+- `SlotClassification.h`: the slot class enum, moved whole from
+  `slot/SlotConfig.h` (namespace kept) so `CapFacets.h` can name it.
+- `OverrideFiles.h`: the effect override directory (doc 9's layer 2) --
+  parsing a `<plugin>|<local FormID> = <column>` line, the file order (the
+  `EffectOverrides/*.ini` alphabetically, the player's file last), the format
+  version and the merge; the game side is `EffectCatalog::LoadOverrides`.
+- `ThetaDrift.h`: how far the live θ moved from the bootstrap (means moved,
+  mean / max / rms |Δμ|, mean ln variance ratio), for the `[Soak]` heartbeat
+  and `hg theta`.
+
+Their tests: `CapFacetsTests.cpp` (each facet's columns, each class arm, no
+dead class, real items from the three dump fixtures), `OverrideFilesTests.cpp`
+and `ThetaDriftTests.cpp`.

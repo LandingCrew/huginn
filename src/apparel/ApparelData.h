@@ -129,7 +129,7 @@ namespace Huginn::Apparel
    // player-made piece can carry two fortify effects for DIFFERENT crafts, and
    // collapsing that to the largest magnitude made the item invisible at the
    // other one of its own benches: "Fortify Alchemy 5 / Fortify Smithing 20"
-   // classified as Smithing, so at an alchemy lab WeightForCandidate read the
+   // classified as Smithing, so at an alchemy lab the context weight read the
    // alchemy weight for CraftSkill::Smithing, got 0.0, and never offered a ring
    // that was genuinely useful there.
    // =============================================================================

@@ -21,10 +21,6 @@ namespace Huginn::Config
    // State Evaluation Configuration
    // -----------------------------------------------------------------------------
 
-   // How often to log game state in debug mode (in milliseconds)
-   // Only affects debug builds
-   inline constexpr float STATE_LOG_INTERVAL_MS = 1000.0f;
-
    // How long a context reason stays on the wheel after it stops being true (#62).
    // Only damps a DOWNGRADE — a more urgent reason is adopted instantly — so this
    // is the longest a stale label can linger, not a delay on real news.
@@ -33,7 +29,7 @@ namespace Huginn::Config
    // SlotLocker's DEFAULT 3000ms content lock, so the label cannot outlive the
    // slot contents it is explaining — but that lock is fLockDurationMs, which
    // the player can lower or zero out, so this is a ceiling and not the whole
-   // guarantee. ScoreCandidates clamps the effective hold to the live lock
+   // guarantee. UpdateContextReason clamps the effective hold to the live lock
    // duration; keep the two arguments together if this number changes.
    inline constexpr float REASON_HOLD_MS = 1500.0f;
 
@@ -48,7 +44,7 @@ namespace Huginn::Config
    // which regressed every used item onto a fixed number with no contrast and
    // let a trained item's learned boost reach ~24x: the soak run's crowding
    // (docs/playtest/Soak-2026-10-LoreRim.md). On 0-1 the boost tops out near
-   // 1 + lambdaMax = 4x.
+   // 1 + λ_max ([Scoring] fLambdaMax) = 4x.
    inline constexpr float CHOICE_TARGET = 1.0f;
    inline constexpr float PASSED_OVER_TARGET = 0.0f;
 
@@ -83,11 +79,6 @@ namespace Huginn::Config
    // Recommended: 100-200ms (10-5 Hz)
    // Target: < 0.1ms per update check
    inline constexpr float UPDATE_INTERVAL_MS = 100.0f;
-
-   // Wildcard cooldown: How long a wildcard spell persists before a new one can be selected
-   // Higher = more stable recommendations, Lower = more variety
-   // Recommended: 30-60 seconds
-   inline constexpr float WILDCARD_COOLDOWN_SECONDS = 30.0f;
 
    // Thresholds (still compile-time; not in INI)
    inline constexpr float WEAPON_CHARGE_LOW_THRESHOLD = 0.2f;  // 20% - low charge warning
@@ -231,7 +222,7 @@ namespace Huginn::Config
 
    // The 2%/hour weight decay (DECAY_RATE_PER_HOUR) is gone: what the player
    // stops choosing now fades by confidence and is forgotten -- memory with a
-   // useful life, FeatureBanditLearner::MemoryLife and [Learning] in the INI.
+   // useful life, the old learner's MemoryLife and [Learning] in the INI.
 
 
    // -----------------------------------------------------------------------------

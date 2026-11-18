@@ -13,6 +13,10 @@
 #include "../Profiling.h"
 #include "../util/NameMatch.h"
 #include "../effect/EffectCatalog.h"
+#include "core/RefreshPass.h"   // the refresh pass (R8.1)
+#include "core/ResistPotions.h"  // 0.24.29: the running resist potions
+
+#include <cmath>
 
 namespace Huginn::State
 {
@@ -247,6 +251,20 @@ namespace Huginn::State
     const bool catalogReady = catalog.Ready();
     Core::Coverage::Active coverage;
 
+    // R8.1 (0.23.55): the refresh pass's inputs, filled in the same walk: the
+    // remaining time of every effect that sets an active-buff flag (each Add
+    // sits beside the flag it times). Abilities are skipped above all of
+    // them, so an ability never times a block.
+    Core::Refresh::Inputs refresh;
+    // 0.24.29: per element, the player's resist effects from a potion (not
+    // food): they do not stack, so one running blocks the rest
+    // (core/ResistPotions.h).
+    std::array<Core::Refresh::Timer, Core::ResistPotions::kElementCount> potionResist{};
+    // ... and the resist effects a spell, scroll or staff put on the player,
+    // by effect form (the same spell again would only refresh one).
+    Core::ResistPotions::CastEffects castResist;
+    const float refreshSec = m_refreshPriorSec.load();
+
     // Single iteration over active effects (pattern from EffectsSensor.cpp)
     if (activeEffects) {
       for (auto* effect : *activeEffects) {
@@ -308,6 +326,13 @@ namespace Huginn::State
           }
         }
 
+        // R8.1: this effect's remaining seconds; kNoTimer for one with no
+        // duration (a worn enchantment, a constant effect): it never ends, so
+        // a block it holds is never due for its refresh.
+        const float remainingSec = effect->duration > 0.0f
+                                       ? std::max(0.0f, effect->duration - effect->elapsedSeconds)
+                                       : Core::Refresh::kNoTimer;
+
         // 0.23.46: a beneficial effect (a buff, a worn enchantment, a restore
         // still running) covers its column for covered(i). Abilities stay out,
         // as above; a detrimental one never covers.
@@ -342,6 +367,7 @@ namespace Huginn::State
              (spell && (Util::NameContainsWord(spell->GetName(), "warming") ||
                         Util::NameContainsWord(spell->GetName(), "warmth"))))) {
           newBuffs.hasWarmingEffect = true;
+          refresh.warming.Add(remainingSec);
         }
 
         auto primaryAV = baseEffect->data.primaryAV;
@@ -489,12 +515,6 @@ namespace Huginn::State
 #ifdef _DEBUG
             logger::trace("[StateManager] --> Detected FORTIFY ILLUSION (mag: {})", magnitude);
 #endif
-          } else if (primaryAV == RE::ActorValue::kEnchanting) {
-            newBuffs.hasFortifyEnchanting = true;
-            isFortifySchoolEffect = true;
-#ifdef _DEBUG
-            logger::trace("[StateManager] --> Detected FORTIFY ENCHANTING (mag: {})", magnitude);
-#endif
           }
           // LORERIM PowerModifier variants (AV 144-148 for schools)
           else if (primaryAV == RE::ActorValue::kDestructionPowerModifier) {
@@ -551,6 +571,32 @@ namespace Huginn::State
           }
         }
 
+        // 0.24.29: a timed resistance (a value modifier on the element's AV)
+        // from a potion or a cast: core/ResistPotions.h. A constant one (gear)
+        // is the permanent resistance the threshold reads.
+        if (archetype == RE::EffectSetting::Archetype::kValueModifier ||
+            archetype == RE::EffectSetting::Archetype::kPeakValueModifier) {
+          using E = Core::Refresh::Element;
+          std::optional<E> element;
+          switch (primaryAV) {
+            case RE::ActorValue::kResistFire: element = E::fire; break;
+            case RE::ActorValue::kResistFrost: element = E::frost; break;
+            case RE::ActorValue::kResistShock: element = E::shock; break;
+            case RE::ActorValue::kPoisonResist: element = E::poison; break;
+            case RE::ActorValue::kResistMagic: element = E::magic; break;
+            default: break;
+          }
+          if (element && !baseEffect->IsDetrimental() && magnitude > 0.0f && spell && remainingSec >= 0.0f) {
+            if (spell->GetFormType() == RE::FormType::AlchemyItem) {
+              if (!static_cast<RE::AlchemyItem*>(spell)->IsFood()) {
+                potionResist[static_cast<std::size_t>(*element)].Add(remainingSec);
+              }
+            } else if (!Core::Refresh::RefreshDue(remainingSec, refreshSec)) {
+              castResist.Add(baseEffect->GetFormID());
+            }
+          }
+        }
+
         // Process effects by archetype (match ActiveBuffsSensor approach - don't rely on IsDetrimental flag)
         switch (archetype) {
           // BUFFS
@@ -564,6 +610,7 @@ namespace Huginn::State
 
           case RE::EffectSetting::Archetype::kInvisibility:
             newBuffs.isInvisible = true;
+            refresh.invisibility.Add(remainingSec);
 #ifdef _DEBUG
             logger::trace("[StateManager] --> Detected INVISIBILITY");
 #endif
@@ -577,10 +624,12 @@ namespace Huginn::State
             // threshold-based classification. The recommendation engine handles preference.
             if (primaryAV == RE::ActorValue::kDamageResist) {
               newBuffs.hasArmorBuff = true;
+              refresh.armor.Add(remainingSec);
             }
             // Water Breathing
             else if (primaryAV == RE::ActorValue::kWaterBreathing) {
               newBuffs.hasWaterBreathing = true;
+              refresh.waterbreathing.Add(remainingSec);
 #ifdef _DEBUG
               logger::trace("[StateManager] --> Detected WATER BREATHING");
 #endif
@@ -662,6 +711,7 @@ namespace Huginn::State
             // Muffle (Fame AV)
             if (primaryAV == RE::ActorValue::kFame) {
               newBuffs.hasMuffle = true;
+              refresh.muffle.Add(remainingSec);
 #ifdef _DEBUG
               logger::trace("[StateManager] --> Detected MUFFLE");
 #endif
@@ -739,28 +789,14 @@ namespace Huginn::State
     newBuffs.hasActiveSummon = summonCount > 0;
     newBuffs.summonCount = static_cast<std::uint8_t>(std::min(summonCount, 255));
 
-    // 0.23.46: the commanded-actor limit, as the engine computes it for a
-    // cast: 1, through the player's perk entry points (Twin Souls adds 1; an
-    // entry point may also set or multiply). The summon filter reads it.
-    // Evaluated only while a summon is up -- the limit cannot matter with
-    // none, and the perk machinery runs off this thread as little as it can;
-    // with none the last value stands (1 until the first summon).
-    {
-      static float s_lastLimit = 1.0f;
-      if (summonCount > 0) {
-        float limit = 1.0f;
-        RE::BGSEntryPoint::HandleEntryPoint(RE::BGSEntryPoint::ENTRY_POINT::kModCommandedActorLimit, player, &limit);
-        s_lastLimit = limit;
-      }
-      newBuffs.summonLimit = s_lastLimit;
-    }
-
     // 0.23.46 (v3 log only): the actors the player commands, each with the
     // effect that made it -- its kind, its source (the spell or scroll, or the
     // staff for a staff's enchantment), its timer -- from the player's own
     // commanded-actor list. Thralls are logged apart from summons (doc 11
-    // decision 3: whether they count is the user's test).
+    // decision 3: whether they count is the user's test). The same walk
+    // collects the spells the summon limit is evaluated with (below).
     std::vector<Core::Coverage::CommandedActor> commanded;
+    std::vector<RE::MagicItem*> limitSpells;
     if (auto* process = player->GetActorRuntimeData().currentProcess; process && process->middleHigh) {
       for (auto& data : process->middleHigh->commandedActors) {
         auto actorPtr = data.commandedActor.get();
@@ -777,13 +813,56 @@ namespace Huginn::State
           entry.remaining = ae->duration > 0.0f ? std::max(0.0f, ae->duration - ae->elapsedSeconds)
                                                 : Core::Coverage::kNoTimer;
           entry.elapsed = ae->elapsedSeconds;
+          if (entry.kind != Core::Coverage::CommandedActor::Kind::Other && ae->spell &&
+              std::find(limitSpells.begin(), limitSpells.end(), ae->spell) == limitSpells.end())
+            limitSpells.push_back(ae->spell);
         }
         commanded.push_back(entry);
       }
     }
+
+    // 0.23.46: the commanded-actor limit, as the engine computes it for a
+    // cast: 1, through the player's perk entry points (Twin Souls adds 1; an
+    // entry point may also set or multiply). The summon filter reads it.
+    // Evaluated only while a summon is up -- the limit cannot matter with
+    // none, and the perk machinery runs off this thread as little as it can.
+    //
+    // 0.24.24: the entry point has two condition tabs, Perk Owner and the
+    // spell being cast (PerkConditionTabCount 2; EPMagic_SpellHasKeyword or
+    // GetIsID on tab 1 is common: Vigilant, Kitty's spell packs, Ancient
+    // Blood, the Necromancy CC, Undeath). The game passes that spell before
+    // the result, so the call is (ep, owner, spell, &value). Leaving the
+    // spell out made the engine read &limit as the spell and call through
+    // its "vtable" -- the 2026-10-30 crash (rax 0xCCCCCCCC3F800000 = 1.0f
+    // plus debug stack fill, under PerkEntryPointExtender's condition hook).
+    // The limit is evaluated with each distinct spell of a live summon or
+    // reanimated thrall (the casts the limit governs; an actor commanded by
+    // any other effect, such as Bend Will, is left out) and the highest kept, so it
+    // does not depend on the list's order. With no such spell the last value
+    // stands (reset to 1 on every load, ResetTrackingState); a null spell is
+    // never passed, since a tab-1 condition would read it the same way.
+    // Per candidate spell would be exact (a tab-1 perk can raise one summon
+    // spell's limit and not another's); that is a follow-up, since the
+    // filter, covered(i), the upgrade gate and the v3 log all read one value.
+    if (summonCount > 0 && !limitSpells.empty()) {
+      float best = 0.0f;
+      for (auto* spell : limitSpells) {
+        float limit = 1.0f;
+        RE::BGSEntryPoint::HandleEntryPoint(RE::BGSEntryPoint::ENTRY_POINT::kModCommandedActorLimit, player, spell, &limit);
+        if (std::isfinite(limit)) best = std::max(best, limit);
+      }
+      if (best > 0.0f) m_summonLimit = best;
+    }
+    newBuffs.summonLimit = m_summonLimit;
+
     coverage.summons = summonCount;
     coverage.summonLimit = newBuffs.summonLimit;
     coverage.summonRemaining = Core::Coverage::OldestRemaining(commanded);
+    // R8.1: the summon filter's block (the summon filter's own test), and the
+    // timer of the summon a cast would dismiss -- the oldest -- which is what
+    // covered(i) reads too, so the filter and covered(i) cannot disagree.
+    refresh.summonBlocked = Core::Coverage::SummonLimitReached(summonCount, newBuffs.summonLimit);
+    refresh.summonLeft = coverage.summonRemaining;
     {
       std::unique_lock lock(m_coverageMutex);
       m_coverage.valid = catalogReady;
@@ -887,6 +966,32 @@ namespace Huginn::State
     // Update effects and buffs with change detection
     {
       std::unique_lock lock(m_playerMutex);
+      // R8.1: which active-buff blocks are due for their refresh. A bit that
+      // flips changes the buffs below, so the pipeline runs on it.
+      {
+        const auto& r = m_playerState.resistances;
+        newBuffs.refreshDue = Core::Refresh::ComputeDue(refresh, refreshSec);
+        if (newBuffs.refreshDue != m_lastRefreshDue) {
+          logger::info("[StateManager] Refresh due: {} (window {:.1f}s)"sv,
+            Core::Refresh::DueNames(newBuffs.refreshDue), m_refreshPriorSec.load());
+          m_lastRefreshDue = newBuffs.refreshDue;
+        }
+        newBuffs.castResist = castResist;
+        newBuffs.potionResist = Core::ResistPotions::RunningBits(potionResist, refreshSec);
+        if (newBuffs.potionResist != m_lastPotionResist) {
+          static constexpr std::array<const char*, Core::ResistPotions::kElementCount> kNames{
+            "fire", "frost", "shock", "poison", "magic" };
+          std::string names;
+          for (std::size_t e = 0; e < kNames.size(); ++e) {
+            if (!(newBuffs.potionResist & Core::ResistPotions::Bit(static_cast<Core::Refresh::Element>(e)))) continue;
+            if (!names.empty()) names += ',';
+            names += kNames[e];
+          }
+          logger::info("[StateManager] Resist potion running: {} (player fire {:.0f} frost {:.0f} shock {:.0f})"sv,
+            names.empty() ? "none" : names, r.fire, r.frost, r.shock);
+          m_lastPotionResist = newBuffs.potionResist;
+        }
+      }
       bool effectsChanged = (m_playerState.effects != newEffects);
       bool buffsChanged = (m_playerState.buffs != newBuffs);
       bool vampireChanged = (m_playerState.vampireStage != newVampireStage);

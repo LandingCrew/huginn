@@ -28,7 +28,13 @@
 //     are read against;
 //   - warn, a fault that held FaultWatch::kOnsetSec, with both bipeds' parts
 //     and that same swap context;
-//   - info, its end: the model back, or the weapon swapped out.
+//   - info, its end: the model back, or the weapon swapped out;
+//   - warn / info (0.24.26), the behaviour graph against the hand
+//     (Core::JudgeGraphHand): drawn and settled (not equipping) for
+//     kGraphMismatchOnsetSec with the graph's hand type clearly wrong for
+//     what the hand holds -- a spell under a type other than 9, a weapon
+//     under 9 or 0, an empty hand under 9 -- with the last swap, who made
+//     it, and the last cast; then its end.
 // =============================================================================
 
 #include <string>
@@ -46,4 +52,10 @@ namespace Huginn::State::HandModelProbe
    /// `hg hands`: both hands, live -- the weapon, the pose, the view, each
    /// biped's parts for it and where they hang. Main thread (the console).
    [[nodiscard]] std::vector<std::string> DescribeHands(RE::PlayerCharacter* player);
+
+   /// One line for the debug log just before a Huginn hand equip (0.24.26):
+   /// both casters' states and current spells, the weapon state, the
+   /// behaviour graph's equip and hand variables, and the calling thread
+   /// beside the game's main thread id. Main thread (the hand equip gate).
+   [[nodiscard]] std::string DescribeForEquip(RE::PlayerCharacter* player);
 }

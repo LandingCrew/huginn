@@ -94,8 +94,11 @@ namespace Huginn::Learning::SelectionLogV3
             const size_t count = allocator.GetSlotCount();
             if (count == 0) return;
             const size_t slot = which % count;
-            const bool ok = Input::EquipManager::GetSingleton().EquipSlot(slot, Input::EquipHand::Right);
-            logger::info("[DecisionSession] pressed key s{} ({})"sv, slot, ok ? "equipped" : "nothing to equip");
+            bool parked = false;
+            const bool ok = Input::EquipManager::GetSingleton().EquipSlot(
+                slot, Input::EquipHand::Right, std::nullopt, &parked);
+            logger::info("[DecisionSession] pressed key s{} ({})"sv, slot,
+                !ok ? "nothing to equip" : parked ? "parked at the hand equip gate" : "equipped");
         }
 
         RE::BGSEquipSlot* RightHand()
@@ -146,9 +149,9 @@ namespace Huginn::Learning::SelectionLogV3
             logger::info("[DecisionSession] no weapon or spell on page {} to pick from the wheel"sv, page);
         }
 
-        // Wildcards on every eligible slot, so the logged pages carry wildcard
-        // rows and their propensities (the shipped odds show one ~20% of the
-        // time). Test mode only; nothing is saved.
+        // A wildcard on the page's wildcard key at every roll (R10: P(roll) 1,
+        // no refractory), so the logged pages carry wildcard rows and their
+        // propensities. Test mode only; nothing is saved.
         float g_wcBase = 0.0f, g_wcMax = 0.0f, g_wcRefractory = 0.0f;   // session tasks only (see above)
 
         void ForceWildcards()

@@ -3,15 +3,6 @@
 
 namespace Huginn::Override
 {
-    void Settings::LoadFromFile(const std::filesystem::path& iniPath)
-    {
-        CSimpleIniA ini;
-        if (LoadIniFile(ini, iniPath, "OverrideSettings"sv)) {
-            logger::info("[OverrideSettings] Loading override settings from: {}"sv, iniPath.string());
-            LoadFromIni(ini);
-        }
-    }
-
     void Settings::LoadFromIni(const CSimpleIniA& ini)
     {
         // Helper lambda for reading float values with defaults
@@ -105,31 +96,6 @@ namespace Huginn::Override
         logger::info("[OverrideSettings] Anti-flicker duration: {:.0f}ms"sv, minOverrideDurationMs);
 
         logger::info("[OverrideSettings] Allow impure potions: {}"sv, allowImpurePotions);
-    }
-
-    void Settings::ResetToDefaults()
-    {
-        criticalHealthThreshold = Defaults::CRITICAL_HEALTH_THRESHOLD;
-        criticalHealthHysteresis = Defaults::CRITICAL_HEALTH_HYSTERESIS;
-        weaponChargeThreshold = Defaults::WEAPON_CHARGE_THRESHOLD;
-        weaponChargeHysteresis = Defaults::WEAPON_CHARGE_HYSTERESIS;
-        lowAmmoThreshold = Defaults::LOW_AMMO_THRESHOLD;
-        lowAmmoHysteresis = Defaults::LOW_AMMO_HYSTERESIS;
-        criticalMagickaThreshold = Defaults::CRITICAL_MAGICKA_THRESHOLD;
-        criticalMagickaHysteresis = Defaults::CRITICAL_MAGICKA_HYSTERESIS;
-        criticalStaminaThreshold = Defaults::CRITICAL_STAMINA_THRESHOLD;
-        criticalStaminaHysteresis = Defaults::CRITICAL_STAMINA_HYSTERESIS;
-        minOverrideDurationMs = Defaults::MIN_OVERRIDE_DURATION_MS;
-        enableCriticalHealth = Defaults::ENABLE_CRITICAL_HEALTH;
-        enableDrowning = Defaults::ENABLE_DROWNING;
-        enableWeaponCharge = Defaults::ENABLE_WEAPON_CHARGE;
-        enableLowAmmo = Defaults::ENABLE_LOW_AMMO;
-        enableCriticalMagicka = Defaults::ENABLE_CRITICAL_MAGICKA;
-        enableCriticalStamina = Defaults::ENABLE_CRITICAL_STAMINA;
-        enablePoisoned = Defaults::ENABLE_POISONED;
-        allowImpurePotions = Defaults::ALLOW_IMPURE_POTIONS;
-
-        logger::info("[OverrideSettings] Reset to defaults"sv);
     }
 
 }  // namespace Huginn::Override

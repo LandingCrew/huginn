@@ -4,6 +4,10 @@
 #include "UtilityScorerDebugWidget.h"
 #include "../slot/SlotClassifier.h"
 #include "../slot/SlotConfig.h"
+#include "../core/EffectColumns.h"   // the explanation's column names (R8.4)
+#include "../core/NeedIds.h"         // ... and need names
+#include <algorithm>
+#include <cmath>
 #include <format>
 #include <shared_mutex>
 
@@ -26,17 +30,12 @@ namespace Huginn::UI
         constexpr ImVec4 STAFF_COLOR{0.6f, 0.5f, 0.3f, 1.0f};      // Brown
         constexpr ImVec4 APPAREL_COLOR{0.79f, 0.61f, 1.0f, 1.0f};  // Soft violet — matches the widget (#65)
 
-        // Score component colors
-        constexpr ImVec4 CONTEXT_COLOR{0.4f, 0.8f, 0.4f, 1.0f};    // Green
-        constexpr ImVec4 QVALUE_COLOR{0.4f, 0.6f, 1.0f, 1.0f};     // Blue
-        constexpr ImVec4 PRIOR_COLOR{0.8f, 0.6f, 0.4f, 1.0f};      // Brown
-        constexpr ImVec4 UCB_COLOR{0.9f, 0.9f, 0.4f, 1.0f};        // Yellow
-        constexpr ImVec4 CORRELATION_COLOR{0.7f, 0.4f, 0.9f, 1.0f};// Purple
-        constexpr ImVec4 MULTIPLIER_COLOR{0.9f, 0.5f, 0.5f, 1.0f}; // Red
-        constexpr ImVec4 RECENCY_COLOR{1.0f, 0.7f, 0.2f, 1.0f};    // Warm amber
+        // Score component colors (R8.4: the choice score's parts)
+        constexpr ImVec4 TERM_COLOR{0.4f, 0.8f, 0.4f, 1.0f};       // Green: theta n cap terms
+        constexpr ImVec4 BIAS_COLOR{0.4f, 0.6f, 1.0f, 1.0f};       // Blue: b
+        constexpr ImVec4 LEGACY_COLOR{0.8f, 0.6f, 0.4f, 1.0f};     // Brown: the D2 legacy feature
 
         // Status colors
-        constexpr ImVec4 WILDCARD_COLOR{1.0f, 0.8f, 0.2f, 1.0f};   // Gold
         constexpr ImVec4 FAVORITE_COLOR{1.0f, 0.4f, 0.4f, 1.0f};   // Red heart
         constexpr ImVec4 UTILITY_BAR{0.3f, 0.7f, 0.9f, 1.0f};      // Cyan
 
@@ -113,26 +112,6 @@ namespace Huginn::UI
         m_coldStartBoostedCount = coldStartBoostedCount;
     }
 
-    void UtilityScorerDebugWidget::UpdateUsageMemory(std::vector<Learning::UsageEvent> snapshot,
-                                                      uint32_t currentContextHash)
-    {
-        // Resolve names here (update thread) rather than at render time: the
-        // render thread must not walk the form table, and a form can be unloaded
-        // between snapshot and draw. Owned copies, index-aligned with the events.
-        std::vector<std::string> newNames;
-        newNames.reserve(snapshot.size());
-        for (const auto& event : snapshot) {
-            auto* form = RE::TESForm::LookupByID(event.formID);
-            const char* name = form ? form->GetName() : nullptr;
-            newNames.emplace_back((name && name[0]) ? name : "???");
-        }
-
-        std::unique_lock lock(m_mutex);
-        m_cachedUsageSnapshot = std::move(snapshot);
-        m_cachedUsageNames = std::move(newNames);
-        m_cachedContextHash = currentContextHash;
-    }
-
     void UtilityScorerDebugWidget::Draw()
     {
         if (!m_isVisible) {
@@ -148,9 +127,6 @@ namespace Huginn::UI
         std::string localPageName;
         size_t localPageCount = 0;
         size_t localColdStartCount = 0;
-        std::vector<Learning::UsageEvent> localUsageSnapshot;
-        std::vector<std::string> localUsageNames;
-        uint32_t localContextHash = 0;
         {
             std::shared_lock lock(m_mutex);
             localCandidates = m_cachedCandidates;
@@ -160,9 +136,6 @@ namespace Huginn::UI
             localPageName = m_cachedPageName;
             localPageCount = m_pageCount;
             localColdStartCount = m_coldStartBoostedCount;
-            localUsageSnapshot = m_cachedUsageSnapshot;
-            localUsageNames = m_cachedUsageNames;
-            localContextHash = m_cachedContextHash;
         }
 
         // Position on right side, below Cache widget to avoid overlap
@@ -172,7 +145,7 @@ namespace Huginn::UI
 
         ImGuiWindowFlags flags = 0;
 
-        static const std::string windowTitle = std::format("Utility Scorer [v{} DEBUG]", Huginn::VERSION_STRING);
+        static const std::string windowTitle = std::format("Choice Scorer [v{} DEBUG]", Huginn::VERSION_STRING);
         if (ImGui::Begin(windowTitle.c_str(), &m_isVisible, flags)) {
             // Header: Page info + slot count
             ImGui::TextColored(ScorerColors::HEADER_COLOR, "Page: \"%s\" (%zu/%zu)",
@@ -180,10 +153,10 @@ namespace Huginn::UI
                               localPageIndex + 1,
                               localPageCount);
 
-            // Cold Start indicator
+            // The legacy floors' cold start (which rows get the D2 feature)
             if (localColdStartCount > 0) {
                 ImGui::SameLine();
-                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), " [Cold Start: %zu]",
+                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), " [legacy cold start: %zu]",
                                   localColdStartCount);
             }
 
@@ -197,39 +170,6 @@ namespace Huginn::UI
                 // Per-slot collapsible sections
                 for (size_t i = 0; i < localAssignments.size(); ++i) {
                     DrawSlotSection(localAssignments[i], localCandidates, localNames, i);
-                }
-            }
-
-            // Event buffer section (unchanged from original)
-            ImGui::Separator();
-            ImGui::TextColored(ScorerColors::HEADER_COLOR, "Event Buffer (%zu/%zu)",
-                              localUsageSnapshot.size(),
-                              Learning::UsageMemory::BUFFER_CAPACITY);
-            ImGui::SameLine();
-            ImGui::TextColored(ScorerColors::LABEL_DIM, "ctx:0x%04X",
-                              localContextHash & 0xFFFF);
-
-            if (localUsageSnapshot.empty()) {
-                ImGui::TextColored(ScorerColors::LABEL_DIM, "  (empty)");
-            } else {
-                // Newest events at top (reverse iteration)
-                for (size_t i = localUsageSnapshot.size(); i-- > 0;) {
-                    const auto& event = localUsageSnapshot[i];
-                    bool matches = (event.contextHash == localContextHash);
-
-                    // Names were resolved on the update thread; index-aligned.
-                    const char* itemName = i < localUsageNames.size()
-                        ? localUsageNames[i].c_str()
-                        : "???";
-
-                    ImVec4 color = matches
-                        ? ImVec4(0.9f, 0.9f, 0.9f, 1.0f)
-                        : ScorerColors::LABEL_DIM;
-
-                    ImGui::TextColored(color, "  %-18s [0x%04X]%s",
-                                      itemName,
-                                      event.contextHash & 0xFFFF,
-                                      matches ? " \xE2\x97\x84" : "");
                 }
             }
         }
@@ -316,11 +256,8 @@ namespace Huginn::UI
             ImGui::SameLine();
         }
 
-        // Wildcard badge
-        if (candidate.isWildcard) {
-            ImGui::TextColored(ScorerColors::WILDCARD_COLOR, "[W]");
-            ImGui::SameLine();
-        }
+        // R10: no wildcard badge on a ranked row -- the wildcard is a key's
+        // placement (the assignments below mark it), not a row's flag.
 
         // Favorite badge
         if (candidate.IsFavorited()) {
@@ -332,12 +269,6 @@ namespace Huginn::UI
         ImGui::TextColored(typeColor, "[%s]", typeName);
         ImGui::SameLine();
 
-        // Recency badge
-        if (candidate.breakdown.recencyBoost > 0.0f) {
-            ImGui::TextColored(ScorerColors::RECENCY_COLOR, "[REC]");
-            ImGui::SameLine();
-        }
-
         // Candidate name (owned snapshot — the candidate's own view is blanked;
         // see UpdateSlotData). Truncated if too long.
         if (name.length() > 20) {
@@ -346,54 +277,72 @@ namespace Huginn::UI
             ImGui::Text("%.*s", static_cast<int>(name.length()), name.data());
         }
 
-        // Utility bar, from the slot score so it is defined for any sign:
-        // exp(score) is the utility under R7's bridge (Max ~15 for typical
-        // utility); an unranked row is 0.
-        DrawUtilityBar(Core::DisplayUtility(candidate.SlotScore()), 15.0f);
-
-        // Compact inline score summary
-        DrawScoreSummary(candidate.breakdown);
+        // The score (mu, any sign) and its parts
+        DrawScoreBar(candidate);
+        DrawChoiceSummary(candidate);
 
         ImGui::PopID();
         ImGui::Separator();
     }
 
-    void UtilityScorerDebugWidget::DrawScoreSummary(const Scoring::ScoreBreakdown& bd)
+    void UtilityScorerDebugWidget::DrawChoiceSummary(const Scoring::ScoredCandidate& candidate)
     {
-        // Compact single-line score summary: ctx:X.X learn:X.X [rec:X.X] [corr:X.X] [pot:Xx] [fav:Xx]
-        ImGui::TextColored(ScorerColors::CONTEXT_COLOR, "ctx:%.1f", bd.contextWeight);
-        ImGui::SameLine(0.0f, 2.0f);
-        ImGui::TextColored(ScorerColors::QVALUE_COLOR, "learn:%.1f", bd.learningScore);
-
-        if (bd.recencyBoost > 0.0f) {
-            ImGui::SameLine(0.0f, 2.0f);
-            ImGui::TextColored(ScorerColors::RECENCY_COLOR, "rec:%.1f", bd.recencyBoost);
+        // R8.4: the choice score's parts, as [Recs] prints them: the top three
+        // theta[need][col] n a terms (the first is the explanation), b, and the
+        // D2 legacy feature (lm on a row the old floors kept, "um" otherwise).
+        // The fallback ranking (no bootstrap) has no choice parts: `choice` is
+        // unset there, so it says so instead of printing "learned" and lm 0.
+        if (candidate.fallbackRanked) {
+            ImGui::TextColored(ScorerColors::LABEL_DIM, "fallback: s = ln u (no bootstrap)");
+            return;
         }
-        if (std::abs(bd.correlationBonus) > 0.01f) {
-            ImGui::SameLine(0.0f, 2.0f);
-            ImGui::TextColored(ScorerColors::CORRELATION_COLOR, "corr:%.1f", bd.correlationBonus);
+        const auto& p = candidate.choice;
+        bool any = false;
+        for (const auto& t : p.top) {
+            if (t.need < 0) break;
+            const auto ni = static_cast<size_t>(t.need);
+            const auto ci = static_cast<size_t>(t.col);
+            const std::string_view need = ni < Core::Needs::kNeedCount ? Core::Needs::kNeeds[ni].id : std::string_view("?");
+            const std::string_view col = ci < Core::Effect::kColumnCount ? Core::Effect::kColumns[ci].id : std::string_view("?");
+            if (any) ImGui::SameLine(0.0f, 6.0f);
+            ImGui::TextColored(ScorerColors::TERM_COLOR, "%.*sx%.*s=%+.2f",
+                static_cast<int>(need.size()), need.data(), static_cast<int>(col.size()), col.data(), t.value);
+            any = true;
         }
-        if (std::abs(bd.potionMultiplier - 1.0f) > 0.01f) {
-            ImGui::SameLine(0.0f, 2.0f);
-            ImGui::TextColored(ScorerColors::MULTIPLIER_COLOR, "pot:%.1fx", bd.potionMultiplier);
+        if (!any) {
+            ImGui::TextColored(ScorerColors::LABEL_DIM, "learned");
         }
-        if (std::abs(bd.favoritesMultiplier - 1.0f) > 0.01f) {
-            ImGui::SameLine(0.0f, 2.0f);
-            ImGui::TextColored(ScorerColors::MULTIPLIER_COLOR, "fav:%.1fx", bd.favoritesMultiplier);
+        ImGui::TextColored(ScorerColors::BIAS_COLOR, "b:%+.2f", p.b);
+        ImGui::SameLine(0.0f, 6.0f);
+        if (p.utilMissing != 0.0) {
+            ImGui::TextColored(ScorerColors::LABEL_DIM, "lm: um");
+        } else {
+            ImGui::TextColored(ScorerColors::LEGACY_COLOR, "lm:%+.2f", p.lnLearnMult);
+        }
+        if (p.covered > 0.0) {
+            ImGui::SameLine(0.0f, 6.0f);
+            ImGui::TextColored(ScorerColors::LABEL_DIM, "covered:%.2f", p.covered);
         }
     }
 
-    void UtilityScorerDebugWidget::DrawUtilityBar(float utility, float maxUtility)
+    void UtilityScorerDebugWidget::DrawScoreBar(const Scoring::ScoredCandidate& candidate)
     {
-        float fraction = (maxUtility > 0.0f) ? std::clamp(utility / maxUtility, 0.0f, 1.0f) : 0.0f;
+        // The slot score, any sign: mu (R8.3), or s = ln u in the fallback.
+        // The bar is the logistic of it (0.5 at 0), so it is defined for any
+        // sign; an unranked row (remembered only) is an empty bar.
+        const double s = candidate.SlotScore();
+        const float fraction = std::isfinite(s) ? static_cast<float>(1.0 / (1.0 + std::exp(-s))) : (s > 0 ? 1.0f : 0.0f);
 
-        // Draw custom colored progress bar
         ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ScorerColors::UTILITY_BAR);
-
-        char overlay[32];
-        snprintf(overlay, sizeof(overlay), "%.2f", utility);
+        char overlay[48];
+        if (std::isfinite(s) && candidate.fallbackRanked) {
+            snprintf(overlay, sizeof(overlay), "s %+.2f  fallback", s);   // ln u: no mu, no sd
+        } else if (std::isfinite(s)) {
+            snprintf(overlay, sizeof(overlay), "mu %+.2f  sd %.2f", s, std::sqrt(std::max(candidate.choice.var, 0.0)));
+        } else {
+            snprintf(overlay, sizeof(overlay), "%s", s > 0 ? "pinned" : "unranked");
+        }
         ImGui::ProgressBar(fraction, ImVec2(-1.0f, 0.0f), overlay);
-
         ImGui::PopStyleColor();
     }
 

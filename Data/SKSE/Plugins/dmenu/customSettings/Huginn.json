@@ -250,16 +250,16 @@
         {
           "type": "button",
           "text": {
-            "name": "Show/Hide Widget",
-            "desc": "Flip the widget between shown and hidden. Same flag as the hotkey; resets to shown on load. Use Enable Widget above to turn it off for good."
+            "name": "Reset Widget",
+            "desc": "Reopen the widget if the game closed it and re-send every slot. Same as the reset key (iResetWidgetKey, default X). The widget hides with the HUD; use Enable Widget above to turn it off for good."
           },
-          "id": "Huginn_toggle_widget"
+          "id": "Huginn_reset_widget"
         },
         {
           "type": "button",
           "text": {
             "name": "Reset Learned Weights",
-            "desc": "Clear all learned preferences (rewards/penalties)"
+            "desc": "Return the choice model's weights (theta) to the shipped bootstrap and clear every item's learned bias (b). Same as the console's hg reset weights"
           },
           "id": "Huginn_reset_weights"
         },
@@ -267,7 +267,7 @@
           "type": "button",
           "text": {
             "name": "Reset to Defaults",
-            "desc": "Restore all settings to compile-time defaults"
+            "desc": "Every setting back to the shipped defaults: writes the shipped Huginn.ini over yours (yours kept as Huginn.ini.<date>-<time>.bak) and this panel's values back to their defaults. Learned weights are kept (Reset Learned Weights clears those). Restart the game before changing this panel again: it shows the old values until then."
           },
           "id": "Huginn_reset_defaults"
         },

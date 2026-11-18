@@ -1,4 +1,6 @@
 #include "BanditSerializer.h"
+#include "CharacterRecord.h"    // HCID (0.24.22: out of this file, which R12 retires)
+#include "ChoiceSerializer.h"   // R8.3: THTA / BIAS ride in the same callbacks
 #include "Globals.h"
 
 #include <algorithm>
@@ -6,8 +8,6 @@
 #include <cstring>
 #include <type_traits>
 
-#include <chrono>
-#include <random>
 
 namespace Huginn::Persist
 {
@@ -18,114 +18,61 @@ namespace Huginn::Persist
    // contract: the entry must be trivially copyable and tightly packed. The size
    // check equals the exact field sum — if a field is added/reordered or padding
    // appears, this fails to compile, forcing a wire-format + version bump instead
-   // of silently writing an incompatible blob. The byte order also matches the
-   // legacy per-field format (formID, weights[18], trainCount, minutes); v4
-   // keeps the stride and makes the count a float.
+   // of silently writing an incompatible blob. Byte order: formID,
+   // weights[18], trainCount (float), minutesSinceChosen.
    static_assert(std::is_trivially_copyable_v<BanditEntry>,
       "SerializedEntry must be trivially copyable for batch cosave I/O");
    static_assert(sizeof(BanditEntry) ==
          sizeof(RE::FormID)
        + sizeof(float) * Learning::StateFeatures::NUM_FEATURES
-       + sizeof(float)      // trainCount (v4: float; v2/v3: uint32)
-       + sizeof(uint32_t),  // minutesSinceChosen (v4; v2/v3: since the last update)
+       + sizeof(float)      // trainCount
+       + sizeof(uint32_t),  // minutesSinceChosen
       "SerializedEntry layout changed — batch cosave I/O assumes tight packing; "
       "bump kBanditSerializationVersion and update the wire format");
 
    // Static buffer — populated by LoadCallback, consumed by ApplyPendingBanditData
    static std::optional<LoadedBanditData> s_pendingBanditData;
 
-   // The character the in-memory learner belongs to (0 = none yet), and the
-   // character ID / learning clock the save being loaded carries (none = no
-   // readable HCID record: the save is treated as a different character). Touched
-   // only from the SKSE callbacks and InitializeGameSystems, all on the game
-   // thread. NOT under the update loop's exclusion -- InitializeGameSystems
-   // does not run inside RunExclusive -- which is why the learner is replaced
-   // in one ImportData call (one lock) rather than Clear() then import.
-   static uint64_t s_activeCharacterID = 0;
-   static std::optional<uint64_t> s_loadedCharacterID;
-   static std::optional<uint64_t> s_loadedClock;
+   // The accept/skip decision, checked at compile time (the Debug suite's
+   // Test 4 checks it at run time too).
+   static_assert(CheckBndwHeader(kBanditSerializationVersion, Learning::StateFeatures::NUM_FEATURES)
+      == BndwHeader::Accept);
+   static_assert(CheckBndwHeader(3, Learning::StateFeatures::NUM_FEATURES) == BndwHeader::WrongVersion);
+   static_assert(CheckBndwHeader(kBanditSerializationVersion, Learning::StateFeatures::NUM_FEATURES - 2)
+      == BndwHeader::WrongFeatureCount);
 
-   static uint64_t NewCharacterID()
+   std::vector<BanditEntry> DecodeEntryBlob(
+      const std::byte* data, size_t byteLen, uint32_t numItems, bool unitTest)
    {
-      std::random_device rd;
-      std::mt19937_64 gen((static_cast<uint64_t>(rd()) << 32) ^ rd() ^
-         static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()));
-      uint64_t id = 0;
-      while (id == 0) id = gen();
-      return id;
-   }
-
-   std::vector<BanditEntry> DecodeV2EntryBlob(
-      const std::byte* data, size_t byteLen, uint32_t numItems, uint32_t diskFeatureCount,
-      uint32_t recordVersion, bool unitTest)
-   {
-      static_assert(sizeof(float) == sizeof(uint32_t), "v3 and v4 share one stride");
-      constexpr auto compiled = static_cast<uint32_t>(Learning::StateFeatures::NUM_FEATURES);
-      const size_t stride = sizeof(RE::FormID)
-                          + sizeof(float) * diskFeatureCount
-                          + sizeof(uint32_t) * 2;
+      constexpr size_t stride = sizeof(BanditEntry);
       if (byteLen != stride * numItems) {
          // The unit tests feed a short blob on purpose. Logged at [E] like a
          // real one, it was read as a save dropping learned weights on load
          // (2026-10-01), so a test call says so on the line itself.
          if (unitTest) {
-            logger::info("[Cosave Test] DecodeV2EntryBlob: byteLen {} != stride {} x numItems {} — "
+            logger::info("[Cosave Test] DecodeEntryBlob: byteLen {} != stride {} x numItems {} — "
                "rejecting (UNIT TEST: deliberate short blob, not a save fault)"sv,
                byteLen, stride, numItems);
          } else {
-            logger::error("[Cosave] DecodeV2EntryBlob: byteLen {} != stride {} x numItems {} — rejecting"sv,
+            logger::error("[Cosave] DecodeEntryBlob: byteLen {} != stride {} x numItems {} — rejecting"sv,
                byteLen, stride, numItems);
          }
          return {};
       }
-      const uint32_t copyCount = std::min(diskFeatureCount, compiled);
-
-      // Value-init zeroes every weight, so positions >= copyCount stay 0
-      // (new features start untrained).
+      // The save side writes the entry array as one blob, so the read is one
+      // memcpy back (trivially copyable and tightly packed: asserted above).
       std::vector<BanditEntry> out(numItems);
-      const std::byte* p = data;
-      for (uint32_t i = 0; i < numItems; ++i, p += stride) {
-         auto& e = out[i];
-         std::memcpy(&e.formID, p, sizeof(e.formID));
-         std::memcpy(e.weights.data(), p + sizeof(e.formID), sizeof(float) * copyCount);
-         const std::byte* tail = p + sizeof(e.formID) + sizeof(float) * diskFeatureCount;
-         if (recordVersion >= 4) {
-            std::memcpy(&e.trainCount, tail, sizeof(e.trainCount));
-         } else {
-            uint32_t count = 0;
-            std::memcpy(&count, tail, sizeof(count));
-            e.trainCount = static_cast<float>(count);
-         }
-         std::memcpy(&e.minutesSinceChosen, tail + sizeof(e.trainCount),
-            sizeof(e.minutesSinceChosen));
+      if (byteLen > 0) {
+         std::memcpy(out.data(), data, byteLen);
       }
       return out;
    }
 
    // =========================================================================
-   // SaveCallback — serialize FeatureBanditLearner data into cosave records
+   // The BNDW record: FeatureBanditLearner weights + train counts
    // =========================================================================
-   static void SaveCallback(SKSE::SerializationInterface* a_intfc)
+   static void SaveBanditRecord(SKSE::SerializationInterface* a_intfc)
    {
-      // ── HCID record: which character, and its learning clock ──────────────
-      // Written first and on its own, so a failure in the learner record
-      // below cannot take it down. The ID is always set by now --
-      // ResolveLoadedLearner runs at every new game and load, and no save
-      // precedes both -- so a zero here is a bug: logged, and given an ID so
-      // the save is still identified.
-      if (s_activeCharacterID == 0) {
-         s_activeCharacterID = NewCharacterID();
-         g_activeCharacterID.store(s_activeCharacterID, std::memory_order_relaxed);
-         logger::warn("[Cosave] No character ID at save time (unexpected) -- assigned {:016X}"sv,
-            s_activeCharacterID);
-      }
-      const uint64_t clock = g_featureBanditLearner ? g_featureBanditLearner->GetClock() : 0;
-      if (!a_intfc->OpenRecord(kRecordType_CharacterID, kCharacterIDVersion) ||
-          !a_intfc->WriteRecordData(s_activeCharacterID) ||
-          !a_intfc->WriteRecordData(clock)) {
-         logger::error("[Cosave] Failed to write the HCID record"sv);
-      }
-
       // ── BNDW record: FeatureBanditLearner weights + train counts ──────────
       if (g_featureBanditLearner) {
          if (!a_intfc->OpenRecord(kRecordType_BanditWeights, kBanditSerializationVersion)) {
@@ -166,9 +113,8 @@ namespace Huginn::Persist
          // real playthrough. If a corrupt/oversized count somehow reached here, the
          // load side rejects numItems > kMaxBanditItems wholesale (see LoadCallback).
 
-         // Entries: one contiguous blob instead of 21 calls/item. The array is
-         // byte-identical to the old per-field layout (see static_asserts above),
-         // so existing v2 saves remain compatible in both directions.
+         // Entries: one contiguous blob instead of 21 calls/item; the array's
+         // memory layout is the wire format (see static_asserts above).
          if (numItems > 0) {
             const uint32_t byteLen = numItems * static_cast<uint32_t>(sizeof(BanditEntry));
             if (!a_intfc->WriteRecordData(banditEntries.data(), byteLen)) {
@@ -185,34 +131,35 @@ namespace Huginn::Persist
    }
 
    // =========================================================================
+   // SaveCallback -- every record, each on its own so one failing cannot take
+   // another down
+   // =========================================================================
+   static void SaveCallback(SKSE::SerializationInterface* a_intfc)
+   {
+      // THTA / BIAS / DISC (R8.3, 0.24.14): the choice learner, beside BNDW
+      // (which STAYS: R6's D2 reads the old learner's state).
+      SaveChoiceRecords(a_intfc);
+      SaveBanditRecord(a_intfc);
+      // HCID last (0.24.22): its learning clock is read after every export
+      // above, so it is never older than the learning they wrote.
+      SaveCharacterRecord(a_intfc);
+   }
+
+   // =========================================================================
    // LoadCallback — deserialize cosave records into static buffer
    // =========================================================================
    static void LoadCallback(SKSE::SerializationInterface* a_intfc)
    {
       s_pendingBanditData = LoadedBanditData{};
-      s_loadedCharacterID.reset();
-      s_loadedClock.reset();
+      ResetPendingCharacter();
+      ResetPendingChoice();
 
       uint32_t type, version, length;
       while (a_intfc->GetNextRecordInfo(type, version, length)) {
          switch (type) {
          case kRecordType_CharacterID:
-         {
-            // v2: the ID and the learning clock. (v1, pre-release 0.22.11
-            // builds, is no longer read: one tester, no saves that old.)
-            uint64_t id = 0;
-            uint64_t clock = 0;
-            const bool ok = version == kCharacterIDVersion && a_intfc->ReadRecordData(id) && id != 0 &&
-                            a_intfc->ReadRecordData(clock);
-            if (ok) {
-               s_loadedCharacterID = id;
-               s_loadedClock = clock;
-            } else {
-               logger::warn("[Cosave] Unreadable HCID record (version {}) -- treating the save as unidentified"sv,
-                  version);
-            }
+            LoadCharacterRecord(a_intfc, version);
             break;
-         }
          case kRecordType_BanditWeights:
          {
             auto& banditData = *s_pendingBanditData;
@@ -222,15 +169,18 @@ namespace Huginn::Persist
                logger::error("[Cosave] Failed to read BNDW version"sv);
                break;
             }
-            if (recVersion != 3 && recVersion != kBanditSerializationVersion) {
-               logger::warn("[Cosave] BNDW version unsupported: got {} (expected 3 or {}) — skipping"sv,
+            // Only the current version (v4) with NUM_FEATURES weights per
+            // entry is read (CheckBndwHeader); anything else is skipped whole
+            // and the old learner starts empty. No migration: no save holds
+            // another format. A header/in-data version mismatch is logged
+            // rather than rejected, and the in-data version is trusted. The
+            // header check, the item cap and the exact-length read below
+            // validate everything decode relies on.
+            if (CheckBndwHeader(recVersion, Learning::StateFeatures::NUM_FEATURES) == BndwHeader::WrongVersion) {
+               logger::warn("[Cosave] BNDW version unsupported: got {} (expected {}) — skipping"sv,
                   recVersion, kBanditSerializationVersion);
                break;
             }
-            // Only v3 and v4 reach here (v1/v2, the old 8/5 target, are skipped); both keep
-            // v2's fixed-stride wire format. A header/in-data mismatch is logged rather than rejected, and the
-            // in-data version is trusted. The version check, bounds checks, and
-            // exact-length reads below validate everything decode relies on.
             if (recVersion != version) {
                logger::warn("[Cosave] BNDW version mismatch: SKSE header {} vs in-data {} — trusting in-data version"sv,
                   version, recVersion);
@@ -241,20 +191,10 @@ namespace Huginn::Persist
                logger::error("[Cosave] Failed to read BNDW numFeatures"sv);
                break;
             }
-            if (numFeatures == 0 || numFeatures > kMaxBanditFeatures) {
-               logger::error("[Cosave] BNDW numFeatures {} out of range [1, {}] — corrupt record, skipping"sv,
-                  numFeatures, kMaxBanditFeatures);
+            if (CheckBndwHeader(recVersion, numFeatures) != BndwHeader::Accept) {
+               logger::warn("[Cosave] BNDW feature count unsupported: got {} (expected {}) — skipping"sv,
+                  numFeatures, Learning::StateFeatures::NUM_FEATURES);
                break;
-            }
-            constexpr auto compiledFeatures = static_cast<uint32_t>(Learning::StateFeatures::NUM_FEATURES);
-            if (numFeatures != compiledFeatures) {
-               // Positional migration (append-only convention, see header/StateFeatures.h):
-               // smaller on-disk count → tail zero-pads (new features untrained);
-               // larger → tail truncates (removed features dropped).
-               logger::info("[Cosave] BNDW feature-count migration: {} on disk -> {} compiled ({})"sv,
-                  numFeatures, compiledFeatures,
-                  numFeatures < compiledFeatures ? "zero-padding new features"sv
-                                                 : "truncating removed features"sv);
             }
 
             if (!a_intfc->ReadRecordData(banditData.totalTrainCount)) {
@@ -308,17 +248,13 @@ namespace Huginn::Persist
             };
 
             {
-               // v2/v3: fixed-stride entries — read the whole array in one call, using
-               // the stride the record was WRITTEN with (differs from sizeof(BanditEntry)
-               // during feature-count migration). A short read rejects the record
-               // wholesale (no silent partial import). byteLen cannot overflow:
-               // numItems <= 50k and stride <= 4 + 4*256 + 8, product < 52 MB.
-               const size_t diskStride = sizeof(RE::FormID)
-                                       + sizeof(float) * numFeatures
-                                       + sizeof(uint32_t) * 2;
+               // Fixed-stride entries — read the whole array in one call. A
+               // short read rejects the record wholesale (no silent partial
+               // import). byteLen cannot overflow: numItems <= kMaxBanditItems
+               // (the static_assert in the header).
                std::vector<BanditEntry> raw;
                if (numItems > 0) {
-                  const uint32_t byteLen = numItems * static_cast<uint32_t>(diskStride);
+                  const uint32_t byteLen = numItems * static_cast<uint32_t>(sizeof(BanditEntry));
                   std::vector<std::byte> blob(byteLen);
                   const uint32_t got = a_intfc->ReadRecordData(blob.data(), byteLen);
                   if (got != byteLen) {
@@ -326,17 +262,7 @@ namespace Huginn::Persist
                         got, byteLen);
                      break;
                   }
-                  raw = DecodeV2EntryBlob(blob.data(), blob.size(), numItems, numFeatures, recVersion);
-               }
-               // v3 -> v4: the evidence is kept as it was (n_eff = the train
-               // count) and every life starts now. v3's minutes counted from
-               // the last update or decay stamp, not the last pick.
-               if (recVersion == 3) {
-                  for (auto& entry : raw) {
-                     entry.minutesSinceChosen = 0;
-                  }
-                  logger::info("[Cosave] BNDW v3 converted to v{}: {} entries keep their evidence; "
-                     "each one's useful life starts now"sv, kBanditSerializationVersion, raw.size());
+                  raw = DecodeEntryBlob(blob.data(), blob.size(), numItems);
                }
                for (auto& entry : raw) {
                   acceptEntry(entry);
@@ -347,6 +273,15 @@ namespace Huginn::Persist
                banditData.entries.size(), banditData.resolvedFormIDs, banditData.failedFormIDs, droppedCorrupt);
             break;
          }
+         case kRecordType_Theta:
+            LoadThetaRecord(a_intfc, version, length);
+            break;
+         case kRecordType_Bias:
+            LoadBiasRecord(a_intfc, version, length);
+            break;
+         case kRecordType_Discovery:
+            LoadDiscoveryRecord(a_intfc, version, length);
+            break;
          default:
             logger::warn("[Cosave] Unknown record type {:08X} — skipping"sv, type);
             break;
@@ -356,17 +291,20 @@ namespace Huginn::Persist
 
    // =========================================================================
    // RevertCallback — drop the load buffer (new game / load). The learner is
-   // NOT cleared here any more; ResolveLoadedLearner decides (0.22.11).
+   // NOT cleared here any more; the load decides (0.22.11).
    // =========================================================================
    static void RevertCallback([[maybe_unused]] SKSE::SerializationInterface* a_intfc)
    {
       // Revert no longer clears the learner. It runs before EVERY load, and
       // clearing here is what made a death-and-reload forget everything
-      // learned since the save. ResolveLoadedLearner decides at
+      // learned since the save. The load decides (DecideCharacterLoad) at
       // kPostLoadGame / kNewGame, once it knows whose save this is.
       s_pendingBanditData.reset();
-      s_loadedCharacterID.reset();
-      s_loadedClock.reset();
+      ResetPendingCharacter();
+      ResetPendingChoice();
+      // 0.24.14: no discovery-boost gains until the load's prime (Main.cpp
+      // step 6c): nothing this load restores may count as newly gained.
+      if (g_choiceLearner) g_choiceLearner->SuspendDiscovery();
       logger::debug("[Cosave] Revert: learner kept until the load decides"sv);
    }
 
@@ -383,40 +321,21 @@ namespace Huginn::Persist
       intfc->SetRevertCallback(RevertCallback);
    }
 
-   void ResolveLoadedLearner(Learning::FeatureBanditLearner& learner, bool isNewGame,
-      bool loadSucceeded)
+   void ResolveLoadedLearner(Learning::FeatureBanditLearner& learner, LoadDecision decision)
    {
-      if (isNewGame) {
+      const uint32_t saveTrains = s_pendingBanditData ? s_pendingBanditData->totalTrainCount : 0;
+      switch (decision) {
+      case LoadDecision::NewGame:
          s_pendingBanditData.reset();
          learner.Clear();
-         learner.SetClock(0);
-         s_activeCharacterID = NewCharacterID();
-         g_activeCharacterID.store(s_activeCharacterID, std::memory_order_relaxed);
-         logger::info("[Cosave] New game: learner cleared, character ID {:016X}"sv, s_activeCharacterID);
+         logger::info("[Cosave] New game: old learner cleared"sv);
          return;
-      }
-
-      // A load that failed (a missing master, a corrupt save) restored
-      // nothing: keep the learner and the active character exactly as they
-      // were, so the next real load of this character still matches.
-      if (!loadSucceeded) {
+      case LoadDecision::Failed:
+         // A load that failed (a missing master, a corrupt save) restored
+         // nothing: keep the learner as it was.
          s_pendingBanditData.reset();
-         logger::warn("[Cosave] Load failed -- learner and character ID left as they were"sv);
          return;
-      }
-
-      // A save with no readable HCID record is a different character: it
-      // gets a new ID. (Saves from before 0.22.11 used to get one derived
-      // from name and race; one tester, no saves that old.)
-      const bool identified = s_loadedCharacterID.has_value() && s_loadedClock.has_value();
-      const uint64_t loadedID = identified ? *s_loadedCharacterID : NewCharacterID();
-      const uint32_t saveTrains = s_pendingBanditData ? s_pendingBanditData->totalTrainCount : 0;
-
-      // Is the save behind memory? By the learning clock.
-      const uint64_t memClock = learner.GetClock();
-      const bool saveNotAhead = identified && *s_loadedClock <= memClock;
-
-      if (s_activeCharacterID != 0 && loadedID == s_activeCharacterID && saveNotAhead) {
+      case LoadDecision::Reload: {
          // A reload of the character in memory: memory holds the save's
          // learning plus whatever was learned since. Dynamic forms (0xFF) are
          // taken from the save, because the engine can reuse those IDs.
@@ -424,28 +343,23 @@ namespace Huginn::Persist
                                                      : std::vector<Learning::FeatureBanditLearner::SerializedEntry>{};
          s_pendingBanditData.reset();
          learner.ReplaceDynamicEntries(saveEntries);
-         logger::info("[Cosave] Reload of the same character ({:016X}): kept in-memory learning "
-                      "({} items, {} trains, clock {}); the save is not ahead ({} trains, clock {})"sv,
-            s_activeCharacterID, learner.GetItemCount(), learner.GetTotalTrainCount(), memClock,
-            saveTrains, *s_loadedClock);
+         logger::info("[Cosave] Reload: kept the in-memory old learner ({} items, {} trains; the save had {} trains)"sv,
+            learner.GetItemCount(), learner.GetTotalTrainCount(), saveTrains);
          return;
+      }
+      case LoadDecision::Replace:
+         break;
       }
 
       // A different character, the first load since launch, or a later save
       // of this one: the save's learner. ImportData replaces everything under
-      // one lock; Clear() only when the save carries no learner at all.
-      const char* why = !identified ? "unidentified save"
-                      : (s_activeCharacterID == 0) ? "first load"
-                      : (loadedID != s_activeCharacterID) ? "different character"
-                      : "save is ahead of memory";
+      // one lock -- InitializeGameSystems does not run inside RunExclusive,
+      // so not Clear() then import; Clear() only when the save carries no
+      // learner at all.
       if (!ApplyPendingBanditData(learner)) {
          learner.Clear();
       }
-      learner.SetClock(s_loadedClock.value_or(0));
-      s_activeCharacterID = loadedID;
-      g_activeCharacterID.store(s_activeCharacterID, std::memory_order_relaxed);
-      logger::info("[Cosave] Loaded character {:016X} ({}): learner from the save ({} items, clock {})"sv,
-         s_activeCharacterID, why, learner.GetItemCount(), learner.GetClock());
+      logger::info("[Cosave] Load: the old learner from the save ({} items)"sv, learner.GetItemCount());
    }
 
    bool ApplyPendingBanditData(Learning::FeatureBanditLearner& learner)

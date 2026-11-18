@@ -1,15 +1,18 @@
-// Host tests for src/core/CombatUpsert.h.
+// Host tests for src/core/CombatUpsert.h (0.24.29: one fixed margin, covered
+// keys, the wanted clock).
 
 #include "core/CombatUpsert.h"
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace Huginn::Core;
@@ -32,56 +35,40 @@ namespace
     }
 }
 
-TEST_CASE("combat upsert: the barrier is the multiplier times ln(1 + margin)")
+TEST_CASE("combat upsert: the challenger must clear the margin, not reach it")
 {
-    CHECK(CombatUpsertBarrier(3.0f, 0.5f) == doctest::Approx(3.0 * std::log(1.5)));
-    CHECK(CombatUpsertBarrier(3.0f, 0.5f) == doctest::Approx(1.2164).epsilon(1e-4));
-    CHECK(CombatUpsertBarrier(2.0f, 0.5f) == doctest::Approx(2.0 * std::log(1.5)));
-    CHECK(CombatUpsertBarrier(1.0f, 0.5f) == doctest::Approx(LogHoldMargin(0.5f)));
+    const double m = 1.0;   // fCombatChallengerMargin's default
+    CHECK(CombatUpsertBeats(1.001, 0.0, m));
+    CHECK_FALSE(CombatUpsertBeats(1.0, 0.0, m));                // exactly on it holds
+    CHECK_FALSE(CombatUpsertBeats(0.999, 0.0, m));
+    // A difference, not a ratio of signs.
+    CHECK(CombatUpsertBeats(0.01, -1.0, m));
+    CHECK_FALSE(CombatUpsertBeats(-0.01, -1.0, m));
+    // Margin 0: any better item; never a worse or an equal one.
+    CHECK(CombatUpsertBeats(0.1, 0.0, 0.0));
+    CHECK_FALSE(CombatUpsertBeats(0.0, 0.0, 0.0));
+    CHECK_FALSE(CombatUpsertBeats(-0.1, 0.0, 0.0));
 }
 
-TEST_CASE("combat upsert: a multiplier of 0 (or below, or NaN) turns it off")
+TEST_CASE("combat upsert: a margin below 0 (or not finite) turns it off")
 {
-    CHECK(CombatUpsertBarrier(0.0f, 0.5f) == kInf);
-    CHECK(CombatUpsertBarrier(-1.0f, 0.5f) == kInf);
-    CHECK(CombatUpsertBarrier(std::numeric_limits<float>::quiet_NaN(), 0.5f) == kInf);
-    CHECK(CombatUpsertBarrier(std::numeric_limits<float>::infinity(), 0.5f) == kInf);
-    CHECK_FALSE(CombatUpsertBeats(100.0, -100.0, CombatUpsertBarrier(0.0f, 0.5f)));
-}
-
-TEST_CASE("combat upsert: a NaN margin means nothing beats the frozen item; margin 0 means any better one does")
-{
-    CHECK(CombatUpsertBarrier(3.0f, std::numeric_limits<float>::quiet_NaN()) == kInf);
-    CHECK(CombatUpsertBarrier(3.0f, 0.0f) == 0.0);
-    CHECK(CombatUpsertBeats(0.1, 0.0, CombatUpsertBarrier(3.0f, 0.0f)));
-    CHECK_FALSE(CombatUpsertBeats(0.0, 0.0, CombatUpsertBarrier(3.0f, 0.0f)));
-    // A negative margin (clamped away by SlotSettings) never makes a worse item win.
-    CHECK_FALSE(CombatUpsertBeats(-0.1, 0.0, CombatUpsertBarrier(3.0f, -0.5f)));
-}
-
-TEST_CASE("combat upsert: the challenger must clear the barrier, not reach it")
-{
-    const double b = CombatUpsertBarrier(3.0f, 0.5f);
-    CHECK(CombatUpsertBeats(b + 0.001, 0.0, b));
-    CHECK_FALSE(CombatUpsertBeats(b, 0.0, b));                // exactly on it holds
-    CHECK_FALSE(CombatUpsertBeats(b - 0.001, 0.0, b));
-    // Works the same for negative scores: a difference, not a ratio of signs.
-    CHECK(CombatUpsertBeats(-1.0 + b + 0.01, -1.0, b));
-    CHECK_FALSE(CombatUpsertBeats(-1.0 + b - 0.01, -1.0, b));
-    // The [Hold] give-ways while frozen (margins 0.4-0.9) are far below 3 x ln 1.5.
-    CHECK_FALSE(CombatUpsertBeats(0.467, -0.369, b));   // 12:45:03.586, +0.836
-    // 12:54:47 replay example: Lesser Ward +2.202 over Oakflesh -0.475 (+2.677).
-    CHECK(CombatUpsertBeats(2.202, -0.475, b));
+    CHECK_FALSE(CombatUpsertBeats(100.0, -100.0, -0.5));
+    CHECK_FALSE(CombatUpsertBeats(100.0, -100.0, std::nan("")));
+    CHECK_FALSE(CombatUpsertBeats(100.0, -100.0, kInf));
+    const std::vector<std::optional<UpsertKey>> keys{ UpsertKey{ -5.0, false }, UpsertKey{ 0.0, true } };
+    const std::vector<SlotScore> challengers{ 5.0, 4.0 };
+    const std::vector<std::vector<bool>> fits{ { true, true }, { true, true } };
+    CHECK(PlanCombatUpserts(keys, challengers, fits, -1.0).empty());     // a covered key too
+    CHECK(PlanCombatUpserts(keys, challengers, fits, std::nan("")).empty());
 }
 
 TEST_CASE("combat upsert: no measurement against an unranked or pinned score")
 {
-    const double b = CombatUpsertBarrier(3.0f, 0.5f);
-    CHECK_FALSE(CombatUpsertBeats(1.0, kUnrankedScore, b));   // frozen item never scored
-    CHECK_FALSE(CombatUpsertBeats(kUnrankedScore, -5.0, b));
-    CHECK_FALSE(CombatUpsertBeats(kPinnedScore, 0.0, b));
-    CHECK_FALSE(CombatUpsertBeats(1.0, kPinnedScore, b));
-    CHECK_FALSE(CombatUpsertBeats(std::nan(""), 0.0, b));
+    CHECK_FALSE(CombatUpsertBeats(1.0, kUnrankedScore, 1.0));   // frozen item never scored
+    CHECK_FALSE(CombatUpsertBeats(kUnrankedScore, -5.0, 1.0));
+    CHECK_FALSE(CombatUpsertBeats(kPinnedScore, 0.0, 1.0));
+    CHECK_FALSE(CombatUpsertBeats(1.0, kPinnedScore, 1.0));
+    CHECK_FALSE(CombatUpsertBeats(std::nan(""), 0.0, 1.0));
 }
 
 TEST_CASE("combat upsert: an open key passes the gate")
@@ -174,51 +161,73 @@ TEST_CASE("combat upsert: a key that just took an upsert is in grace and in cool
     CHECK(DecideCombatUpsertGate(in) == CombatUpsertGate::Cooldown);
 }
 
-TEST_CASE("combat upsert: planning pairs the widest margins, one challenger per key")
+namespace
 {
-    const double b = CombatUpsertBarrier(3.0f, 0.5f);   // 1.216
+    std::optional<UpsertKey> Held(SlotScore score) { return UpsertKey{ score, false }; }
+    std::optional<UpsertKey> Covered(SlotScore score) { return UpsertKey{ score, true }; }
+}
+
+TEST_CASE("combat upsert: planning pairs the widest leads, one challenger per key")
+{
+    const double m = 1.2;
     // Keys 0 and 2 open, key 1 not.
-    const std::vector<std::optional<SlotScore>> frozen{ -1.0, std::nullopt, 0.0 };
+    const std::vector<std::optional<UpsertKey>> keys{ Held(-1.0), std::nullopt, Held(0.0) };
     const std::vector<SlotScore> challengers{ 1.5, 0.5, 2.0 };
     const std::vector<std::vector<bool>> fits{
         { true, true, true },
         { true, true, true },
         { true, true, true },
     };
-    const auto picks = PlanCombatUpserts(frozen, challengers, fits, b);
+    const auto picks = PlanCombatUpserts(keys, challengers, fits, m);
     REQUIRE(picks.size() == 2);
     // Widest first: challenger 2 (2.0) on key 0 (-1.0), +3.0.
     CHECK(picks[0].key == 0);
     CHECK(picks[0].challenger == 2);
-    CHECK(picks[0].margin == doctest::Approx(3.0));
-    // Then challenger 0 (1.5) on key 2 (0.0): +1.5 > 1.216. Challenger 1 never clears.
+    CHECK(picks[0].lead == doctest::Approx(3.0));
+    CHECK_FALSE(picks[0].covered);
+    // Then challenger 0 (1.5) on key 2 (0.0): +1.5 > 1.2. Challenger 1 never clears.
     CHECK(picks[1].key == 2);
     CHECK(picks[1].challenger == 0);
 }
 
-TEST_CASE("combat upsert: a challenger goes only where it fits, and none past the barrier means none")
+TEST_CASE("combat upsert: a challenger goes only where it fits, and none past the margin means none")
 {
-    const double b = CombatUpsertBarrier(3.0f, 0.5f);
-    const std::vector<std::optional<SlotScore>> frozen{ -1.0, -1.0 };
+    const std::vector<std::optional<UpsertKey>> keys{ Held(-1.0), Held(-1.0) };
     const std::vector<SlotScore> challengers{ 2.0 };
     const std::vector<std::vector<bool>> fits{ { false }, { true } };
-    const auto picks = PlanCombatUpserts(frozen, challengers, fits, b);
+    const auto picks = PlanCombatUpserts(keys, challengers, fits, 1.0);
     REQUIRE(picks.size() == 1);
     CHECK(picks[0].key == 1);
 
-    const std::vector<SlotScore> weak{ 0.2 };   // +1.2 < 1.216
-    CHECK(PlanCombatUpserts(frozen, weak, fits, b).empty());
-    // Off: nothing at all.
-    CHECK(PlanCombatUpserts(frozen, challengers, fits, CombatUpsertBarrier(0.0f, 0.5f)).empty());
+    const std::vector<SlotScore> weak{ -0.1 };   // +0.9 < 1.0
+    CHECK(PlanCombatUpserts(keys, weak, fits, 1.0).empty());
+}
+
+TEST_CASE("combat upsert: each key asks its best fitting challenger only")
+{
+    // Key 0 on 0.0. The best fitting challenger (1.5) misses a margin of 2; a
+    // lower one cannot clear it, so nothing is asked further down.
+    const std::vector<std::optional<UpsertKey>> keys{ Held(0.0) };
+    const std::vector<SlotScore> challengers{ 3.0, 1.5, 1.0 };
+    const std::vector<std::vector<bool>> fits{ { false, true, true } };
+    CHECK(PlanCombatUpserts(keys, challengers, fits, 2.0).empty());
+    // A challenger placed on another key this run is not "the best" for the next.
+    const std::vector<std::optional<UpsertKey>> two{ Held(0.0), Held(-0.1) };
+    const std::vector<std::vector<bool>> fitsTwo{ { true, true, false }, { true, true, false } };
+    const auto both = PlanCombatUpserts(two, challengers, fitsTwo, 1.0);
+    REQUIRE(both.size() == 2);
+    CHECK(both[0].key == 1);          // +3.1, the widest lead
+    CHECK(both[0].challenger == 0);
+    CHECK(both[1].key == 0);
+    CHECK(both[1].challenger == 1);   // +1.5: the best one left for key 0
 }
 
 TEST_CASE("combat upsert: ties go to the lower key, then the lower challenger")
 {
-    const double b = 1.0;
-    const std::vector<std::optional<SlotScore>> frozen{ 0.0, 0.0 };
+    const std::vector<std::optional<UpsertKey>> keys{ Held(0.0), Held(0.0) };
     const std::vector<SlotScore> challengers{ 2.0, 2.0 };
     const std::vector<std::vector<bool>> fits{ { true, true }, { true, true } };
-    const auto picks = PlanCombatUpserts(frozen, challengers, fits, b);
+    const auto picks = PlanCombatUpserts(keys, challengers, fits, 1.0);
     REQUIRE(picks.size() == 2);
     CHECK(picks[0].key == 0);
     CHECK(picks[0].challenger == 0);
@@ -228,13 +237,42 @@ TEST_CASE("combat upsert: ties go to the lower key, then the lower challenger")
 
 TEST_CASE("combat upsert: short fits rows and missing keys read as no")
 {
-    const std::vector<std::optional<SlotScore>> frozen{ -5.0, -5.0, -5.0 };
+    const std::vector<std::optional<UpsertKey>> keys{ Held(-5.0), Held(-5.0), Held(-5.0) };
     const std::vector<SlotScore> challengers{ 2.0, 3.0 };
     const std::vector<std::vector<bool>> fits{ { true } };   // key 0: challenger 0 only; keys 1, 2: none
-    const auto picks = PlanCombatUpserts(frozen, challengers, fits, 1.0);
+    const auto picks = PlanCombatUpserts(keys, challengers, fits, 1.0);
     REQUIRE(picks.size() == 1);
     CHECK(picks[0].key == 0);
     CHECK(picks[0].challenger == 0);
+}
+
+TEST_CASE("combat upsert: a covered key takes any challenger, ahead of the keys that need a lead")
+{
+    // Key 0 holds the Resist Fire just drunk: its buff runs, the filter
+    // dropped it, and its score is the one it was locked on (+4.0). Key 1 is
+    // ordinary at -3.0.
+    const std::vector<std::optional<UpsertKey>> keys{ Covered(4.0), Held(-3.0) };
+    const std::vector<SlotScore> challengers{ 2.0, 0.5 };
+    const std::vector<std::vector<bool>> fits{ { true, true }, { true, true } };
+    const auto one = PlanCombatUpserts(keys, challengers, fits, 1.0, 1);
+    REQUIRE(one.size() == 1);
+    CHECK(one[0].key == 0);           // covered first, though key 1's lead (+5.0) is wider
+    CHECK(one[0].challenger == 0);
+    CHECK(one[0].covered);
+    // Measured on the stale score, the same key would hold: 2.0 is behind 4.0.
+    const std::vector<std::optional<UpsertKey>> stale{ Held(4.0) };
+    CHECK(PlanCombatUpserts(stale, challengers, { { true, true } }, 1.0).empty());
+    // A covered key still takes only a challenger that fits it, and only a ranked one.
+    const std::vector<std::optional<UpsertKey>> coveredOnly{ Covered(4.0) };
+    CHECK(PlanCombatUpserts(coveredOnly, challengers, { { false, false } }, 1.0).empty());
+    const std::vector<SlotScore> unranked{ kUnrankedScore };
+    CHECK(PlanCombatUpserts(coveredOnly, unranked, { { true } }, 1.0).empty());
+    // Both, no limit: the covered key, then key 1 with the challenger left (+3.5).
+    const auto both = PlanCombatUpserts(keys, challengers, fits, 1.0);
+    REQUIRE(both.size() == 2);
+    CHECK(both[1].key == 1);
+    CHECK(both[1].challenger == 1);
+    CHECK(both[1].lead == doctest::Approx(3.5));
 }
 
 TEST_CASE("combat upsert: a key the allocator wants for an override or hold is left to it")
@@ -267,10 +305,10 @@ TEST_CASE("combat upsert: a press holds its key for the floor even with fPressGr
 
 TEST_CASE("combat upsert: at most maxPicks per run")
 {
-    const std::vector<std::optional<SlotScore>> frozen{ -5.0, -5.0 };
+    const std::vector<std::optional<UpsertKey>> keys{ Held(-5.0), Held(-5.0) };
     const std::vector<SlotScore> challengers{ 2.0, 3.0 };
     const std::vector<std::vector<bool>> fits{ { true, true }, { true, true } };
-    const auto picks = PlanCombatUpserts(frozen, challengers, fits, 1.0, 1);
+    const auto picks = PlanCombatUpserts(keys, challengers, fits, 1.0, 1);
     REQUIRE(picks.size() == 1);
     CHECK(picks[0].key == 0);         // widest: 3.0 on key 0 (+8.0)
     CHECK(picks[0].challenger == 1);
@@ -288,20 +326,142 @@ TEST_CASE("combat upsert memory: the page takes one upsert per spacing")
     CHECK(mem.PageOpen(1100.0, kCombatUpsertPageSpacingMs));
 }
 
-TEST_CASE("combat upsert memory: what an upsert displaced stays out for the fight; any departure for a while")
+TEST_CASE("combat upsert memory: any departure stays out for a while, an upsert's too (review, PR #254)")
 {
+    // 0.24.29: no departure is barred for the fight. The item an upsert
+    // displaced (A) is out for recentMs like any other (C), then may come back.
     CombatUpsertMemory mem;
-    mem.NoteLeft({ 0xA, 0, "Potion A" }, 1000.0, /*byUpsert=*/true);
-    mem.NoteLeft({ 0xC, 0, "Spell C" }, 1000.0, /*byUpsert=*/false);
-    CHECK(mem.Excluded(0xA, 0, "Potion A", 600000.0, 10000.0));    // ten minutes on: still out
-    CHECK(mem.Excluded(0xC, 0, "Spell C", 5000.0, 10000.0));       // left 4 s ago
+    mem.NoteLeft({ 0xA, 0, "Potion A" }, 1000.0);   // an upsert displaced it
+    mem.NoteLeft({ 0xC, 0, "Spell C" }, 1000.0);    // an override broke its key
+    CHECK(mem.Excluded(0xA, 0, "Potion A", 5000.0, 10000.0));      // left 4 s ago
+    CHECK(mem.Excluded(0xC, 0, "Spell C", 5000.0, 10000.0));
+    CHECK_FALSE(mem.Excluded(0xA, 0, "Potion A", 11000.0, 10000.0));
     CHECK_FALSE(mem.Excluded(0xC, 0, "Spell C", 11000.0, 10000.0));
     CHECK(mem.Excluded(0xF, 0, "Potion A", 2000.0, 10000.0));      // same name, other form
     CHECK_FALSE(mem.Excluded(0xB, 0, "Other", 2000.0, 10000.0));
+    // Leaving again restarts the wait.
+    mem.NoteLeft({ 0xA, 0, "Potion A" }, 9000.0);
+    CHECK(mem.Excluded(0xA, 0, "Potion A", 11000.0, 10000.0));
     mem.Prune(11000.0, 10000.0);
-    CHECK(mem.Size() == 1);                                        // C pruned, A kept
+    CHECK(mem.Size() == 1);                                        // C pruned, A (left at 9 s) kept
     mem.EndFight();
-    CHECK_FALSE(mem.Excluded(0xA, 0, "Potion A", 600000.0, 10000.0));
+    CHECK(mem.Size() == 1);                                        // ages out on its own
+    mem.Prune(19000.0, 10000.0);
+    CHECK(mem.Size() == 0);
+}
+
+TEST_CASE("combat wanted clock: an item keeps its start while it stays wanted")
+{
+    CombatWantedClock clock;
+    clock.Note({ { 0xA, 0, "Potion A" }, { 0xB, 0, "Spell B" } }, 1000.0);
+    CHECK(clock.ForMs(0xA, 0, "Potion A", 1000.0) == 0.0);
+    clock.Note({ { 0xA, 0, "Potion A" }, { 0xB, 0, "Spell B" } }, 1100.0);
+    clock.Note({ { 0xA, 0, "Potion A" } }, 1200.0);   // B stops being wanted
+    CHECK(clock.ForMs(0xA, 0, "Potion A", 2500.0) == doctest::Approx(1500.0));
+    CHECK(clock.ForMs(0xB, 0, "Spell B", 2500.0) < 0.0);
+    // B back: a flicker starts it over.
+    clock.Note({ { 0xA, 0, "Potion A" }, { 0xB, 0, "Spell B" } }, 1300.0);
+    CHECK(clock.ForMs(0xB, 0, "Spell B", 1400.0) == doctest::Approx(100.0));
+    // The same name on another form is the same item (as post-lock dedup).
+    CHECK(clock.ForMs(0xF, 0, "Potion A", 1300.0) == doctest::Approx(300.0));
+    // A stack is its own item unless the name matches; an empty name never does.
+    clock.Note({ { 0xC, 7, "" } }, 2000.0);
+    CHECK(clock.ForMs(0xC, 7, "", 2100.0) == doctest::Approx(100.0));
+    CHECK(clock.ForMs(0xC, 8, "", 2100.0) < 0.0);
+    clock.Clear();
+    CHECK(clock.Size() == 0);
+}
+
+TEST_CASE("combat wanted clock: time wanted while shown on a key does not count once it leaves (review, PR #254)")
+{
+    // A sits on key 0 and on the memoryless page for 10 s. The locker notes
+    // only the wanted items no key shows, so A is not on the clock while
+    // shown. B upserts onto key 0 at 10 s; from 10.1 s A is wanted and shown
+    // nowhere, so its clock starts then, not at 0.
+    CombatWantedClock clock;
+    for (double t = 0.0; t < 10000.0; t += 100.0) {
+        clock.Note({ { 0xB, 0, "Spell B" } }, t);   // A shown: not noted
+    }
+    CHECK(clock.ForMs(0xA, 0, "Potion A", 10000.0) < 0.0);
+    clock.Note({ { 0xA, 0, "Potion A" } }, 10100.0);
+    CHECK(clock.ForMs(0xA, 0, "Potion A", 10100.0 + 1499.0) < 1500.0);   // under fCombatWantedSec
+    CHECK(clock.ForMs(0xA, 0, "Potion A", 10100.0 + 1500.0) == doctest::Approx(1500.0));
+}
+
+TEST_CASE("combat wanted clock: a suspension does not count (alt-tab, the console; 0.24.29)")
+{
+    // In the log of 2026-11-10 a 122 s console pause let three Resist Frost
+    // potions take keys at "wanted 122.0s", seen for no game time at all.
+    CombatWantedClock clock;
+    clock.Note({ { 0xA, 0, "Potion A" } }, 1000.0);
+    clock.Skip(122000.0);
+    clock.Note({ { 0xA, 0, "Potion A" } }, 123100.0);
+    CHECK(clock.ForMs(0xA, 0, "Potion A", 123100.0) == doctest::Approx(100.0));
+    clock.Skip(0.0);
+    clock.Skip(-5.0);   // never moves a wait back
+    CHECK(clock.ForMs(0xA, 0, "Potion A", 124600.0) == doctest::Approx(1600.0));
+}
+
+TEST_CASE("combat upsert wake: a run when a waiting challenger's time gates open (review, PR #254)")
+{
+    // The wanted clock moves only on a run, and a quiet fight skips runs: the
+    // locker names the time the next wait matures, and the skip gates force
+    // one run then (PipelineCoordinator::NeedsForcedRun).
+    constexpr double kNever = -std::numeric_limits<double>::infinity();
+    const double inf = std::numeric_limits<double>::infinity();
+
+    // Resist Fire wanted since 10.0 s, fCombatWantedSec 1.5 s: the run at
+    // 10.1 s schedules one at 11.5 s, and nothing once it has matured.
+    const double matures = 10000.0 + 1500.0;
+    CHECK(NextUpsertWakeMs({ UpsertOpenAtMs(matures, kNever, kNever, kNever, kNever) }, 10100.0) ==
+          doctest::Approx(11500.0));
+    CHECK(NextUpsertWakeMs({ UpsertOpenAtMs(matures, kNever, kNever, kNever, kNever) }, 11500.0) == inf);
+    CHECK(NextUpsertWakeMs({}, 10100.0) == inf);
+
+    // The latest gate decides: off a key until 13 s, the page open at 12 s.
+    CHECK(UpsertOpenAtMs(matures, 13000.0, 12000.0, kNever, kNever) == doctest::Approx(13000.0));
+    CHECK(UpsertOpenAtMs(matures, kNever, 12000.0, 12100.0, kNever) == doctest::Approx(12100.0));
+    CHECK(UpsertOpenAtMs(matures, kNever, kNever, kNever, 11800.0) == doctest::Approx(11800.0));
+    // The earliest challenger wakes the pipeline.
+    CHECK(NextUpsertWakeMs({ 14000.0, 11600.0, 9000.0 }, 10100.0) == doctest::Approx(11600.0));
+
+    // The memory's opening times.
+    CombatUpsertMemory mem;
+    CHECK(mem.PageOpenAtMs(kCombatUpsertPageSpacingMs) == kNever);
+    CHECK(mem.ExcludedUntilMs(0xA, 0, "Potion A", 3000.0) == kNever);
+    mem.NoteUpsert(5000.0);
+    mem.NoteLeft({ 0xA, 0, "Potion A" }, 5000.0);
+    CHECK(mem.PageOpenAtMs(kCombatUpsertPageSpacingMs) == doctest::Approx(5000.0 + kCombatUpsertPageSpacingMs));
+    CHECK(mem.ExcludedUntilMs(0xA, 0, "Potion A", 3000.0) == doctest::Approx(8000.0));
+    CHECK(mem.ExcludedUntilMs(0xF, 0, "Potion A", 3000.0) == doctest::Approx(8000.0));   // same name
+    // Consistent with Excluded and PageOpen at the edge.
+    CHECK(mem.Excluded(0xA, 0, "Potion A", 7999.0, 3000.0));
+    CHECK_FALSE(mem.Excluded(0xA, 0, "Potion A", 8000.0, 3000.0));
+    CHECK(mem.PageOpen(5000.0 + kCombatUpsertPageSpacingMs, kCombatUpsertPageSpacingMs));
+}
+
+TEST_CASE("combat upsert wake: how long a key closed on time stays closed")
+{
+    CHECK(CombatUpsertGateWaitMs(OpenKey()) == 0.0);
+    auto in = OpenKey();
+    in.sincePressMs = 100.0;   // pressed: max(grace 600, floor 500) from the press
+    CHECK(CombatUpsertGateWaitMs(in) == doctest::Approx(500.0));
+    in = OpenKey();
+    in.sinceShownMs = 200.0;   // changed: the grace from the change
+    CHECK(CombatUpsertGateWaitMs(in) == doctest::Approx(400.0));
+    in = OpenKey();
+    in.sinceUpsertMs = 4000.0;   // cooldown 10 s
+    in.sinceShownMs = 4000.0;
+    CHECK(CombatUpsertGateWaitMs(in) == doctest::Approx(6000.0));
+    in.sincePressMs = 100.0;   // both: the later one
+    CHECK(CombatUpsertGateWaitMs(in) == doctest::Approx(6000.0));
+    // A gate that opens on an event, not a time.
+    in = OpenKey();
+    in.shownPinned = true;
+    CHECK(CombatUpsertGateWaitMs(in) == std::numeric_limits<double>::infinity());
+    in = OpenKey();
+    in.wheelOpen = true;
+    CHECK(CombatUpsertGateWaitMs(in) == std::numeric_limits<double>::infinity());
 }
 
 namespace
@@ -322,12 +482,12 @@ namespace
         CombatUpsertMemory mem;
         int changes = 0;
 
-        void Run(double nowMs, const std::vector<Key>& wanted, double barrier, double recentMs)
+        void Run(double nowMs, const std::vector<Key>& wanted, double margin, double recentMs)
         {
             mem.Prune(nowMs, recentMs);
             if (!mem.PageOpen(nowMs, kCombatUpsertPageSpacingMs)) return;
-            std::vector<std::optional<SlotScore>> frozen;
-            for (const auto& k : keys) frozen.push_back(k.score);
+            std::vector<std::optional<UpsertKey>> frozen;
+            for (const auto& k : keys) frozen.push_back(UpsertKey{ k.score, false });
             std::vector<SlotScore> scores;
             std::vector<std::size_t> src;
             for (std::size_t j = 0; j < wanted.size(); ++j) {
@@ -344,9 +504,9 @@ namespace
                     fits[k][c] = src[c] == k || wanted[src[c]].fitsAll;
                 }
             }
-            for (const auto& p : PlanCombatUpserts(frozen, scores, fits, barrier, 1)) {
+            for (const auto& p : PlanCombatUpserts(frozen, scores, fits, margin, 1)) {
                 auto& key = keys[p.key];
-                mem.NoteLeft({ key.formID, 0, key.name }, nowMs, true);
+                mem.NoteLeft({ key.formID, 0, key.name }, nowMs);
                 mem.NoteUpsert(nowMs);
                 key = wanted[src[p.challenger]];
                 ++changes;
@@ -360,9 +520,11 @@ TEST_CASE("combat upsert: no cascade through the item an upsert displaced (verif
     // Key k (Regular) frozen on healing potion A (s=0); key j (Healing) frozen
     // on C (s=-1.5). The seating wants B (damage, s=+1.5, fits only k) on k and
     // A on j. Run 1: B takes k. After that A, shown nowhere and the allocator's
-    // pick for j, must NOT take j: A moving k -> j in 0.1 s is the home-key
-    // move the combat lock defers, as two changes.
-    const double b = CombatUpsertBarrier(3.0f, 0.5f);
+    // pick for j, must NOT take j at once: A moving k -> j in 0.1 s is the
+    // home-key move the combat lock defers, as two changes. 0.24.29 (review of
+    // PR #254): once A has been off its key for recentMs it may come back,
+    // here on j, where it still leads C by more than the margin.
+    const double b = 1.0;
     const double recentMs = 10000.0;
     Page page;
     page.keys = { { 0xA, "Potion A", 0.0, true }, { 0xC, "Spell C", -1.5, true } };
@@ -370,16 +532,20 @@ TEST_CASE("combat upsert: no cascade through the item an upsert displaced (verif
     page.Run(1000.0, wanted, b, recentMs);
     REQUIRE(page.changes == 1);
     CHECK(page.keys[0].formID == 0xB);
-    for (double t = 1100.0; t <= 61000.0; t += 100.0) {   // a minute of runs, past spacing and cooldown
+    for (double t = 1100.0; t < 1000.0 + recentMs; t += 100.0) {   // past the page spacing, inside recentMs
         page.Run(t, wanted, b, recentMs);
     }
     CHECK(page.changes == 1);
     CHECK(page.keys[1].formID == 0xC);
+    page.Run(1000.0 + recentMs, wanted, b, recentMs);
+    CHECK(page.changes == 2);
+    CHECK(page.keys[1].formID == 0xA);
+    CHECK(page.keys[0].formID == 0xB);
 }
 
-TEST_CASE("combat upsert: two keys clearing the barrier at once change one at a time")
+TEST_CASE("combat upsert: two keys clearing the margin at once change one at a time")
 {
-    const double b = CombatUpsertBarrier(3.0f, 0.5f);
+    const double b = 1.0;
     Page page;
     page.keys = { { 0x1, "Old 1", -2.0, true }, { 0x2, "Old 2", -2.0, true } };
     const std::vector<Page::Key> wanted{ { 0x3, "New 3", 1.0, true }, { 0x4, "New 4", 1.0, true } };

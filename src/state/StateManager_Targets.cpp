@@ -18,9 +18,12 @@
 #include "StateManager.h"
 #include "StateConstants.h"
 #include "StateEvaluator.h"  // v0.6.11: For ClassifyActor
+#include "HostileSight.h"    // 0.24.29: cast / ready elements only in sight
 #include "../Profiling.h"
 #include "core/TargetFamilies.h"
 #include "core/TargetTracking.h"
+#include "core/HardGates.h"     // 0.24.31: AllyAimHeld (no_ally_aimed)
+#include "core/NeedSensorMath.h"   // 0.24.32: WoundFraction (ally_injured)
 
 namespace Huginn::State
 {
@@ -30,6 +33,23 @@ namespace Huginn::State
       // casting RIGHT NOW (its glow is on screen) -- never its spell list.
       // Bits: 1 fire, 2 frost, 4 shock, read off the casting spell's
       // harmful effects' resist actor value, the engine's own element.
+      std::uint8_t SpellElementBits(const RE::MagicItem* spell)
+      {
+         std::uint8_t bits = 0;
+         if (!spell) return bits;
+         for (const auto* effect : spell->effects) {
+            const auto* mgef = effect ? effect->baseEffect : nullptr;
+            if (!mgef || !mgef->IsDetrimental()) continue;
+            switch (mgef->data.resistVariable) {
+            case RE::ActorValue::kResistFire: bits |= 1; break;
+            case RE::ActorValue::kResistFrost: bits |= 2; break;
+            case RE::ActorValue::kResistShock: bits |= 4; break;
+            default: break;
+            }
+         }
+         return bits;
+      }
+
       std::uint8_t CastElementBits(RE::Actor* actor)
       {
          std::uint8_t bits = 0;
@@ -37,18 +57,22 @@ namespace Huginn::State
                               RE::MagicSystem::CastingSource::kOther }) {
             auto* caster = actor->GetMagicCaster(source);
             if (!caster || caster->state.get() == RE::MagicCaster::State::kNone) continue;
-            auto* spell = caster->currentSpell;
-            if (!spell) continue;
-            for (const auto* effect : spell->effects) {
-               const auto* mgef = effect ? effect->baseEffect : nullptr;
-               if (!mgef || !mgef->IsDetrimental()) continue;
-               switch (mgef->data.resistVariable) {
-               case RE::ActorValue::kResistFire: bits |= 1; break;
-               case RE::ActorValue::kResistFrost: bits |= 2; break;
-               case RE::ActorValue::kResistShock: bits |= 4; break;
-               default: break;
-               }
-            }
+            bits |= SpellElementBits(caster->currentSpell);
+         }
+         return bits;
+      }
+
+      // 0.24.29: the element of a spell an actor holds READY in either hand
+      // with its hands raised (the readied spell's hand art glows), same bits.
+      // The equipped hands only: what it holds, never what it knows.
+      std::uint8_t ReadyElementBits(RE::Actor* actor)
+      {
+         const auto* state = actor->AsActorState();
+         if (!state || !state->IsWeaponDrawn()) return 0;
+         std::uint8_t bits = 0;
+         for (bool left : { false, true }) {
+            auto* obj = actor->GetEquippedObject(left);
+            bits |= SpellElementBits(obj ? obj->As<RE::SpellItem>() : nullptr);
          }
          return bits;
       }
@@ -84,6 +108,8 @@ namespace Huginn::State
          std::uint32_t families = 0;
          bool summoned = false;
          std::uint8_t castBits = 0;
+         std::uint8_t readyBits = 0;   // 0.24.29: ReadyElementBits
+         std::vector<std::uint32_t> sightRequest;   // 0.24.29: the hostiles HostileSight tests
       };
    }
 
@@ -201,6 +227,7 @@ namespace Huginn::State
       const bool hadTargets = m_targets.primary.has_value() || !m_targets.targets.empty();
       m_targets.Clear();
       m_prevTargetDigest = TargetDigest{};
+      m_allyAimLastSec = -1.0;   // 0.24.31: the ally-look hold ends with the player
       return hadTargets;
       }
 
@@ -322,6 +349,7 @@ namespace Huginn::State
       bool changed = false;
       HostileNeeds hostileNeeds;        // R3: this poll's living combat hostiles
       bool followerBleedout = false;    // R3: a teammate down on one knee
+      float followerHealthMissing = 0.0f;   // 0.24.32: the share of their health the most hurt teammate is missing
       bool playerSummonNear = false;    // R3: the player's own summon or thrall in range (0.23.41)
       bool scoringArcher = false;
       float soleTtk = -1.0f;
@@ -340,6 +368,11 @@ namespace Huginn::State
       // COMBAT_EXIT, which is the window those flips fit inside. Same thread
       // as PollPlayerPosition, the debouncer's only writer.
       const bool inCombat = player->IsInCombat() || m_combatDebounce.Value();
+      if (crosshairOrStickyActor && !crosshairOrStickyActor->IsDead() &&
+          IsPlayerSideActor(crosshairOrStickyActor, player)) {
+        m_allyAimLastSec = nowSec;
+      }
+      m_targets.allyInCrosshair = Core::Gate::AllyAimHeld(m_allyAimLastSec, nowSec);
 
       // Clear SECONDARY ENEMY targets when leaving combat (preserve primary + allies)
       if (!inCombat && !m_targets.targets.empty()) {
@@ -447,8 +480,18 @@ namespace Huginn::State
             if (actor->IsInCombat()) {
               hostileNeeds.families |= GetCachedFamilies(actor);
               hostileNeeds.summoned |= IsSummon(actor);
-              if (actor->IsCasting(nullptr)) {
-                hostileNeeds.castBits |= CastElementBits(actor);
+              // 0.24.29: a cast or a readied spell counts only for a hostile
+              // in the player's line of sight (HostileSight.h; the main-thread
+              // hook tests the ones named here, so a newcomer counts from the
+              // next poll). Health lost to an element needs no sight.
+              const std::uint8_t cast = actor->IsCasting(nullptr) ? CastElementBits(actor) : 0;
+              const std::uint8_t ready = ReadyElementBits(actor);
+              if ((cast | ready) != 0) {
+                hostileNeeds.sightRequest.push_back(formID);
+                if (HostileSight::Sees(formID)) {
+                  hostileNeeds.castBits |= cast;
+                  hostileNeeds.readyBits |= ready;
+                }
               }
             }
 
@@ -745,11 +788,19 @@ namespace Huginn::State
             }
             m_processedAllies.insert(allyFormID);
 
-            // R3 ally_injured, the visible step: a teammate down on one knee.
-            // (The continuous health reading needs a HUD mod's ally bars.)
+            // R3 ally_injured: a teammate down on one knee, and (0.24.32) how
+            // much of their health they are missing -- read here, from the
+            // actor, before the primary target (the follower in the
+            // crosshair) is skipped and before the collection can refuse a
+            // full house.
             if (isTeammate) {
               if (const auto* allyState = ally->AsActorState(); allyState && allyState->IsBleedingOut()) {
                 followerBleedout = true;
+              }
+              if (auto* av = ally->AsActorValueOwner()) {
+                followerHealthMissing = std::max(followerHealthMissing,
+                   Core::Needs::WoundFraction(av->GetActorValue(RE::ActorValue::kHealth),
+                      ally->GetActorValueModifier(RE::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kHealth)));
               }
             }
 
@@ -944,6 +995,11 @@ namespace Huginn::State
         soleTtk = m_soleHostileTtk.Update(sole, soleHealth, nowSec);
       }
 
+      // 0.24.31: no_ally_aimed's pass for heals; 0.24.32: a badly hurt
+      // standing teammate opens it too.
+      m_targets.allyDown = Core::Gate::AllyNeedsHeal(followerBleedout, followerHealthMissing);
+
+
       // Change detection: compare lightweight digest against previous
       TargetDigest digest = ComputeTargetDigest();
       changed = !(digest == m_prevTargetDigest);
@@ -978,18 +1034,39 @@ namespace Huginn::State
       // union over every poll while the published combat flag is up, cleared
       // when it drops (a hostile dying mid-fight does not unset its family).
       // Not part of `changed`: the need sensors never open a skip gate.
+      // 0.24.29: the element facets also take what the fight has shown the
+      // player (Core::Needs::ElementsShown): a hostile seen casting fire,
+      // frost or shock or holding it ready, or health lost to it, held the
+      // same way.
+      HostileSight::Request(std::move(hostileNeeds.sightRequest));
       const bool fighting = m_combatDebounce.Value();
+      std::uint32_t shownNew = 0;
       UpdateNeedSensors([&](NeedSensorState& n) {
-        n.families = fighting ? (n.families | hostileNeeds.families) : 0u;
-        n.hostileSummoned = hostileNeeds.summoned;
-        n.targetArcher = scoringArcher;
-        n.followerBleedout = followerBleedout;
-        n.playerSummonNear = playerSummonNear;
-        n.soleHostileTtk = soleTtk;
         if (hostileNeeds.castBits & 1) n.castFireAt = nowSec;
         if (hostileNeeds.castBits & 2) n.castFrostAt = nowSec;
         if (hostileNeeds.castBits & 4) n.castShockAt = nowSec;
+        const std::uint32_t shown = fighting
+            ? Core::Needs::ElementsShown(nowSec, { n.castFireAt, n.castFrostAt, n.castShockAt },
+                                         { n.hurtFireAt, n.hurtFrostAt, n.hurtShockAt }, hostileNeeds.readyBits)
+            : 0u;
+        const std::uint32_t before = n.families;
+        n.families = fighting ? (n.families | hostileNeeds.families | shown) : 0u;
+        shownNew = shown & ~(before | hostileNeeds.families);
+        n.hostileSummoned = hostileNeeds.summoned;
+        n.targetArcher = scoringArcher;
+        n.followerBleedout = followerBleedout;
+        n.followerHealthMissing = followerHealthMissing;
+        n.playerSummonNear = playerSummonNear;
+        n.soleHostileTtk = soleTtk;
       });
+      if (shownNew != 0) {
+        using Core::Needs::Family;
+        using Core::Needs::FamilyBit;
+        logger::info("[Needs] Fight element held until combat ends:{}{}{} (seen ready, cast or hurt)"sv,
+            (shownNew & FamilyBit(Family::ElementFire)) ? " fire" : "",
+            (shownNew & FamilyBit(Family::ElementFrost)) ? " frost" : "",
+            (shownNew & FamilyBit(Family::ElementShock)) ? " shock" : "");
+      }
 
       LogTargetsAndActors(nowSec, fighting, scoringPick);
 
@@ -1011,10 +1088,12 @@ namespace Huginn::State
       // Outside the primary block: it is the closest hostile, not the primary.
       digest.closestEnemyDistance = m_targets.ClosestEnemyDistanceBucket();
 
-      // Scoring consumes the ANY-hostile-casting aggregate (ContextRuleEngine
-      // ward weights, GameState::anyCasting) — a background caster must produce
+      // Scoring consumes the ANY-hostile-casting aggregate (the legacy context
+      // rules' ward weights, GameState::anyCasting) — a background caster must produce
       // a dirty signal even when the primary target is unchanged.
       digest.anyCasting = m_targets.cachedAnyCasting;
+      digest.allyInCrosshair = m_targets.allyInCrosshair;   // 0.24.31: no_ally_aimed
+      digest.allyDown = m_targets.allyDown;
 
       for (const auto& target : m_targets.targets) {
       if (target.isDead) continue;

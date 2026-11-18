@@ -87,16 +87,6 @@ namespace Huginn::State
       m_lastUpdateChanged = changed;
    }
 
-   bool StateManager::PollAll()
-   {
-      std::lock_guard pollLock(m_pollMutex);
-      bool changed = false;
-      for (auto [timer, interval, poll] : GetPollTable()) {
-         changed |= (this->*poll)();
-      }
-      return changed;
-   }
-
    void StateManager::ResetTrackingState()
    {
       logger::info("[StateManager] ResetTrackingState() - clearing accumulated state for save load"sv);
@@ -124,11 +114,15 @@ namespace Huginn::State
       }
       m_stickyTargetFormID = 0;
       m_stickyTargetLastSeenTime = 0.0f;
+      m_allyAimLastSec = -1.0;   // 0.24.31: no ally-look hold carried into a load
       m_prevTargetDigest = TargetDigest{};
 
       // --- Actor type cache (race could differ between save files) ---
       m_actorTypeCache.clear();
       m_processedAllies.clear();
+
+      // --- The commanded-actor limit: another character's perks (0.24.24) ---
+      m_summonLimit = 1.0f;
 
       // --- Ore-vein caches (FormIDs, esp. FF-runtime ones, can be recycled
       //     between save files — same reason as the actor type cache) ---
@@ -144,9 +138,9 @@ namespace Huginn::State
          *timer = 0.0f;
       }
 
-      // --- Combat transition tracking ---
-      m_combatTransition.store(CombatTransition::None, std::memory_order_relaxed);
+      // --- Combat state ---
       m_isInCombat.store(false, std::memory_order_relaxed);
+      m_lastRefreshDue = 0;
       m_wasInCombat = false;
       m_combatDebounce.Reset();
       m_castingDebounce.Reset();
@@ -167,9 +161,6 @@ namespace Huginn::State
       m_hpGrounded = -1.0f;
       m_fallHpBefore = -1.0f;
       m_pendingLanding = {};
-
-      // --- Elemental window flag (stale true would hold the outer gate open) ---
-      m_elementalWindowActive.store(false, std::memory_order_relaxed);
 
       // --- R3 need sensors: timers, damage sums, the held families ---
       {
@@ -197,9 +188,8 @@ namespace Huginn::State
    {
       logger::info("[StateManager] ForceUpdate() called - polling all sensors"sv);
 
-      // PollAll's loop, under the one lock with the timer reset (PollAll
-      // takes m_pollMutex itself). Each poll, then its timer: the polls do
-      // not read the timers.
+      // Every poll, under m_pollMutex, with its timer reset. Each poll, then
+      // its timer: the polls do not read the timers.
       std::lock_guard pollLock(m_pollMutex);
       for (auto [timer, interval, poll] : GetPollTable()) {
          (void)(this->*poll)();
@@ -235,12 +225,6 @@ namespace Huginn::State
       return m_targets;  // Copy-out pattern
    }
 
-   std::optional<TargetActorState> StateManager::GetPrimaryTarget() const
-   {
-      std::shared_lock lock(m_targetsMutex);
-      return m_targets.primary;  // Copy-out pattern
-   }
-
    HealthTrackingState StateManager::GetHealthTracking() const noexcept
    {
       std::shared_lock lock(m_trackingMutex);
@@ -263,6 +247,12 @@ namespace Huginn::State
    {
       std::shared_lock lock(m_needMutex);
       return m_needSensors;  // Copy-out pattern
+   }
+
+   double StateManager::GetCombatStartAt() const noexcept
+   {
+      std::shared_lock lock(m_needMutex);
+      return m_needSensors.combatStartAt;
    }
 
    StateManager::CoverageState StateManager::GetCoverage() const

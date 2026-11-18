@@ -76,6 +76,10 @@ PICKS = {
     'theta + b + recent + learn mult + fav/corr/potion (D5)': dict(outside=False, feat_spec=['learn', 'mults'],
                                                                   _with=['recent']),
     'theta + b + recent + old learner state (L1)': dict(outside=False, feat_spec=['learner'], _with=['recent']),
+    # 0.24.19: D2's columns as the live score read them (the v3 row's lm / um; 0 / 1 under engine
+    # B): the fit of B on logs from 0.24.17 on (README, 'Logs from 0.24.17 on')
+    'theta + b + recent + learn mult as the live score read it (lm/um, B)': dict(
+        outside=False, feat_spec=['learn_live'], _with=['recent']),
 }
 PICKS_SPLIT = {   # only with --split-at
     'theta + b, needs split by build': dict(outside=False, _with=['split']),

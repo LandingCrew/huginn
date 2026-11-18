@@ -18,6 +18,7 @@ namespace
     constexpr auto S = HandPose::Sheathed;
     constexpr auto M = HandPose::Moving;
     using K = FaultWatch::EventKind;
+    using GK = GraphHandWatch::EventKind;
 }
 
 TEST_CASE("hand model: a drawn part is judged")
@@ -289,4 +290,77 @@ TEST_CASE("pose stuck: a gap in the world restarts a pending clock and leaves a 
     const auto settled = w.Update(kDrawn, 41.0);
     CHECK(settled.kind == PK::Settled);
     CHECK(settled.heldSec == doctest::Approx(21.0));
+}
+
+TEST_CASE("graph hand: only the clear cases of the stuck graph are mismatches")
+{
+    // A spell in the hand: the graph must read magic.
+    CHECK(JudgeGraphHand(HandHeld::Spell, kGraphHandMagic) == GraphHand::Agrees);
+    CHECK(JudgeGraphHand(HandHeld::Spell, 0) == GraphHand::SpellNotMagic);
+    CHECK(JudgeGraphHand(HandHeld::Spell, 2) == GraphHand::SpellNotMagic);
+    // A weapon: anything but magic or fists (Goldbrand under iRightHandType 9).
+    CHECK(JudgeGraphHand(HandHeld::Weapon, 2) == GraphHand::Agrees);
+    CHECK(JudgeGraphHand(HandHeld::Weapon, 8) == GraphHand::Agrees);  // a staff
+    CHECK(JudgeGraphHand(HandHeld::Weapon, kGraphHandMagic) == GraphHand::WeaponAsMagic);
+    CHECK(JudgeGraphHand(HandHeld::Weapon, kGraphHandFists) == GraphHand::WeaponAsFists);
+    // An empty hand: only magic is clearly wrong (the load-time drop: both
+    // hands empty, iRightHandType 9).
+    CHECK(JudgeGraphHand(HandHeld::Empty, 0) == GraphHand::Agrees);
+    CHECK(JudgeGraphHand(HandHeld::Empty, kGraphHandMagic) == GraphHand::EmptyAsMagic);
+    // Not judged.
+    CHECK(JudgeGraphHand(HandHeld::Other, kGraphHandMagic) == GraphHand::Agrees);
+    CHECK(JudgeGraphHand(HandHeld::Other, 0) == GraphHand::Agrees);
+}
+
+TEST_CASE("graph hand: a mismatch held 1 s drawn is reported once, then its end")
+{
+    constexpr std::uint32_t kGoldbrand = 0x0010AA19;
+    GraphHandWatch w{ kGraphMismatchOnsetSec };
+    CHECK(w.Update(kGoldbrand, D, 0, GraphHand::WeaponAsMagic, 0.0).kind == GK::None);
+    CHECK(w.Update(kGoldbrand, D, 0, GraphHand::WeaponAsMagic, 0.75).kind == GK::None);
+    const auto onset = w.Update(kGoldbrand, D, 0, GraphHand::WeaponAsMagic, 1.0);
+    CHECK(onset.kind == GK::Onset);
+    CHECK(onset.state == GraphHand::WeaponAsMagic);
+    CHECK(w.Update(kGoldbrand, D, 0, GraphHand::WeaponAsMagic, 5.0).kind == GK::None);
+    const auto back = w.Update(kGoldbrand, D, 0, GraphHand::Agrees, 6.0);
+    CHECK(back.kind == GK::Recovered);
+    CHECK(back.faultSec == doctest::Approx(6.0));
+}
+
+TEST_CASE("graph hand: equipping (not settled) restarts a pending mismatch")
+{
+    // The caller passes Moving while IsEquipping / IsUnequipping is set, so a
+    // graph a beat behind a swap is not a mismatch.
+    GraphHandWatch w{ kGraphMismatchOnsetSec };
+    w.Update(kEmptyHandKey, D, 0, GraphHand::EmptyAsMagic, 0.0);
+    w.Update(kEmptyHandKey, M, 0, GraphHand::Agrees, 0.5);
+    CHECK_FALSE(w.Pending());
+    w.Update(kEmptyHandKey, D, 0, GraphHand::EmptyAsMagic, 0.75);
+    CHECK(w.Update(kEmptyHandKey, D, 0, GraphHand::EmptyAsMagic, 1.5).kind == GK::None);
+    CHECK(w.Update(kEmptyHandKey, D, 0, GraphHand::EmptyAsMagic, 1.75).kind == GK::Onset);
+}
+
+TEST_CASE("graph hand: a reported mismatch ends when the hand's content changes or stops being judged")
+{
+    constexpr std::uint32_t kFirebolt = 0x0012FD19;
+    GraphHandWatch w{ kGraphMismatchOnsetSec };
+    w.Update(kEmptyHandKey, D, 0, GraphHand::EmptyAsMagic, 0.0);
+    CHECK(w.Update(kEmptyHandKey, D, 0, GraphHand::EmptyAsMagic, 1.0).kind == GK::Onset);
+    const auto swapped = w.Update(kFirebolt, D, 0, GraphHand::Agrees, 2.0);
+    CHECK(swapped.kind == GK::SwappedOut);
+    CHECK(swapped.state == GraphHand::EmptyAsMagic);
+
+    w.Update(kFirebolt, D, 0, GraphHand::SpellNotMagic, 3.0);
+    CHECK(w.Update(kFirebolt, D, 0, GraphHand::SpellNotMagic, 4.0).kind == GK::Onset);
+    CHECK(w.Update(0, D, 0, GraphHand::Agrees, 5.0).kind == GK::SwappedOut);  // a torch: not judged
+}
+
+TEST_CASE("graph hand: the model watch keeps its own onset")
+{
+    // The template change leaves FaultWatch as it was: 2 s by default.
+    CHECK(FaultWatch::kOnsetSec == doctest::Approx(2.0));
+    FaultWatch m;
+    m.Update(kSword, D, k1st, ModelState::NotInHand, 0.0);
+    CHECK(m.Update(kSword, D, k1st, ModelState::NotInHand, 1.0).kind == K::None);
+    CHECK(m.Update(kSword, D, k1st, ModelState::NotInHand, 2.0).kind == K::Onset);
 }

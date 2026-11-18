@@ -147,4 +147,4 @@ Four new vectors allocated per page per pipeline tick. These contribute to the s
 
 ## Relationship to Existing Optimizations
 
-The existing `performance-optimizations.md` lists `Display::Wheeler (5.25ms)` as "Not Optimized — External mod API overhead, out of our control." This analysis shows that **P1-P3 are within Huginn's control** and can reduce the Wheeler push cost substantially without any changes to Wheeler itself. Only P4 requires external coordination.
+The existing `performance-optimizations.md` (since removed, in 326f720) lists `Display::Wheeler (5.25ms)` as "Not Optimized — External mod API overhead, out of our control." This analysis shows that **P1-P3 are within Huginn's control** and can reduce the Wheeler push cost substantially without any changes to Wheeler itself. Only P4 requires external coordination.

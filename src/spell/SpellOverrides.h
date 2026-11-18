@@ -72,8 +72,9 @@ namespace Huginn::Spell
 
       // Which keys have matched since the last load. Mutable because matching
       // happens during classification, which is const; guarded because
-      // classification runs on the update thread and again from the console
-      // thread when `hg dump spells` walks the whole form array.
+      // classification runs on the update thread and may run from another
+      // (the console's dump walked the whole form array from its own thread
+      // until R11 deleted it; the lock stays as cheap insurance).
       mutable std::mutex m_matchMutex;
       mutable std::unordered_set<std::string> m_matchedNames;
       mutable std::unordered_set<RE::FormID> m_matchedFormIDs;

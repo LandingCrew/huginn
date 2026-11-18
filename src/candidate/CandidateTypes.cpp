@@ -24,9 +24,6 @@ namespace Huginn::Candidate
         candidate.range = data.range;
         candidate.isFavorited = data.isFavorited;
 
-        // canAfford will be set by filters based on current magicka
-        candidate.canAfford = true;
-
         return candidate;
     }
 
@@ -73,9 +70,6 @@ namespace Huginn::Candidate
         candidate.value = data.value;
         candidate.count = inventoryCount;
 
-        // Can afford if we have at least one
-        candidate.canAfford = inventoryCount > 0;
-
         return candidate;
     }
 
@@ -110,9 +104,6 @@ namespace Huginn::Candidate
         candidate.maxCharge = data.maxCharge;
         candidate.isFavorited = favorited;
 
-        // Weapons are always "affordable" (no cost to equip)
-        candidate.canAfford = true;
-
         return candidate;
     }
 
@@ -138,9 +129,6 @@ namespace Huginn::Candidate
         candidate.baseDamage = data.baseDamage;
         candidate.hasEnchantment = data.hasEnchantment;
         candidate.count = inventoryCount;
-
-        // Can afford if we have at least one
-        candidate.canAfford = inventoryCount > 0;
 
         return candidate;
     }
@@ -171,9 +159,6 @@ namespace Huginn::Candidate
         candidate.duration = data.duration;
         candidate.count = inventoryCount;
 
-        // Can afford if we have at least one
-        candidate.canAfford = inventoryCount > 0;
-
         return candidate;
     }
 
@@ -203,8 +188,9 @@ namespace Huginn::Candidate
         candidate.magnitudes = invApparel.data.magnitudes;
 
         // Worn gear is the apparel equivalent of an active buff: re-recommending
-        // what the player already has on is pure noise. PassesBasicFilters() drops
-        // it on this flag alone, which is why apparel needs no cooldown.
+        // what the player already has on is pure noise. The apparel gather
+        // (CandidateGenerator) skips a worn piece before it builds a candidate,
+        // which is why apparel needs no cooldown.
         candidate.isEquipped = invApparel.isEquipped;
 
         return candidate;

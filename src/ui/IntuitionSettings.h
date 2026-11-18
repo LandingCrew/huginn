@@ -12,7 +12,7 @@ namespace Huginn::UI
     enum class DisplayMode : uint8_t {
         Minimal = 0,   // Name only (cleanest HUD)
         Normal  = 1,   // Name + contextual details (MP cost, damage, charge, count)
-        Verbose = 2    // Name + details + score breakdown (debug)
+        Verbose = 2    // Name + details + the score and its explanation term (R8.4; debug)
     };
 
     // =========================================================================
@@ -120,9 +120,8 @@ namespace Huginn::UI
             return instance;
         }
 
-        void LoadFromFile(const std::filesystem::path& iniPath);
+        // Over the dMenu descriptor's defaults (Settings::LoadDMenuIni).
         void LoadFromIni(const CSimpleIniA& ini);
-        void ResetToDefaults();
 
         /// Produce an immutable snapshot of all widget settings.
         [[nodiscard]] IntuitionConfig BuildConfig() const;

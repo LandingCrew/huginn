@@ -5,13 +5,10 @@
   "description": "Context-aware spell and equipment recommendation system for Skyrim",
   "license": "MIT",
   "dependencies": [
-    "rsm-binary-io",
     "spdlog",
     "simpleini",
-    "toml11",
     "rapidcsv",
     "doctest",
-    "freetype",
     {
       "name": "imgui",
       "features": ["win32-binding", "dx11-binding"]

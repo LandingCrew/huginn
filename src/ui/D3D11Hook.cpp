@@ -30,9 +30,13 @@ namespace Huginn::UI
         if (renderer.IsInitialized()) {
             static std::atomic<bool> s_firstFrameLogged{ false };
             if (!s_firstFrameLogged.exchange(true, std::memory_order_relaxed)) {
-                logger::info("[D3D11Hook] First ImGui overlay frame"sv);
+                logger::info("[D3D11Hook] First ImGui overlay frame (thread {})"sv, GetCurrentThreadId());
             }
 
+#ifdef _DEBUG
+            // The input thread's queued events, before NewFrame reads io.
+            DebugInputHook::DrainToImGui();
+#endif
             renderer.BeginFrame();
 
 #ifdef _DEBUG

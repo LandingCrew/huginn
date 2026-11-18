@@ -92,6 +92,9 @@ namespace Huginn::Learning
 
         // R4: the selection log v3's capture at the press (logging only).
         DecisionCapture v3{};
+        // R8.2: the decision as the v3 log recorded it (set at confirmation,
+        // before the dispatch): the ChoiceSubscriber's input.
+        std::shared_ptr<const Core::DecisionLog::Decision> v3Decision;
     };
 
 }  // namespace Huginn::Learning

@@ -179,21 +179,24 @@ namespace Huginn::Core::Reach
         std::string_view caseLabel;   // ExternalEquipLearner's A-E label ("" = none)
         // 0.23.46: for a case-A pick, why it was not a candidate (the filter
         // that dropped it, "unscored", "not-gathered"; "" = not given). A
-        // field of its own after util=, so the case label stays as it was
+        // field of its own after score=, so the case label stays as it was
         // (the fit tools and SoakMetrics group by it).
         std::string_view notCandidate;
         bool scored = false;          // Huginn scored it in the run the pick saw
         bool ranked = false;          // its rank is known (inside the sorted prefix), else "tail"
         std::size_t rank = 0;         // 0-based, as the selection log prints it
-        float utility = 0.0f;
+        // R8.4 (0.24.1): what the row ranked on (the choice score mu; s = ln u
+        // in the fallback), any sign. Was the old utility (util=), which
+        // ranks nothing since R8.3.
+        double score = 0.0;
         bool pageKnown = false;       // a pipeline run had been cached
         std::size_t page = 0;
         std::vector<std::pair<std::size_t, std::string>> keys;   // slot index, name: the page as shown
     };
 
     /// "[Reach] 'Fast Healing' 0002F3B8 kind=spell via=magic menu fight=no
-    ///  case=B-low (low rank) rank=14 util=0.83 | page 0: 0=Oakflesh 1=Lesser Ward";
-    ///  a case-A pick adds " filtered_by=<reason>" after util=.
+    ///  case=B-low (low rank) rank=14 score=+0.83 | page 0: 0=Oakflesh 1=Lesser Ward";
+    ///  a case-A pick adds " filtered_by=<reason>" after score=.
     [[nodiscard]] inline std::string FormatLine(const Line& in)
     {
         std::string out = std::format("[Reach] '{}' {:08X} kind={} via={} fight={} case={}",
@@ -201,11 +204,11 @@ namespace Huginn::Core::Reach
             in.via.empty() ? std::string_view("?") : in.via, in.inFight ? "yes" : "no",
             in.caseLabel.empty() ? std::string_view("-") : in.caseLabel);
         if (!in.scored) {
-            out += " rank=- util=-";
+            out += " rank=- score=-";
         } else if (in.ranked) {
-            out += std::format(" rank={} util={:.2f}", in.rank, in.utility);
+            out += std::format(" rank={} score={:+.2f}", in.rank, in.score);
         } else {
-            out += std::format(" rank=tail util={:.2f}", in.utility);
+            out += std::format(" rank=tail score={:+.2f}", in.score);
         }
         if (!in.notCandidate.empty()) {
             out += std::format(" filtered_by={}", in.notCandidate);

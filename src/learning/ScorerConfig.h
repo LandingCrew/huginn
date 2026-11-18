@@ -7,25 +7,15 @@ namespace Huginn::Scoring
     // =============================================================================
     enum class FavoritesMode : uint8_t
     {
-        Boost,      // Favorited items get utility multiplied by favoritesBoostMin-Max
+        Boost,      // Favorited items get utility multiplied by favoritesBoostMax (the legacy floors' input)
         Off,        // Ignore favorites flag entirely (neutral scoring)
         Suppress    // Skip favorited items from recommendations (they're already accessible)
     };
 
-    // =============================================================================
-    // POTION TIER PREFERENCE - which strength of the same potion ranks first
-    // =============================================================================
-    enum class PotionTierPreference : uint8_t
-    {
-        Higher,     // Use the best one now (greedy)
-        None,       // No ordering: natural scores stand, and the slot hold keeps near-ties still
-        Lower       // Save the good ones for later
-    };
-
-    // Utility ratio between adjacent strengths of one potion under Higher/Lower.
-    // Deliberately larger than the slot challenger margin (default 25%), so the
-    // tier rule decides which strength shows and a hold cannot keep the wrong one.
-    inline constexpr float POTION_TIER_STEP = 1.5f;
+    // R8.4 (0.24.1): the potion tier preference (which strength of one potion
+    // ranked first, by a fixed utility step) is gone with its INI key. It
+    // only ever reordered the utility ranking, which nothing ranks on since
+    // R8.3; the choice score orders strengths through cap(i).
 
     // =============================================================================
     // SCORER CONFIGURATION - Tunable parameters for the utility scoring system
@@ -59,10 +49,13 @@ namespace Huginn::Scoring
         // How to handle favorited items
         FavoritesMode favoritesMode = FavoritesMode::Boost;
 
-        // Boost range for favorited items (when mode = Boost)
-        // Utility is multiplied by a value in [favoritesBoostMin, favoritesBoostMax]
-        // Scaled by item's utility rank (top items get higher boost)
-        float favoritesBoostMin = 1.3f;
+        // Boost for favorited items (when mode = Boost): a favourite's utility
+        // is multiplied by favoritesBoostMax. R8.4 (0.24.1): only the uniform
+        // multiplier the old floors test against is left (the "provisional"
+        // value the floor pass always used); the rank scaling that replaced it
+        // after the floors, and its lower end, are gone. A legacy feature
+        // input only: the choice score's favourite term is the battery on b
+        // ([Favorites] fFavoriteLifeMult).
         float favoritesBoostMax = 2.5f;
 
         // ---------------------------------------------------------------------
@@ -105,10 +98,6 @@ namespace Huginn::Scoring
         // Flat restore bonus when resource < 30%
         float flatRestoreLowResourceMult = 1.5f;
 
-        // Which strength of the same potion ranks first -- see
-        // UtilityScorer::ApplyPotionTierPreference
-        PotionTierPreference potionTierPreference = PotionTierPreference::Higher;
-
         // ---------------------------------------------------------------------
         // Scoring Thresholds
         // ---------------------------------------------------------------------
@@ -130,26 +119,21 @@ namespace Huginn::Scoring
         // Performance
         // ---------------------------------------------------------------------
 
-        // How many top candidates count as ranked: the cold-start floor (fewer
-        // scored than this triggers it) and the ranks the selection log reports.
-        // The scorer sorts the WHOLE list since R7 (0.23.11); this no longer
-        // limits the sort.
+        // The legacy floors' cold start: fewer rows kept than this triggers
+        // it (so it decides which rows get the D2 feature). R8.4: nothing
+        // else; the reported rank prefix is PipelineStateCache's own constant.
         size_t topNCandidates = 10;
 
         // ---------------------------------------------------------------------
         // Helper Methods
         // ---------------------------------------------------------------------
 
-        // Get favorites multiplier for an item based on its rank
-        // rank 0 = top item (gets max boost), higher ranks get less boost
-        [[nodiscard]] float GetFavoritesMultiplier(size_t rank, size_t totalItems) const noexcept
+        // The favourites multiplier in the legacy utility: favoritesBoostMax
+        // for a favourite in Boost mode, else 1. (Suppress favourites never
+        // reach scoring: the favorite_suppressed filter drops them, R8.1.)
+        [[nodiscard]] float FavoritesMultiplier(bool favorited) const noexcept
         {
-            if (favoritesMode != FavoritesMode::Boost || totalItems == 0) {
-                return 1.0f;
-            }
-            // Linear interpolation from max to min based on rank position
-            float t = (totalItems > 1) ? static_cast<float>(rank) / static_cast<float>(totalItems - 1) : 0.0f;
-            return favoritesBoostMax - t * (favoritesBoostMax - favoritesBoostMin);
+            return (favoritesMode == FavoritesMode::Boost && favorited) ? favoritesBoostMax : 1.0f;
         }
     };
 

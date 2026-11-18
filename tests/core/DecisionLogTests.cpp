@@ -8,8 +8,10 @@
 // change: run the tests, copy <build>/tests/synthetic_v3.actual.jsonl over the
 // fixture, and update the Python test's expectations. Before a deliberate
 // format change, keep the old golden file beside it under the version that
-// wrote it (synthetic_v3_0.23.52.jsonl: before 0.23.53's old-engine columns),
-// so the readers keep reading it.
+// wrote it (synthetic_v3_0.23.52.jsonl: before 0.23.53's old-engine columns;
+// synthetic_v3_0.24.8.jsonl: 243 columns, before 0.24.9's alcohol moved every
+// column after kind_light; synthetic_v3_0.24.9.jsonl: that column still named
+// alcohol, before 0.24.16 renamed it narcotic), so the readers keep reading it.
 
 #include "core/DecisionLog.h"
 #include "core/NeedIds.h"
@@ -71,6 +73,9 @@ namespace
             h.curves.assign(Needs::kNeedCount, Needs::Curve{ Needs::CurveKind::Step, 0.5f, 0.0f });
             h.curves[N(Needs::NeedId::health_deficit)] = { Needs::CurveKind::Logistic, 0.5f, 10.0f };
             h.curves[N(Needs::NeedId::enemy_count)] = { Needs::CurveKind::Linear, 1.0f, 5.0f };
+            // 0.23.56 (R8.2): the bootstrap the shadow model was seeded from.
+            h.bootstrapCreatedUtc = "2026-10-29 12:29:59";
+            h.bootstrapSha256 = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
             return h;
         }
 
@@ -150,6 +155,22 @@ namespace
                 r.old.prior = 0.55f;
                 r.old.ctx = 0.8f;
                 r.old.floor = static_cast<std::uint8_t>(Floor::pass);
+                // 0.23.56 (R8.2): the shadow score; explained by
+                // health_deficit x restore_health; four nulls (wu, hk) between.
+                r.mu = 1.25f;
+                r.sd = 0.4f;
+                r.lm = 0.3125f;
+                r.um = 0;
+                r.exNeed = static_cast<std::int16_t>(N(Needs::NeedId::health_deficit));
+                r.exCol = static_cast<std::int16_t>(C("restore_health"));
+                // 0.24.17: the D2 engine in shadow: A ranks it first and
+                // shows it on key 0 of its stateless page; the live ranking
+                // second, on key 2 of its own.
+                r.legacyShadowMu = 1.75f;
+                r.legacyShadowRankA = 1;
+                r.legacyShadowRankB = 2;
+                r.legacyShadowKeyA = 0;
+                r.legacyShadowKeyB0 = 2;
                 p->rows.push_back(r);
             }
             {
@@ -175,6 +196,13 @@ namespace
                 r.old.prior = 0.3f;
                 r.old.ctx = 0.02f;
                 r.old.floor = static_cast<std::uint8_t>(Floor::cold);
+                // 0.24.17: off A's stateless page (rank 7), on the live
+                // ranking's (rank 4, key 5); no mu..ex in between (nulls).
+                r.legacyShadowMu = 0.2f;
+                r.legacyShadowRankA = 7;
+                r.legacyShadowRankB = 4;
+                r.legacyShadowKeyA = -1;
+                r.legacyShadowKeyB0 = 5;
                 p->rows.push_back(r);
             }
             {
@@ -205,13 +233,19 @@ namespace
                 r.kind = static_cast<std::uint8_t>(Effect::Kind::Armour);
                 r.flags = Flag::Held | Flag::Equipped;
                 r.cap = &boots;
-                // 0.23.53: held, never gathered: the learner's metrics only
-                // (the row ends after rec).
+                // 0.23.53: held, never gathered: the learner's metrics only.
                 r.old.est = 0.0f;
                 r.old.alpha = 0.0f;
                 r.old.trains = 0.0f;
                 r.old.ucb = 1.0f;
                 r.old.rec = 0.0f;
+                // 0.23.56 (R8.2): scored by the shadow model at the context
+                // (ln learn mult 0, util missing 1), no positive need term.
+                r.mu = -0.5f;
+                r.sd = 0.35f;
+                r.lm = 0.0f;
+                r.um = 1;
+                r.exNeed = kExLearned;
                 p->rows.push_back(r);
             }
             {
@@ -522,9 +556,49 @@ TEST_CASE("decision log: the old engine's columns end at the last one set (0.23.
     CHECK(encodeRow(r) == R"(["00000012",0,null,null,-1,4,-1,null,[],null,null,null,0,0,0,1,0,null,null,null,null,0])");
     // The head names the columns and the floors.
     const std::string head = Encoder().BeginSegment(Synthetic::MakeHead());
-    CHECK(head.find(R"("fb","cr","est","a","n","ucb","rec","prior","cw","fl","wu","hk"])") != std::string::npos);
+    CHECK(head.find(R"("fb","cr","est","a","n","ucb","rec","prior","cw","fl","wu","hk","mu","sd","lm","um","ex",)"
+                    R"("amu","ar","br","ak","bk"])") != std::string::npos);
+    // 0.23.56 (R8.2): the bootstrap the shadow model was seeded from
+    CHECK(head.find(R"(,"bootstrap":{"created_utc":"2026-10-29 12:29:59","sha256":"0011)") != std::string::npos);
+    {
+        Head none = Synthetic::MakeHead();
+        none.bootstrapSha256.clear();
+        CHECK(Encoder().BeginSegment(none).find("bootstrap") == std::string::npos);
+    }
+    // 0.23.56: the shadow columns end at the last one set, and the hotkey
+    // column reads null (not -1) when a later column is written.
+    r.hotkey = kNoHotkey;
+    r.mu = 0.5f;
+    CHECK(encodeRow(r) == R"(["00000012",0,null,null,-1,4,-1,null,[],null,null,null,0,0,0,1,0,null,null,null,null,null,0.5])");
+    r.um = 1;
+    r.exNeed = kExLearned;
+    CHECK(encodeRow(r) == R"(["00000012",0,null,null,-1,4,-1,null,[],null,null,null,0,0,0,1,0,null,null,null,null,null,0.5,null,null,1,"learned"])");
+    r.exNeed = 3;
+    r.exCol = 26;
+    CHECK(encodeRow(r).ends_with(R"(1,[3,26]])"));
+    r.mu = kNone;
+    r.um = -1;
+    r.exNeed = kExNone;
+    // 0.24.17: the D2 shadow's columns: a rank of 0 and a key of
+    // kNoShadowKey read null, a key of -1 (off that page) is written.
+    r.legacyShadowKeyA = -1;
+    CHECK(encodeRow(r) == R"(["00000012",0,null,null,-1,4,-1,null,[],null,null,null,0,0,0,1,0,null,null,null,null,null,)"
+                          R"(null,null,null,null,null,null,null,null,-1])");
+    r.legacyShadowMu = -0.25f;
+    r.legacyShadowRankB = 12;
+    r.legacyShadowKeyB0 = 3;
+    CHECK(encodeRow(r).ends_with(R"(null,null,null,null,null,-0.25,null,12,-1,3])"));
+    r.legacyShadowMu = kNone;
+    r.legacyShadowRankB = 0;
+    r.legacyShadowKeyA = kNoShadowKey;
+    r.legacyShadowKeyB0 = kNoShadowKey;
     CHECK(head.find(R"("addedAtPick":256,"favorite":512})") != std::string::npos);
     CHECK(head.find(R"("floors":["pass","cold","ctx","util","suppressed"])") != std::string::npos);
+    // 0.23.55: covered(i)'s left(r) centre, [Scoring] fRefreshPriorSec.
+    CHECK(head.find(R"(,"refreshPriorSec":5.000)") != std::string::npos);
+    Head h = Synthetic::MakeHead();
+    h.refreshPriorSec = 3.0f;
+    CHECK(Encoder().BeginSegment(h).find(R"(,"refreshPriorSec":3.000)") != std::string::npos);
 }
 
 TEST_CASE("decision log: a pick carries the v2 record id; nothing carries none (0.23.53)")

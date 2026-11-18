@@ -9,16 +9,16 @@ namespace Huginn::Context
     // CONTEXT REASON (architecture-critique #10)
     // =========================================================================
     // One vocabulary for "why does the current situation matter", shared by:
-    //   - ContextRuleEngine::DominantReason() — derived from the SAME continuous
-    //     weight curves that drive scoring (no parallel threshold pass)
+    //   - the choice score's explanation (R8.3): the need of an item's largest
+    //     theta n cap term, mapped to a reason (display/NeedReason.h)
     //   - CandidateBase::overrideReason — stamped by OverrideManager on the
     //     candidate it surfaced, so the display can say why it jumped the queue
     //
     // The enum carries no display text: the display layer owns the wording
     // (Display::ReasonLabel in display/ExplanationLabel.h).
     //
-    // Ordering IS display priority: DominantReason() marks every reason whose
-    // threshold is met and then returns the lowest enumerator among them, so
+    // Ordering IS display priority: the page's label is the lowest enumerator
+    // among the explanations of what it shows (PipelineCoordinator), so
     // reordering here reorders the labels — no second list to keep in sync.
     // =========================================================================
     enum class ContextReason : uint8_t

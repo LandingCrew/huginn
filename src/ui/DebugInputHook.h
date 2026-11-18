@@ -28,21 +28,26 @@ namespace Huginn::UI
         static bool Install();
 
         /// Whether the user has toggled interaction mode (Home key).
-        static bool IsInteracting() { return s_interacting; }
+        static bool IsInteracting() { return s_interacting.load(std::memory_order_relaxed); }
+
+        /// Hand the events the input thread queued to ImGui. Call on the
+        /// render thread, before ImGui's NewFrame (PresentHook).
+        static void DrainToImGui();
 
     private:
         /// The hooked dispatch function — replaces BSInputDeviceManager::DispatchEvents.
         static void DispatchHook(RE::BSTEventSource<RE::InputEvent*>* a_dispatcher,
                                  RE::InputEvent** a_events);
 
-        /// Translate a single RE::ButtonEvent into ImGui IO calls.
+        /// Translate a single RE::ButtonEvent into queued ImGui events.
         static void TranslateButtonEvent(RE::ButtonEvent* a_button);
 
         /// Translate a DirectInput scan code → Windows VK → ImGuiKey.
         static ImGuiKey VirtualKeyToImGuiKey(uint32_t a_vkCode);
 
         /// Toggle flag — true while the user is interacting with debug widgets.
-        static inline bool s_interacting = false;
+        /// Set on the input thread, read on the render thread.
+        static inline std::atomic<bool> s_interacting{ false };
 
         /// Trampoline storage for the original dispatch function.
         static inline REL::Relocation<decltype(DispatchHook)> _originalDispatch;

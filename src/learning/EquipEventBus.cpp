@@ -14,12 +14,6 @@ namespace Huginn::Learning
         m_subscribers.push_back(subscriber);
     }
 
-    void EquipEventBus::Unsubscribe(IEquipSubscriber* subscriber)
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        std::erase(m_subscribers, subscriber);
-    }
-
     void EquipEventBus::Dispatch(const EquipEvent& event)
     {
         // Snapshot subscriber list under m_mutex, then dispatch OUTSIDE it.

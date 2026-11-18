@@ -79,17 +79,6 @@ namespace Huginn::Override
         // DEBUG / DIAGNOSTICS
         // =============================================================================
 
-        /**
-         * @brief Check if a specific override is currently active
-         * @param overrideName Name of the override ("CriticalHealth", "Drowning", "WeaponCharge")
-         */
-        [[nodiscard]] bool IsOverrideActive(std::string_view overrideName) const;
-
-        /**
-         * @brief Get the count of currently active overrides
-         */
-        [[nodiscard]] size_t GetActiveOverrideCount() const noexcept { return m_lastActiveCount; }
-
     private:
         OverrideManager() = default;
         ~OverrideManager() = default;

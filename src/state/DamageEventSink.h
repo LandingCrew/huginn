@@ -64,9 +64,6 @@ namespace Huginn::State
       /// Called by StateManager::PollHealthTracking() to get pending events
       [[nodiscard]] std::vector<QueuedDamageEvent> DrainQueue();
 
-      /// Get queue size (for debugging)
-      [[nodiscard]] size_t GetQueueSize() const;
-
    protected:
       /// Process TESHitEvent - called on game thread when any actor is hit
       RE::BSEventNotifyControl ProcessEvent(

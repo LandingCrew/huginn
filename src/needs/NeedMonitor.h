@@ -1,16 +1,18 @@
 #pragma once
 
 // =============================================================================
-// NEED MONITOR (R3) -- the need vector on its own cadence, logged only
+// NEED MONITOR (R3; R8.3: the scorer's input and a skip-gate key)
 // =============================================================================
 // Every update tick (UpdateLoop, after the sensors poll) the monitor builds the
 // live need snapshot (NeedSnapshotBuilder::ReadLiveNeeds) and evaluates it.
-// It is NOT part of the recommendation pipeline: it does not open either skip
-// gate and nothing that scores, allocates or displays reads it, so the
-// pipeline runs exactly when it did before R3. (Putting the need signature in
-// the skip gate moved to R8, the cutover: verifier round 1 on #188 modelled it
-// at 0.17 -> 4.6 pipeline runs/s in a melee fight and a 60% rise in wildcard
-// screen time while exploring -- not "logged only".)
+// R8.3: the choice score reads the vector (PipelineCoordinator), and its
+// 0.05-step signature (core/NeedEvaluator.h SignatureHash) joins both skip
+// gates: a continuous need re-scores the page when it moves a step. It
+// replaced the gate's ambient signature and elemental window. Modelled by
+// verifier round 1 on #188 at 0.17 -> 4.6 pipeline runs/s in a melee fight,
+// 0.01 -> 0.44 on a quiet walk, a wildcard on screen ~20% -> ~32% of quiet
+// exploration and ~4.6 Wheeler pushes/s in fights; the [Soak] heartbeat's
+// `rate` field measures all three.
 //
 // Logging: one [Needs] debug line when the 0.05-step signature moves -- a need
 // turns on or off, or one moves kLogDeadbandLevels steps (0.25) from the line
@@ -22,7 +24,9 @@
 
 #include "NeedSnapshotBuilder.h"
 
+#include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <mutex>
 #include <optional>
 
@@ -43,6 +47,13 @@ namespace Huginn::Needs
       /// The last tick's vector (a copy); empty before the first tick.
       [[nodiscard]] std::optional<LiveNeeds> Latest() const;
 
+      /// R8.3: the last tick's signature hash (core/NeedEvaluator.h
+      /// SignatureHash); 0 before the first tick.
+      [[nodiscard]] std::uint64_t LatestSignatureHash() const noexcept
+      {
+         return m_sigHash.load(std::memory_order_acquire);
+      }
+
       static constexpr std::chrono::milliseconds kLogInterval{ 1000 };
       static constexpr int kLogDeadbandLevels = 5;  // 0.25: logging only
 
@@ -51,6 +62,7 @@ namespace Huginn::Needs
 
       mutable std::mutex m_mutex;
       std::optional<LiveNeeds> m_latest;
+      std::atomic<std::uint64_t> m_sigHash{ 0 };
       std::optional<Core::Needs::NeedSignature> m_lastLogged;
       std::chrono::steady_clock::time_point m_lastLogAt{};
    };

@@ -2,6 +2,7 @@
 #include "IniLoad.h"
 #include <SimpleIni.h>
 #include <algorithm>
+#include <cmath>
 
 // Debug widgets only exist in debug builds
 #ifdef _DEBUG
@@ -18,15 +19,6 @@ namespace Huginn::UI
         return instance;
     }
 
-    void DebugSettings::LoadFromFile(const std::filesystem::path& iniPath)
-    {
-        CSimpleIniA ini;
-        if (LoadIniFile(ini, iniPath, "DebugSettings"sv)) {
-            LoadFromIni(ini);
-            ApplyToWidgets();  // standalone load-then-apply convenience
-        }
-    }
-
     // [Debug] lives in ONE file: dMenu's own INI. See IntuitionSettings::LoadFromIni.
     void DebugSettings::LoadFromIni(const CSimpleIniA& ini)
     {
@@ -35,29 +27,21 @@ namespace Huginn::UI
         stateManagerVisible = ini.GetBoolValue(section, "bShowStateManager", DebugDefaults::STATE_MANAGER_VISIBLE);
         registryVisible = ini.GetBoolValue(section, "bShowRegistry", DebugDefaults::REGISTRY_VISIBLE);
         utilityScorerVisible = ini.GetBoolValue(section, "bShowUtilityScorer", DebugDefaults::UTILITY_SCORER_VISIBLE);
-        recLogVerbosity = std::clamp(
-            static_cast<int>(ini.GetLongValue(section, "iRecommendationLog", DebugDefaults::REC_LOG_VERBOSITY)),
-            0, 2);
+        // A dMenu slider: dMenu writes it as a float ("2.000000"), and
+        // GetLongValue returns its fallback for anything but integer text, so
+        // read as a long the slider never took (it read 1 whatever was set).
+        // Read the float and round it; integer text ("2") reads the same.
+        const double recLog = ini.GetDoubleValue(section, "iRecommendationLog", DebugDefaults::REC_LOG_VERBOSITY);
+        recLogVerbosity = std::isfinite(recLog)
+            ? static_cast<int>(std::clamp(std::lround(recLog), 0L, 2L))
+            : DebugDefaults::REC_LOG_VERBOSITY;
 
         logger::info("[DebugSettings] Loaded: StateManager={}, Registry={}, UtilityScorer={}, RecLog={}"sv,
             stateManagerVisible, registryVisible, utilityScorerVisible, recLogVerbosity);
         // No ApplyToWidgets() here — LoadFromIni is a pure loader (Phase 1), like
-        // every other settings class. Callers apply visibility explicitly: the
-        // LoadFromFile wrapper, InitializeGameSystems, and the reload path's
+        // every other settings class. Callers apply visibility explicitly:
+        // InitializeGameSystems (and its early kDataLoaded read), and the reload path's
         // ApplySideEffects (Phase 2).
-    }
-
-    void DebugSettings::ResetToDefaults()
-    {
-        stateManagerVisible = DebugDefaults::STATE_MANAGER_VISIBLE;
-        registryVisible = DebugDefaults::REGISTRY_VISIBLE;
-        utilityScorerVisible = DebugDefaults::UTILITY_SCORER_VISIBLE;
-        recLogVerbosity = DebugDefaults::REC_LOG_VERBOSITY;
-
-        logger::info("[DebugSettings] Reset to defaults"sv);
-
-        // Apply to widgets
-        ApplyToWidgets();
     }
 
     void DebugSettings::ApplyToWidgets()

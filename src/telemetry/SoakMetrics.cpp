@@ -3,7 +3,8 @@
 #include "Config.h"
 #include "Globals.h"
 #include "Profiling.h"
-#include "learning/FeatureBanditLearner.h"
+#include "learning/ChoiceLearner.h"
+#include "learning/legacy/LegacyRun.h"   // the old learner's counts (D2, R8.4)
 
 #include <algorithm>
 #include <format>
@@ -81,9 +82,10 @@ namespace Huginn::Telemetry
 
     void SoakMetrics::RecordPipelineRun([[maybe_unused]] std::size_t candidateCount,
         [[maybe_unused]] std::size_t displayedCount,  // read only by Huginn_PLOT (Tracy builds)
-        bool overrideActive)
+        bool overrideActive, bool wildcardShown)
     {
         m_recomputes.fetch_add(1, std::memory_order_relaxed);
+        m_wildcardOnScreen.store(wildcardShown, std::memory_order_relaxed);
         if (overrideActive) {
             m_overrideRuns.fetch_add(1, std::memory_order_relaxed);
         }
@@ -141,10 +143,20 @@ namespace Huginn::Telemetry
                 if (change.ratio != ChallengerRatio::NotApplicable) {
                     m_challengerRatios[static_cast<std::size_t>(change.ratio)].fetch_add(1, std::memory_order_relaxed);
                 }
+                if (change.dsd != Core::Challenger::DeltaSdBucket::Count) {
+                    m_deltaSd[static_cast<std::size_t>(change.dsd)].fetch_add(1, std::memory_order_relaxed);
+                    if (change.underLine) m_underLine.fetch_add(1, std::memory_order_relaxed);
+                }
                 if (change.cause == SlotChange::Page || change.slotIndex >= SLOT_CHURN_SLOTS) {
                     continue;
                 }
                 ++counted;
+                if (change.bounce) {
+                    m_bounces.fetch_add(1, std::memory_order_relaxed);
+                    if (change.cause == SlotChange::Expired || change.cause == SlotChange::Unheld) {
+                        m_bouncesHold.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
                 // Tenure measures juggling the player did not ask for: a change
                 // the player's own press caused -- the Used backfill, a
                 // Remembrance hold arriving or leaving -- is left out.
@@ -184,6 +196,9 @@ namespace Huginn::Telemetry
         const uint32_t micros = tickMs > 0.0f ? static_cast<uint32_t>(tickMs * 1000.0f) : 0u;
         m_ticks.fetch_add(1, std::memory_order_relaxed);
         m_tickSumMicros.fetch_add(micros, std::memory_order_relaxed);
+        if (m_wildcardOnScreen.load(std::memory_order_relaxed)) {
+            m_wildcardTicks.fetch_add(1, std::memory_order_relaxed);
+        }
 
         uint32_t prevPeak = m_tickPeakMicros.load(std::memory_order_relaxed);
         while (micros > prevPeak &&
@@ -197,11 +212,11 @@ namespace Huginn::Telemetry
         const float elapsedMs = std::chrono::duration<float, std::milli>(elapsed).count();
         if (elapsedMs >= Config::SOAK_HEARTBEAT_INTERVAL_MS) {
             m_windowStart.store(nowTicks, std::memory_order_relaxed);
-            EmitHeartbeat(now);
+            EmitHeartbeat(now, elapsedMs / 1000.0f);
         }
     }
 
-    void SoakMetrics::EmitHeartbeat(std::chrono::steady_clock::time_point now)
+    void SoakMetrics::EmitHeartbeat(std::chrono::steady_clock::time_point now, float windowSec)
     {
         // Read-and-reset the window counters.
         const uint32_t hit   = m_hit.exchange(0, std::memory_order_relaxed);
@@ -216,6 +231,11 @@ namespace Huginn::Telemetry
         const uint32_t recomputes   = m_recomputes.exchange(0, std::memory_order_relaxed);
         const uint32_t overrideRuns = m_overrideRuns.exchange(0, std::memory_order_relaxed);
         const uint32_t pageBails    = m_pageRaceBails.exchange(0, std::memory_order_relaxed);
+        const uint32_t wheelerPushes = m_wheelerPushes.exchange(0, std::memory_order_relaxed);
+        const uint32_t wildcardTicks = m_wildcardTicks.exchange(0, std::memory_order_relaxed);
+        const uint32_t wildcardRolls = m_wildcardRolls.exchange(0, std::memory_order_relaxed);
+        const uint32_t wildcardRelevant = m_wildcardRollsRelevant.exchange(0, std::memory_order_relaxed);
+        const uint32_t wildcardPicks = m_wildcardPicks.exchange(0, std::memory_order_relaxed);
         const uint64_t sumMicros    = m_tickSumMicros.exchange(0, std::memory_order_relaxed);
         const uint32_t peakMicros   = m_tickPeakMicros.exchange(0, std::memory_order_relaxed);
         const uint32_t pressRegular = m_pressRegular.exchange(0, std::memory_order_relaxed);
@@ -245,6 +265,13 @@ namespace Huginn::Telemetry
         for (std::size_t r = 0; r < ratios.size(); ++r) {
             ratios[r] = m_challengerRatios[r].exchange(0, std::memory_order_relaxed);
         }
+        std::array<uint32_t, static_cast<std::size_t>(Core::Challenger::DeltaSdBucket::Count)> deltaSd{};
+        for (std::size_t b = 0; b < deltaSd.size(); ++b) {
+            deltaSd[b] = m_deltaSd[b].exchange(0, std::memory_order_relaxed);
+        }
+        const uint32_t underLine = m_underLine.exchange(0, std::memory_order_relaxed);
+        const uint32_t bounces = m_bounces.exchange(0, std::memory_order_relaxed);
+        const uint32_t bouncesHold = m_bouncesHold.exchange(0, std::memory_order_relaxed);
         uint32_t churnPeak = 0;
         std::size_t churnPeakSlot = 0;
         {
@@ -286,7 +313,15 @@ namespace Huginn::Telemetry
                 churnStr += std::format("{}{}={}", r ? " " : "",
                     ChallengerRatioName(static_cast<ChallengerRatio>(r)), ratios[r]);
             }
-            churnStr += ") tenure(";
+            // R9: the same changes on Delta / sigma_Delta, and how many were
+            // at or under the challenger rule's line on raw scores (the hold
+            // passes none of those but its class-capped give-ways).
+            churnStr += ") dsd(";
+            for (std::size_t b = 0; b < deltaSd.size(); ++b) {
+                churnStr += std::format("{}{}={}", b ? " " : "",
+                    Core::Challenger::DeltaSdBucketName(static_cast<Core::Challenger::DeltaSdBucket>(b)), deltaSd[b]);
+            }
+            churnStr += std::format(") under={} tenure(", underLine);
             for (std::size_t b = 0; b < tenure.size(); ++b) {
                 churnStr += std::format("{}{}={}", b ? " " : "",
                     TenureBandName(static_cast<TenureBand>(b)), tenure[b]);
@@ -313,14 +348,30 @@ namespace Huginn::Telemetry
         const float avgMs  = ticks ? (static_cast<float>(sumMicros) / 1000.0f / ticks) : 0.0f;
         const float peakMs = static_cast<float>(peakMicros) / 1000.0f;
 
-        std::size_t learnerItems = 0;
-        uint32_t learnerTrains = 0;
-        uint64_t learnerForgot = 0;
-        if (g_featureBanditLearner) {
-            learnerItems  = g_featureBanditLearner->GetItemCount();
-            learnerTrains = g_featureBanditLearner->GetTotalTrainCount();
-            learnerForgot = g_featureBanditLearner->GetForgottenTotal();
+        // The old learner (kept for D2's ln learn mult; BNDW).
+        const auto oldLearner = Scoring::Legacy::Counts();
+        const std::size_t learnerItems = oldLearner.items;
+        const uint32_t learnerTrains = oldLearner.trains;
+        const uint64_t learnerForgot = oldLearner.forgot;
+        // R8.3: the choice learner beside the old one (theta entries moved
+        // from the bootstrap / all keyed entries, b items), or "off" in the
+        // fallback ranking.
+        std::string choiceStr = "off";
+        if (g_choiceLearner && g_choiceLearner->Ready()) {
+            const auto st = g_choiceLearner->GetStats();
+            choiceStr = std::format("theta={}/{} b={} picks={}", st.thetaMoved, st.thetaEntries, st.bEntries,
+                st.picksLearned);
         }
+        // R8.3: the rates the need-signature gate was modelled at (runs/s
+        // 4.6 in a melee fight, 0.44 on a quiet walk; wildcard on screen 20%
+        // to 32% exploring; Wheeler 4.6 pushes/s in fights).
+        const float win = windowSec > 0.0f ? windowSec : 1.0f;
+        // R10: appended, so every field before it keeps its place.
+        const std::string rateStr = std::format("runs/s={:.2f} wildcard={:.0f}% wheeler/s={:.2f} "
+            "wildcards rolled={} relevant={} picked={}",
+            static_cast<float>(recomputes) / win,
+            ticks ? 100.0f * static_cast<float>(wildcardTicks) / static_cast<float>(ticks) : 0.0f,
+            static_cast<float>(wheelerPushes) / win, wildcardRolls, wildcardRelevant, wildcardPicks);
 
         const int64_t upTicks = now.time_since_epoch().count() -
                                 m_processStart.load(std::memory_order_relaxed);
@@ -339,10 +390,73 @@ namespace Huginn::Telemetry
         // not, and by kind; it counts enchanted gear too, which reachIns does
         // not (ReachReporter).
         const uint32_t pressTotal = pressRegular + pressLabeled;
+        // R9, churn per press (the in-game comparison against the R8
+        // session): the visible changes the player did not cause -- every
+        // cause but a page switch, a Used backfill, a Remembrance hold and an
+        // override (trace-04's "without player or safety causes") -- over
+        // the presses. Both counts are printed so windows sum (a session's
+        // figure is the sum over the sum, not a mean of ratios); R8's
+        // heartbeat carries the same causes and presses, so
+        // tools/soak/churn_per_press.py computes it for either build.
+        const uint32_t ownChurn = churnTotal - churn[static_cast<std::size_t>(SlotChange::Page)] -
+                                  churn[static_cast<std::size_t>(SlotChange::Used)] -
+                                  churn[static_cast<std::size_t>(SlotChange::Remembrance)] -
+                                  churn[static_cast<std::size_t>(SlotChange::Override)];
+        const std::string perPressStr = std::format("churn={} presses={} churn/press={} bounce10s={} (hold={})",
+            ownChurn, pressTotal,
+            pressTotal ? std::format("{:.2f}", static_cast<float>(ownChurn) / static_cast<float>(pressTotal))
+                       : std::string("n/a"),
+            bounces, bouncesHold);
+        // R11 (map Phase 9): theta drift, appended last so every field before
+        // it keeps its place (tools/soak reads fields by name). The moved
+        // count above climbs with every answered onset whether or not a mean
+        // changed (the opportunity counter widens variances); these say how
+        // far the MEANS moved (core/ThetaDrift.h): weights whose mean moved,
+        // their mean and largest |mu - mu_boot| and where, the mean
+        // ln(var / var_boot), b's spread, and theta_covered. "off" in the
+        // fallback ranking.
+        std::string driftStr = "off";
+        if (g_choiceLearner && g_choiceLearner->Ready()) {
+            const auto d = g_choiceLearner->GetDrift();
+            std::string at = "-";
+            if (d.theta.maxSlot < Core::Choice::K * Core::Choice::J) {
+                const std::size_t k = d.theta.maxSlot / Core::Choice::J;
+                const std::size_t j = d.theta.maxSlot % Core::Choice::J;
+                at = std::format("{}:{}", Core::Needs::kNeeds[k].id, Core::Effect::kColumns[j].id);
+            }
+            driftStr = std::format("mu-moved={} dmean={:.4f} drms={:.4f} dmax={:+.3f} at={} var-moved={} lnvar={:+.3f} "
+                                   "b={} bmean={:.3f} bmax={:.3f} covered={:+.3f}",
+                d.theta.meanMoved, d.theta.meanAbsDelta, d.theta.rmsDelta, d.theta.maxDelta, at, d.theta.varMoved,
+                d.theta.meanLnVar, d.b.entries, d.b.meanAbsMu, d.b.maxAbsMu, d.covered.mu);
+        }
+        // 0.24.17: the D2 engine in shadow beside the live one, appended last
+        // so every field before it keeps its place (tools/soak reads by name
+        // and position). Per pick of the window: key / wheel picks and menu
+        // reach-ins, whether A's stateless page held the chosen item and
+        // whether the live ranking's stateless page did (the control: the
+        // two differ only by the ranking), the reach-ins only one of them
+        // held, and picks whose context had no shadow (nodata). "moot" with
+        // bLegacyLearnFeature on (A is live), "off" with bShadowLegacy off.
+        Core::ShadowCompare::Tally legacyShadowTally;
+        {
+            std::lock_guard lock(m_shadowMutex);
+            legacyShadowTally = legacyShadowWindowTally;
+            legacyShadowWindowTally = {};
+        }
+        const bool shadowMoot = Scoring::Legacy::Enabled();
+        const bool shadowOn = Scoring::Legacy::ShadowEnabled();
+        const std::string shadowStr = shadowMoot ? std::string("moot (bLegacyLearnFeature on: A is live)")
+            : !shadowOn ? std::string("off")
+            : std::format("keys={} keysOnA={} keysOnB0={} reach={} reachOnA={} reachOnB0={} reachAonly={} "
+                          "reachB0only={} nodata={}",
+                  legacyShadowTally.keys, legacyShadowTally.keysOnA, legacyShadowTally.keysOnB0,
+                  legacyShadowTally.reach, legacyShadowTally.reachOnA, legacyShadowTally.reachOnB0,
+                  legacyShadowTally.reachAOnly, legacyShadowTally.reachB0Only, legacyShadowTally.noData);
         logger::info(
             "[Soak] up={}h{:02}m{:02}s | equips hit={} near={} miss={} novel={} new={} accept={} skipped={} | "
             "recompute={}/{} ticks override={} pageBail={} | slotChurn={} | learn items={} trains={} forgot={} | tick avg={:.3f} peak={:.3f} ms | "
-            "goals reachIns={} (candidate={}) presses={} (regular={} labeled={} offPage={}) pageFlips={} | {}"sv,
+            "goals reachIns={} (candidate={}) presses={} (regular={} labeled={} offPage={}) pageFlips={} | {} | "
+            "choice {} | rate {} | perPress {} | drift {} | shadowA {}"sv,
             upH, upM, upS,
             hit, near_, miss, novel, learned, acceptStr, skipStr,
             recomputes, ticks, overrideRuns, pageBails,
@@ -351,7 +465,7 @@ namespace Huginn::Telemetry
             avgMs, peakMs,
             totalEquips + learned, hit + near_ + miss,
             pressTotal, pressRegular, pressLabeled, pressOffPage, pageFlips,
-            Core::Reach::FormatSplit(reach));
+            Core::Reach::FormatSplit(reach), choiceStr, rateStr, perPressStr, driftStr, shadowStr);
 
         Huginn_PLOT("Huginn/Learner Items", static_cast<int64_t>(learnerItems));
         // Only plot windows that carry signal — zero-equip windows would drag the

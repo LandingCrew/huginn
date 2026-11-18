@@ -84,10 +84,10 @@ namespace Huginn::Learning
             event.attribution.empty() ? ""sv : " case="sv, event.attribution);
     }
 
-    void SelectionTracker::Select(RE::FormID formID, EquipSource source, std::string via,
+    bool SelectionTracker::Select(RE::FormID formID, EquipSource source, std::string via,
                                   std::string attribution)
     {
-        if (formID == 0) return;
+        if (formID == 0) return false;
 
         // R4: a pick of this item the v3 log was keeping on its own (one the
         // learner skipped, made a moment earlier) is this same selection.
@@ -146,7 +146,7 @@ namespace Huginn::Learning
             if (confirmNow) {
                 Confirm(confirmNow->event, confirmNow->selectedAt, "consumed");
             }
-            if (known) return;
+            if (known) return false;
         }
 
         // Capture OUTSIDE m_mutex: it takes StateManager and cache locks.
@@ -178,7 +178,7 @@ namespace Huginn::Learning
             logger::info("[Selection] {:08X} '{}' src={} via={} -- soul gem used, confirmed at once"sv,
                 formID, FormName(formID), EquipSourceToString(source), event.via);
             Confirm(event, now, "used");
-            return;
+            return false;   // nothing left pending
         }
 
         Pending pending{ std::move(event), now, deadline, {} };
@@ -192,9 +192,48 @@ namespace Huginn::Learning
 
         std::lock_guard lock(m_mutex);
         for (const auto& p : m_pending) {
-            if (p.event.formID == formID) return;  // lost a race to an identical select
+            if (p.event.formID == formID) return false;  // lost a race to an identical select
         }
         m_pending.push_back(std::move(pending));
+        return true;
+    }
+
+    bool SelectionTracker::GateHold(RE::FormID formID)
+    {
+        if (formID == 0) return false;
+        std::lock_guard lock(m_mutex);
+        for (auto& p : m_pending) {
+            if (p.event.formID == formID) {
+                p.gate.Hold();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void SelectionTracker::GateRelease(RE::FormID formID, bool retime)
+    {
+        if (formID == 0) return;
+        const auto now = std::chrono::steady_clock::now();
+        std::lock_guard lock(m_mutex);
+        for (auto& p : m_pending) {
+            if (p.event.formID != formID) continue;
+            if (p.gate.Release() && retime) {
+                // The confirm window from the equip, not the press (core/SelectionGate.h).
+                const float windowMs = p.event.kind == SelectionKind::Consumable
+                    ? Config::CONSUMPTION_HUGINN_WINDOW_MS
+                    : Config::SELECTION_CONFIRM_MS;
+                // Both on a clock that starts now: the act is 0.
+                const double leftMs = std::chrono::duration<double, std::milli>(p.deadline - now).count();
+                const double deadlineMs = Core::SelectionGate::RetimedDeadline(leftMs, 0.0, windowMs);
+                p.deadline = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                    std::chrono::duration<double, std::milli>(deadlineMs));
+                logger::debug("[Selection] {:08X} '{}': its equip went through the hand equip gate; confirm window "
+                              "restarts ({:.0f}ms from now)"sv,
+                    formID, FormName(formID), deadlineMs);
+            }
+            return;
+        }
     }
 
     bool SelectionTracker::OnConsumed(RE::FormID formID)
@@ -204,6 +243,12 @@ namespace Huginn::Learning
             std::lock_guard lock(m_mutex);
             for (auto it = m_pending.begin(); it != m_pending.end(); ++it) {
                 if (it->event.formID == formID) {
+                    // Its equip still parked at the hand equip gate: this drop
+                    // is not the press's (the other hand casting the same
+                    // scroll). Nothing is decided until the gate lets go.
+                    if (it->gate.Held()) {
+                        return true;
+                    }
                     // Held (it may yet be Huginn's wheel): the drop is kept and
                     // confirms when the hold resolves, under the right label.
                     if (it->hold.OnConsumed() == Core::WheelAttributionHold::Action::Defer) {
@@ -245,6 +290,12 @@ namespace Huginn::Learning
                 if (action == Core::WheelAttributionHold::Action::AnnounceConfirm) {
                     consumed.push_back(std::move(*it));
                     it = m_pending.erase(it);
+                    continue;
+                }
+                // Its equip parked at the hand equip gate: not decided yet
+                // (core/SelectionGate.h); the deadline restarts when it goes.
+                if (it->gate.Held()) {
+                    ++it;
                     continue;
                 }
                 if (!it->hold.Held() && now >= it->deadline) {
@@ -344,7 +395,10 @@ namespace Huginn::Learning
         // Log BEFORE dispatch: the log records the learner's prediction for the
         // press-time state, which the dispatch is about to update.
         const uint64_t rid = SelectionLog::Write(event, how);
-        SelectionLogV3::OnConfirmed(event, selectedAt, how, rid);   // R4: logging only; rid joins the two (0.23.53)
+        // R4: logging only; rid joins the two (0.23.53). R8.2: the logged
+        // decision rides on the event to the ChoiceSubscriber (the new learner's
+        // choice set is the log's).
+        event.v3Decision = SelectionLogV3::OnConfirmed(event, selectedAt, how, rid);
         EquipEventBus::GetSingleton().Dispatch(event);
     }
 }

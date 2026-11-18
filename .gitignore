@@ -92,3 +92,7 @@ coverage/
 .claude
 *.tracy
 traces/
+
+# Python bytecode (tools/*)
+__pycache__/
+*.pyc

@@ -71,6 +71,16 @@ target_compile_features(huginn_core_tests PRIVATE cxx_std_23)
 # PCH, no CommonLib), which is the point.
 target_include_directories(huginn_core_tests PRIVATE "${PROJECT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/support")
 target_link_libraries(huginn_core_tests PRIVATE doctest::doctest)
+# ShippedDefaultsTests.cpp (0.24.10): the embedded shipped files (the
+# generated header, root CMakeLists.txt) and settings/IniOverlay.h, the one
+# non-core header under test. It includes nothing but SimpleIni (header-only,
+# not a game header), so the overlay every settings INI is loaded through is
+# the code tested here, not a copy of it.
+find_path(HUGINN_SIMPLEINI_DIR "SimpleIni.h" REQUIRED)
+target_include_directories(huginn_core_tests PRIVATE "${HUGINN_GENERATED_DIR}")
+# SYSTEM, as the plugin sees it (third-party: no /W4 warnings from it).
+target_include_directories(huginn_core_tests SYSTEM PRIVATE "${HUGINN_SIMPLEINI_DIR}")
+add_dependencies(huginn_core_tests huginn_shipped_files)
 # Data-driven tests (the race map) read repo files by absolute path.
 target_compile_definitions(huginn_core_tests PRIVATE "HUGINN_REPO_ROOT=\"${PROJECT_SOURCE_DIR}\"")
 if(MSVC)
@@ -98,6 +108,11 @@ if(Python3_Interpreter_FOUND)
    add_test(NAME replay_v3_roundtrip
       COMMAND "${Python3_EXECUTABLE}" -I "${PROJECT_SOURCE_DIR}/tools/replay/test_replay_v3.py")
    set_tests_properties(replay_v3_roundtrip PROPERTIES TIMEOUT 600)   # runs 43-73 s
+   # 0.24.17: the D2 shadow's offline comparison (tools/shadow), on a log the replay
+   # test's schema-doc encoder writes.
+   add_test(NAME shadow_compare
+      COMMAND "${Python3_EXECUTABLE}" -I "${PROJECT_SOURCE_DIR}/tools/shadow/test_shadow_compare.py")
+   set_tests_properties(shadow_compare PROPERTIES TIMEOUT 120)
 else()
    message(STATUS "Python 3 not found: the replay_v3_roundtrip test is not registered")
 endif()

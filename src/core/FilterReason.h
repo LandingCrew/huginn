@@ -12,9 +12,11 @@
 // reason on the row, `filtered_by`, so the shadow fit can tell the active-buff
 // filters' drops (a covered item) from the rest.
 //
-// LOGGING ONLY: the filters decide exactly as before; this names the branch
-// that decided. The names are written into every v3 head ("filters"), and a
-// row's `fb` column indexes that list.
+// LOGGING ONLY at first (0.23.46): the filters decided exactly as before; this
+// named the branch that decided. The names are written into every v3 head
+// ("filters"), and a row's `fb` column indexes that list. R8.1 (0.23.55)
+// appended the four hard gates, which do decide: they are the old engine's
+// context zeros and the favourites Suppress skip, moved out of the scorer.
 //
 // Pure: standard library only (src/core/README.md).
 // =============================================================================
@@ -48,6 +50,19 @@ namespace Huginn::Core::Filter
         cooldown,         // used a moment ago
         duplicate,        // a second candidate with the same key (the first one stays eligible)
         truncated,        // past maxCandidatesAfterFilter
+        // --- the hard gates (R8.1, 0.23.55; core/HardGates.h): the old engine's
+        // context zeros, run in the visitor before the active-buff filters.
+        // Appended, so the ranges above keep their values and old files read
+        // the same (a row's fb indexes its own head's list).
+        no_follower,          // a spell or scroll for someone else, no follower near
+        no_workstation,       // fortify apparel, no station up for any craft it fortifies
+        not_dark,             // a torch while darkness does not apply
+        favorite_suppressed,  // a favourite under [Favorites] sFavoritesMode = Suppress
+        // 0.24.29 (core/LockReach.h), appended like the gates above
+        lock_out_of_reach,    // an unlock spell, scroll or staff that cannot open the lock in the crosshair
+        resist_weaker,        // a resist potion weaker than another of its element on hand (core/ResistPotions.h)
+        // 0.24.31 (core/HardGates.h NotAtAlly), appended
+        no_ally_aimed,        // a spell or scroll for someone else, no ally in the crosshair
         _Count
     };
     inline constexpr std::size_t kReasonCount = static_cast<std::size_t>(Reason::_Count);
@@ -56,6 +71,8 @@ namespace Huginn::Core::Filter
         "affordability", "equipped",     "full_health", "full_magicka",   "full_stamina",
         "invisibility",  "muffle",       "armor",       "summon_limit",   "warming",
         "waterbreathing", "resist",      "cooldown",    "duplicate",      "truncated",
+        "no_follower",    "no_workstation", "not_dark", "favorite_suppressed",
+        "lock_out_of_reach", "resist_weaker", "no_ally_aimed",
     };
 
     [[nodiscard]] constexpr std::string_view ReasonName(Reason r) noexcept
@@ -64,16 +81,23 @@ namespace Huginn::Core::Filter
         return i < kReasonCount ? kReasonNames[i] : std::string_view("?");
     }
 
-    /// One of the filters that drop an item whose effect is already running on
-    /// the player (CandidateFilters' "active buff" stage, resists included).
+    /// An active-buff filter (doc 11's "covered" items): the need the item
+    /// answers is already met -- its buff, or one like it, is running.
     [[nodiscard]] constexpr bool IsActiveBuff(Reason r) noexcept
     {
         return r >= Reason::invisibility && r <= Reason::resist;
     }
 
-    [[nodiscard]] constexpr bool IsFullVital(Reason r) noexcept
+    /// A combat-locked key whose item was dropped for this reason takes any
+    /// challenger past the wanted clock (core/CombatUpsert.h): the need it
+    /// answers is gone (an active-buff filter: its buff is running), or the one
+    /// it was cast for is (no_ally_aimed, 0.24.31: no ally in the crosshair --
+    /// Fire Shell on Target held a key 17 s after the player looked away from
+    /// the follower, Fire Shell on Self off the page, 2026-11-14), or no ally
+    /// is near at all (no_follower: the follower died or fell behind).
+    [[nodiscard]] constexpr bool FreesCombatKey(Reason r) noexcept
     {
-        return r >= Reason::full_health && r <= Reason::full_stamina;
+        return IsActiveBuff(r) || r == Reason::no_ally_aimed || r == Reason::no_follower;
     }
 
     /// One gathered candidate the filters dropped, and why.

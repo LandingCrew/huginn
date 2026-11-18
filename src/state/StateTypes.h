@@ -215,10 +215,6 @@ namespace Huginn::State
       return usage.IsHeavy(10.0f);  // >10/sec
       }
 
-      [[nodiscard]] bool IsStaminaDraining() const noexcept {
-      return usage.rate > regen.rate + 5.0f;
-      }
-
       [[nodiscard]] float GetNetStaminaChange() const noexcept {
       return regen.rate - usage.rate;
       }
@@ -291,10 +287,6 @@ namespace Huginn::State
       // Helper methods
       [[nodiscard]] bool IsUsingMagickaHeavily() const noexcept {
       return usage.IsHeavy(15.0f);  // >15/sec
-      }
-
-      [[nodiscard]] bool IsMagickaDraining() const noexcept {
-      return usage.rate > regen.rate + 5.0f;
       }
 
       [[nodiscard]] bool IsActivelyCasting() const noexcept {
@@ -393,18 +385,6 @@ namespace Huginn::State
       [[nodiscard]] float GetNetHealthChange() const noexcept
       {
       return healingRate - damageRate;  // Positive = net healing, Negative = net damage
-      }
-
-      [[nodiscard]] bool IsLosingHealthFast() const noexcept
-      {
-      // True if taking more damage than healing can sustain
-      return damageRate > healingRate + 10.0f;  // Losing >10 HP/s net
-      }
-
-      [[nodiscard]] bool IsHealingRedundant() const noexcept
-      {
-      // True if already healing faster than current damage
-      return IsActivelyHealing() && healingRate > damageRate * 1.5f;
       }
 
       // Check if specific damage type was received recently (v0.6.7)

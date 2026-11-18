@@ -17,8 +17,9 @@ namespace Huginn::Learning
 
         // Attribution window: max cache age for pipeline state to be valid (ms)
         // The update loop refreshes the cache timestamp every tick (~100ms) even when
-        // scoring is skipped, so 2s covers menu pauses and occasional hiccups.
-        inline constexpr float EXTERNAL_EQUIP_TIME_WINDOW = 2000.0f;
+        // scoring is skipped, so 0.5 s (about five ticks) covers an occasional
+        // hiccup. The shipped configs/Huginn.ini value.
+        inline constexpr float EXTERNAL_EQUIP_TIME_WINDOW = 500.0f;
 
         // The anti-spam interval and the per-case reward multipliers that lived
         // here were removed with the one selection path (2026-10-02): a
@@ -37,8 +38,9 @@ namespace Huginn::Learning
     {
         bool learnFromExternalEquips = LearningDefaults::LEARN_FROM_EXTERNAL_EQUIPS;
         float externalEquipTimeWindow = LearningDefaults::EXTERNAL_EQUIP_TIME_WINDOW;
-        // Memory with a useful life (FeatureBanditLearner::SetMemoryLife);
-        // the defaults live on the struct.
+        // Memory with a useful life (ChoiceLearner::SetMemoryLife, its b
+        // battery; FeatureBanditLearner::SetMemoryLife for D2); the defaults
+        // live on the struct.
         MemoryLife memory{};
     };
 
@@ -58,9 +60,9 @@ namespace Huginn::Learning
             return instance;
         }
 
-        void LoadFromFile(const std::filesystem::path& iniPath);
+        // Over the shipped Huginn.ini (Settings::LoadMainIni): its values are
+        // the defaults.
         void LoadFromIni(const CSimpleIniA& ini);
-        void ResetToDefaults();
 
         /// Produce an immutable snapshot of all learning settings.
         [[nodiscard]] LearningConfig BuildConfig() const;

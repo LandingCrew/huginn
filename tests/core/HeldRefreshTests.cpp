@@ -8,20 +8,20 @@
 
 using namespace Huginn::Core;
 
-TEST_CASE("held refresh: (a) item in the scored list -> data, utility and score refreshed")
+TEST_CASE("held refresh: (a) item in the scored list -> the whole row and its score refreshed")
 {
     const std::vector<ItemKey> scored{ { 0x111, 0 }, { 0x3EAE2, 0 }, { 0x222, 0 } };
     const auto plan = PlanHeldRefresh(0x3EAE2, 0, false, scored, ItemKey{ 0x3EAE2, 0 });
     REQUIRE(plan.scoredIndex.has_value());
     CHECK(*plan.scoredIndex == 1);
     CHECK_FALSE(plan.useCurrent);
-    CHECK(plan.refreshUtility);
+    CHECK(plan.refreshRow);
     CHECK(plan.refreshScore);
     // A pinned (override) key keeps its pinned score.
     CHECK_FALSE(PlanHeldRefresh(0x3EAE2, 0, true, scored, std::nullopt).refreshScore);
 }
 
-TEST_CASE("held refresh: (b) item filtered out this run -> current data refreshed, utility kept")
+TEST_CASE("held refresh: (b) item filtered out this run -> current data refreshed, the rest of the row kept")
 {
     // The healing potion just drunk: on cooldown and at full health, so the
     // filters and the scorer dropped it -- but the registry lookup (before any
@@ -30,7 +30,7 @@ TEST_CASE("held refresh: (b) item filtered out this run -> current data refreshe
     const auto plan = PlanHeldRefresh(0x3EAE2, 0, false, scored, ItemKey{ 0x3EAE2, 0 });
     CHECK_FALSE(plan.scoredIndex.has_value());
     CHECK(plan.useCurrent);
-    CHECK_FALSE(plan.refreshUtility);
+    CHECK_FALSE(plan.refreshRow);
     CHECK_FALSE(plan.refreshScore);
     CHECK(plan.Any());
 }
@@ -58,7 +58,7 @@ TEST_CASE("held refresh: a Remembrance-only scored row gives data, not its unran
     scored[0].rememberedOnly = true;
     const auto plan = PlanHeldRefresh(0x12FD0, 0, false, scored, std::nullopt);
     REQUIRE(plan.scoredIndex.has_value());
-    CHECK_FALSE(plan.refreshUtility);
+    CHECK_FALSE(plan.refreshRow);
     CHECK_FALSE(plan.refreshScore);
 }
 

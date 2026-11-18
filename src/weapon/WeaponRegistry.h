@@ -158,7 +158,7 @@ namespace Huginn::Weapon
       // element, dangling those pointers. They are therefore only safe to use
       // synchronously on the update thread, before yielding to the next write.
       // Do NOT cache them across frames or hand them to another thread; for
-      // cross-thread/persistent use, copy via GetAllWeapons()/GetAllAmmo() or
+      // cross-thread/persistent use, copy via GetAllWeapons() or
       // ForEachWeapon()/ForEachAmmo() (which hold the lock for the whole visit).
 
       /**
@@ -215,13 +215,6 @@ namespace Huginn::Weapon
        */
       [[nodiscard]] std::vector<const InventoryWeapon*> GetWeaponsNeedingCharge() const;
 
-      /**
-       * @brief Get weapons with a specific tag
-       * @param tag The WeaponTag to filter by
-       * @return Vector of pointers to matching weapons
-       */
-      [[nodiscard]] std::vector<const InventoryWeapon*> GetWeaponsWithTag(WeaponTag tag) const;
-
       // =============================================================================
       // CONVENIENCE "BEST" ACCESSORS - O(n) single-pass max-find
       // =============================================================================
@@ -238,22 +231,9 @@ namespace Huginn::Weapon
        */
       [[nodiscard]] const InventoryWeapon* GetBestRangedWeapon() const noexcept;
 
-      /**
-       * @brief Get the best silvered weapon by damage
-       * @return Pointer to highest-damage silver weapon, or nullptr if none
-       */
-      [[nodiscard]] const InventoryWeapon* GetBestSilveredWeapon() const noexcept;
-
       // =============================================================================
       // AMMO ACCESSORS
       // =============================================================================
-
-      /**
-       * @brief Get ammo by FormID
-       * @param formID The ammo's form ID
-       * @return Pointer to InventoryAmmo, or nullptr if not found
-       */
-      [[nodiscard]] const InventoryAmmo* GetAmmo(RE::FormID formID) const;
 
       /**
        * @brief Get all arrows
@@ -278,24 +258,10 @@ namespace Huginn::Weapon
       [[nodiscard]] std::vector<const InventoryAmmo*> GetMagicAmmo() const;
 
       /**
-       * @brief Get all silver arrows/bolts (v0.7.8)
-       * @param topK Maximum number of results (default 3, 0 = all)
-       * @return Vector of pointers to silver ammo, sorted by damage descending
-       * @note OPTIMIZATION (v0.7.20 H4): Uses partial_sort for O(n log k) vs O(n log n)
-       */
-      [[nodiscard]] std::vector<const InventoryAmmo*> GetSilverAmmo(size_t topK = 3) const;
-
-      /**
        * @brief Get the best arrow by damage
        * @return Pointer to highest-damage arrow, or nullptr if none
        */
       [[nodiscard]] const InventoryAmmo* GetBestArrow() const noexcept;
-
-      /**
-       * @brief Get the best silver arrow by damage (v0.7.8)
-       * @return Pointer to highest-damage silver arrow, or nullptr if none
-       */
-      [[nodiscard]] const InventoryAmmo* GetBestSilverArrow() const noexcept;
 
       /**
        * @brief Get the best bolt by damage
@@ -343,16 +309,11 @@ namespace Huginn::Weapon
       }
 
       /**
-       * @brief Get all tracked ammo (returns copy for thread safety - v0.7.12)
-       */
-      [[nodiscard]] std::vector<InventoryAmmo> GetAllAmmo() const;
-
-      /**
        * @brief Iterate over all ammo without copying (zero-allocation visitor pattern)
        * @tparam Func Callable with signature void(const InventoryAmmo&) or bool(const InventoryAmmo&)
        * @param func Function to call for each ammo. If returns bool, iteration stops on false.
        * @note Thread-safe: Holds shared_lock during iteration
-       * @note PERFORMANCE: Use this instead of GetAllAmmo() in hot paths
+       * @note PERFORMANCE: zero-allocation; there is no copying accessor for ammo
        */
       template<typename Func>
       void ForEachAmmo(Func&& func) const

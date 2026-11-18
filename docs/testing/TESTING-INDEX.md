@@ -1,5 +1,7 @@
 # Huginn Testing Index
 
+> **R11 (0.24.4):** the host suite (`huginn_core_tests`) carries the engine's math, the facets and slot classes (`CapFacetsTests`), the override files (`OverrideFilesTests`) and the θ drift (`ThetaDriftTests`); the in-game suites state made-up candidates in the old classifiers' vocabulary and answer their facets through `InstallSyntheticFacetResolver` (Tests.cpp). `python -I tools/prune/r8_check.py` and `tools/prune/test_r8_check.py` are part of the gate.
+
 **Applies to:** v0.19.x (verified against v0.19.10); sections 0 and 1a added
 for v0.23.9 (R1, host tests and the unattended in-game run); the selection log
 v3 tests and `--decision-session` for v0.23.15 (R4)
@@ -65,8 +67,10 @@ port, checked bit for bit against the loop it replaced) and `core/RingBuffer.h`.
 | `SlotClassCapMathTests.cpp` | `core/SlotClassCapMath.h`: the free allowance, one more discount per item, a discount of 1 or more (and NaN) turns the cap off, a negative one clamps to a hard cap, bit for bit against the loop it replaced, the early stop |
 | `SlotScoreMathTests.cpp` | `core/SlotScoreMath.h` (R7, sign-safe slot scores): the bridge ln(utility) and its inverse, the class cap as ln of the old factor (it lowers a negative score), the hold's margin as a difference, tie epsilon, sentinels, churn buckets |
 | `SlotSnapshotIOTests.cpp` | `core/SlotSnapshotIO.h`, the slot snapshot text format: names survive escaping, read-back equality, the item dictionary across snapshots, malformed text refused with a line number |
-| `SlotAllocGoldenTests.cpp` | R7 golden: `core/SlotAllocCore.h` with the old arithmetic reproduces the recorded `fixtures/slots/*-old.txt` pages; the new game code's `*-new.txt` pages replay; old and new arithmetic give identical pages on recorded and synthetic snapshots, differing only at float-rounding boundaries; the full sort characterised |
+| `SlotAllocGoldenTests.cpp` | R7 golden: `core/SlotAllocCore.h` with the old arithmetic reproduces the recorded `fixtures/slots/*-old.txt` pages; the new game code's `*-new.txt` pages replay; old and new arithmetic give identical pages on recorded and synthetic snapshots, differing only at float-rounding boundaries; the full sort characterised. Since R10 the recorded pages that show a rank-swapped wildcard (106 of 425 old, 66 of 230 new) leave the exact replay, counted, and are checked on every key but the wildcard's instead (89 and 51 of them agree there, counted); every synthetic page must hold one wildcard at most, on the page's wildcard key, with no form twice and the wildcard's name nowhere else |
+| `WildcardTests.cpp` | R10, wildcards by uncertainty: the draw's math (`core/WildcardPick.h`: relevance against the cut, P(roll) from base to max, the mixture draw, the inverse CDF, a form's share over its stacks); the wildcard key in the slot core (`SeatOf`, the cached wildcard pinned and never moved by seating even when its item has a seat elsewhere, the owner coming home, overrides and refusals, the roll's pool and exact propensity with seating on and off, name twins kept out); the gate (`core/WildcardGate.h`: one roll per refractory window, only the displayed page rolls, the per-page cache, reshape, refusal, the uid drop, combat, expiry, reset) |
 | `SlotAllocAdversarialTests.cpp` | R7 named cases under both arithmetics: ties keep list order, zero/denormal utilities rank last, the class cap with a tie, overrides and pinned vitals, remembered-only rows, the job-key pull, past the sorted prefix, a challenger on the hold's margin, rounding boundaries, negative scores |
+| `ShippedDefaultsTests.cpp` | 0.24.10, the shipped defaults: the compiled-in `configs/Huginn.ini` and dMenu descriptor equal the repo files byte for byte; `settings/IniOverlay.h` (the player's file over the shipped one: a replaced key, a kept key, no duplicates, a BOM, on the real shipped Huginn.ini with every second key deleted and every third changed); `core/DMenuDefaults.h` (the descriptor's defaults in dMenu's serialization, its fallbacks and refusals); a source guard that every settings INI read goes through the overlay |
 | `SignatureDedupTests.cpp` | `core/SignatureDedup.h` (0.23.16), the inventory duplicate warning's dedup: once per (key, signature), again when the signature changes; 8 threads released together on a latch, each inserting 4000 keys of its own while all hit one shared key: the shared key warns once and no key is lost (0.23.17). With the lock removed it crashes (heap corruption / SIGSEGV), so it relies on the CTest TIMEOUT (`tests/CMakeLists.txt`) if a run ever hangs instead |
 
 **The effect extractor (R2, 0.23.12).** `core/EffectRules`, `core/EffectMapper`,
@@ -135,7 +139,7 @@ answered); schema: [9-selection-log-v3.md](../architecture/9-selection-log-v3.md
 |---|---|
 | `DecisionLogTests.cpp` | the JSON helpers (escaping, numbers, FormIDs); caps and contexts defined once per segment, content-addressed; a synthetic session (key, menu with an added row, a co-pick sharing the context, nothing, wheel, a lapped nothing (0.23.51) with its lap context, a second segment) equals `fixtures/decisions/synthetic_v3.jsonl` byte for byte (with `heldFull` and `preEquipped`); the run gate that keeps a previous save's cached run out of a context after a load (two loads in one launch) |
 | `NeedEpisodesTests.cpp` | onset 0.5 / expiry 0.25 hysteresis, the 1 s minimum, a selection inside answers and one outside does not, the grace, the 0.5 s slack for a press that ended its episode, payloads, reset; the laps (0.23.51): an episode under 60 s judged whole, a persistent need cut every 60 s with each unanswered stretch one record, the first stretch 60-120 s and needs lapping on one tick, a press just before / after a cut (no slack after a lap), the last stretch (dropped under 1 s, slack kept), a pause adding at most 1 s of active time, the payload carried to the next stretch, `lapSec` 0 and Reset, a death dropping lapped stretches in their grace; the clock's hold (`LapHoldFor`: a dialogue, a menu that blocks gameplay (0.23.55), disabled controls, 30 s without input, in that order), an hour away with the game unpaused adding at most 30 s and no lap, a dialogue or a carriage holding the clock while onsets and expiries go on, 50 s in a blocking menu adding no active time |
-| `LapHoldInputsTests.cpp` | the lap clock's hold inputs (0.23.55, `core/LapHoldInputs.h`): a stick event counts as input only beyond the game's deadzone, radially (a zero deadzone is the 0.23.51 any-non-zero rule, NaN is no input); the deadzone read from the game kept when in [0, 1), else the 0.15 fallback (not found, negative, 1 or more, a percent, NaN); the mirrored menu flag and context values; `MenuBlocksGameplay` on the vanilla constructor notes (HUD, Cursor, Fader, LoadWaitSpinner, Kinect, Mist, IntuitionMenu, gameplay and out-of-range contexts never hold; Crafting, Dialogue by its context, and Inventory, Magic, Map, Book, Console and the other vanilla menus made non-pausing hold) and on each blocking flag and each menu context alone, the flags left out on purpose never alone |
+| `LapHoldInputsTests.cpp` | the lap clock's hold inputs (0.23.55 on engine-rewrite, 0.24.7 here; `core/LapHoldInputs.h`): a stick event counts as input only beyond the game's deadzone, radially (a zero deadzone is the 0.23.51 any-non-zero rule, NaN is no input); the deadzone read from the game kept when in [0, 1), else the 0.15 fallback (not found, negative, 1 or more, a percent, NaN); the mirrored menu flag and context values; `MenuBlocksGameplay` on the vanilla constructor notes (HUD, Cursor, Fader, LoadWaitSpinner, Kinect, Mist, IntuitionMenu, gameplay and out-of-range contexts never hold; Crafting, Dialogue by its context, and Inventory, Magic, Map, Book, Console and the other vanilla menus made non-pausing hold) and on each blocking flag and each menu context alone, the flags left out on purpose never alone |
 | `WeaponLoadoutTests.cpp` | which two-handed weapon is a quarterstaff (0.23.51, `core/WeaponLoadout.h`), on runtime keyword lists copied from the LoreRim dump: the Staff of Wandering Stars, one keyword of three enough, a real warhammer, a greatsword and a magic staff not, a one-handed "quarterstaff" never tested |
 | `tools/replay/test_replay_v3.py` (CTest `replay_v3_roundtrip`) | `replay.py`'s v3 reader decodes the golden file to the values the C++ test wrote, round-trips a session written by an encoder of its own (plain and gzip), refuses malformed files, skips a torn line (and what depended on it) and resyncs at the next head, and never raises on damage (torn head, a line torn inside a UTF-8 character, a truncated or corrupt gzip, NUL padding) |
 
@@ -194,8 +198,8 @@ Then launch Skyrim. Two trigger points:
 
 | When | What runs | Where |
 |---|---|---|
-| **`kDataLoaded`** (main menu, once per process) | `RunUnitTests()` | `src/Main.cpp:682` |
-| **`kPostLoadGame`** — loading a save, **not** a new game | the 19 after-load suites | `InitializeGameSystems()`, `src/Main.cpp` (the `HUGINN_RUN_SUITE` list) |
+| **`kDataLoaded`** (main menu, once per process) | `RunUnitTests()` | `src/Main.cpp` (`HUGINN_RUN_SUITE(RunUnitTests)` in the kDataLoaded handler) |
+| **`kPostLoadGame`** — loading a save, **not** a new game | the 20 after-load suites | `InitializeGameSystems()`, `src/Main.cpp` (the `HUGINN_RUN_SUITE` list) |
 
 The second group is gated on `!isNewGame` because it needs real form data
 (spells, items, weapons) in the player's inventory. Starting a new game runs
@@ -218,7 +222,7 @@ per batch:
 ```
 [HuginnTest] suite RunSlotClassCapTest passed (0 error line(s))
 [HuginnTest] suite RunHomeKeyTest SKIPPED (0 error line(s); skipped: needs seating, the hold and home keys)
-[HuginnTest] RESULT phase=load suites=18 passed=17 failed=0 skipped=1 fail_lines=0 failed_suites=- skipped_suites=RunHomeKeyTest
+[HuginnTest] RESULT phase=load suites=20 passed=19 failed=0 skipped=1 fail_lines=0 failed_suites=- skipped_suites=RunHomeKeyTest
 ```
 
 `phase=menu` is `RunUnitTests()` at `kDataLoaded`; `phase=load` is the
@@ -233,7 +237,7 @@ after the main-menu suites Huginn loads a named save, runs the after-load
 suites, logs
 
 ```
-[HuginnTest] DONE result=PASS suites=19 passed=19 failed=0 skipped=0 fail_lines=0 failed_suites=- skipped_suites=- reason=-
+[HuginnTest] DONE result=PASS suites=21 passed=21 failed=0 skipped=0 fail_lines=0 failed_suites=- skipped_suites=- reason=-
 ```
 
 and ends the process (exit code 0 on PASS, 1 on FAIL). `reason` is `-`,
@@ -409,16 +413,17 @@ carries them). The run order is the `HUGINN_RUN_SUITE` list in `src/Main.cpp`.
 | GameState hash | Test 1 minimum hash, Test 2 maximum hash, Test 3 uniqueness across all `GameState::kTotalStates` = 48,384 states (6×6×3×7×4×2×2×2×2), Test 3b stamina is excluded from the hash, Test 3c allyStatus hashes as its injured bit — None == Present, and Injured differs, Test 3d the distance bucket is the closest living hostile's (a townsperson leaves it Ranged, a corpse is ignored), Test 3e target type is seen only for a living hostile primary |
 | SpellRegistry | Registry starts empty (basic construction; the real coverage is the integration suite) |
 | PriorCalculator context independence | Tests 1–8: healing and damage priors identical in/out of context; magnitude, scarcity, spell cost, weapon charge, ammo matching and scroll magnitude *do* affect the prior. This is the guard on the `ContextRuleEngine` / `PriorCalculator` separation |
-| Optimization + engine | Test 1 partial-sort correctness, Test 3 `SCOPED_TIMER` compiles and runs, Tests 4–9 `ContextRuleEngine` vital / elemental / environmental / combat / target / equipment rules, Test 10 end-to-end `ContextRuleEngine` → `UtilityScorer` (subtests 1a/1b/2–5: forge, enchanter, resist-fire, healing at 30% HP, AOE damage, soul gem), Test 11 `TargetCollection` cache invariant, Test 12 `PipelineStateCache` rank clamping, Test 13 `EquipSourceTracker` FormID keying, Test 14 `UsageMemory` snapshot reader, Test 15 dedup equivalence (`IsFavorited`, fortify-school parity), Test 16 `FeatureBanditLearner` batch decay, Test 17 `ContextReason` derivation, and an unnumbered wildcard-page-cache block |
+| Optimization + engine | Test 1 partial-sort correctness, Test 3 `SCOPED_TIMER` compiles and runs, Tests 4–9 `ContextRuleEngine` vital / elemental / environmental / combat / target / equipment rules, Test 10 end-to-end `ContextRuleEngine` → `UtilityScorer` (subtests 1a/1b/2–5: forge, enchanter, resist-fire, healing at 30% HP, AOE damage, soul gem), Test 11 `TargetCollection` cache invariant, Test 12 `PipelineStateCache` rank clamping, Test 13 `EquipSourceTracker` FormID keying, Test 14 `UsageMemory` snapshot reader, Test 15 dedup equivalence (`IsFavorited`, fortify-school parity), Test 16 `FeatureBanditLearner` batch decay, Test 17 explanation label and context weights (torch, survival food, not_dark filter, label ladder 17i-17k) |
 
-The wildcard-page-cache block (search `wildcardSlots` in `src/Tests.cpp`) is the regression guard
-for issue #70 and its two siblings: it pins roll probabilities to 1.0 and the
-refractory to 0 so the rolls are deterministic, then asserts per-page bounds — it
-asserts bounds, not randomness.
+The wildcard-page-cache block that used to sit here (the regression guard for
+issue #70 and its two siblings) left with R10: the wildcard manager's decisions
+are `core/WildcardGate.h`, host-tested in `tests/core/WildcardTests.cpp`
+(per-page cache and shape, only the displayed page rolling, refusal, combat,
+expiry).
 
 ### 2.2 Runs at `kPostLoadGame` (needs a loaded save)
 
-The 19 suites, in run order:
+The 20 suites, in run order:
 
 | Suite | What it covers |
 |---|---|
@@ -426,14 +431,15 @@ The 19 suites, in run order:
 | `RunItemClassifierTests()` | Item classification against real forms |
 | `RunItemRegistryTests()` | Item registry against real inventory. Its potion-sort check needs 2+ health potions; in test mode it supplies them (section 1a), otherwise it marks the suite skipped |
 | `RunWeaponRegistryTests()` | Weapon registry against real inventory |
-| `RunMultiplicativeScoringTests()` | 6 tests: zero context gates utility, adaptive lambda vs confidence, learning amplification, correlation compounding, full integration, favorites boost by rank |
+| `RunMultiplicativeScoringTests()` | Test 1 only: zero context gates utility (the context rules' healing weight at full health; D2's input). Tests 2-5 checked arithmetic on their own constants and called no Huginn code (deleted in 0.24.5); Test 6 went with the rank scaling in R8.4 |
 | `RunRegressionTests()` | See below |
-| `RunCosaveTests()` | 4 tests: `FeatureBanditLearner` export/import round-trip, empty round-trip, import clears existing data, feature-count migration (pad / truncate / equal / reject) |
+| `RunCosaveTests()` | 4 tests: `FeatureBanditLearner` export/import round-trip, empty round-trip, import clears existing data, BNDW header accept/skip (only v4 at the compiled feature count loads) and v4 decode (round-trip / short-blob reject) |
 | `RunStateFeaturesTests()` | 8 tests: default state, low-health combat, one-hot correctness across all 7 target types, distance normalisation, `ToArray` round-trip, normalisation bounds, no-enemy fallback, vital clamping |
 | `RunFeatureBanditLearnerTests()` | Feature-based learner: cold start, convergence, weight interpretability, regularisation, clamping, generalisation, item independence, `Clear()`, passed-over updates |
 | `RunOverrideNamespaceTests()` | `Huginn_Overrides.ini` section namespacing (`[Spell:...]` / `[Item:...]`) |
 | `RunSlotLockerResetTest()` | `SlotLocker::Reset()` clears every `LockedSlot` field (throwaway) |
 | `RunSlotLockerInstanceLockTest()` | Per-stack lock breaking (throwaway) |
+| `RunSlotLockerOverrideScopeTest()` | An override breaks only its own key's lock; the combat lock's freeze (a challenger never takes a key, `UseKind::Used` keeps it, `UseKind::Gone` frees it, leaving combat turns it into a normal lock) (0.23.37) |
 | `RunSlotSeatingTest()` | Anti-juggling seating; skipped when `bKeepSlotPositions` is off |
 | `RunFillJobKeysTest()` | `bFillJobKeysFromRegular` |
 | `RunSlotClassCapTest()` | The slot class cap: free items, then x discount per item; food counts as one class |
@@ -463,7 +469,7 @@ TC-04, 06, 08, 09 and 13 are not present). Terminal marker:
 ### 2.3 Terminology
 
 The learning system is a linear contextual bandit — see
-[../architecture/4-contextual-bandits.md](../architecture/4-contextual-bandits.md).
+[../architecture/archive/4-contextual-bandits.md](../architecture/archive/4-contextual-bandits.md).
 Suite names above use the real identifiers.
 
 ---
@@ -474,16 +480,18 @@ Recorded in [../roadmap.md](../roadmap.md) under *Follow-ups*.
 
 1. **`Context::WeightForCandidate` is hand-reimplemented in two tests instead of
    being called.** The sites, by their comments in `src/Tests.cpp`: "Extract
-   weight using UtilityScorer's GetContextWeight logic" (inside unit test 10)
-   and the TC-05 block that simulates `GetContextWeight` with `max()`
-   accumulation. Both should call
+   the weight as Context::WeightForCandidate does" (inside unit test 10, in
+   `RunUnitTests`) and TC-05 in `RunRegressionTests` ("Simulate the
+   per-candidate weight lookup with max() accumulation"), which still
+   re-implements the lookup with `std::max` by hand. Both should call
    `Context::WeightForCandidate()` from
    `src/context/ContextWeightForCandidate.h`, which most of the rest of the file
-   already does (18 call sites). `DominantReason` / `ReasonLabel` are covered by
-   unit test 17 and are not part of this gap.
+   already does (about 34 mentions). `Display::ReasonLabel` is covered by unit
+   test 17's label ladder and is not part of this gap. The item goes when D2
+   goes (the context rules and their in-game tests with it).
 
 2. *(Resolved.)* The cosave decode negative test used to log a real-looking
-   `[E] DecodeV2EntryBlob: byteLen 83 != stride 84`. The "length mismatch must
+   `[E] DecodeV2EntryBlob: byteLen 83 != stride 84` (now `DecodeEntryBlob`). The "length mismatch must
    reject the decode" block now passes `unitTest=true`, so the rejection logs
    at info and names itself a test; it no longer counts as a failure line for
    the harness (section 1a).
@@ -498,7 +506,7 @@ Recorded in [../roadmap.md](../roadmap.md) under *Follow-ups*.
 | **Capture history** (what previous traces measured) | [../profiling/tracy-traces.md](../profiling/tracy-traces.md) |
 | **Long-play soak** (20–50 hr endurance, `[Soak]` heartbeat, accept%) | [../playtest/LongPlaySoak.md](../playtest/LongPlaySoak.md) |
 | **Timing targets and update-loop tiers** | [../reference/Performance.md](../reference/Performance.md) |
-| **Console commands** for manual poking (`hg refresh`, `hg recs`, `hg status`, `hg weights`) | [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) |
+| **Console commands** for manual poking (`hg refresh`, `hg recs`, `hg status`, `hg weights`) | [Console commands](../../CLAUDE.md#console-commands) |
 
 ### In-game verification gotchas
 
@@ -537,6 +545,6 @@ Listed so nobody reintroduces a reference to it:
 - No `docs/refactor/staged-implementation.md`, no `docs/reviews/SESSION-SUMMARY.md`,
   no `docs/testing/performance-issues.md`
 - No `docs/ROADMAP.md` — the roadmap is [../roadmap.md](../roadmap.md), with
-  [../roadmap-archive.md](../roadmap-archive.md) beside it
+  `docs/roadmap-archive.md` (removed in dd73d24) beside it
 - No `huginn.reload` console command — the command is registered as `Huginn`
-  with the short alias `hg`, so the syntax is `hg reload`; see [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands)
+  with the short alias `hg`, so the syntax is `hg reload`; see [Console commands](../../CLAUDE.md#console-commands)

@@ -13,7 +13,8 @@
 //   school_fortified                     the spell's school has an active Fortify
 //
 // The game side (src/effect/CrossFeatures.*) reads the state and calls these.
-// R2 computes them on demand (`hg cap`); nothing reads them for scoring yet.
+// Since R8.3 (0.24.0) they are attributes a_j of the choice score (mu), through
+// PipelineCoordinator::AttrOf; `hg cap` shows them.
 //
 // Pure: standard library only (src/core/README.md).
 // =============================================================================

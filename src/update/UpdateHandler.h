@@ -43,6 +43,11 @@ namespace Huginn::Update
        */
       static UpdateHandler* GetSingleton();
 
+      /// 0.24.29: ms the update loop has lost to suspensions since launch
+      /// (each gap over the 1 s clamp, less the 1 s it counts). The combat
+      /// upsert's wanted clock does not count them.
+      [[nodiscard]] std::int64_t SuspendedMs() const noexcept { return m_suspendedMs.load(std::memory_order_relaxed); }
+
       /**
        * @brief Register this handler with SKSE's event system
        * @return true if registration succeeded, false otherwise
@@ -84,6 +89,22 @@ namespace Huginn::Update
       }
 
       /**
+       * @brief RunExclusive without waiting: run `fn` under the update mutex
+       * if it is free right now, and return whether it ran.
+       * For the main thread (the hand equip gate, 0.24.26), which must not
+       * block on a tick running elsewhere: a busy mutex means try again next
+       * frame. Never call it from inside a tick (the mutex is not recursive).
+       */
+      template <typename Fn>
+      bool TryRunExclusive(Fn&& fn)
+      {
+         std::unique_lock<std::mutex> lock(m_mutex, std::try_to_lock);
+         if (!lock.owns_lock()) return false;
+         std::forward<Fn>(fn)();
+         return true;
+      }
+
+      /**
        * @brief Enable or disable updates
        * @param enabled true to enable updates, false to disable
        */
@@ -94,18 +115,6 @@ namespace Huginn::Update
        * @return true if enabled, false otherwise
        */
       [[nodiscard]] bool IsEnabled() const noexcept { return m_enabled.load(std::memory_order_acquire); }
-
-      /**
-       * @brief Get the configured update interval in milliseconds
-       * @return Update interval in milliseconds
-       */
-      [[nodiscard]] float GetUpdateInterval() const noexcept { return Config::UPDATE_INTERVAL_MS; }
-
-      /**
-       * @brief Get the time since last update in milliseconds
-       * @return Milliseconds elapsed since last update
-       */
-      [[nodiscard]] float GetTimeSinceLastUpdate() const;
 
       /**
        * @brief Seconds since the player's latest input (0.23.51)
@@ -127,9 +136,10 @@ namespace Huginn::Update
        * fHeadingAxisDeadzone:Controls for the right (core/LapHoldInputs.h;
        * 0.15 when a setting cannot be read). Called at kDataLoaded, at every
        * kNewGame / kPostLoadGame, and by DoUpdate every 60 s. Logs the values
-       * at info when they change. Main thread (the message handler and the
-       * update loop; serialized by a mutex); the values reach ProcessEvent
-       * through atomics.
+       * at info when they change. Runs on the message handler's thread and on
+       * whichever thread runs the update tick (a game job thread in gameplay;
+       * see THREADS in UpdateLoop.cpp); serialized by a mutex. The values reach
+       * ProcessEvent through atomics.
        */
       void SyncStickDeadzones(std::string_view why);
 
@@ -144,6 +154,10 @@ namespace Huginn::Update
 
       /// Last update time point
       std::chrono::steady_clock::time_point m_lastUpdate;
+
+      /// 0.24.29: the time the loop lost to suspensions (the clamp in
+      /// DoUpdate: alt-tab, the console, a pause), ms since launch.
+      std::atomic<std::int64_t> m_suspendedMs{ 0 };
 
       /// The latest player input, steady_clock ticks since its epoch
       /// (kNoInput before the first). Written by ProcessEvent (game threads),

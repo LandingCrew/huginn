@@ -5,14 +5,6 @@
 
 namespace Huginn::State
 {
-    void ContextWeightSettings::LoadFromFile(const std::filesystem::path& iniPath)
-    {
-        CSimpleIniA ini;
-        if (LoadIniFile(ini, iniPath, "ContextWeightSettings"sv)) {
-            LoadFromIni(ini);
-        }
-    }
-
     void ContextWeightSettings::LoadFromIni(const CSimpleIniA& ini)
     {
         const char* section = "ContextWeights";
@@ -100,59 +92,6 @@ namespace Huginn::State
         logger::info("[ContextWeightSettings] Loaded smoothing: health^{:.1f}, magicka^{:.1f}, stamina^{:.1f}, weaponCharge^{:.1f}",
             fHealthSmoothingExponent, fMagickaSmoothingExponent, fStaminaSmoothingExponent,
             fWeaponChargeSmoothingExponent);
-    }
-
-    void ContextWeightSettings::ResetToDefaults()
-    {
-        // Legacy weights (0-10 scale)
-        weightOnFire = ContextWeightDefaults::ON_FIRE;
-        weightPoisoned = ContextWeightDefaults::POISONED;
-        weightFrozen = ContextWeightDefaults::FROZEN;
-        weightShocked = ContextWeightDefaults::SHOCKED;
-        weightDiseased = ContextWeightDefaults::DISEASED;
-
-        weightUnderwater = ContextWeightDefaults::UNDERWATER;
-        weightFallingHigh = ContextWeightDefaults::FALLING_HIGH;
-        weightLookingAtLock = ContextWeightDefaults::LOOKING_AT_LOCK;
-
-        // Normalized weights [0,1]
-        weightInCombat = ContextWeightDefaults::IN_COMBAT;
-        weightMultipleEnemies = ContextWeightDefaults::MULTIPLE_ENEMIES;
-        weightEnemyCasting = ContextWeightDefaults::ENEMY_CASTING;
-        weightSneaking = ContextWeightDefaults::SNEAKING;
-        weightDarkness = ContextWeightDefaults::DARKNESS;
-        darkLightLevel = State::LightLevel::DARK_THRESHOLD;
-        State::StateManager::GetSingleton().SetDarkLightLevel(darkLightLevel);
-        weightHungry = ContextWeightDefaults::HUNGRY;
-        alcoholSatisfiesHunger = false;
-        weightCold = ContextWeightDefaults::COLD;
-
-        weightAtForge = ContextWeightDefaults::AT_FORGE;
-        weightAtEnchanter = ContextWeightDefaults::AT_ENCHANTER;
-        weightAtAlchemyLab = ContextWeightDefaults::AT_ALCHEMY_LAB;
-
-        weightTargetUndead = ContextWeightDefaults::TARGET_UNDEAD;
-        weightTargetDaedra = ContextWeightDefaults::TARGET_DAEDRA;
-        weightTargetDragon = ContextWeightDefaults::TARGET_DRAGON;
-
-        weightNeedsAmmo = ContextWeightDefaults::NEEDS_AMMO;
-        weightNoWeapon = ContextWeightDefaults::NO_WEAPON;
-        weightWeapon = ContextWeightDefaults::WEAPON;
-        weightSpell = ContextWeightDefaults::SPELL;
-        weightSummon = ContextWeightDefaults::SUMMON;
-        weightAllyInjured = ContextWeightDefaults::ALLY_INJURED;
-
-        weightSoulGem = ContextWeightDefaults::SOUL_GEM;
-        weightBuffPotion = ContextWeightDefaults::BUFF_POTION;
-        weightBuffCombat = ContextWeightDefaults::BUFF_COMBAT;
-
-        // Smoothing parameters
-        fHealthSmoothingExponent = ContextWeightDefaults::HEALTH_SMOOTHING_EXPONENT;
-        fMagickaSmoothingExponent = ContextWeightDefaults::MAGICKA_SMOOTHING_EXPONENT;
-        fStaminaSmoothingExponent = ContextWeightDefaults::STAMINA_SMOOTHING_EXPONENT;
-        fWeaponChargeSmoothingExponent = ContextWeightDefaults::WEAPON_CHARGE_SMOOTHING_EXPONENT;
-
-        logger::info("[ContextWeightSettings] Reset to defaults (legacy + normalized weights)"sv);
     }
 
     ContextWeightConfig ContextWeightSettings::BuildConfig() const

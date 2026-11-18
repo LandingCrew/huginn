@@ -5,16 +5,10 @@
 
 namespace Huginn::UI
 {
-    void IntuitionSettings::LoadFromFile(const std::filesystem::path& iniPath)
-    {
-        CSimpleIniA ini;
-        if (LoadIniFile(ini, iniPath, "IntuitionSettings"sv)) {
-            LoadFromIni(ini);
-        }
-    }
-
-    // [Widget] lives in ONE file: dMenu's own INI. Nothing overlays it, so each
-    // key falls back to its compile-time default.
+    // [Widget] lives in ONE file: dMenu's own INI, parsed over the dMenu
+    // descriptor's defaults (Settings::LoadDMenuIni), so a key the file leaves
+    // out reads the descriptor's default; the constants below apply only to a
+    // key in neither.
     void IntuitionSettings::LoadFromIni(const CSimpleIniA& ini)
     {
         const char* section = "Widget";
@@ -83,23 +77,6 @@ namespace Huginn::UI
             // player tells a setting that did not take from one that did not apply.
             displayMode == DisplayMode::Minimal ? (minimalCounts ? " (counts)" : " (names only)") : "",
             slotEffect == SlotEffect::Fade ? "fade" : slotEffect == SlotEffect::Instant ? "instant" : "slide");
-    }
-
-    void IntuitionSettings::ResetToDefaults()
-    {
-        enabled   = IntuitionDefaults::ENABLED;
-        positionX = IntuitionDefaults::POSITION_X;
-        positionY = IntuitionDefaults::POSITION_Y;
-        alpha     = IntuitionDefaults::ALPHA;
-        scale        = IntuitionDefaults::SCALE;
-        childAlpha     = IntuitionDefaults::CHILD_ALPHA;
-        readOnly       = IntuitionDefaults::READ_ONLY;
-        hideWhileWheelOpen = IntuitionDefaults::HIDE_WHILE_WHEEL_OPEN;
-        displayMode    = DisplayMode::Minimal;
-        minimalCounts  = IntuitionDefaults::MINIMAL_COUNTS;
-        slotEffect     = SlotEffect::Slide;
-
-        logger::info("[IntuitionSettings] Reset to defaults"sv);
     }
 
     IntuitionConfig IntuitionSettings::BuildConfig() const

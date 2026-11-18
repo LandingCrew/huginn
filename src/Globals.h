@@ -18,9 +18,16 @@
 #include "apparel/ApparelRegistry.h"
 #include "learning/FeatureBanditLearner.h"
 #include "learning/UsageMemory.h"
+#include "learning/ChoiceLearner.h"
 #include "learning/UtilityScorer.h"
 #include "slot/SlotLocker.h"
 #include "util/IntervalTimer.h"
+#include "core/LearningClock.h"
+
+namespace Huginn::Scoring::Legacy
+{
+    class LegacyScorer;   // learning/legacy/LegacyScorer.h (R8.4)
+}
 
 // =============================================================================
 // GLOBAL INSTANCES - Declared here, defined in Globals.cpp
@@ -33,7 +40,11 @@ extern std::unique_ptr<Huginn::State::StateEvaluator> g_stateEvaluator;
 extern std::unique_ptr<Huginn::Spell::SpellRegistry> g_spellRegistry;
 extern std::unique_ptr<Huginn::Learning::FeatureBanditLearner> g_featureBanditLearner;
 extern std::unique_ptr<Huginn::Learning::UsageMemory> g_usageMemory;
+// R8.2, live from R8.3: the choice learner the pipeline ranks with (learning/ChoiceLearner.h); null until the first game load.
+extern std::unique_ptr<Huginn::Learning::ChoiceLearner> g_choiceLearner;
 extern std::unique_ptr<Huginn::Scoring::UtilityScorer> g_utilityScorer;
+// R8.4: the old engine's per-candidate score, kept for D2 only (learning/legacy/LegacyScorer.h)
+extern std::unique_ptr<Huginn::Scoring::Legacy::LegacyScorer> g_legacyScorer;
 extern std::unique_ptr<Huginn::Item::ItemRegistry> g_itemRegistry;
 extern std::unique_ptr<Huginn::Weapon::WeaponRegistry> g_weaponRegistry;
 extern std::unique_ptr<Huginn::Scroll::ScrollRegistry> g_scrollRegistry;
@@ -57,7 +68,6 @@ struct RegistryTimers {
 extern RegistryTimers g_registryTimers;
 
 // Non-registry timers (kept separate — different lifecycle)
-extern std::chrono::steady_clock::time_point g_lastStateLog;
 // Atomic: written by the load (main thread), read by the update loop
 // (Util::IsExtraListStable). Ordered by g_loadGeneration's release/acquire
 // pair, see core/InstanceDetail.h.
@@ -78,32 +88,20 @@ extern std::string g_listName;
 // Mirrored from Persist's own copy so the selection and A|B logs can stamp it
 // without reaching into the serializer.
 extern std::atomic<uint64_t> g_activeCharacterID;
+// The learning clock (core/LearningClock.h, 0.24.22): one count both learners
+// and the resets tick, saved in HCID beside the character ID; a load compares
+// it with the save's and sets it (persist/CharacterRecord.h).
+extern Huginn::Core::LearningClock::Clock g_learningClock;
 
 // Flags
-extern bool g_hasShownWelcomeNotification;
 extern std::atomic<bool> g_updateSystemFailed;
-
-// =============================================================================
-// HELPER: Evaluate Current Game State
-// =============================================================================
-
-/// @brief Helper struct to return both GameState and PlayerActorState together
-/// @details Reduces code duplication across multiple call sites
-struct EvaluatedGameState {
-  Huginn::State::GameState gameState;
-  Huginn::State::PlayerActorState playerState;
-};
-
-/// @brief Fetches state from StateManager and evaluates current GameState
-/// @return Struct containing evaluated GameState and PlayerActorState
-/// @note C++17 structured bindings: auto [state, player] = EvaluateCurrentGameState();
-[[nodiscard]] EvaluatedGameState EvaluateCurrentGameState();
 
 /// @brief Reset all stateful pipeline subsystems to a clean state.
 /// @details Shared by InitializeGameSystems() and Cmd_ResetAll to prevent
 /// the reset and init sequences from silently diverging.
 /// Resets: UtilityScorer, UsageMemory, OverrideManager, CandidateGenerator,
-///         SlotAllocator, SlotLocker (with INI config), StateManager tracking.
+///         SlotAllocator, SlotLocker (the locks; its config is the caller's),
+///         StateManager tracking.
 void ResetPipelineSubsystems();
 
 /// @brief Canonical path to the main Huginn INI (Data/SKSE/Plugins/Huginn.ini).
@@ -118,36 +116,34 @@ void ResetPipelineSubsystems();
 /// through here so a console reload can't silently reset them by reading the
 /// wrong file. [Keybindings] is NOT here — it belongs to the main INI.
 /// @note The main-INI fallback is inert for these sections: Huginn.ini does not
-/// define [Widget] or [Debug], so with dMenu absent they take compile-time
-/// defaults. Configuring the widget UI requires dMenu.
+/// define [Widget] or [Debug], so with dMenu absent they take the dMenu
+/// descriptor's defaults (Settings::LoadDMenuIni). Configuring the widget UI
+/// requires dMenu.
 [[nodiscard]] std::filesystem::path GetDMenuIniPath();
 
-// LoadIniFile is declared in IniLoad.h (included above) — the shared parse front
-// door used by every settings loader.
+/// @brief dMenu's own INI for Huginn, whether or not it exists
+/// (Data/SKSE/Plugins/dmenu/customSettings/ini/Huginn.ini). Readers use
+/// GetDMenuIniPath(); this is for the one writer, Reset to Defaults.
+[[nodiscard]] std::filesystem::path GetDMenuOwnIniPath();
+
+// Settings INIs are parsed through Settings::LoadMainIni / LoadDMenuIni
+// (settings/ShippedDefaults.h): the shipped file, then the player's over it.
+// LoadIniFile (IniLoad.h) is for the other files (Huginn_Overrides.ini, the
+// test harness's INI).
 
 /// @brief Load [Candidates] section settings from an already-parsed INI into g_candidateConfig.
 void LoadCandidateConfigFromINI(const CSimpleIniA& ini);
-/// @brief Convenience overload: parse Huginn.ini, then load [Candidates].
-/// @note Called during both kNewGame and kPostLoadGame events.
-void LoadCandidateConfigFromINI();
 
 /// @brief Load [Wildcards] section settings from an already-parsed INI into the WildcardManager.
 void LoadWildcardConfigFromINI(Huginn::Scoring::WildcardManager& wildcardMgr, const CSimpleIniA& ini);
-/// @brief Convenience overload: parse Huginn.ini, then load [Wildcards].
-/// @note Called during both kNewGame and kPostLoadGame events, after UtilityScorer is created.
-void LoadWildcardConfigFromINI(Huginn::Scoring::WildcardManager& wildcardMgr);
 
 /// @brief Load [SlotLocker] section settings from an already-parsed INI.
+/// @note InitializeGameSystems (step 8) and SettingsReloader::ApplySideEffects.
 [[nodiscard]] Huginn::Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini);
-/// @brief Convenience overload: parse Huginn.ini, then load [SlotLocker].
-/// @note Called during kNewGame, kPostLoadGame, and hg reload.
-[[nodiscard]] Huginn::Slot::SlotLockConfig LoadSlotLockerConfigFromINI();
 
 // =============================================================================
 // GLOBAL ACCESSORS - Safe access to global systems from other translation units
 // =============================================================================
 namespace Huginn {
     State::StateEvaluator* GetStateEvaluator();
-    Learning::FeatureBanditLearner* GetFeatureBanditLearner();
-    Learning::UsageMemory* GetUsageMemory();
 }

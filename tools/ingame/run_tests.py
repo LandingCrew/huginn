@@ -4,7 +4,7 @@ Launches the game through Mod Organizer 2's command line, lets Huginn run its
 main-menu suites, auto-load a save and run the after-load suites, then waits
 for the sentinel line Huginn logs before it ends the game:
 
-    [HuginnTest] DONE result=PASS suites=19 passed=19 failed=0 skipped=0 fail_lines=0 failed_suites=- skipped_suites=- reason=-
+    [HuginnTest] DONE result=PASS suites=21 passed=21 failed=0 skipped=0 fail_lines=0 failed_suites=- skipped_suites=- reason=-
 
 Exit code: 0 on PASS (and no skipped suite, unless --allow-skips); 1 on a
 failed suite, a skipped suite, or a run that never reached the sentinel

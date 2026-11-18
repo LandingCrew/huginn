@@ -40,6 +40,10 @@ namespace Huginn::UI
         static LRESULT CALLBACK WndProcHook(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
         inline static WNDPROC s_originalWndProc = nullptr;
         inline static ImGuiRenderer* s_instance = nullptr;
+        // io.WantCapture*, as of the last frame: written on the render thread
+        // (EndFrame), read on the window thread (WndProcHook).
+        inline static std::atomic<bool> s_wantCaptureMouse{ false };
+        inline static std::atomic<bool> s_wantCaptureKeyboard{ false };
 
         // D3D11 resources
         ID3D11Device* m_device = nullptr;

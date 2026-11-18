@@ -140,6 +140,8 @@ New items start with minimal learning influence. After ~5 uses, Huginn has a dec
 
 Optionally, lower-priority slots will occasionally show items you haven't tried yet — giving the learner a chance to discover that you actually love that Scroll of Blizzard you forgot about. Configurable probability, cooldown, and which slots participate.
 
+Spells you just learned and items you just picked up get a [b]discovery boost[/b] (on by default): they show up as wildcards sooner for a while. With it off, a new item is no more uncertain than anything you've never picked — a limitation of starting from the bootstrap.
+
 [line]
 
 [size=3][b]Item Support[/b][/size]

@@ -12,7 +12,7 @@
 #   /external:W0             external headers emit no warnings
 # and CommonLibSSE is added with add_subdirectory(... SYSTEM), so its include
 # directory reaches us as /external:I even where a header is pulled in with
-# quotes. Imported targets (vcpkg: spdlog, fmt, imgui, freetype, doctest) are
+# quotes. Imported targets (vcpkg: spdlog, fmt, imgui, doctest) are
 # SYSTEM by default.
 #
 # /WX: warnings are errors on our targets, so the build stays at 0 warnings.

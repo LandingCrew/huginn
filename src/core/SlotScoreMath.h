@@ -24,7 +24,7 @@
 //     ranked, +inf for an override (pinned by a rule, never compared).
 //
 // THE BRIDGE (R7, until the new scorer lands in R8): score = ln(utility). The
-// old engine's utilities are >= 0 (fMinimumUtility is clamped to >= 0), so the
+// old engine's utilities are >= 0 (its utility floor is clamped to >= 0), so the
 // bridge is defined on every row the slot code ever sees; ln 0 = -inf. With
 // sigma = 0 and m = 1 + fChallengerMargin (1.5 shipped), the slot code on the
 // bridged scores makes the decisions the old multiplicative code made on the
@@ -67,9 +67,9 @@ namespace Huginn::Core
     /// size: with a non-power-of-two discount the old cap products carry noise of
     /// up to ~1.4e-7 in log space, and the band has to sit above it. It can drop
     /// to kScoreTieEpsilon at R8, when scores stop being float utilities and the
-    /// tier preference is gone. Not a tuning knob: under the bridge the old engine's
-    /// potion tier preference divides a family's next tier by exactly 1.5
-    /// (POTION_TIER_STEP), the same 1.5 as the hold's margin, so adjacent tiers sit
+    /// tier preference is gone (R8.4 deleted it). Not a tuning knob: under the bridge the
+    /// old engine's potion tier preference divided a family's next tier by exactly 1.5
+    /// (its fixed tier step), the same 1.5 as the hold's margin, so adjacent tiers sat
     /// ON the margin and only the rounding of u / 1.5 * 1.5 decided the old
     /// comparison (a recorded play snapshot hit it: Potion of Plentiful Magicka at
     /// 0.207614 against Minor at 0.13840933). With the band both arithmetics hold
@@ -79,7 +79,7 @@ namespace Huginn::Core
 
     /// THE BRIDGE: the old engine's utility as a score. ln(u) for u > 0; -inf
     /// for u <= 0 and for NaN (no ranked row has either: utilities are >= the
-    /// INI's fMinimumUtility, which is clamped to >= 0).
+    /// INI's utility floor, which is clamped to >= 0).
     [[nodiscard]] inline SlotScore BridgeScore(float utility) noexcept
     {
         if (!(utility > 0.0f)) {
@@ -88,26 +88,25 @@ namespace Huginn::Core
         return std::log(static_cast<double>(utility));
     }
 
-    /// The old engine's utility back from a score: exp(score), for display
-    /// only (the debug widget's bar, the widget's unused confidence payload).
-    /// Defined for any sign: 0 for -inf, finite for +inf (clamped to the
-    /// largest float), 0 for NaN. Under the bridge it returns the utility.
-    [[nodiscard]] inline float DisplayUtility(SlotScore score) noexcept
-    {
-        if (!(score == score)) {
-            return 0.0f;   // NaN
-        }
-        const double u = std::exp(score);
-        if (!(u < static_cast<double>(std::numeric_limits<float>::max()))) {
-            return std::numeric_limits<float>::max();
-        }
-        return static_cast<float>(u);
-    }
-
     /// a beats b: greater by more than the tie epsilon. -inf never beats -inf.
     [[nodiscard]] inline bool ScoreGreater(SlotScore a, SlotScore b) noexcept
     {
         return a > b + kScoreTieEpsilon;
+    }
+
+    /// The ranking's order (ScoredCandidate::operator<, R8.3: on the choice
+    /// score mu): a higher score first; on an exact tie, a higher tie-break
+    /// (a weapon's DPS, 0 for anything else); on a tie of both, neither
+    /// (std::stable_sort then keeps the generation order). Exact comparisons,
+    /// not an epsilon: an epsilon is not transitive, and std::sort on an
+    /// intransitive comparator is undefined. A NaN score reads as -inf, so the
+    /// order stays strict weak whatever reaches it; any sign is fine.
+    [[nodiscard]] inline bool RanksBefore(SlotScore a, float tieA, SlotScore b, float tieB) noexcept
+    {
+        if (!(a == a)) a = kUnrankedScore;
+        if (!(b == b)) b = kUnrankedScore;
+        if (a != b) return a > b;
+        return tieA > tieB;
     }
 
     /// ln m for the slot hold's margin m = 1 + margin. The float sum is the
