@@ -81,6 +81,7 @@ namespace Huginn::Effect
         // magicka, stamina), and whether that restore is a full-restore sentinel.
         std::array<float, 3> restoreAmount{};
         std::array<bool, 3> fullRestore{};
+        std::array<float, 3> restoreSeconds{};   // 0.24.34: the restore's longest row, seconds (0 instant)
         Core::Effect::School school = Core::Effect::School::None;
         // 0.23.30: rows that fire only with a perk, graded, NOT in `cap`: the
         // catalog is built at the main menu, before there is a player, so a

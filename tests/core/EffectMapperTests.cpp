@@ -1246,6 +1246,14 @@ TEST_CASE("cross features")
     CHECK(Overshoot(0, true, 40, 200) == doctest::Approx(0.8));  // full restore = max
     CHECK(Overshoot(9e9f, false, 0, 100) == 1.0f);
     CHECK(Overshoot(10, false, 5, 0) == 0.0f);
+    // 0.24.34: a heal over time meets the damage still coming. Restore Health
+    // (Remarkable), 240 over 20 s, 300 max, 165 missing: +0.25 standing still;
+    // losing 5/s for its 20 s the gap is 265, so it no longer overshoots.
+    CHECK(Overshoot(240, false, 165, 300) == doctest::Approx(0.25));
+    CHECK(Overshoot(240, false, 165, 300, 20, 5) == doctest::Approx(-25.0 / 300.0));
+    CHECK(Overshoot(240, false, 165, 300, 20, 50) == doctest::Approx(-0.2));   // the gap caps at max
+    CHECK(Overshoot(240, false, 165, 300, 0, 50) == doctest::Approx(0.25));    // instant: today's gap
+    CHECK(Overshoot(240, false, 165, 300, 20, -3) == doctest::Approx(0.25));   // no negative loss
     CHECK(WeaponCharge(50, 200) == doctest::Approx(0.25));
     CHECK(WeaponCharge(50, 0) == 0.0f);
     CHECK(StackCount(0) == 0.0f);
@@ -1500,4 +1508,28 @@ TEST_CASE("effect mapper: heal routing -- the fastest heal decides heal_slow; pe
     CHECK(CapOf(r, 2, Col::total_restore_health) == 0.0f);
 
     CHECK(CapOf(r, 3, Col::rate_per_magicka) > 0.0f);
+}
+
+TEST_CASE("effect mapper: a potion never heals others; a restore's seconds for the overshoot (0.24.34)")
+{
+    // The user, 2026-11-18: "potions are really only for the player
+    // character". A potion lands on the drinker whatever its effect record's
+    // delivery or area says.
+    World w;
+    const auto heal = w.Add(Mgef(kArchValueModifier, "Health", "Restore Health"));
+    auto& potion = w.Item(Kind::Potion, "Potion of Restore Health");
+    potion.delivery = kDeliveryTouch;
+    World::Fx(potion, heal, 12, 20, 15);   // an area on the record
+    auto& aura = w.Item(Kind::Spell, "Healing Aura on Self");
+    World::Fx(aura, heal, 0.75f, 300, 15);   // a self spell with an area: heals allies too
+    auto& close = w.Item(Kind::Spell, "Close Wounds");
+    World::Fx(close, heal, 40, 0);
+    const auto r = w.Build();
+    CHECK(CapOf(r, 0, Col::restore_health) > 0.0f);
+    CHECK(CapOf(r, 0, Col::restore_health_other) == 0.0f);
+    CHECK(CapOf(r, 0, Col::total_restore_health_other) == 0.0f);
+    CHECK(CapOf(r, 1, Col::restore_health_other) > 0.0f);
+    CHECK(r.mappings[0].restoreSeconds[0] == doctest::Approx(20.0));
+    CHECK(r.mappings[0].restoreAmount[0] == doctest::Approx(240.0));
+    CHECK(r.mappings[2].restoreSeconds[0] == 0.0f);
 }

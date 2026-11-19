@@ -96,6 +96,7 @@ namespace Huginn::Effect
             e.cap = std::move(cap);
             e.restoreAmount = m.restoreAmount;
             e.fullRestore = m.fullRestore;
+            e.restoreSeconds = m.restoreSeconds;
             e.school = PrimarySchool(m, pops);
             e.perkRows = GradePerkRows(m, pops);
             e.unlockReach = m.unlockReach;

@@ -172,8 +172,9 @@ TEST_CASE("bootstrap: the shipped file reads and maps by name")
     CHECK(m.report.colsPrior == 7);
     CHECK(m.model.Th(static_cast<std::size_t>(Needs::NeedId::downtime), Col(Effect::Col::total_restore_health_other)).mu ==
           doctest::Approx(1.0));
+    // rate_per_magicka has no obvious pair (dropped in 0.24.34): it starts at 0
     CHECK(m.model.Th(static_cast<std::size_t>(Needs::NeedId::magicka_deficit), Col(Effect::Col::rate_per_magicka)).mu ==
-          doctest::Approx(1.0));
+          doctest::Approx(0.0));
     {
         const auto j = Col(Effect::Col::heal_slow);
         CHECK(m.model.Th(static_cast<std::size_t>(Needs::NeedId::in_combat), j).mu == doctest::Approx(-1.0));

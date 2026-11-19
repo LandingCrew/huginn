@@ -287,6 +287,9 @@ namespace Huginn::Core::Effect
         // per vital, and whether a row is a full-restore sentinel.
         std::array<float, 3> restoreAmount{};
         std::array<bool, 3> fullRestore{};
+        // 0.24.34: the longest of those rows per vital, seconds (0 instant):
+        // the time over which a heal over time meets the damage still coming.
+        std::array<float, 3> restoreSeconds{};
         // 0.23.30: rows that fire only with a perk (beside cap(i), graded by
         // GradePerkRows), and the perk and bane rows themselves, from which an
         // item that keeps no row at all still takes its delivery, timing,

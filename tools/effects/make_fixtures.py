@@ -585,7 +585,8 @@ def expected_values(items):
                     continue
                 vals[c] = max(vals.get(c, 0.0), v)
             for kr in it['rows']:
-                if 'restore_health' in kr['cols'] and (kr['delivery'] != '0' or kr['area'] > 0):
+                # 0.24.34: a potion never heals others (it lands on the drinker)
+                if castable and 'restore_health' in kr['cols'] and (kr['delivery'] != '0' or kr['area'] > 0):
                     heals_others = True
             if heals_others and max(vals.get('restore_health', 0), others_heal) > 0:
                 vals['restore_health_other'] = max(vals.get('restore_health', 0), others_heal)

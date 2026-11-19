@@ -181,14 +181,15 @@ TEST_CASE("obvious pairs: every pair names a need, and doc 9's count")
             ++pairs;
         }
     }
-    // docs/architecture/9-context-as-learner-input.md, "Pairs": 274 since
-    // 0.24.34 added total_restore_* x downtime and rate_per_magicka x
-    // magicka_deficit; 269 since 0.24.33 added heal_slow x combat_onset, downtime and -in_combat; 266 since
+    // docs/architecture/9-context-as-learner-input.md, "Pairs": 273 since
+    // 0.24.34 added total_restore_* x downtime (rate_per_magicka x
+    // magicka_deficit, added and dropped in 0.24.34, lifted heal spells when
+    // magicka was too low to cast them); 269 since 0.24.33 added heal_slow x combat_onset, downtime and -in_combat; 266 since
     // 0.23.30 added magicka_deficit x kind_weapon and combat_regen_ok x
     // kind_food (a negative one); 264 since 0.23.19 added deep_water_ahead x
     // utility_water_breathing (263 since 0.23.17 dropped cold x resist_frost
     // and cold x armour_warm; 265 before; 266 before 0.23.16).
-    CHECK(pairs == 274);
+    CHECK(pairs == 273);
 }
 
 TEST_CASE("obvious pairs: no eating in combat, unless health regeneration is blocked (0.23.30)")

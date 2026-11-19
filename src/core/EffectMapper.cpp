@@ -1024,8 +1024,10 @@ namespace Huginn::Core::Effect
                 const int v = VitalIndex(r.col);
                 if (v < 0 || !eligible(r, r.col)) continue;
                 if (RouteVital(r.col, r.delivery, castable) != VitalRoute::Player) continue;
-                if (r.fullRestore) m.fullRestore[static_cast<std::size_t>(v)] = true;
-                else m.restoreAmount[static_cast<std::size_t>(v)] += r.total;   // 0.24.34: raw is the rate
+                const auto vi = static_cast<std::size_t>(v);
+                if (r.fullRestore) m.fullRestore[vi] = true;
+                else m.restoreAmount[vi] += r.total;   // 0.24.34: raw is the rate
+                m.restoreSeconds[vi] = std::max(m.restoreSeconds[vi], static_cast<float>(r.duration));
             }
         }
 
@@ -1171,7 +1173,7 @@ namespace Huginn::Core::Effect
                     const int v = VitalIndex(c);
                     if (v < 0) continue;   // a restore; a regeneration has a rate, no amount to total
                     // As Grade: any kept heal that reaches others makes the item one.
-                    if (c == Col::restore_health && (r.delivery != kDeliverySelf || r.area > 0)) healsOthers = true;
+                    if (castable && c == Col::restore_health && (r.delivery != kDeliverySelf || r.area > 0)) healsOthers = true;
                     if (!eligible(r, c)) continue;
                     // RouteVital, as Grade routes the row: the player's own
                     // restore, or a heal for someone else; magicka or stamina
@@ -1375,7 +1377,10 @@ namespace Huginn::Core::Effect
                 // Any kept heal that reaches others, visible or not: Breath of
                 // Life's visible row heals the caster and a hidden twin with
                 // an area heals the allies around.
-                if (c == Col::restore_health && (r.delivery != kDeliverySelf || r.area > 0)) healsOthers = true;
+                // A potion never does (0.24.34, the user: potions are only for the
+                // player character): it lands on the drinker whatever its
+                // effect record's delivery or area says.
+                if (castable && c == Col::restore_health && (r.delivery != kDeliverySelf || r.area > 0)) healsOthers = true;
                 if (!eligible(r, c)) continue;
                 if (c == Col::restore_health || c == Col::regen_health) {
                     if (r.duration >= kSlowHealSec) slowHeal = true;

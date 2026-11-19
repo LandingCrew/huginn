@@ -40,6 +40,10 @@ namespace Huginn::State
     float baseMaxHealth = DefaultState::DEFAULT_MAX_VITAL;  // Base max value (before debuffs)
     float baseMaxMagicka = DefaultState::DEFAULT_MAX_VITAL;
     float baseMaxStamina = DefaultState::DEFAULT_MAX_VITAL;
+    // 0.24.34, the player only (0 on targets): health lost per second right
+    // now (State::HealthLossPerSec), what a heal over time must also cover
+    // before it overshoots (core/CrossFeatures.h Overshoot).
+    float healthLossPerSec = 0.0f;
 
     // Helper methods
     [[nodiscard]] bool IsHealthLow() const noexcept {
@@ -103,7 +107,8 @@ namespace Huginn::State
                    std::abs(maxStamina - other.maxStamina) < Epsilon::VITAL_MAX_VALUE &&
                    std::abs(baseMaxHealth - other.baseMaxHealth) < Epsilon::VITAL_MAX_VALUE &&
                    std::abs(baseMaxMagicka - other.baseMaxMagicka) < Epsilon::VITAL_MAX_VALUE &&
-                   std::abs(baseMaxStamina - other.baseMaxStamina) < Epsilon::VITAL_MAX_VALUE;
+                   std::abs(baseMaxStamina - other.baseMaxStamina) < Epsilon::VITAL_MAX_VALUE &&
+                   std::abs(healthLossPerSec - other.healthLossPerSec) < 1.0f;   // HP per second
 
 #ifdef _DEBUG
       if (!equal) {
