@@ -568,7 +568,12 @@ TEST_CASE("choice update: a passed-over heal for someone else moves ally_injured
         CHECK(m.Th(kALLY, kRESTO).mu == doctest::Approx(-sig2 * 0.5));
         CHECK(m.Th(kCOMBAT, kRHO).mu == doctest::Approx(0.0));     // not "never in a fight"
         CHECK(m.Th(kCOMBAT, kRESTO).mu == doctest::Approx(0.0));
-        CHECK(m.Th(kCOMBAT, kRHO).var == doctest::Approx(sig2));   // the set was seen
+        // 0.24.34 (review of #258): no gradient, no precision -- only owned
+        // rows carry restore_health_other, so the rest's variance there is 0
+        CHECK(m.Th(kCOMBAT, kRHO).var == doctest::Approx(1.0));
+        CHECK(m.Th(kCOMBAT, kRESTO).var == doctest::Approx(1.0));
+        CHECK(m.Th(kALLY, kRHO).var == doctest::Approx(sig2));     // the owner saw it
+        CHECK(m.Th(kCOMBAT, kDMG).var == doctest::Approx(sig2));   // the bolt's column as before
         // the bolt's own evidence reaches every active need, as before
         CHECK(m.Th(kCOMBAT, kDMG).mu == doctest::Approx(sig2 * 0.5));
         CHECK(m.Th(kALLY, kDMG).mu == doctest::Approx(sig2 * 0.5));
@@ -581,7 +586,11 @@ TEST_CASE("choice update: a passed-over heal for someone else moves ally_injured
         n[kCOMBAT] = 1.0;
         const auto set = setOf();
         (void)Update(m, MakeTick(m, n, {}), set, 0);
-        CHECK(m.Th(kCOMBAT, kRHO).mu == doctest::Approx(-sig2 * 0.25));
+        // the rest: the heal's a x (1 - 0.5) = 0.5, P 0.5 each: V_rest
+        // 0.125 - 0.0625 = 0.0625, G_rest -0.25
+        const double sigC = 1.0 / (1.0 + 0.0625);
+        CHECK(m.Th(kCOMBAT, kRHO).mu == doctest::Approx(-sigC * 0.25));
+        CHECK(m.Th(kCOMBAT, kRHO).var == doctest::Approx(sigC));
         const double sigA = 1.0 / (1.0 + 0.25 * 0.25);
         CHECK(m.Th(kALLY, kRHO).mu == doctest::Approx(-sigA * 0.5 * 0.5));
     }
@@ -603,5 +612,20 @@ TEST_CASE("choice update: a passed-over heal for someone else moves ally_injured
         CHECK(m.Th(kALLY, kRHO).mu == doctest::Approx(sig2 * 0.5));
         CHECK(m.Th(kCOMBAT, kRHO).mu == doctest::Approx(0.0));
         CHECK(m.Th(kCOMBAT, kDMG).mu == doctest::Approx(-sig2 * 0.5));   // the bolt passed over
+    }
+    SUBCASE("a heal that also heals the player (a self heal with an area) is not owned (0.24.34)")
+    {
+        Model m = Blank();
+        std::array<double, K> n{};
+        n[kALLY] = 1.0;
+        n[kCOMBAT] = 1.0;
+        auto set = setOf();
+        set[1].attr = A(Grading::Graded, { { kRH, 1.0 }, { kRHO, 1.0 }, { kRESTO, 1.0 } });
+        (void)Update(m, MakeTick(m, n, {}), set, 0);
+        // on the page for the player's own wounds too: every active need learns it
+        CHECK(m.Th(kCOMBAT, kRHO).mu == doctest::Approx(-sig2 * 0.5));
+        CHECK(m.Th(kCOMBAT, kRH).mu == doctest::Approx(-sig2 * 0.5));
+        CHECK(m.Th(kALLY, kRHO).mu == doctest::Approx(-sig2 * 0.5));
+        CHECK(m.Th(kCOMBAT, kRHO).var == doctest::Approx(sig2));
     }
 }

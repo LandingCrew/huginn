@@ -1460,3 +1460,44 @@ TEST_CASE("effect mapper: vital restores grade per second, their totals and the 
     CHECK(r.mappings[3].restoreAmount[0] == doctest::Approx(240.0));
     CHECK(r.mappings[2].restoreAmount[0] == doctest::Approx(40.0));
 }
+
+TEST_CASE("effect mapper: heal routing -- the fastest heal decides heal_slow; per magicka and totals as Grade routes (0.24.34, review of #258)")
+{
+    World w;
+    const auto heal = w.Add(Mgef(kArchValueModifier, "Health", "Restore Health"));
+    const auto regen = w.Add(Mgef(kArchPeakValueModifier, "HealRate", "Regenerate Health"));
+    const auto mag = w.Add(Mgef(kArchValueModifier, "Magicka", "Restore Magicka"));
+    // 0: a quick heal with a long regeneration rider: a fight's heal, not slow
+    auto& rider = w.Item(Kind::Potion, "Potion of Restore Health with a rider");
+    World::Fx(rider, heal, 12, 20);
+    World::Fx(rider, regen, 50, 300);
+    // 1: magicka cast at someone else: its family only, nothing for the player
+    auto& gift = w.Item(Kind::Spell, "Restore Magicka on Target");
+    gift.delivery = kDeliveryAimed;
+    gift.magickaCost = 30;
+    World::Fx(gift, mag, 20, 0);
+    // 2: a health regeneration cast at an ally: a heal for others, with a total
+    auto& mend = w.Item(Kind::Spell, "Regenerate Health on Target");
+    mend.delivery = kDeliveryTargetActor;
+    mend.magickaCost = 40;
+    World::Fx(mend, regen, 50, 60);
+    // 3: a costed heal of the player's own, so rate_per_magicka has a population
+    auto& close = w.Item(Kind::Spell, "Close Wounds");
+    close.magickaCost = 40;
+    World::Fx(close, heal, 40, 0);
+    const auto r = w.Build();
+
+    CHECK(CapOf(r, 0, Col::heal_slow) == 0.0f);
+    CHECK(CapOf(r, 0, Col::restore_health) > 0.0f);
+
+    CHECK(CapOf(r, 1, Col::restore_magicka) == 0.0f);
+    CHECK(CapOf(r, 1, Col::restore) > 0.0f);                 // the family keeps what it is
+    CHECK(CapOf(r, 1, Col::rate_per_magicka) == 0.0f);       // restores nothing the player has
+    CHECK(CapOf(r, 1, Col::total_restore_magicka) == 0.0f);
+
+    CHECK(CapOf(r, 2, Col::restore_health_other) > 0.0f);
+    CHECK(CapOf(r, 2, Col::total_restore_health_other) == doctest::Approx(CapOf(r, 2, Col::restore_health_other)));
+    CHECK(CapOf(r, 2, Col::total_restore_health) == 0.0f);
+
+    CHECK(CapOf(r, 3, Col::rate_per_magicka) > 0.0f);
+}

@@ -105,6 +105,20 @@ class TempWork(unittest.TestCase):
         return r, buf.getvalue()
 
 
+class MeaningChanges(unittest.TestCase):
+    """0.24.34: restore_health / _magicka / _stamina grade the rate, not the total, under
+    the same names; a fit over logs on both sides is told (review of #258)."""
+
+    def test_straddling_builds_name_the_change(self):
+        got = fitlib.meaning_changes_spanned({'0.24.33 (0baf363)', '0.24.34 (1ba4cb1)'})
+        self.assertEqual(got, [('0.24.34', ('restore_health', 'restore_magicka', 'restore_stamina'))])
+
+    def test_one_side_is_quiet(self):
+        self.assertEqual(fitlib.meaning_changes_spanned({'0.23.56 (synthetic)', '0.24.33 (x)'}), [])
+        self.assertEqual(fitlib.meaning_changes_spanned({'0.24.34 (x)', '0.24.40 (y)'}), [])
+        self.assertEqual(fitlib.meaning_changes_spanned({'not a build'}), [])
+
+
 class Loader(TempWork):
     def files(self):
         """A rotated file (launch 1 of A, launch 2 of B, the first segment of launch 3 of A

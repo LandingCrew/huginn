@@ -30,8 +30,16 @@
 // recent row's weights step on the rest:
 //     G_j      = a_chosen,j - E_j                     (the owner need)
 //     G_j_rest = G_j - (s_ch a_chosen,j - sum_owned s_i P_i a_ij)   (the others)
-// The precision rises by c^2 V_j for every weight as before (the set was
-// seen). Without it, a follower heal passed over in a fight sank across the
+// and the precision each rises by is the variance of what it steps on: the
+// owner c^2 V_j, the others c^2 V_j_rest, V_j_rest the variance under P of
+// a_ij (1 - s_i) (0.24.34, review of #258: with V_j for both, a column only
+// owned rows carry, restore_health_other, gave the other needs no gradient
+// but full precision every pick, freezing their weights at today's value
+// with a confidence no evidence earned -- and the sd the hold reads with
+// them). A row that also heals the player (restore_health beside
+// restore_health_other: a self heal with an area) is not owned: it is on the
+// page for the player's own wounds too (OwnedColumn::unless).
+// Without it, a follower heal passed over in a fight sank across the
 // ten-odd fight needs active at once (in_combat, enemy_casting,
 // target_humanoid, a fire enemy, a Destruction loadout ... x
 // restore_health_other: about 0 in the bootstrap, -0.1 to -0.17 after one
@@ -200,13 +208,18 @@ namespace Huginn::Core::Choice
     {
         Effect::Col col;
         Needs::NeedId need;
+        Effect::Col unless;   // 0.24.34: a row carrying this too is not owned (it is on the page for more)
     };
     inline constexpr std::array<OwnedColumn, 1> kOwnedColumns{ {
-        { Effect::Col::restore_health_other, Needs::NeedId::ally_injured },
+        { Effect::Col::restore_health_other, Needs::NeedId::ally_injured, Effect::Col::restore_health },
     } };
+    // Update keeps one owner need per tick (the gradient split has one
+    // "rest"); a second entry needs an owner per column there first.
+    static_assert(kOwnedColumns.size() == 1, "ChoiceUpdate: one owned column until Update splits per column");
 
     /// The owner need of a row under `t` and its share s (0: not owned): the
-    /// first owned column the row carries whose need is active.
+    /// first owned column the row carries whose need is active, when the row
+    /// does not also carry that entry's `unless` column.
     struct Owner
     {
         std::int32_t need = -1;
@@ -216,11 +229,16 @@ namespace Huginn::Core::Choice
     {
         for (const auto& oc : kOwnedColumns) {
             const auto j = static_cast<std::uint16_t>(oc.col);
+            const auto u = static_cast<std::uint16_t>(oc.unless);
             const auto k = static_cast<std::size_t>(oc.need);
             if (k >= t.n.size() || !(t.n[k] > 0.0)) continue;
+            bool has = false, also = false;
             for (const auto& [col, a] : at.a) {
-                if (col == j && a > 0.0) return Owner{ static_cast<std::int32_t>(k), std::min(t.n[k], 1.0) };
+                if (!(a > 0.0)) continue;
+                if (col == j) has = true;
+                if (col == u) also = true;
             }
+            if (has && !also) return Owner{ static_cast<std::int32_t>(k), std::min(t.n[k], 1.0) };
         }
         return Owner{};
     }
@@ -245,23 +263,27 @@ namespace Huginn::Core::Choice
         // E_p a, E_p a^2 per column, both blocks; the owned rows' part
         // (0.24.33, the header) per column, for the one owner need a tick can
         // have per column (kOwnedColumns names one).
-        std::array<double, J> E{}, E2{}, Es{}, Es2{}, Eo{}, Eso{};
+        // E2r / Es2r: E_p of the rest's square, (a (1 - s))^2, for V_rest.
+        std::array<double, J> E{}, E2{}, Es{}, Es2{}, Eo{}, Eso{}, E2r{}, Es2r{};
         std::array<bool, J> touched{}, touchedS{};
         std::int32_t owner = -1;
         for (std::size_t i = 0; i < set.size(); ++i) {
             const double p = res.P[i];
             const Owner o = OwnerOf(t, set[i].attr);
             if (o.need >= 0) owner = o.need;
+            const double keep = 1.0 - o.share;
             for (const auto& [j, a] : set[i].attr.a) {
                 E[j] += p * a;
                 E2[j] += p * a * a;
                 Eo[j] += o.share * p * a;
+                E2r[j] += p * (keep * a) * (keep * a);
                 touched[j] = true;
             }
             for (const auto& [j, s] : set[i].attr.s) {
                 Es[j] += p * s;
                 Es2[j] += p * s * s;
                 Eso[j] += o.share * p * s;
+                Es2r[j] += p * (keep * s) * (keep * s);
                 touchedS[j] = true;
             }
         }
@@ -276,18 +298,24 @@ namespace Huginn::Core::Choice
             scho[j] = oc.share * s;
         }
         std::vector<std::uint16_t> cols, colsS;
-        std::array<double, J> V{}, G{}, Gr{}, Vs{}, Gs{}, Gsr{};
+        std::array<double, J> V{}, G{}, Vr{}, Gr{}, Vs{}, Gs{}, Vsr{}, Gsr{};
         for (std::size_t j = 0; j < J; ++j) {
             if (touched[j]) {
                 cols.push_back(static_cast<std::uint16_t>(j));
                 V[j] = std::max(E2[j] - E[j] * E[j], 0.0);
                 G[j] = ach[j] - E[j];
-                Gr[j] = G[j] - (acho[j] - Eo[j]);   // the owned rows' part taken out
+                // The owned rows' part taken out: the rest's gradient and its
+                // variance (the header).
+                const double Er = E[j] - Eo[j];
+                Vr[j] = std::max(E2r[j] - Er * Er, 0.0);
+                Gr[j] = G[j] - (acho[j] - Eo[j]);
             }
             if (touchedS[j]) {
                 colsS.push_back(static_cast<std::uint16_t>(j));
                 Vs[j] = std::max(Es2[j] - Es[j] * Es[j], 0.0);
                 Gs[j] = sch[j] - Es[j];
+                const double Esr = Es[j] - Eso[j];
+                Vsr[j] = std::max(Es2r[j] - Esr * Esr, 0.0);
                 Gsr[j] = Gs[j] - (scho[j] - Eso[j]);
             }
         }
@@ -295,12 +323,14 @@ namespace Huginn::Core::Choice
         for (const std::uint16_t k : t.active) {
             const double c = t.n[k];
             const bool own = static_cast<std::int32_t>(k) == owner;
+            const auto& v = own ? V : Vr;
             const auto& g = own ? G : Gr;
+            const auto& vs = own ? Vs : Vsr;
             const auto& gs = own ? Gs : Gsr;
-            for (const std::uint16_t j : cols) Detail::Step(m.Th(k, j), c, V[j], g[j]);
+            for (const std::uint16_t j : cols) Detail::Step(m.Th(k, j), c, v[j], g[j]);
             res.weightsMoved += cols.size();
             if (st) {
-                for (const std::uint16_t j : colsS) Detail::Step(m.strength[static_cast<std::size_t>(k) * J + j], c, Vs[j], gs[j]);
+                for (const std::uint16_t j : colsS) Detail::Step(m.strength[static_cast<std::size_t>(k) * J + j], c, vs[j], gs[j]);
                 res.weightsMoved += colsS.size();
             }
         }
@@ -308,10 +338,10 @@ namespace Huginn::Core::Choice
             const double c = t.r[f];
             if (c == 0.0) continue;
             auto& rr = m.recent[f];
-            for (const std::uint16_t j : cols) Detail::Step(rr.theta[j], c, V[j], Gr[j]);
+            for (const std::uint16_t j : cols) Detail::Step(rr.theta[j], c, Vr[j], Gr[j]);
             res.weightsMoved += cols.size();
             if (st && rr.strength.size() == J) {
-                for (const std::uint16_t j : colsS) Detail::Step(rr.strength[j], c, Vs[j], Gsr[j]);
+                for (const std::uint16_t j : colsS) Detail::Step(rr.strength[j], c, Vsr[j], Gsr[j]);
                 res.weightsMoved += colsS.size();
             }
         }

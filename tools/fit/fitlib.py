@@ -18,6 +18,7 @@ import hashlib
 import json
 import math
 import sys
+import warnings
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -202,6 +203,28 @@ def version(build):
         return None
 
 
+# Columns whose meaning changed at a version while keeping their name (a rename is
+# a new name, test_rename_is_a_new_name; these kept theirs so the fitted weights
+# carry over). Logs on both sides of a change pool two quantities in one column:
+# fit on one side (since= / until=), or read the pooled weight as a blend.
+CAP_MEANING_CHANGES = {
+    # the total healed (magnitude x duration) -> the rate (per second, or all
+    # of it at once when instant); the total moved to total_restore_*
+    '0.24.34': ('restore_health', 'restore_magicka', 'restore_stamina'),
+}
+
+
+def meaning_changes_spanned(builds):
+    """The CAP_MEANING_CHANGES the given builds straddle: [(version, columns)], a build
+    before the change and one at or after it both among them."""
+    vs = [v for v in (version(b) for b in builds) if v is not None]
+    if not vs:
+        return []
+    lo, hi = min(vs), max(vs)
+    return [(v, cols) for v, cols in sorted(CAP_MEANING_CHANGES.items(), key=lambda kv: version(kv[0]))
+            if lo < version(v) <= hi]
+
+
 def segment_names(split_at):
     """Labels of the build segments split_at cuts ('0.23.41' -> ['<0.23.41', '>=0.23.41'])."""
     cuts = sorted(split_at, key=version)
@@ -274,6 +297,9 @@ def build(D, include_nothing=True, latest_caps=False, v2=None, since=None, until
                 and (lo is None or version(d['build']) >= lo) and (hi is None or version(d['build']) <= hi)]
     if not decs:
         raise ValueError(f'no decisions to fit (builds {since or "any"} .. {until or "any"})')
+    for v, cols in meaning_changes_spanned({d['build'] for d in decs}):
+        warnings.warn(f"the kept logs straddle {v}, where {', '.join(cols)} changed meaning "
+                      f"(CAP_MEANING_CHANGES): fit since='{v}', or until a build before it", stacklevel=2)
     if any(version(v) is None for v in split_at):
         raise ValueError(f'split_at: {list(split_at)} are not all versions (0.23.41)')
     cuts = sorted(version(v) for v in split_at)
