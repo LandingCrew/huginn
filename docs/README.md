@@ -118,6 +118,7 @@ R6 (the offline fit, [roadmap](roadmap.md) R6) found that no variant without the
 | [9-context-as-learner-input.md](architecture/9-context-as-learner-input.md) | The engine's design: context as the learner's input (shared need × effect weights, response curves) |
 | [9-implementation-map.md](architecture/9-implementation-map.md) | What was built, phase by phase (Phases 0-10, with "as built" notes) |
 | [9-bootstrap-format.md](architecture/9-bootstrap-format.md) | The bootstrap file (format version 1): θ, u0, κ, recent, b, curves; the score and the reader's rules |
+| [9-hand-tuned.md](architecture/9-hand-tuned.md) | Hand-tuned correlations: the obvious pairs (full table, generated) and every other hand-set strength, where it lives and what would retire it |
 | [9-selection-log-v3.md](architecture/9-selection-log-v3.md) | The selection log v3 format |
 | [11-sequences-and-redundancy.md](architecture/11-sequences-and-redundancy.md) | covered(i), the refresh prior, the summon limit, anticipatory resists |
 | [0-pipeline.md](architecture/0-pipeline.md) | The tick in detail (pre-rewrite body; the banner says what changed) |
