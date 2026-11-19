@@ -24,6 +24,7 @@
 #include "core/TargetTracking.h"
 #include "core/HardGates.h"     // 0.24.31: AllyAimHeld (no_ally_aimed)
 #include "core/NeedSensorMath.h"   // 0.24.32: WoundFraction (ally_injured)
+#include "core/AllyHeal.h"         // 0.24.37: the follower-heal override's teammates
 
 namespace Huginn::State
 {
@@ -350,6 +351,9 @@ namespace Huginn::State
       HostileNeeds hostileNeeds;        // R3: this poll's living combat hostiles
       bool followerBleedout = false;    // R3: a teammate down on one knee
       float followerHealthMissing = 0.0f;   // 0.24.32: the share of their health the most hurt teammate is missing
+      // 0.24.37: the follower-heal override's teammates (core/AllyHeal.h)
+      std::array<Core::AllyHeal::Teammate, Core::AllyHeal::kMaxTeammates> healableAllies{};
+      std::size_t healableAllyCount = 0;
       bool playerSummonNear = false;    // R3: the player's own summon or thrall in range (0.23.41)
       bool scoringArcher = false;
       float soleTtk = -1.0f;
@@ -794,13 +798,25 @@ namespace Huginn::State
             // crosshair) is skipped and before the collection can refuse a
             // full house.
             if (isTeammate) {
-              if (const auto* allyState = ally->AsActorState(); allyState && allyState->IsBleedingOut()) {
+              const auto* allyState = ally->AsActorState();
+              const bool bleedout = allyState && allyState->IsBleedingOut();
+              float missing = 0.0f;
+              if (bleedout) {
                 followerBleedout = true;
               }
               if (auto* av = ally->AsActorValueOwner()) {
-                followerHealthMissing = std::max(followerHealthMissing,
-                   Core::Needs::WoundFraction(av->GetActorValue(RE::ActorValue::kHealth),
-                      ally->GetActorValueModifier(RE::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kHealth)));
+                missing = Core::Needs::WoundFraction(av->GetActorValue(RE::ActorValue::kHealth),
+                   ally->GetActorValueModifier(RE::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kHealth));
+                followerHealthMissing = std::max(followerHealthMissing, missing);
+              }
+              // 0.24.37: one a heal for others can work on, for the
+              // follower-heal override. Not undead: vanilla Heal Other and
+              // Healing Hands do nothing on an undead target -- a vampire
+              // follower, a thrall (/code-review #259). Classified only when
+              // hurt, so a healthy party costs no keyword lookups.
+              if ((bleedout || missing > 0.0f) && healableAllyCount < healableAllies.size() &&
+                  StateEvaluator{}.ClassifyActor(ally) != TargetType::Undead) {
+                healableAllies[healableAllyCount++] = { missing, bleedout, std::sqrt(distSq) };
               }
             }
 
@@ -998,6 +1014,8 @@ namespace Huginn::State
       // 0.24.31: no_ally_aimed's pass for heals; 0.24.32: a badly hurt
       // standing teammate opens it too.
       m_targets.allyDown = Core::Gate::AllyNeedsHeal(followerBleedout, followerHealthMissing);
+      m_targets.healableAllies = healableAllies;   // 0.24.37: the follower-heal override
+      m_targets.healableAllyCount = healableAllyCount;
 
 
       // Change detection: compare lightweight digest against previous

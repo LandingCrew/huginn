@@ -5,6 +5,7 @@
 #include "OverrideConfig.h"
 #include "state/PlayerActorState.h"
 #include "state/WorldState.h"
+#include "state/TargetActorState.h"   // 0.24.35: the most hurt teammate (CriticalAllyHealth)
 #include <unordered_map>
 #include <string>
 #include <string_view>
@@ -36,7 +37,7 @@ namespace Huginn::Override
     //                                              -> DisplayContext (backends)
     //
     // USAGE:
-    //   auto overrides = overrideMgr.EvaluateOverrides(playerState, worldState);
+    //   auto overrides = overrideMgr.EvaluateOverrides(playerState, worldState, targets);
     //   slotAllocator.AllocateSlots(candidates, overrides, ...);
     // =============================================================================
 
@@ -63,7 +64,8 @@ namespace Huginn::Override
          */
         [[nodiscard]] OverrideCollection EvaluateOverrides(
             const State::PlayerActorState& player,
-            const State::WorldState& world);
+            const State::WorldState& world,
+            const State::TargetCollection& targets);
 
         /**
          * @brief Update internal timers (call from main update loop)
@@ -141,6 +143,15 @@ namespace Huginn::Override
         [[nodiscard]] std::optional<OverrideResult> EvaluatePoisoned(
             const State::PlayerActorState& player);
 
+        /**
+         * @brief 0.24.35: a teammate badly hurt (below fCriticalAllyHealthThreshold) or down;
+         * 0.24.37: one a heal can work on (not undead), in reach, in a fight
+         * @return OverrideResult with the best heal-for-others spell affordable now (the one
+         *         already on the key kept while magicka is short), or nullopt
+         */
+        [[nodiscard]] std::optional<OverrideResult> EvaluateCriticalAllyHealth(
+            const State::PlayerActorState& player, const State::TargetCollection& targets);
+
         // =============================================================================
         // ITEM FINDERS
         // =============================================================================
@@ -191,6 +202,13 @@ namespace Huginn::Override
          */
         [[nodiscard]] std::optional<Candidate::CandidateVariant> FindCurePoisonItem() const;
 
+        /**
+         * @brief 0.24.35: the best heal-for-others SPELL the player knows and can afford now
+         *        (restore_health_other in the catalog); never a potion -- a potion is the drinker's
+         * @return SpellCandidate, or nullopt when none is known or affordable
+         */
+        [[nodiscard]] std::optional<Candidate::CandidateVariant> FindAllyHealSpell() const;
+
         // =============================================================================
         // HYSTERESIS HELPERS
         // =============================================================================
@@ -230,7 +248,8 @@ namespace Huginn::Override
         // kept while castable so the key does not swap between spells. Cleared
         // when that emergency ends, when a potion takes over, and on Reset --
         // without that it carried across fights and loads (/code-review #147).
-        mutable std::array<RE::FormID, 3> m_spellIncumbent{};
+        // [3] (0.24.35): the follower heal's spell, the same way.
+        mutable std::array<RE::FormID, 4> m_spellIncumbent{};
         Weapon::WeaponRegistry* m_weaponRegistry = nullptr;
 
         // Hysteresis tracking for each condition

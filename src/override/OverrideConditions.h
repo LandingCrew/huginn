@@ -22,6 +22,11 @@ namespace Huginn::Override
         inline constexpr int CRITICAL_HEALTH = 100;  // HP < 10% - highest priority
         inline constexpr int CRITICAL_MAGICKA = 70;  // MP < 10% - magicka potion
         inline constexpr int CRITICAL_STAMINA = 60;  // SP < 10% - stamina potion
+        // 0.24.35: a teammate badly hurt or down -- a heal for them on the
+        // health key. Below CRITICAL_HEALTH, which shares the key: the
+        // player's own emergency wins it. Above DROWNING's 50, so it trips
+        // Wheeler auto-focus at the shipped iAutoFocusMinPriority.
+        inline constexpr int CRITICAL_ALLY_HEALTH = 65;
         inline constexpr int DROWNING = 50;          // Underwater without waterbreathing
         // Poisoned with a cure in the bag. Below DROWNING so it does not trip
         // Wheeler auto-focus at the shipped iAutoFocusMinPriority (50), and far
@@ -43,7 +48,7 @@ namespace Huginn::Override
 
     enum class OverrideCategory : uint8_t
     {
-        HP,      // CriticalHealth
+        HP,      // CriticalHealth, CriticalAllyHealth (0.24.35: the heal key)
         MP,      // CriticalMagicka
         SP,      // CriticalStamina
         Other    // Drowning, LowAmmo, WeaponCharge, Poisoned
@@ -70,6 +75,7 @@ namespace Huginn::Override
         WeaponCharge,
         LowAmmo,
         Poisoned,
+        CriticalAllyHealth,   // 0.24.35
         Count
     };
 
