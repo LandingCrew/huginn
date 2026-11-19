@@ -1004,6 +1004,10 @@ namespace Huginn::Slot
             bool enabled;
             std::string_view name;
             OverrideCategory category;
+            // 0.24.35: shares its key with another condition on purpose (the
+            // follower heal under CriticalHealth): checked for an accepting
+            // slot, not counted as a competitor for it
+            bool sharesKey = false;
         };
         const ConditionCheck checks[] = {
             { Override::Config::ENABLE_CRITICAL_HEALTH(),  "CriticalHealth",  OverrideCategory::HP },
@@ -1016,7 +1020,7 @@ namespace Huginn::Slot
             // 0.24.35: shares the heal key with CriticalHealth on purpose (the
             // player's emergency wins it): checked for an accepting slot, not
             // counted as a competitor for it below
-            { Override::Config::ENABLE_CRITICAL_ALLY_HEALTH(), "CriticalAllyHealth", OverrideCategory::HP },
+            { Override::Config::ENABLE_CRITICAL_ALLY_HEALTH(), "CriticalAllyHealth", OverrideCategory::HP, true },
         };
 
         std::string unplaceable;
@@ -1054,7 +1058,7 @@ namespace Huginn::Slot
         for (const auto category : kCategories) {
             size_t enabledCount = 0;
             for (const auto& check : checks) {
-                if (check.enabled && check.category == category && check.name != "CriticalAllyHealth") ++enabledCount;
+                if (check.enabled && check.category == category && !check.sharesKey) ++enabledCount;
             }
             if (enabledCount == 0) continue;
 

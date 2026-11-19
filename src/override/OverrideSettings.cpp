@@ -74,8 +74,10 @@ namespace Huginn::Override
         enableCriticalAllyHealth = readBool(section, "bEnableCriticalAllyHealth", Defaults::ENABLE_CRITICAL_ALLY_HEALTH);
         criticalAllyHealthThreshold = readFloat(section, "fCriticalAllyHealthThreshold", Defaults::CRITICAL_ALLY_HEALTH_THRESHOLD);
         criticalAllyHealthHysteresis = readFloat(section, "fCriticalAllyHealthHysteresis", Defaults::CRITICAL_ALLY_HEALTH_HYSTERESIS);
-        logger::info("[OverrideSettings] Critical Ally Health: threshold={:.0f}%, hysteresis={:.0f}%, enabled={}"sv,
-            criticalAllyHealthThreshold * 100.0f, criticalAllyHealthHysteresis * 100.0f, enableCriticalAllyHealth);
+        criticalAllyHealthMaxDistance = readFloat(section, "fCriticalAllyHealthMaxDistance", Defaults::CRITICAL_ALLY_HEALTH_MAX_DISTANCE);
+        logger::info("[OverrideSettings] Critical Ally Health: threshold={:.0f}%, hysteresis={:.0f}%, max distance={:.0f}, enabled={}"sv,
+            criticalAllyHealthThreshold * 100.0f, criticalAllyHealthHysteresis * 100.0f, criticalAllyHealthMaxDistance,
+            enableCriticalAllyHealth);
 
         // Log loaded values
         logger::info("[OverrideSettings] Critical Health: threshold={:.0f}%, hysteresis={:.0f}%, enabled={}"sv,

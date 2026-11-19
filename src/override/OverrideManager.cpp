@@ -127,7 +127,7 @@ namespace Huginn::Override
         }
 
         if (Config::ENABLE_CRITICAL_ALLY_HEALTH()) {
-            if (auto override = EvaluateCriticalAllyHealth(targets)) {
+            if (auto override = EvaluateCriticalAllyHealth(player, targets)) {
                 result.activeOverrides.push_back(std::move(*override));
             }
         }
@@ -190,28 +190,35 @@ namespace Huginn::Override
     // Spells only (the user: potions are only for the player character).
     // Category HP, below CriticalHealth: the player's own emergency wins the
     // key; not pinned, so a heal already on screen is marked where it is.
+    // 0.24.37 (/code-review #259): only for a teammate a heal can work on
+    // (not undead) within fCriticalAllyHealthMaxDistance (core/AllyHeal.h),
+    // and only in a fight: out of one a follower's health comes back slowly,
+    // and a key held for minutes, focused on every wheel open, is a nag --
+    // the ranking's ally_injured still offers the heal then.
     std::optional<OverrideResult> OverrideManager::EvaluateCriticalAllyHealth(
-        const State::TargetCollection& targets)
+        const State::PlayerActorState& player, const State::TargetCollection& targets)
     {
         const HysteresisConfig config{
             Config::CRITICAL_ALLY_HEALTH_THRESHOLD(),
             Config::CRITICAL_ALLY_HEALTH_HYSTERESIS(),
             Config::MIN_OVERRIDE_DURATION_MS()
         };
-        const float allyHealth = targets.allyBleedout ? 0.0f : 1.0f - std::clamp(targets.allyHealthMissing, 0.0f, 1.0f);
+        const auto ally = Core::AllyHeal::MostHurtInReach(targets.HealableAllies(),
+            Config::CRITICAL_ALLY_HEALTH_MAX_DISTANCE());
+        const float allyHealth = player.isInCombat ? ally.health : 1.0f;
         if (!CheckThresholdHysteresis("CriticalAllyHealth", allyHealth, config)) {
             m_spellIncumbent[3] = 0;
             return std::nullopt;
         }
         auto candidate = FindAllyHealSpell();
         if (!candidate) {
-            return std::nullopt;   // nothing to cast: the ranking keeps the key
+            return std::nullopt;   // no heal for others known: the ranking keeps the key
         }
         OverrideResult result;
         result.priority = Priority::CRITICAL_ALLY_HEALTH;
         result.category = OverrideCategory::HP;
         result.condition = OverrideCondition::CriticalAllyHealth;
-        result.reason = targets.allyBleedout ? "Follower down: heal them!" : "Follower badly hurt: heal them!";
+        result.reason = ally.bleedout ? "Follower down: heal them!" : "Follower badly hurt: heal them!";
         result.candidate = std::move(candidate);
         return result;
     }
@@ -590,6 +597,12 @@ namespace Huginn::Override
         // still. It changes only when the incumbent becomes unaffordable, or a
         // potion comes back (the finder never gets here then).
         const RE::FormID incumbentID = incumbentSlot;
+        // 0.24.37 (/code-review #259): a new emergency (no incumbent: the
+        // last one ended, or a potion took over) logs its pick again, even
+        // the same spell as last time.
+        if (incumbentID == 0) {
+            logState.lastLogged = 0;
+        }
         std::optional<Spell::SpellData> incumbent;
         float incumbentRestored = 0.0f;
         float incumbentCost = 0.0f;
@@ -615,11 +628,20 @@ namespace Huginn::Override
             if (sd.isConcentration && cost <= 0.0f) {
                 cost = static_cast<float>(sd.baseCost);
             }
-            if (cost > magicka) return;
+            // 0.24.37 (/code-review #259): the heal for others already on the
+            // key stays there while the player is short of magicka for it --
+            // dropped, the key went back to the ranking's item and the heal
+            // came back when magicka refilled, a key changing under the
+            // player mid-fight. It was castable when it was picked, so the
+            // player's full magicka pays for it. The player's own vitals
+            // keep the old rule: a heal they cannot cast now is no use to
+            // them, and a potion may be the answer.
+            const bool keptUnaffordable = forOthers && sd.formID == incumbentID;
+            if (cost > magicka && !keptUnaffordable) return;
             // A concentration spell's cost is per second: credit only the
             // seconds the player can pay for, not the whole window.
             const float castSeconds = (sd.isConcentration && cost > 0.0f)
-                ? std::min(window, magicka / cost) : window;
+                ? (cost <= magicka ? std::min(window, magicka / cost) : window) : window;
 
             float restored = 0.0f;
             for (const auto* effect : spell->effects) {
@@ -635,6 +657,7 @@ namespace Huginn::Override
                 incumbentRestored = restored;
                 incumbentCost = cost;
             }
+            if (cost > magicka) return;   // the kept heal for others only: never a new pick
             if (restored > bestRestored) {
                 bestRestored = restored;
                 bestCost = cost;

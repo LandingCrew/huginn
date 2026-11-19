@@ -4,6 +4,9 @@
 #include "StateConstants.h"     // For distance thresholds, epsilons
 #include "GameState.h"  // For TargetType enum
 #include "StateManagerConstants.h"  // For TargetTracking constants
+#include "core/AllyHeal.h"  // 0.24.37: the follower-heal override's teammates
+#include <array>
+#include <span>
 #include <vector>
 #include <optional>
 #include <algorithm>  // For std::max
@@ -196,11 +199,16 @@ namespace Huginn::State
       // (Core::Gate::AllyNeedsHeal): a heal for someone else passes
       // no_ally_aimed without the crosshair.
       bool allyDown = false;
-      // 0.24.35: the most hurt teammate's missing health share (0-1) and
-      // whether one is down on one knee -- what allyDown was decided from,
-      // kept for the follower-heal override's hysteresis (OverrideManager).
-      float allyHealthMissing = 0.0f;
-      bool allyBleedout = false;
+      // 0.24.37: the teammates a heal for others can work on (living, not
+      // undead), with their distance, for the follower-heal override
+      // (OverrideManager; core/AllyHeal.h picks the most hurt in reach).
+      std::array<Core::AllyHeal::Teammate, Core::AllyHeal::kMaxTeammates> healableAllies{};
+      std::size_t healableAllyCount = 0;
+
+      [[nodiscard]] std::span<const Core::AllyHeal::Teammate> HealableAllies() const noexcept
+      {
+         return { healableAllies.data(), healableAllyCount };
+      }
 
       // Cached aggregate counts — kept in sync automatically by InsertOrUpdate,
       // Remove, and Clear. External code that mutates `targets` directly
@@ -256,8 +264,7 @@ namespace Huginn::State
       targets.clear();
       allyInCrosshair = false;
       allyDown = false;
-      allyHealthMissing = 0.0f;
-      allyBleedout = false;
+      healableAllyCount = 0;
       cachedEnemyCount = 0;
       cachedAnyCasting = false;
       }

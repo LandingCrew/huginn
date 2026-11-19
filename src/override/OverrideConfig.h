@@ -24,6 +24,9 @@ namespace Huginn::Override
         // Core::Gate::kAllyBadlyHurtMissing 0.65). Down on one knee reads 0.
         inline constexpr float CRITICAL_ALLY_HEALTH_THRESHOLD = 0.35f;
         inline constexpr float CRITICAL_ALLY_HEALTH_HYSTERESIS = 0.15f;
+        // 0.24.37: a teammate farther than this (game units, ~21 m) is not
+        // one the player can heal from here: the next room, behind a wall
+        inline constexpr float CRITICAL_ALLY_HEALTH_MAX_DISTANCE = 1500.0f;
 
         // Weapon Charge Override
         // Activation uses `charge < threshold`, and a drained weapon keeps a
@@ -107,6 +110,7 @@ namespace Huginn::Override
         float criticalHealthHysteresis = Defaults::CRITICAL_HEALTH_HYSTERESIS;
         float criticalAllyHealthThreshold = Defaults::CRITICAL_ALLY_HEALTH_THRESHOLD;   // 0.24.35
         float criticalAllyHealthHysteresis = Defaults::CRITICAL_ALLY_HEALTH_HYSTERESIS;
+        float criticalAllyHealthMaxDistance = Defaults::CRITICAL_ALLY_HEALTH_MAX_DISTANCE;   // 0.24.37
 
         // =========================================================================
         // WEAPON CHARGE OVERRIDE
@@ -202,6 +206,7 @@ namespace Huginn::Override
         inline bool ENABLE_CRITICAL_ALLY_HEALTH() { return Settings::GetSingleton().enableCriticalAllyHealth; }
         inline float CRITICAL_ALLY_HEALTH_THRESHOLD() { return Settings::GetSingleton().criticalAllyHealthThreshold; }
         inline float CRITICAL_ALLY_HEALTH_HYSTERESIS() { return Settings::GetSingleton().criticalAllyHealthHysteresis; }
+        inline float CRITICAL_ALLY_HEALTH_MAX_DISTANCE() { return Settings::GetSingleton().criticalAllyHealthMaxDistance; }
         inline bool ALLOW_IMPURE_POTIONS() { return Settings::GetSingleton().allowImpurePotions; }
         inline bool HEALTH_SPELL_FALLBACK() { return Settings::GetSingleton().healthSpellFallback; }
         inline bool MAGICKA_SPELL_FALLBACK() { return Settings::GetSingleton().magickaSpellFallback; }

@@ -144,11 +144,13 @@ namespace Huginn::Override
             const State::PlayerActorState& player);
 
         /**
-         * @brief 0.24.35: a teammate badly hurt (below fCriticalAllyHealthThreshold) or down
-         * @return OverrideResult with the best heal-for-others spell affordable now, or nullopt
+         * @brief 0.24.35: a teammate badly hurt (below fCriticalAllyHealthThreshold) or down;
+         * 0.24.37: one a heal can work on (not undead), in reach, in a fight
+         * @return OverrideResult with the best heal-for-others spell affordable now (the one
+         *         already on the key kept while magicka is short), or nullopt
          */
         [[nodiscard]] std::optional<OverrideResult> EvaluateCriticalAllyHealth(
-            const State::TargetCollection& targets);
+            const State::PlayerActorState& player, const State::TargetCollection& targets);
 
         // =============================================================================
         // ITEM FINDERS
