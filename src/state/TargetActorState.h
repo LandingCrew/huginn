@@ -196,6 +196,11 @@ namespace Huginn::State
       // (Core::Gate::AllyNeedsHeal): a heal for someone else passes
       // no_ally_aimed without the crosshair.
       bool allyDown = false;
+      // 0.24.35: the most hurt teammate's missing health share (0-1) and
+      // whether one is down on one knee -- what allyDown was decided from,
+      // kept for the follower-heal override's hysteresis (OverrideManager).
+      float allyHealthMissing = 0.0f;
+      bool allyBleedout = false;
 
       // Cached aggregate counts — kept in sync automatically by InsertOrUpdate,
       // Remove, and Clear. External code that mutates `targets` directly
@@ -251,6 +256,8 @@ namespace Huginn::State
       targets.clear();
       allyInCrosshair = false;
       allyDown = false;
+      allyHealthMissing = 0.0f;
+      allyBleedout = false;
       cachedEnemyCount = 0;
       cachedAnyCasting = false;
       }

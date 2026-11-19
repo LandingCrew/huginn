@@ -983,7 +983,7 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
     Huginn_ZONE_NAMED("Pipeline::AllocateAndLock");
     // Evaluate safety overrides (critical health, drowning, weapon charge)
     auto& overrideMgr = Override::OverrideManager::GetSingleton();
-    ctx.overrides = overrideMgr.EvaluateOverrides(ctx.playerState, ctx.worldState);
+    ctx.overrides = overrideMgr.EvaluateOverrides(ctx.playerState, ctx.worldState, ctx.targets);
 
     // Multi-page classification-based slot assignment. Allocate for the page
     // snapshotted by ResolveDisplayPage (not m_currentPage), so an off-thread

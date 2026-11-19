@@ -998,6 +998,8 @@ namespace Huginn::State
       // 0.24.31: no_ally_aimed's pass for heals; 0.24.32: a badly hurt
       // standing teammate opens it too.
       m_targets.allyDown = Core::Gate::AllyNeedsHeal(followerBleedout, followerHealthMissing);
+      m_targets.allyHealthMissing = followerHealthMissing;   // 0.24.35: the follower-heal override
+      m_targets.allyBleedout = followerBleedout;
 
 
       // Change detection: compare lightweight digest against previous

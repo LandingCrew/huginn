@@ -1013,6 +1013,10 @@ namespace Huginn::Slot
             { Override::Config::ENABLE_WEAPON_CHARGE(),    "WeaponCharge",    OverrideCategory::Other },
             { Override::Config::ENABLE_LOW_AMMO(),         "LowAmmo",         OverrideCategory::Other },
             { Override::Config::ENABLE_POISONED(),         "Poisoned",        OverrideCategory::Other },
+            // 0.24.35: shares the heal key with CriticalHealth on purpose (the
+            // player's emergency wins it): checked for an accepting slot, not
+            // counted as a competitor for it below
+            { Override::Config::ENABLE_CRITICAL_ALLY_HEALTH(), "CriticalAllyHealth", OverrideCategory::HP },
         };
 
         std::string unplaceable;
@@ -1050,7 +1054,7 @@ namespace Huginn::Slot
         for (const auto category : kCategories) {
             size_t enabledCount = 0;
             for (const auto& check : checks) {
-                if (check.enabled && check.category == category) ++enabledCount;
+                if (check.enabled && check.category == category && check.name != "CriticalAllyHealth") ++enabledCount;
             }
             if (enabledCount == 0) continue;
 

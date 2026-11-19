@@ -19,6 +19,12 @@ namespace Huginn::Override
         inline constexpr float CRITICAL_HEALTH_THRESHOLD = 0.35f;    // 35% - trigger activation
         inline constexpr float CRITICAL_HEALTH_HYSTERESIS = 0.15f;   // gap - deactivate at threshold+gap (50%)
 
+        // Critical Ally Health Override (0.24.35): the most hurt teammate's
+        // health, as the player's own (a teammate at 35% is badly hurt,
+        // Core::Gate::kAllyBadlyHurtMissing 0.65). Down on one knee reads 0.
+        inline constexpr float CRITICAL_ALLY_HEALTH_THRESHOLD = 0.35f;
+        inline constexpr float CRITICAL_ALLY_HEALTH_HYSTERESIS = 0.15f;
+
         // Weapon Charge Override
         // Activation uses `charge < threshold`, and a drained weapon keeps a
         // sub-cost charge remainder (rarely exactly 0), so the threshold must be
@@ -49,6 +55,7 @@ namespace Huginn::Override
         inline constexpr bool ENABLE_CRITICAL_MAGICKA = true;
         inline constexpr bool ENABLE_CRITICAL_STAMINA = true;
         inline constexpr bool ENABLE_POISONED = true;
+        inline constexpr bool ENABLE_CRITICAL_ALLY_HEALTH = true;
 
         // Potion selection
         inline constexpr bool ALLOW_IMPURE_POTIONS = true;       // Fall back to potions with side effects (Skooma etc.)
@@ -98,6 +105,8 @@ namespace Huginn::Override
         // =========================================================================
         float criticalHealthThreshold = Defaults::CRITICAL_HEALTH_THRESHOLD;
         float criticalHealthHysteresis = Defaults::CRITICAL_HEALTH_HYSTERESIS;
+        float criticalAllyHealthThreshold = Defaults::CRITICAL_ALLY_HEALTH_THRESHOLD;   // 0.24.35
+        float criticalAllyHealthHysteresis = Defaults::CRITICAL_ALLY_HEALTH_HYSTERESIS;
 
         // =========================================================================
         // WEAPON CHARGE OVERRIDE
@@ -138,6 +147,7 @@ namespace Huginn::Override
         bool enableCriticalMagicka = Defaults::ENABLE_CRITICAL_MAGICKA;
         bool enableCriticalStamina = Defaults::ENABLE_CRITICAL_STAMINA;
         bool enablePoisoned = Defaults::ENABLE_POISONED;
+        bool enableCriticalAllyHealth = Defaults::ENABLE_CRITICAL_ALLY_HEALTH;   // 0.24.35
 
         // =========================================================================
         // POTION SELECTION
@@ -189,6 +199,9 @@ namespace Huginn::Override
         inline float CRITICAL_STAMINA_HYSTERESIS() { return Settings::GetSingleton().criticalStaminaHysteresis; }
         inline bool ENABLE_CRITICAL_STAMINA() { return Settings::GetSingleton().enableCriticalStamina; }
         inline bool ENABLE_POISONED() { return Settings::GetSingleton().enablePoisoned; }
+        inline bool ENABLE_CRITICAL_ALLY_HEALTH() { return Settings::GetSingleton().enableCriticalAllyHealth; }
+        inline float CRITICAL_ALLY_HEALTH_THRESHOLD() { return Settings::GetSingleton().criticalAllyHealthThreshold; }
+        inline float CRITICAL_ALLY_HEALTH_HYSTERESIS() { return Settings::GetSingleton().criticalAllyHealthHysteresis; }
         inline bool ALLOW_IMPURE_POTIONS() { return Settings::GetSingleton().allowImpurePotions; }
         inline bool HEALTH_SPELL_FALLBACK() { return Settings::GetSingleton().healthSpellFallback; }
         inline bool MAGICKA_SPELL_FALLBACK() { return Settings::GetSingleton().magickaSpellFallback; }

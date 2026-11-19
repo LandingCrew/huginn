@@ -74,7 +74,8 @@ namespace Huginn::Override
 
     OverrideCollection OverrideManager::EvaluateOverrides(
         const State::PlayerActorState& player,
-        [[maybe_unused]] const State::WorldState& world)
+        [[maybe_unused]] const State::WorldState& world,
+        const State::TargetCollection& targets)
     {
         OverrideCollection result;
 
@@ -121,6 +122,12 @@ namespace Huginn::Override
 
         if (Config::ENABLE_POISONED()) {
             if (auto override = EvaluatePoisoned(player)) {
+                result.activeOverrides.push_back(std::move(*override));
+            }
+        }
+
+        if (Config::ENABLE_CRITICAL_ALLY_HEALTH()) {
+            if (auto override = EvaluateCriticalAllyHealth(targets)) {
                 result.activeOverrides.push_back(std::move(*override));
             }
         }
@@ -172,6 +179,40 @@ namespace Huginn::Override
         result.reason = "CRITICAL: Need Health Potion!";
         result.candidate = std::move(candidate);
 
+        return result;
+    }
+
+    // 0.24.35: a teammate below fCriticalAllyHealthThreshold of their health,
+    // or down on one knee (read as 0), puts the best heal for others the
+    // player can cast now on the health key. The ranking can be slow to it:
+    // on 2026-11-18 (8cdb635c) Healing Hands sat at #17-#110 for 30 s with
+    // the follower badly hurt, until the player took it from the magic menu.
+    // Spells only (the user: potions are only for the player character).
+    // Category HP, below CriticalHealth: the player's own emergency wins the
+    // key; not pinned, so a heal already on screen is marked where it is.
+    std::optional<OverrideResult> OverrideManager::EvaluateCriticalAllyHealth(
+        const State::TargetCollection& targets)
+    {
+        const HysteresisConfig config{
+            Config::CRITICAL_ALLY_HEALTH_THRESHOLD(),
+            Config::CRITICAL_ALLY_HEALTH_HYSTERESIS(),
+            Config::MIN_OVERRIDE_DURATION_MS()
+        };
+        const float allyHealth = targets.allyBleedout ? 0.0f : 1.0f - std::clamp(targets.allyHealthMissing, 0.0f, 1.0f);
+        if (!CheckThresholdHysteresis("CriticalAllyHealth", allyHealth, config)) {
+            m_spellIncumbent[3] = 0;
+            return std::nullopt;
+        }
+        auto candidate = FindAllyHealSpell();
+        if (!candidate) {
+            return std::nullopt;   // nothing to cast: the ranking keeps the key
+        }
+        OverrideResult result;
+        result.priority = Priority::CRITICAL_ALLY_HEALTH;
+        result.category = OverrideCategory::HP;
+        result.condition = OverrideCondition::CriticalAllyHealth;
+        result.reason = targets.allyBleedout ? "Follower down: heal them!" : "Follower badly hurt: heal them!";
+        result.candidate = std::move(candidate);
         return result;
     }
 
@@ -516,13 +557,17 @@ namespace Huginn::Override
     // Hands restore someone else. SpellData carries neither delivery nor
     // magnitude, so the form is looked up here -- only while an override is
     // active with no potion, which is rare.
+    // forOthers (0.24.35, the follower-heal override): the reverse -- a spell
+    // that heals someone else (the catalog's restore_health_other: a touch,
+    // aimed or target heal, or a self heal with an area), any delivery.
     static std::optional<Candidate::CandidateVariant> FindRestoreSpell(
         Core::Facets::F restore,
         RE::ActorValue av,
         std::string_view label,
         Context::ContextReason reason,
         PotionLogState& logState,
-        RE::FormID& incumbentSlot)
+        RE::FormID& incumbentSlot,
+        bool forOthers = false)
     {
         if (!g_spellRegistry || g_spellRegistry->IsLoading()) {
             return std::nullopt;
@@ -555,7 +600,14 @@ namespace Huginn::Override
             // does not map cannot qualify.
             if (!Effect::FacetsOfForm(sd.formID).facets.Has(restore)) return;
             auto* spell = RE::TESForm::LookupByID<RE::SpellItem>(sd.formID);
-            if (!spell || spell->GetDelivery() != RE::MagicSystem::Delivery::kSelf) return;
+            if (!spell) return;
+            if (forOthers) {
+                const auto* entry = Effect::EffectCatalog::GetSingleton().FindOrMapId(sd.formID);
+                if (!entry || !(Core::Effect::Get(entry->cap, Core::Effect::Col::restore_health_other) > 0.0f)) return;
+            }
+            else if (spell->GetDelivery() != RE::MagicSystem::Delivery::kSelf) {
+                return;
+            }
             float cost = spell->CalculateMagickaCost(player);
             // The engine can report <= 0 for concentration spells; use the
             // base cost then, as CandidateGenerator does -- otherwise a heal
@@ -600,8 +652,9 @@ namespace Huginn::Override
         }
         incumbentSlot = best->formID;
         if (best->formID != logState.lastLogged) {
-            logger::info("[OverrideManager] {}: no potion, spell '{}' FormID={:08X} (restores {:.0f} in {:.0f}s, cost {:.0f} of {:.0f} magicka)"sv,
-                label, best->name, best->formID, bestRestored, window, bestCost, magicka);
+            logger::info("[OverrideManager] {}: {} '{}' FormID={:08X} (restores {:.0f} in {:.0f}s, cost {:.0f} of {:.0f} magicka)"sv,
+                label, forOthers ? "heal for others" : "no potion, spell", best->name, best->formID, bestRestored, window,
+                bestCost, magicka);
             logState.lastLogged = best->formID;
         }
 
@@ -757,6 +810,13 @@ namespace Huginn::Override
         candidate.overrideReason = Context::ContextReason::NeedsAmmo;
 
         return candidate;
+    }
+
+    std::optional<Candidate::CandidateVariant> OverrideManager::FindAllyHealSpell() const
+    {
+        static PotionLogState s_log;
+        return FindRestoreSpell(Core::Facets::F::RestoreHealth, RE::ActorValue::kHealth,
+            "FindAllyHealSpell"sv, Context::ContextReason::AllyInjured, s_log, m_spellIncumbent[3], true);
     }
 
     std::optional<Candidate::CandidateVariant> OverrideManager::FindHealthPotion() const
