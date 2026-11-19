@@ -262,9 +262,15 @@ its build's index:
 - a name the build does not know is skipped (its row or column contributes
   nothing);
 - a need or column the build has and the file lacks takes its prior: θ0 =
-  `+T0` (1) for an obvious pair of `effects.csv` (`-T0` for
-  `combat_regen_ok × kind_food`, 0 for the `overshoot_*` pairs), 0 otherwise,
-  with the prior's precision (1 for an obvious pair, 11.1111 otherwise);
+  `+T0` (1) for an obvious pair of `effects.csv` (`-T0` for a need written
+  `-need` there, such as `in_combat × heal_slow` and `combat_regen_ok ×
+  kind_food`; 0 for the `overshoot_*` pairs), 0 otherwise, with the prior's
+  precision (1 for an obvious pair, 11.1111 otherwise). The reader gives only
+  the sign (`core/ObviousPairs.h`); the offline fit also multiplies a few
+  pairs by `tools/fit/fitlib.py` `PAIR_STRENGTH` (the element resist pairs,
+  2.5; `ally_injured × restore_health_other`, 4.19213), so a pair the file
+  lacks starts weaker in the plugin than in a refit
+  (`docs/architecture/9-hand-tuned.md`);
 - the same applies to `u0.need`, `recent.features[].family` and `curves`.
 
 ## Reader rules

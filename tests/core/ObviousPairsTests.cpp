@@ -205,7 +205,8 @@ TEST_CASE("obvious pairs: no eating in combat, unless health regeneration is blo
     CHECK(needs.at("combat_regen_ok").at("r3_input").find("healthRegenSuppressed") != std::string::npos);
     const auto food = SplitIds(effects.at("kind_food").at("obvious_needs"), true);
     CHECK(food.contains("-combat_regen_ok"));   // written negative since 0.24.39
-    CHECK_FALSE(food.contains("in_combat"));
+    // in_combat in either sign: the sign stripped (/code-review #261)
+    CHECK_FALSE(SplitIds(effects.at("kind_food").at("obvious_needs")).contains("in_combat"));
     CHECK(SplitIds(effects.at("kind_weapon").at("obvious_needs")).contains("magicka_deficit"));
 }
 

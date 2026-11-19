@@ -171,12 +171,16 @@ def join_v2(idx, d):
 # their start is what ships (configs/Huginn_Bootstrap.json carries the same values).
 PAIR_STRENGTH = {(f'{s}_{e}' if s != 'damage_rate' else f'{e}_damage_rate', f'resist_{e}'): 2.5
                  for e in ('fire', 'frost', 'shock') for s in ('enemy_casting', 'target_element', 'damage_rate')}
-# 0.24.39: a heal for a hurt follower starts as strong as a heal for the player's own wound.
-# The fit had no follower data and left ally_injured x restore_health_other at its prior
-# (0.9996), so Healing Hands sat at #17-#110 with the follower badly hurt; 0.24.31 copied
-# health_deficit x restore_health's fitted 4.19213 into the shipped file by hand
-# (Huginn_Bootstrap.json provenance.hand_edits). Written here, a refit keeps that start
-# instead of putting it back to 1.0 (docs/architecture/9-hand-tuned.md).
+# 0.24.39: the follower heal's start. The fit had no follower data and left
+# ally_injured x restore_health_other at its prior (0.9996): a heal for a downed follower
+# ranked 202nd of 219 (2026-11-13). 0.24.31 set it by hand in the shipped file
+# (Huginn_Bootstrap.json provenance.hand_edits) to 4.19213, the value R6's fit gave
+# health_deficit x restore_health -- a fixed number copied once, not tied to that weight:
+# a refit that moves health_deficit x restore_health leaves this start where it is.
+# Written here, a refit keeps it instead of putting it back to 1.0
+# (docs/architecture/9-hand-tuned.md). Like every PAIR_STRENGTH entry it is a multiple of
+# T0 (1 in the shipped fit), so cv.py's T0=0 / T0=2 variants scale it with every other
+# obvious pair (to 0 and 8.38).
 PAIR_STRENGTH[('ally_injured', 'restore_health_other')] = 4.19213
 
 
