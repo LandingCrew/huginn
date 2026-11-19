@@ -86,6 +86,9 @@ namespace Huginn::State
       if (std::isfinite(newVitals.maxStamina) && newVitals.maxStamina > 0.0f) {
       newVitals.stamina = std::clamp(currentStamina / newVitals.maxStamina, 0.0f, 1.0f);
       }
+      // 0.24.34: the health the player is losing per second (the health poll's
+      // decaying sums), for a heal over time's overshoot.
+      newVitals.healthLossPerSec = HealthLossPerSec(GetNeedSensors(), NeedClock::Now());
 
       // Stage 3b: Return change detection flag
       return UpdateStateIfChanged(m_playerMutex, m_playerState.vitals, newVitals);

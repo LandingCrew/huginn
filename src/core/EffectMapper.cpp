@@ -121,6 +121,25 @@ namespace Huginn::Core::Effect
             }
         }
 
+        /// 0.24.34: where a vital restore or regeneration row lands -- the one
+        /// routing Grade, the overshoot's amounts (MapItem), the totals and the
+        /// rate per magicka (Extras) and the perk rows read. Only a spell or a
+        /// scroll is cast where its delivery says (0.24.31); a potion lands on
+        /// the drinker whatever its effect record says.
+        enum class VitalRoute : std::uint8_t
+        {
+            NotVital,     // not a restore or regeneration of a vital
+            Player,       // the player's own vital column
+            Other,        // a health restore or regeneration cast at someone else: restore_health_other
+            FamilyOnly,   // magicka or stamina cast at someone else: its family only
+        };
+        VitalRoute RouteVital(Col c, int delivery, bool castable) noexcept
+        {
+            if (!IsPlayerVital(c)) return VitalRoute::NotVital;
+            if (!castable || delivery == kDeliverySelf) return VitalRoute::Player;
+            return (c == Col::restore_health || c == Col::regen_health) ? VitalRoute::Other : VitalRoute::FamilyOnly;
+        }
+
         float HungerSize(const MagicEffectRecord& m)
         {
             for (const auto& k : m.keywords) {
@@ -255,6 +274,7 @@ namespace Huginn::Core::Effect
         void ApplyChance(KeptRow& k, float chance) noexcept
         {
             if (!(chance < 1.0f)) return;
+            k.total *= chance;
             if (k.graded) k.raw *= chance;
             else k.post *= chance;
         }
@@ -684,7 +704,15 @@ namespace Huginn::Core::Effect
                 case Rule::Amount:
                     k.raw = mag * std::max(d, 1.0f);
                     k.graded = true;
-                    if (VitalIndex(cls.col) >= 0 && row.magnitude >= kFullRestore) k.fullRestore = true;
+                    if (VitalIndex(cls.col) >= 0) {
+                        // 0.24.34: a vital restore grades its rate, the
+                        // magnitude -- per second over time or concentrated,
+                        // all of it at once when instant -- and keeps its
+                        // total for total_restore_* and the overshoot.
+                        k.total = k.raw;
+                        k.raw = mag;
+                        if (row.magnitude >= kFullRestore) k.fullRestore = true;
+                    }
                     break;
                 case Rule::Level:
                     // Timed: graded within the column's timed population
@@ -729,6 +757,7 @@ namespace Huginn::Core::Effect
             // population's size, Populations::GradeGroup; zeros are not in it).
             if (k.graded && !(k.raw > 0.0f) && !k.fullRestore) {
                 k.raw = 0.0f;
+                k.total = 0.0f;
                 if (cls.route != Route::Data) {
                     k.graded = false;
                     k.post *= zeroFactor;
@@ -994,9 +1023,11 @@ namespace Huginn::Core::Effect
             for (const auto& r : m.rows) {
                 const int v = VitalIndex(r.col);
                 if (v < 0 || !eligible(r, r.col)) continue;
-                if (castable && r.delivery != kDeliverySelf) continue;
-                if (r.fullRestore) m.fullRestore[static_cast<std::size_t>(v)] = true;
-                else m.restoreAmount[static_cast<std::size_t>(v)] += r.raw;
+                if (RouteVital(r.col, r.delivery, castable) != VitalRoute::Player) continue;
+                const auto vi = static_cast<std::size_t>(v);
+                if (r.fullRestore) m.fullRestore[vi] = true;
+                else m.restoreAmount[vi] += r.total;   // 0.24.34: raw is the rate
+                m.restoreSeconds[vi] = std::max(m.restoreSeconds[vi], static_cast<float>(r.duration));
             }
         }
 
@@ -1114,6 +1145,62 @@ namespace Huginn::Core::Effect
         return m;
     }
 
+    namespace
+    {
+        /// 0.24.34: the totals and the rate per magicka of an item's vital
+        /// restores (effects.csv total_restore_*, rate_per_magicka), as
+        /// Populations::Add and Grade both read them. Slots: the player's
+        /// health, magicka, stamina (the rows Grade puts on restore_*), then
+        /// a heal for someone else (restore_health_other's rows).
+        struct RestoreExtras
+        {
+            std::array<float, 4> total{};
+            std::array<bool, 4> full{};
+            float perMagicka = 0.0f;
+        };
+        constexpr std::array<Col, 4> kTotalCols{ Col::total_restore_health, Col::total_restore_magicka,
+                                                 Col::total_restore_stamina, Col::total_restore_health_other };
+
+        RestoreExtras Extras(const ItemMapping& m)
+        {
+            RestoreExtras x;
+            const Eligibility eligible(m);
+            const bool castable = m.kind == Kind::Spell || m.kind == Kind::Scroll;
+            const bool costed = m.kind == Kind::Spell && m.magickaCost > 0.0f;
+            bool healsOthers = false;
+            for (const auto& r : m.rows) {
+                for (const Col c : { r.col, r.col2 }) {
+                    const int v = VitalIndex(c);
+                    if (v < 0) continue;   // a restore; a regeneration has a rate, no amount to total
+                    // As Grade: any kept heal that reaches others makes the item one.
+                    if (castable && c == Col::restore_health && (r.delivery != kDeliverySelf || r.area > 0)) healsOthers = true;
+                    if (!eligible(r, c)) continue;
+                    // RouteVital, as Grade routes the row: the player's own
+                    // restore, or a heal for someone else; magicka or stamina
+                    // cast at someone else is its family only and restores
+                    // nothing the totals or the rate per magicka read.
+                    const VitalRoute route = RouteVital(c, r.delivery, castable);
+                    if (route != VitalRoute::Player && route != VitalRoute::Other) continue;
+                    if (costed && !r.fullRestore && r.raw > 0.0f) x.perMagicka = std::max(x.perMagicka, r.raw / m.magickaCost);
+                    const auto s = static_cast<std::size_t>(route == VitalRoute::Other ? 3 : v);
+                    if (r.fullRestore) x.full[s] = true;
+                    else x.total[s] += r.total;
+                }
+            }
+            // restore_health_other takes the player's heal too when it reaches
+            // others (an area on a self spell), as Grade values it.
+            if (healsOthers) {
+                x.total[3] = std::max(x.total[3], x.total[0]);
+                x.full[3] = x.full[3] || x.full[0];
+            }
+            else {
+                x.total[3] = 0.0f;
+                x.full[3] = false;
+            }
+            return x;
+        }
+    }
+
     // =========================================================================
     // Populations
     // =========================================================================
@@ -1159,6 +1246,13 @@ namespace Huginn::Core::Effect
             if (g.fallback != 0) pops_[Key(g.col, g.fallback)].push_back(g.raw);
         }
         if (m.kind == Kind::Spell && m.magickaCost > 0.0f) pops_[Key(Col::magicka_cost, 0)].push_back(m.magickaCost);
+        {
+            const auto x = Extras(m);   // 0.24.34
+            for (std::size_t s = 0; s < kTotalCols.size(); ++s) {
+                if (!x.full[s] && x.total[s] > 0.0f) pops_[Key(kTotalCols[s], 0)].push_back(x.total[s]);
+            }
+            if (x.perMagicka > 0.0f) pops_[Key(Col::rate_per_magicka, 0)].push_back(x.perMagicka);
+        }
         if (m.consumable) pops_[Key(Col::gold_value, static_cast<std::uint32_t>(m.kind))].push_back(static_cast<float>(m.value));
         finalized_ = false;
     }
@@ -1272,6 +1366,8 @@ namespace Huginn::Core::Effect
         float othersHeal = 0.0f;
         float othersRegen = 0.0f;
         bool anySummon = false;
+        bool slowHeal = false;   // 0.24.33: heal_slow
+        bool fastHeal = false;   // 0.24.34: a heal row under kSlowHealSec (the item's fastest heal decides)
         // Only a spell or a scroll is cast where its delivery says, as the
         // overshoot reads it (MapItem): a potion lands on the drinker whatever
         // its effect record says.
@@ -1281,8 +1377,15 @@ namespace Huginn::Core::Effect
                 // Any kept heal that reaches others, visible or not: Breath of
                 // Life's visible row heals the caster and a hidden twin with
                 // an area heals the allies around.
-                if (c == Col::restore_health && (r.delivery != kDeliverySelf || r.area > 0)) healsOthers = true;
+                // A potion never does (0.24.34, the user: potions are only for the
+                // player character): it lands on the drinker whatever its
+                // effect record's delivery or area says.
+                if (castable && c == Col::restore_health && (r.delivery != kDeliverySelf || r.area > 0)) healsOthers = true;
                 if (!eligible(r, c)) continue;
+                if (c == Col::restore_health || c == Col::regen_health) {
+                    if (r.duration >= kSlowHealSec) slowHeal = true;
+                    else fastHeal = true;
+                }
                 const float v = RowValue(r, c, pops);
                 // 0.24.31: a restore or regeneration cast at someone else (touch,
                 // aimed, at an actor or a location) does not restore the player,
@@ -1292,7 +1395,8 @@ namespace Huginn::Core::Effect
                 // 90 s while the player was at 1-20% health (2026-11-14). Its
                 // family (restore, regen) keeps the value -- what kind of item it
                 // is -- and a heal's goes to restore_health_other below.
-                if (castable && r.delivery != kDeliverySelf && IsPlayerVital(c)) {
+                const VitalRoute route = RouteVital(c, r.delivery, castable);
+                if (route == VitalRoute::Other || route == VitalRoute::FamilyOnly) {
                     put(FamilyOf(c), v);
                     if (c == Col::restore_health) othersHeal = std::max(othersHeal, v);
                     if (c == Col::regen_health) othersRegen = std::max(othersRegen, v);
@@ -1360,6 +1464,11 @@ namespace Huginn::Core::Effect
         }
         if (!m.rows.empty()) {
             if (anyFullRestore) put(Col::full_restore, 1.0f);
+            // A slow heal: every heal row runs kSlowHealSec or longer (0.24.34:
+            // the fastest decides, so a quick heal with a long regeneration
+            // rider is not one). A constant item heals nobody when used, and a
+            // concentration spell's 1 s rows are recast every second.
+            if (slowHeal && !fastHeal && !m.constantItem && Get(m.fixed, Col::concentration) <= 0.0f) put(Col::heal_slow, 1.0f);
             if (val[Index(Col::cure)] > 0.0f && anyCureArchetype) put(Col::cure_instant, 1.0f);
         }
 
@@ -1382,6 +1491,22 @@ namespace Huginn::Core::Effect
         }
         if (m.kind == Kind::Spell && m.magickaCost > 0.0f) {
             put(Col::magicka_cost, pops.Percentile(Col::magicka_cost, 0, m.magickaCost));
+        }
+        {
+            // 0.24.34: the vital restores' totals and the rate per magicka.
+            const auto x = Extras(m);
+            for (std::size_t s = 0; s < kTotalCols.size(); ++s) {
+                if (x.full[s]) put(kTotalCols[s], 1.0f);
+                else if (x.total[s] > 0.0f) put(kTotalCols[s], pops.Percentile(kTotalCols[s], 0, x.total[s]));
+            }
+            if (x.perMagicka > 0.0f) put(Col::rate_per_magicka, pops.Percentile(Col::rate_per_magicka, 0, x.perMagicka));
+            // A health regeneration cast at someone else is a heal for others
+            // (restore_health_other, above) with no amount to total -- its
+            // magnitude is a rate of the target's regeneration -- so its total
+            // column takes the value restore_health_other gives it, and it
+            // meets total_restore_health_other x downtime as a restore-based
+            // heal for others does.
+            if (othersRegen > 0.0f && !anySummon) put(Col::total_restore_health_other, othersRegen);
         }
         if (m.consumable) {
             put(Col::gold_value, pops.Percentile(Col::gold_value, static_cast<std::uint32_t>(m.kind),
@@ -1416,8 +1541,8 @@ namespace Huginn::Core::Effect
                 if (!(v > 0.0f)) continue;
                 // 0.24.31: as Grade -- a perk's restore cast at someone else
                 // does not take the player's vital column.
-                if ((m.kind == Kind::Spell || m.kind == Kind::Scroll) && pr.row.delivery != kDeliverySelf &&
-                    IsPlayerVital(c)) {
+                const VitalRoute route = RouteVital(c, pr.row.delivery, m.kind == Kind::Spell || m.kind == Kind::Scroll);
+                if (route == VitalRoute::Other || route == VitalRoute::FamilyOnly) {
                     out.push_back(PerkValue{ pr.perks, FamilyOf(c), v });
                     if (c == Col::restore_health) out.push_back(PerkValue{ pr.perks, Col::restore_health_other, v });
                     continue;

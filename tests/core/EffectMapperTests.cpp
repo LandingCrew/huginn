@@ -264,9 +264,14 @@ TEST_CASE("effect mapper: amount and level values, percentiles within the load o
     auto& f = w.Item(Kind::Potion, "Fortify");
     World::Fx(f, fortify, 100, 1800);  // a level: 100 x 1800/3600 = 50
     const auto r = w.Build();
-    CHECK(CapOf(r, 0, Col::restore_health) == doctest::Approx(1.0 / 3.0));
-    CHECK(CapOf(r, 1, Col::restore_health) == doctest::Approx(1.0));  // 100 total beats 50 instant
-    CHECK(CapOf(r, 2, Col::restore_health) == doctest::Approx(2.0 / 3.0));
+    // 0.24.34: a vital restore grades its rate (25 and 50 at once, 5/s), the
+    // total (25, 100, 50) on total_restore_health.
+    CHECK(CapOf(r, 0, Col::restore_health) == doctest::Approx(2.0 / 3.0));
+    CHECK(CapOf(r, 1, Col::restore_health) == doctest::Approx(1.0 / 3.0));  // 5/s: the slowest
+    CHECK(CapOf(r, 2, Col::restore_health) == doctest::Approx(1.0));
+    CHECK(CapOf(r, 1, Col::total_restore_health) == doctest::Approx(1.0));  // 100 total beats 50 instant
+    CHECK(CapOf(r, 0, Col::total_restore_health) == doctest::Approx(1.0 / 3.0));
+    CHECK(CapOf(r, 2, Col::total_restore_health) == doctest::Approx(2.0 / 3.0));
     CHECK(CapOf(r, 1, Col::restore) == CapOf(r, 1, Col::restore_health));
     CHECK(CapOf(r, 3, Col::fortify_vital_health) == doctest::Approx(1.0));
     CHECK(r.mappings[1].restoreAmount[0] == doctest::Approx(100.0));
@@ -1241,6 +1246,14 @@ TEST_CASE("cross features")
     CHECK(Overshoot(0, true, 40, 200) == doctest::Approx(0.8));  // full restore = max
     CHECK(Overshoot(9e9f, false, 0, 100) == 1.0f);
     CHECK(Overshoot(10, false, 5, 0) == 0.0f);
+    // 0.24.34: a heal over time meets the damage still coming. Restore Health
+    // (Remarkable), 240 over 20 s, 300 max, 165 missing: +0.25 standing still;
+    // losing 5/s for its 20 s the gap is 265, so it no longer overshoots.
+    CHECK(Overshoot(240, false, 165, 300) == doctest::Approx(0.25));
+    CHECK(Overshoot(240, false, 165, 300, 20, 5) == doctest::Approx(-25.0 / 300.0));
+    CHECK(Overshoot(240, false, 165, 300, 20, 50) == doctest::Approx(-0.2));   // the gap caps at max
+    CHECK(Overshoot(240, false, 165, 300, 0, 50) == doctest::Approx(0.25));    // instant: today's gap
+    CHECK(Overshoot(240, false, 165, 300, 20, -3) == doctest::Approx(0.25));   // no negative loss
     CHECK(WeaponCharge(50, 200) == doctest::Approx(0.25));
     CHECK(WeaponCharge(50, 0) == 0.0f);
     CHECK(StackCount(0) == 0.0f);
@@ -1362,4 +1375,161 @@ TEST_CASE("effect mapper: a harm row on a food or potion is a side effect, never
     CHECK(SelfHarmColumn(Col::survival_intoxication) == Col::_Count);  // already a side-effect column
     CHECK(SelfHarmColumn(Col::restore_health) == Col::_Count);
     CHECK(SelfHarmColumn(Col::resist_fire) == Col::_Count);
+}
+
+TEST_CASE("effect mapper: heal_slow marks a heal spread over 60 s or more (0.24.33)")
+{
+    // A heal over a minute saves nobody mid-fight; it suits a fight's first
+    // seconds and the time out of one. LoreRim's Restore Health potions run
+    // 20 s, its healing auras 300 s.
+    World w;
+    const auto heal = w.Add(Mgef(kArchValueModifier, "Health", "Restore Health"));
+    const auto regen = w.Add(Mgef(kArchPeakValueModifier, "HealRate", "Regenerate Health"));
+    auto& auraSelf = w.Item(Kind::Spell, "Healing Aura on Self");
+    World::Fx(auraSelf, heal, 0.25f, 300);
+    auto& auraTarget = w.Item(Kind::Spell, "Healing Aura on Target");
+    auraTarget.delivery = kDeliveryTargetActor;
+    World::Fx(auraTarget, heal, 0.25f, 300);
+    auto& hands = w.Item(Kind::Spell, "Healing Hands");
+    hands.delivery = kDeliveryAimed;
+    hands.castingType = kCastConcentration;
+    World::Fx(hands, heal, 24, 1);
+    auto& potion = w.Item(Kind::Potion, "Potion of Restore Health");
+    World::Fx(potion, heal, 14, 20);
+    auto& regenPotion = w.Item(Kind::Potion, "Potion of Fortify Health Regeneration");
+    World::Fx(regenPotion, regen, 50, 300);
+    auto& instant = w.Item(Kind::Spell, "Close Wounds");
+    World::Fx(instant, heal, 40, 0);
+    auto& ability = w.Item(Kind::Spell, "Regenerating");
+    ability.castingType = kCastConstant;
+    World::Fx(ability, regen, 10, 300);
+    const auto r = w.Build();
+    CHECK(CapOf(r, 0, Col::heal_slow) == 1.0f);
+    CHECK(CapOf(r, 1, Col::heal_slow) == 1.0f);   // cast at someone else: still slow
+    CHECK(CapOf(r, 1, Col::restore_health_other) > 0.0f);
+    CHECK(CapOf(r, 2, Col::heal_slow) == 0.0f);   // concentration: 1 s rows, recast every second
+    CHECK(CapOf(r, 3, Col::heal_slow) == 0.0f);   // 20 s: a fight's heal
+    CHECK(CapOf(r, 4, Col::heal_slow) == 1.0f);
+    CHECK(CapOf(r, 5, Col::heal_slow) == 0.0f);
+    CHECK(CapOf(r, 6, Col::heal_slow) == 0.0f);   // a constant effect is not used
+}
+
+TEST_CASE("effect mapper: vital restores grade per second, their totals and the rate per magicka beside (0.24.34)")
+{
+    // LoreRim, 2026-11-15: Healing Aura on Self 0.75/s for 825 s, Restore
+    // Health potions 12/s for 20 s, Healing Hands 24/s. Graded on the total,
+    // the aura on a follower read 1.0 and Healing Hands 0.38, and the aura
+    // led mid-fight; the user: "rederive anything on heals per second" (an
+    // instant heal all in front), then heals per second per magicka cost.
+    World w;
+    const auto heal = w.Add(Mgef(kArchValueModifier, "Health", "Restore Health"));
+    auto& hands = w.Item(Kind::Spell, "Healing Hands");
+    hands.delivery = kDeliveryAimed;
+    hands.castingType = kCastConcentration;
+    hands.magickaCost = 20;   // per second
+    World::Fx(hands, heal, 24, 1);
+    auto& auraTarget = w.Item(Kind::Spell, "Healing Aura on Target");
+    auraTarget.delivery = kDeliveryTargetActor;
+    auraTarget.magickaCost = 150;
+    World::Fx(auraTarget, heal, 0.75f, 825);
+    auto& close = w.Item(Kind::Spell, "Close Wounds");
+    close.magickaCost = 40;
+    World::Fx(close, heal, 40, 0);
+    auto& potion = w.Item(Kind::Potion, "Potion of Restore Health");
+    World::Fx(potion, heal, 12, 20);
+    auto& auraSelf = w.Item(Kind::Spell, "Healing Aura on Self");
+    auraSelf.magickaCost = 120;
+    World::Fx(auraSelf, heal, 0.75f, 825);
+    const auto r = w.Build();
+
+    // restore_health's population, every kept row: 0.75, 0.75, 12, 24, 40.
+    CHECK(CapOf(r, 2, Col::restore_health) == doctest::Approx(1.0));        // 40 at once
+    CHECK(CapOf(r, 3, Col::restore_health) == doctest::Approx(3.0 / 5.0));  // 12/s
+    CHECK(CapOf(r, 4, Col::restore_health) == doctest::Approx(2.0 / 5.0));  // 0.75/s
+    CHECK(CapOf(r, 0, Col::restore_health_other) == doctest::Approx(4.0 / 5.0));
+    CHECK(CapOf(r, 1, Col::restore_health_other) == doctest::Approx(2.0 / 5.0));
+    CHECK(CapOf(r, 0, Col::restore_health_other) > CapOf(r, 1, Col::restore_health_other));   // Hands over the aura
+    // The totals: the player's own (40, 240, 619) and a heal for others (24, 619).
+    CHECK(CapOf(r, 4, Col::total_restore_health) == doctest::Approx(1.0));
+    CHECK(CapOf(r, 3, Col::total_restore_health) == doctest::Approx(2.0 / 3.0));
+    CHECK(CapOf(r, 2, Col::total_restore_health) == doctest::Approx(1.0 / 3.0));
+    CHECK(CapOf(r, 1, Col::total_restore_health_other) == doctest::Approx(1.0));
+    CHECK(CapOf(r, 0, Col::total_restore_health_other) == doctest::Approx(0.5));
+    CHECK(CapOf(r, 0, Col::total_restore_health) == 0.0f);   // cast at someone else: not the player's
+    CHECK(CapOf(r, 1, Col::total_restore_health) == 0.0f);
+    CHECK(CapOf(r, 4, Col::total_restore_health_other) == 0.0f);
+    // Per magicka: 24/20 = 1.2, 40/40 = 1, 0.75/120, 0.75/150; a potion has none.
+    CHECK(CapOf(r, 0, Col::rate_per_magicka) == doctest::Approx(1.0));
+    CHECK(CapOf(r, 2, Col::rate_per_magicka) == doctest::Approx(0.75));
+    CHECK(CapOf(r, 4, Col::rate_per_magicka) == doctest::Approx(0.5));
+    CHECK(CapOf(r, 1, Col::rate_per_magicka) == doctest::Approx(0.25));
+    CHECK(CapOf(r, 3, Col::rate_per_magicka) == 0.0f);
+    // The overshoot still reads the total.
+    CHECK(r.mappings[3].restoreAmount[0] == doctest::Approx(240.0));
+    CHECK(r.mappings[2].restoreAmount[0] == doctest::Approx(40.0));
+}
+
+TEST_CASE("effect mapper: heal routing -- the fastest heal decides heal_slow; per magicka and totals as Grade routes (0.24.34, review of #258)")
+{
+    World w;
+    const auto heal = w.Add(Mgef(kArchValueModifier, "Health", "Restore Health"));
+    const auto regen = w.Add(Mgef(kArchPeakValueModifier, "HealRate", "Regenerate Health"));
+    const auto mag = w.Add(Mgef(kArchValueModifier, "Magicka", "Restore Magicka"));
+    // 0: a quick heal with a long regeneration rider: a fight's heal, not slow
+    auto& rider = w.Item(Kind::Potion, "Potion of Restore Health with a rider");
+    World::Fx(rider, heal, 12, 20);
+    World::Fx(rider, regen, 50, 300);
+    // 1: magicka cast at someone else: its family only, nothing for the player
+    auto& gift = w.Item(Kind::Spell, "Restore Magicka on Target");
+    gift.delivery = kDeliveryAimed;
+    gift.magickaCost = 30;
+    World::Fx(gift, mag, 20, 0);
+    // 2: a health regeneration cast at an ally: a heal for others, with a total
+    auto& mend = w.Item(Kind::Spell, "Regenerate Health on Target");
+    mend.delivery = kDeliveryTargetActor;
+    mend.magickaCost = 40;
+    World::Fx(mend, regen, 50, 60);
+    // 3: a costed heal of the player's own, so rate_per_magicka has a population
+    auto& close = w.Item(Kind::Spell, "Close Wounds");
+    close.magickaCost = 40;
+    World::Fx(close, heal, 40, 0);
+    const auto r = w.Build();
+
+    CHECK(CapOf(r, 0, Col::heal_slow) == 0.0f);
+    CHECK(CapOf(r, 0, Col::restore_health) > 0.0f);
+
+    CHECK(CapOf(r, 1, Col::restore_magicka) == 0.0f);
+    CHECK(CapOf(r, 1, Col::restore) > 0.0f);                 // the family keeps what it is
+    CHECK(CapOf(r, 1, Col::rate_per_magicka) == 0.0f);       // restores nothing the player has
+    CHECK(CapOf(r, 1, Col::total_restore_magicka) == 0.0f);
+
+    CHECK(CapOf(r, 2, Col::restore_health_other) > 0.0f);
+    CHECK(CapOf(r, 2, Col::total_restore_health_other) == doctest::Approx(CapOf(r, 2, Col::restore_health_other)));
+    CHECK(CapOf(r, 2, Col::total_restore_health) == 0.0f);
+
+    CHECK(CapOf(r, 3, Col::rate_per_magicka) > 0.0f);
+}
+
+TEST_CASE("effect mapper: a potion never heals others; a restore's seconds for the overshoot (0.24.34)")
+{
+    // The user, 2026-11-18: "potions are really only for the player
+    // character". A potion lands on the drinker whatever its effect record's
+    // delivery or area says.
+    World w;
+    const auto heal = w.Add(Mgef(kArchValueModifier, "Health", "Restore Health"));
+    auto& potion = w.Item(Kind::Potion, "Potion of Restore Health");
+    potion.delivery = kDeliveryTouch;
+    World::Fx(potion, heal, 12, 20, 15);   // an area on the record
+    auto& aura = w.Item(Kind::Spell, "Healing Aura on Self");
+    World::Fx(aura, heal, 0.75f, 300, 15);   // a self spell with an area: heals allies too
+    auto& close = w.Item(Kind::Spell, "Close Wounds");
+    World::Fx(close, heal, 40, 0);
+    const auto r = w.Build();
+    CHECK(CapOf(r, 0, Col::restore_health) > 0.0f);
+    CHECK(CapOf(r, 0, Col::restore_health_other) == 0.0f);
+    CHECK(CapOf(r, 0, Col::total_restore_health_other) == 0.0f);
+    CHECK(CapOf(r, 1, Col::restore_health_other) > 0.0f);
+    CHECK(r.mappings[0].restoreSeconds[0] == doctest::Approx(20.0));
+    CHECK(r.mappings[0].restoreAmount[0] == doctest::Approx(240.0));
+    CHECK(r.mappings[2].restoreSeconds[0] == 0.0f);
 }

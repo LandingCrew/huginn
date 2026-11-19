@@ -1,13 +1,13 @@
 #pragma once
 
 // =============================================================================
-// EFFECT COLUMNS -- the 244 columns of cap(i), in the order of effects.csv
+// EFFECT COLUMNS -- the 250 columns of cap(i), in the order of effects.csv
 // =============================================================================
 // GENERATED from docs/architecture/9-data/effects.csv (id, level, family);
 // tests/core/EffectColumnsTests.cpp fails if the two drift apart. Each enum
 // name is the CSV id, so a column reads the same in code, dumps and docs.
 //
-// Levels: 26 families (max over their specifics), 136 specifics, 19
+// Levels: 26 families (max over their specifics), 136 specifics, 25
 // modifiers, 26 item features, 23 weapon stats, 14 armour stats. Two
 // specifics have no family column: drain_skill and soul_trap.
 //
@@ -205,6 +205,12 @@ namespace Huginn::Core::Effect
         cure_instant,
         consumable,
         gold_value,
+        heal_slow,
+        total_restore_health,
+        total_restore_magicka,
+        total_restore_stamina,
+        total_restore_health_other,
+        rate_per_magicka,
         kind_spell,
         kind_scroll,
         kind_staff,
@@ -272,7 +278,7 @@ namespace Huginn::Core::Effect
     };
 
     inline constexpr std::size_t kColumnCount = static_cast<std::size_t>(Col::_Count);
-    static_assert(kColumnCount == 244, "effects.csv has 244 columns");
+    static_assert(kColumnCount == 250, "effects.csv has 250 columns");
 
     enum class Level : std::uint8_t { Family, Specific, Modifier, ItemFeature, WeaponStat, ArmourStat };
 
@@ -465,6 +471,12 @@ namespace Huginn::Core::Effect
         { "cure_instant", Level::Modifier, Col::_Count },
         { "consumable", Level::Modifier, Col::_Count },
         { "gold_value", Level::Modifier, Col::_Count },
+        { "heal_slow", Level::Modifier, Col::_Count },
+        { "total_restore_health", Level::Modifier, Col::_Count },
+        { "total_restore_magicka", Level::Modifier, Col::_Count },
+        { "total_restore_stamina", Level::Modifier, Col::_Count },
+        { "total_restore_health_other", Level::Modifier, Col::_Count },
+        { "rate_per_magicka", Level::Modifier, Col::_Count },
         { "kind_spell", Level::ItemFeature, Col::_Count },
         { "kind_scroll", Level::ItemFeature, Col::_Count },
         { "kind_staff", Level::ItemFeature, Col::_Count },

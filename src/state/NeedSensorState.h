@@ -104,4 +104,15 @@ namespace Huginn::State
       // Other) can be cast on. Teammates stay TargetActorState::isFollower.
       bool playerSummonNear = false;
    };
+
+   /// 0.24.34: the health the player is losing per second as of `now`: the
+   /// per-element decaying sums (tau kDamageDecayTauSec) over tau, the rate the
+   /// HUD's health bar shows falling. The overshoot of a heal over time reads
+   /// it (core/CrossFeatures.h Overshoot); 0 when nothing hurts.
+   [[nodiscard]] inline float HealthLossPerSec(const NeedSensorState& n, double now) noexcept
+   {
+      const float sum = n.dmgFire.At(now) + n.dmgFrost.At(now) + n.dmgShock.At(now) + n.dmgMagic.At(now) +
+                        n.dmgPhysical.At(now);
+      return sum / Core::Needs::kDamageDecayTauSec;
+   }
 }

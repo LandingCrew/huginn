@@ -80,7 +80,7 @@ class GoldenFile(unittest.TestCase):
     def test_head(self):
         h = self.decs[0]["head"]
         self.assertEqual(h["v"], 3)
-        self.assertEqual(len(h["cols"]), 244)   # 243 until 0.24.9 added alcohol (narcotic from 0.24.16)
+        self.assertEqual(len(h["cols"]), 250)   # 245 until 0.24.34 added total_restore_* and rate_per_magicka; 244 until 0.24.33 added heal_slow; 243 until 0.24.9 added alcohol (narcotic from 0.24.16)
         self.assertEqual(h["cols"].index("narcotic"), h["cols"].index("kind_light") + 1)
         self.assertNotIn("alcohol", h["cols"])
         self.assertEqual(len(h["needs"]), 97)  # 96 until 0.23.51 added loadout_quarterstaff; 94 until 0.23.50 added time_to_edge and edge_approach; 93 until 0.23.30 added combat_regen_ok
@@ -376,6 +376,7 @@ class GoldenFile0_24_9(unittest.TestCase):
         old = replay.load_v3([GOLDEN_0_24_9])
         new = replay.load_v3([GOLDEN])
         oc, nc = old[0]["head"]["cols"], new[0]["head"]["cols"]
+        nc = [c for c in nc if c not in ('heal_slow', 'total_restore_health', 'total_restore_magicka', 'total_restore_stamina', 'total_restore_health_other', 'rate_per_magicka')]   # 0.24.33-0.24.34's columns, before alcohol's place
         at = oc.index("alcohol")
         self.assertEqual(nc.index("narcotic"), at)
         self.assertEqual(oc[:at] + oc[at + 1:], nc[:at] + nc[at + 1:])

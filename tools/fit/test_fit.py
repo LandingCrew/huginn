@@ -105,6 +105,20 @@ class TempWork(unittest.TestCase):
         return r, buf.getvalue()
 
 
+class MeaningChanges(unittest.TestCase):
+    """0.24.34: restore_health / _magicka / _stamina grade the rate, not the total, under
+    the same names; a fit over logs on both sides is told (review of #258)."""
+
+    def test_straddling_builds_name_the_change(self):
+        got = fitlib.meaning_changes_spanned({'0.24.33 (0baf363)', '0.24.34 (1ba4cb1)'})
+        self.assertEqual(got, [('0.24.34', ('restore_health', 'restore_magicka', 'restore_stamina'))])
+
+    def test_one_side_is_quiet(self):
+        self.assertEqual(fitlib.meaning_changes_spanned({'0.23.56 (synthetic)', '0.24.33 (x)'}), [])
+        self.assertEqual(fitlib.meaning_changes_spanned({'0.24.34 (x)', '0.24.40 (y)'}), [])
+        self.assertEqual(fitlib.meaning_changes_spanned({'not a build'}), [])
+
+
 class Loader(TempWork):
     def files(self):
         """A rotated file (launch 1 of A, launch 2 of B, the first segment of launch 3 of A
@@ -256,7 +270,7 @@ class NarcoticColumn(TempWork):
         old = v3load.load([self.DEC / 'synthetic_v3_0.24.8.jsonl'])
         new = v3load.load([self.DEC / 'synthetic_v3.jsonl'])
         self.assertEqual(old['heads'][0]['ncols'], 243)
-        self.assertEqual(new['heads'][0]['ncols'], 244)
+        self.assertEqual(new['heads'][0]['ncols'], 250)   # 0.24.33 added heal_slow, 0.24.34 total_restore_* and rate_per_magicka
         self.assertNotIn('narcotic', old['cols'])
         self.assertNotIn('alcohol', new['cols'])
         self.assertEqual(new['cols'].index('narcotic'), new['cols'].index('kind_light') + 1)
@@ -273,7 +287,7 @@ class NarcoticColumn(TempWork):
             if 'launch' in r:
                 r['launch'] = '20261009-110000'
         D = v3load.load([self.write('old.jsonl', edit_lines(old, relaunch)), self.DEC / 'synthetic_v3.jsonl'])
-        self.assertEqual(len(D['cols']), 244)          # the union by name: narcotic appended once
+        self.assertEqual(len(D['cols']), 250)          # the union by name: narcotic and 0.24.33-0.24.34's six appended once
         self.assertEqual(D['stats']['dup_ctx'], 2)      # each file's own second segment, nothing across
         by_launch = {}
         for (launch, cid), ctx in D['ctxs'].items():
@@ -292,8 +306,9 @@ class NarcoticColumn(TempWork):
         self.assertEqual(old['heads'][0]['ncols'], 244)
         at = old['cols'].index('alcohol')
         self.assertNotIn('narcotic', old['cols'])
-        self.assertEqual(new['cols'].index('narcotic'), at)
-        self.assertEqual(old['cols'][:at] + old['cols'][at + 1:], new['cols'][:at] + new['cols'][at + 1:])
+        nc = [c for c in new['cols'] if c not in ('heal_slow', 'total_restore_health', 'total_restore_magicka', 'total_restore_stamina', 'total_restore_health_other', 'rate_per_magicka')]   # 0.24.33-0.24.34's columns, before alcohol's place
+        self.assertEqual(nc.index('narcotic'), at)
+        self.assertEqual(old['cols'][:at] + old['cols'][at + 1:], nc[:at] + nc[at + 1:])
         self.assertEqual(self.named_caps(old), self.named_caps(new))   # the session sets neither column
 
 

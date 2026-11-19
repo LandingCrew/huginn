@@ -451,7 +451,11 @@ def row_quantity(col, kr, constant):
     timed = False
     if rule == 'Amount':
         raw, graded = mag * max(clip_dur(d), 1.0), True
-        full = col in ('restore_health', 'restore_magicka', 'restore_stamina') and kr['mag'] >= 9999
+        if col in ('restore_health', 'restore_magicka', 'restore_stamina'):
+            # 0.24.34: a vital restore grades its rate, the magnitude (per second over time or
+            # concentrated, all of it at once when instant); its total is total_restore_*
+            raw = mag
+            full = kr['mag'] >= 9999
     elif rule == 'Level':
         raw, graded = (mag if (constant or d == 0) else mag * clip_dur(d) / 3600.0), True
         # 0.24.27: a timed Level row grades within its column's timed population;
@@ -581,7 +585,8 @@ def expected_values(items):
                     continue
                 vals[c] = max(vals.get(c, 0.0), v)
             for kr in it['rows']:
-                if 'restore_health' in kr['cols'] and (kr['delivery'] != '0' or kr['area'] > 0):
+                # 0.24.34: a potion never heals others (it lands on the drinker)
+                if castable and 'restore_health' in kr['cols'] and (kr['delivery'] != '0' or kr['area'] > 0):
                     heals_others = True
             if heals_others and max(vals.get('restore_health', 0), others_heal) > 0:
                 vals['restore_health_other'] = max(vals.get('restore_health', 0), others_heal)

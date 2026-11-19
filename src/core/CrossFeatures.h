@@ -25,14 +25,21 @@
 
 namespace Huginn::Core::Effect
 {
-    /// clamp((restored - deficit) / max, -1, 1). `restored` is the item's total
+    /// clamp((restored - gap) / max, -1, 1). `restored` is the item's total
     /// (magnitude x max(duration, 1)); a full-restore sentinel restores `max`.
-    /// 0 when the vital's maximum is unknown (<= 0).
-    [[nodiscard]] inline float Overshoot(float restored, bool fullRestore, float deficit, float maxValue) noexcept
+    /// The gap is the deficit now plus what is lost while the restore runs
+    /// (0.24.34): `lossPerSec` x `durationSec`, capped at `max` -- a heal over
+    /// 20 s mid-fight meets the damage still coming, so its total is not an
+    /// overshoot of today's gap (Restore Health (Remarkable), 240 over 20 s,
+    /// read +0.64 at 59% missing, 2026-11-18). Instant restores (0 s) and no
+    /// loss read the gap as before. 0 when the vital's maximum is unknown.
+    [[nodiscard]] inline float Overshoot(float restored, bool fullRestore, float deficit, float maxValue,
+                                         float durationSec = 0.0f, float lossPerSec = 0.0f) noexcept
     {
         if (!(maxValue > 0.0f)) return 0.0f;
         const float amount = fullRestore ? maxValue : std::max(restored, 0.0f);
-        const float d = std::clamp(deficit, 0.0f, maxValue);
+        const float coming = std::max(lossPerSec, 0.0f) * std::max(durationSec, 0.0f);
+        const float d = std::clamp(std::max(deficit, 0.0f) + coming, 0.0f, maxValue);
         return std::clamp((amount - d) / maxValue, -1.0f, 1.0f);
     }
 

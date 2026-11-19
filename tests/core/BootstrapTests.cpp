@@ -161,7 +161,26 @@ TEST_CASE("bootstrap: the shipped file reads and maps by name")
     // refused; its weights start at the prior. The file names neither.
     CHECK(std::find(d.cols.begin(), d.cols.end(), "narcotic") == d.cols.end());
     CHECK(std::find(d.cols.begin(), d.cols.end(), "alcohol") == d.cols.end());
-    CHECK(m.report.colsPrior == 1);
+    // 0.24.33's heal_slow too: its obvious pairs' prior (+1 at a fight's
+    // onset and out of one, -1 mid-fight).
+    CHECK(std::find(d.cols.begin(), d.cols.end(), "heal_slow") == d.cols.end());
+    // 0.24.34's total_restore_* and rate_per_magicka: their pairs' prior too.
+    for (const char* c : { "total_restore_health", "total_restore_magicka", "total_restore_stamina",
+                           "total_restore_health_other", "rate_per_magicka" }) {
+        CHECK(std::find(d.cols.begin(), d.cols.end(), c) == d.cols.end());
+    }
+    CHECK(m.report.colsPrior == 7);
+    CHECK(m.model.Th(static_cast<std::size_t>(Needs::NeedId::downtime), Col(Effect::Col::total_restore_health_other)).mu ==
+          doctest::Approx(1.0));
+    // rate_per_magicka has no obvious pair (dropped in 0.24.34): it starts at 0
+    CHECK(m.model.Th(static_cast<std::size_t>(Needs::NeedId::magicka_deficit), Col(Effect::Col::rate_per_magicka)).mu ==
+          doctest::Approx(0.0));
+    {
+        const auto j = Col(Effect::Col::heal_slow);
+        CHECK(m.model.Th(static_cast<std::size_t>(Needs::NeedId::in_combat), j).mu == doctest::Approx(-1.0));
+        CHECK(m.model.Th(static_cast<std::size_t>(Needs::NeedId::combat_onset), j).mu == doctest::Approx(1.0));
+        CHECK(m.model.Th(static_cast<std::size_t>(Needs::NeedId::downtime), j).mu == doctest::Approx(1.0));
+    }
     // 0.24.31: the hand re-seed of the heal for others (provenance "hand_edits").
     {
         const auto k = static_cast<std::size_t>(Needs::NeedId::ally_injured);

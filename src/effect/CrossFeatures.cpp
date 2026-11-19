@@ -17,7 +17,9 @@ namespace Huginn::Effect
         float* out[3] = { &f.overshootHealth, &f.overshootMagicka, &f.overshootStamina };
         for (std::size_t i = 0; i < 3; ++i) {
             if (item.restoreAmount[i] > 0.0f || item.fullRestore[i]) {
-                *out[i] = Overshoot(item.restoreAmount[i], item.fullRestore[i], deficits[i], maxes[i]);
+                // 0.24.34: health only -- the loss rate the health poll tracks
+                *out[i] = Overshoot(item.restoreAmount[i], item.fullRestore[i], deficits[i], maxes[i],
+                                    item.restoreSeconds[i], i == 0 ? v.healthLossPerSec : 0.0f);
             }
         }
 

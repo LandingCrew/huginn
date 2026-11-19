@@ -77,7 +77,7 @@ TEST_CASE("effect columns: counts per level and lookups")
     }
     CHECK(fam == 26);
     CHECK(spec == 136);
-    CHECK(mod == 19);
+    CHECK(mod == 25);    // 20 before 0.24.34 added total_restore_* and rate_per_magicka; 19 before 0.24.33 added heal_slow
     CHECK(item == 26);   // 25 before 0.24.9 added alcohol (named narcotic from 0.24.16)
     CHECK(weap == 23);
     CHECK(arm == 14);
