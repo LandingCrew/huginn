@@ -7,8 +7,8 @@ Model (theory page, 'Model and notation', P11):
     outside : u0(d) = theta_out . n(d) + theta_out0        (only in the 3-outcome fit)
     P(y)    = exp(s_y) / (exp(u0) + sum_A exp(s_j) + sum_{H\\A} exp(s_j - kappa))
 Priors: Theta_kj ~ N(theta0_kj, sigma^2) with theta0 = 0 except the obvious pairs of
-effects.csv (theta0 = +T0, combat_regen_ok x kind_food = -T0, overshoot_* pairs 0: the
-logged overshoot is signed and not curved), sigma_obv for obvious pairs, sigma_dense
+effects.csv (theta0 = +T0, -T0 for a need written "-need", overshoot_* pairs 0: the
+logged overshoot is signed and not curved; times PAIR_STRENGTH where it has one), sigma_obv for obvious pairs, sigma_dense
 otherwise; b_i ~ N(0, sigma_b^2).
 """
 import bisect
@@ -171,6 +171,13 @@ def join_v2(idx, d):
 # their start is what ships (configs/Huginn_Bootstrap.json carries the same values).
 PAIR_STRENGTH = {(f'{s}_{e}' if s != 'damage_rate' else f'{e}_damage_rate', f'resist_{e}'): 2.5
                  for e in ('fire', 'frost', 'shock') for s in ('enemy_casting', 'target_element', 'damage_rate')}
+# 0.24.39: a heal for a hurt follower starts as strong as a heal for the player's own wound.
+# The fit had no follower data and left ally_injured x restore_health_other at its prior
+# (0.9996), so Healing Hands sat at #17-#110 with the follower badly hurt; 0.24.31 copied
+# health_deficit x restore_health's fitted 4.19213 into the shipped file by hand
+# (Huginn_Bootstrap.json provenance.hand_edits). Written here, a refit keeps that start
+# instead of putting it back to 1.0 (docs/architecture/9-hand-tuned.md).
+PAIR_STRENGTH[('ally_injured', 'restore_health_other')] = 4.19213
 
 
 def obvious_pairs(needs, cols, path=EFFECTS_CSV):
@@ -184,7 +191,7 @@ def obvious_pairs(needs, cols, path=EFFECTS_CSV):
             neg = t.startswith('-')   # 0.24.33: "-need" is a negative pair (heal_slow x in_combat)
             t = t.lstrip('-').strip()
             if t and t in NI and r['id'] in CI:
-                sign = -1.0 if neg or (t == 'combat_regen_ok' and r['id'] == 'kind_food') else 1.0
+                sign = -1.0 if neg else 1.0
                 if r['id'].startswith('overshoot_'):
                     sign = 0.0
                 out[(NI[t], CI[r['id']])] = sign * PAIR_STRENGTH.get((t, r['id']), 1.0)

@@ -119,6 +119,22 @@ class MeaningChanges(unittest.TestCase):
         self.assertEqual(fitlib.meaning_changes_spanned({'not a build'}), [])
 
 
+class ObviousPairs(unittest.TestCase):
+    """fitlib.obvious_pairs: the prior a refit starts from (docs/architecture/9-hand-tuned.md)."""
+
+    def test_signs_and_strengths(self):
+        needs = ['ally_injured', 'combat_regen_ok', 'downtime', 'target_element_fire']
+        cols = ['restore_health_other', 'kind_food', 'resist_fire']
+        obv = fitlib.obvious_pairs(needs, cols)
+        N = {n: i for i, n in enumerate(needs)}; C = {c: j for j, c in enumerate(cols)}
+        # 0.24.39: the follower heal's hand-set start survives a refit (it was put back to 1.0)
+        self.assertAlmostEqual(obv[(N['ally_injured'], C['restore_health_other'])], 4.19213)
+        # 0.24.39: no eating in combat, written -combat_regen_ok in effects.csv, not special-cased
+        self.assertEqual(obv[(N['combat_regen_ok'], C['kind_food'])], -1.0)
+        self.assertEqual(obv[(N['downtime'], C['kind_food'])], 1.0)
+        self.assertEqual(obv[(N['target_element_fire'], C['resist_fire'])], 2.5)
+
+
 class Loader(TempWork):
     def files(self):
         """A rotated file (launch 1 of A, launch 2 of B, the first segment of launch 3 of A

@@ -7,9 +7,8 @@ The obvious need x effect pairs (doc 9, "Pairs") are the pairs whose theta start
 away from the dense prior: fitlib.obvious_pairs reads them from effects.csv for the
 offline fit, and the R8 bootstrap reader (core/Bootstrap.h) needs the same list in the
 plugin to give a pair the file lacks its prior (docs/architecture/9-bootstrap-format.md,
-Names). The sign rule is fitlib's: +1, except a need written "-need" (0.24.33) and
-combat_regen_ok x kind_food (-1), and every
-overshoot_* column (0: the logged overshoot is signed and not curved).
+Names). The sign rule is fitlib's: +1, except a need written "-need" (0.24.33; -1),
+and every overshoot_* column (0: the logged overshoot is signed and not curved).
 tests/core/ObviousPairsTests.cpp checks the header against the csv on every build.
 
 It also writes the full table of pairs into docs/architecture/9-hand-tuned.md,
@@ -49,7 +48,7 @@ def pairs():
                 t = t.lstrip("-").strip()
                 if t not in needs:
                     raise SystemExit(f"effects.csv {r['id']}: obvious need {t!r} is not in needs.csv")
-                sign = -1 if neg or (t == "combat_regen_ok" and r["id"] == "kind_food") else 1
+                sign = -1 if neg else 1
                 if r["id"].startswith("overshoot_"):
                     sign = 0
                 out.append((r["id"], t, sign))
@@ -116,8 +115,9 @@ def make_header(ps):
     w.append("// fitlib.obvious_pairs): theta0 = sign (the prior's T0 = 1), sigma = 1 (precision")
     w.append("// 1). Every other pair starts at 0 with sigma 0.3 (precision 11.1111). The R8")
     w.append("// bootstrap reader gives a pair the file lacks this prior (core/Bootstrap.h).")
-    w.append("// Sign: +1; -1 for a need effects.csv writes \"-need\" (0.24.33) and for")
-    w.append("// combat_regen_ok x kind_food; 0 for the overshoot_* columns.")
+    w.append("// Sign: +1; -1 for a need effects.csv writes \"-need\" (0.24.33; no eating")
+    w.append("// in combat, -combat_regen_ok x kind_food, since 0.24.39); 0 for the overshoot_*")
+    w.append("// columns.")
     w.append("//")
     w.append("// Pure: standard library only (src/core/README.md).")
     w.append("// =============================================================================")
