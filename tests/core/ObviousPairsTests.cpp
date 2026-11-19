@@ -203,9 +203,10 @@ TEST_CASE("obvious pairs: no eating in combat, unless health regeneration is blo
     REQUIRE(needs.contains("combat_regen_ok"));
     CHECK(needs.at("combat_regen_ok").at("obvious_effects").find("(negative)") != std::string::npos);
     CHECK(needs.at("combat_regen_ok").at("r3_input").find("healthRegenSuppressed") != std::string::npos);
-    const auto food = SplitIds(effects.at("kind_food").at("obvious_needs"));
-    CHECK(food.contains("combat_regen_ok"));
-    CHECK_FALSE(food.contains("in_combat"));
+    const auto food = SplitIds(effects.at("kind_food").at("obvious_needs"), true);
+    CHECK(food.contains("-combat_regen_ok"));   // written negative since 0.24.39
+    // in_combat in either sign: the sign stripped (/code-review #261)
+    CHECK_FALSE(SplitIds(effects.at("kind_food").at("obvious_needs")).contains("in_combat"));
     CHECK(SplitIds(effects.at("kind_weapon").at("obvious_needs")).contains("magicka_deficit"));
 }
 
@@ -231,7 +232,7 @@ TEST_CASE("obvious pairs: core/ObviousPairs.h is effects.csv's obvious_needs, wi
         for (auto need : SplitIds(row.at("obvious_needs"), true)) {
             const bool neg = need[0] == '-';
             if (neg) need.erase(0, 1);
-            int sign = (neg || (need == "combat_regen_ok" && id == "kind_food")) ? -1 : 1;
+            int sign = neg ? -1 : 1;
             if (id.rfind("overshoot_", 0) == 0) sign = 0;
             csv.emplace(id, need, sign);
         }

@@ -11,8 +11,9 @@
 // fitlib.obvious_pairs): theta0 = sign (the prior's T0 = 1), sigma = 1 (precision
 // 1). Every other pair starts at 0 with sigma 0.3 (precision 11.1111). The R8
 // bootstrap reader gives a pair the file lacks this prior (core/Bootstrap.h).
-// Sign: +1; -1 for a need effects.csv writes "-need" (0.24.33) and for
-// combat_regen_ok x kind_food; 0 for the overshoot_* columns.
+// Sign: +1; -1 for a need effects.csv writes "-need" (0.24.33; no eating
+// in combat, -combat_regen_ok x kind_food, since 0.24.39); 0 for the overshoot_*
+// columns.
 //
 // Pure: standard library only (src/core/README.md).
 // =============================================================================
