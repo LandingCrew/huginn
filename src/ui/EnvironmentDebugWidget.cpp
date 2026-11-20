@@ -6,6 +6,7 @@
 #include "StateDebugCommon.h"
 #include "../state/DropAheadProbe.h"
 #include "../state/StateConstants.h"
+#include <cmath>
 #include <format>
 
 namespace Huginn::UI
@@ -109,10 +110,13 @@ namespace Huginn::UI
          ImGui::TextDisabled("Edge: none known");
       }
       ImGui::SameLine(Layout::COLUMN_WIDTH + 20.0f);
-      ImGui::Text("Speed to it: %.0f/game s", r.edgeSpeed);
+      // what rounds to zero prints 0, not -0
+      const float speed = std::abs(r.edgeSpeed) < 0.5f ? 0.0f : r.edgeSpeed;
+      const float approach = std::abs(r.edgeApproach) < 0.005f ? 0.0f : r.edgeApproach;
+      ImGui::Text("Speed to it: %.0f/game s", speed);
       ImGui::Text("Proximity: %.2f", r.edgeProximity);
       ImGui::SameLine(Layout::COLUMN_WIDTH + 20.0f);
-      ImGui::Text("Approach: %+.2f/game s", r.edgeApproach);
+      ImGui::Text("Approach: %+.2f/game s", approach);
 
       ImGui::Separator();
       bool draw = State::DropAheadProbe::DebugDrawOn();
@@ -147,7 +151,9 @@ namespace Huginn::UI
       // Time and lighting - compact single line
       ImGui::Text("Time: %.0f:00 (%s)", world.timeOfDay,
          world.IsNightTime() ? "Night" : "Day");
-      ImGui::SameLine(Layout::COLUMN_WIDTH);
+      // after the text, not at a fixed column: "Time: 5:00 (Night)" is wider
+      // than COLUMN_WIDTH and ran into Light (0.24.40)
+      ImGui::SameLine(0.0f, Layout::INDICATOR_SPACING * 2.0f);
       ImGui::Text("Light: %.2f (%s)", world.lightLevel,
          world.IsDark() ? "Dark" : world.IsWellLit() ? "Bright" : "Mod");
 

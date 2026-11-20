@@ -254,19 +254,22 @@ namespace Huginn::UI
    {
       ImGui::Indent(8.0f);
 
+      // 0.24.40: wide enough for "Poison: 120%" (at 90 it ran into Magic)
+      constexpr float kResistColumn = 120.0f;
+
       // Row 1: Fire | Frost | Shock
       ImVec4 fireColor = resistances.HasHighFireResist() ?
          (resistances.IsFireResistCapped() ? Colors::EFFECT_FROST : Colors::ACTIVE_INDICATOR) :
          Colors::INACTIVE_GRAY;
       ImGui::TextColored(fireColor, "Fire: %.0f%%", resistances.fire);
 
-      ImGui::SameLine(90.0f);
+      ImGui::SameLine(kResistColumn);
       ImVec4 frostColor = resistances.HasHighFrostResist() ?
          (resistances.IsFrostResistCapped() ? Colors::EFFECT_FROST : Colors::ACTIVE_INDICATOR) :
          Colors::INACTIVE_GRAY;
       ImGui::TextColored(frostColor, "Frost: %.0f%%", resistances.frost);
 
-      ImGui::SameLine(180.0f);
+      ImGui::SameLine(2.0f * kResistColumn);
       ImVec4 shockColor = resistances.HasHighShockResist() ?
          (resistances.IsShockResistCapped() ? Colors::EFFECT_FROST : Colors::ACTIVE_INDICATOR) :
          Colors::INACTIVE_GRAY;
@@ -277,7 +280,7 @@ namespace Huginn::UI
          Colors::ACTIVE_INDICATOR : Colors::INACTIVE_GRAY;
       ImGui::TextColored(poisonColor, "Poison: %.0f%%", resistances.poison);
 
-      ImGui::SameLine(90.0f);
+      ImGui::SameLine(kResistColumn);
       ImVec4 magicColor = resistances.HasHighMagicResist() ?
          Colors::ACTIVE_INDICATOR : Colors::INACTIVE_GRAY;
       ImGui::TextColored(magicColor, "Magic: %.0f%%", resistances.magic);
