@@ -2,7 +2,6 @@
 #ifdef _DEBUG
 
 #include "EnvironmentDebugWidget.h"
-#include "DebugSettings.h"
 #include "StateDebugCommon.h"
 #include "../state/DropAheadProbe.h"
 #include "../state/StateConstants.h"
@@ -126,8 +125,9 @@ namespace Huginn::UI
       ImGui::Separator();
       bool draw = State::DropAheadProbe::DebugDrawOn();
       if (ImGui::Checkbox("Draw probe rays", &draw)) {
-         // this session; [Debug] bDrawEnvProbe sets it at load and on a reload
-         DebugSettings::GetSingleton().drawEnvProbe = draw;
+         // The probe's own atomic flag only, this session: the render thread
+         // must not write DebugSettings, which a reload writes on another
+         // (/code-review #262). [Debug] bDrawEnvProbe sets it at load and on a reload.
          State::DropAheadProbe::SetDebugDraw(draw);
       }
       ImGui::TextColored(ImVec4(1.0f, 0.24f, 0.24f, 1.0f), "fall");

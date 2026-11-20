@@ -6,6 +6,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <limits>
@@ -234,4 +235,59 @@ TEST_CASE("probe layout: ProbeAll is ProbeChain's near three")
         CHECK(all[i].hitZ == doctest::Approx(chain[i].hitZ));
     }
     CHECK(a.count == b.count);
+}
+
+// /code-review #262: a far point's edge is a step, not a long slope; a fall
+// into shallow water is a fall; a point the pass could not read has no label.
+TEST_CASE("far points: a sprint down an ordinary hill is no edge; a sudden step out there is")
+{
+    const DropProbeConfig cfg;
+    const auto layout = LayoutFor(700.0f, cfg);   // a sprint: far points 653, 1027, 1400
+    REQUIRE(layout.reach == doctest::Approx(1400.0));
+    World hill;
+    const float slope = std::tan(19.0f * 3.14159265f / 180.0f);
+    hill.ground = [slope](float y) { return 1000.0f - slope * std::max(y, 0.0f); };   // 1400 ahead: 482 below
+    auto hits = ProbeChain(kFeet, kNorth, layout, cfg, hill);
+    CHECK_FALSE(NearestEdgeDistance(kFeet.z, std::span<const ProbeHit>(hits.data(), layout.count), layout.Distances(), cfg));
+    auto f = PD::Build(kFeet, kNorth, layout, hill.casts, hill.count, std::span<const ProbeHit>(hits.data(), layout.count), cfg);
+    CHECK(CountLook(f, PD::Look::Fall) == 0);
+
+    World step;
+    step.ground = [](float y) { return y < 900.0f ? 1000.0f : 400.0f; };   // a 600 step at 900
+    hits = ProbeChain(kFeet, kNorth, layout, cfg, step);
+    const auto edge = NearestEdgeDistance(kFeet.z, std::span<const ProbeHit>(hits.data(), layout.count), layout.Distances(), cfg);
+    REQUIRE(edge.has_value());
+    CHECK(*edge == doctest::Approx(layout.distances[4]));   // 1027, the first point past the step
+    f = PD::Build(kFeet, kNorth, layout, step.casts, step.count, std::span<const ProbeHit>(hits.data(), layout.count), cfg);
+    REQUIRE(f.markCount == 6);
+    CHECK(f.marks[4].look == PD::Look::Fall);
+    CHECK(f.marks[4].drop == doctest::Approx(600.0));
+    CHECK(f.marks[5].look == PD::Look::Okay);   // the next point: level with the foot of the step
+}
+
+TEST_CASE("probe picture: a dangerous drop into shallow water is red, with its water")
+{
+    World w;
+    w.ground = [](float y) { return y < 150.0f ? 1000.0f : 100.0f; };   // a 900 drop
+    const auto f = Picture(w, nullptr, [](std::array<ProbeHit, kMaxPoints>& hits) {
+        for (std::size_t i = 1; i < 3; ++i) {
+            hits[i].waterKnown = true;
+            hits[i].waterZ = 130.0f;   // a 30-deep stream: no safe landing
+        }
+    });
+    CHECK(f.marks[1].look == PD::Look::Fall);
+    CHECK(f.marks[1].drop == doctest::Approx(870.0));
+    CHECK(f.marks[1].waterDepth == doctest::Approx(30.0));
+}
+
+TEST_CASE("probe picture: a point a knee-high obstacle hides gets no label")
+{
+    World w;
+    w.ground = [](float) { return 1000.0f; };
+    w.walls.push_back({ 150.0f, 1040.0f });   // over the knee pick (1024), under the waist pick (1064)
+    const auto f = Picture(w);
+    CHECK(f.markCount == 1);                      // only the first point
+    CHECK(CountLook(f, PD::Look::Skipped) == 1);  // the hidden point's down ray, grey
+    CHECK(CountLook(f, PD::Look::Blocked) == 1);  // the knee pick
+    CHECK(f.unreachedCount == 1);                 // the third point
 }

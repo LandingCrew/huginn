@@ -614,9 +614,11 @@ namespace Huginn::State::DropAheadProbe
             const auto start = Core::Needs::ProbeStartAt(feet, dir, layout.distances[i], cfg);
             const RE::NiPoint3 at{ start.x, start.y, hits[i].startZ.value_or(start.z) };
             water[i] = ReadWater(cell, at);
-            if (water[i].which == WaterCell::Neighbour) ++neighbourCells;
+            // the log's cell counts are the near three's, as its probes are
+            const bool nearPoint = i < Core::Needs::kNearPoints;
+            if (nearPoint && water[i].which == WaterCell::Neighbour) ++neighbourCells;
             if (!water[i].cell) {
-               ++unknownCells;
+               if (nearPoint) ++unknownCells;
                continue;
             }
             hits[i].waterKnown = water[i].Usable();
@@ -682,7 +684,7 @@ namespace Huginn::State::DropAheadProbe
          };
          LogTransition(status, nowSec, fmt::format(": drop {:.0f} | deep water {:.0f} (safe landing >= {:.0f}) | dir "
                                            "({:.2f}, {:.2f}) | probes [{}] [{}] [{}] | water cells: {} neighbour, "
-                                           "{} unknown | unknown {} rejected {} | feet z {:.0f} | edge {} speed {:.0f}/game s "
+                                           "{} unknown | unknown {} rejected {} (all points) | feet z {:.0f} | edge {} speed {:.0f}/game s "
                                            "proximity {:.2f} approach {:+.2f}/game s | reach {:.0f}{}",
             drop, ahead.waterDepth, Core::Needs::kSafeLandingDepth, dir.x, dir.y, probe(0), probe(1), probe(2),
             neighbourCells, unknownCells, unknown, cast.rejected, feet.z,

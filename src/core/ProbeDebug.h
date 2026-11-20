@@ -11,8 +11,9 @@
 //
 // Colours (the user, 2026-10-30): red is a fall -- a down ray whose drop is
 // dangerous (kEdgeDropThreshold, the drop_ahead curve's centre, the line
-// time_to_edge uses); blue is water under the probe (deep_water_ahead's
-// reading); green is fine. A reachability pick that hit something, a down
+// time_to_edge uses; a far point's drop is its step, EdgeReferenceZ), shallow
+// water under it or not; blue is water and no dangerous drop (a safe landing,
+// deep_water_ahead's reading); green is fine. A reachability pick that hit something, a down
 // ray that ran out of recasts, and a point the pass never reached (a pick
 // before it was blocked) are neutral, so red only ever means a fall.
 // =============================================================================
@@ -87,12 +88,15 @@ namespace Huginn::Core::Needs::ProbeDebug
     /// it shows nothing, and its end is a cross that says "nothing below".
     inline constexpr float kVoidDrawLength = 1200.0f;
 
-    /// The colour of a down ray at probe `h` (water filled in), from the feet.
-    [[nodiscard]] inline Look DownLook(float feetZ, const ProbeHit& h, const DropProbeConfig& cfg) noexcept
+    /// The colour of a down ray at probe `h` (water filled in), its drop from
+    /// `fromZ` (EdgeReferenceZ). A fall first (/code-review #262): a dangerous
+    /// drop into shallow water is a fall, as time_to_edge counts it; blue only
+    /// for water with no dangerous drop (DropAtProbe is 0 over a safe landing).
+    [[nodiscard]] inline Look DownLook(float fromZ, const ProbeHit& h, const DropProbeConfig& cfg) noexcept
     {
         if (!h.known) return Look::Skipped;
-        if (WaterDepthAtProbe(feetZ, h, cfg) > 0.0f) return Look::Water;
-        return DropAtProbe(feetZ, h, cfg) >= kEdgeDropThreshold ? Look::Fall : Look::Okay;
+        if (DropAtProbe(fromZ, h, cfg) >= kEdgeDropThreshold) return Look::Fall;
+        return WaterDepthAtProbe(fromZ, h, cfg) > 0.0f ? Look::Water : Look::Okay;
     }
 
     /// The probe point a down ray was cast at: the one whose XY it starts at.
@@ -101,7 +105,9 @@ namespace Huginn::Core::Needs::ProbeDebug
         std::size_t best = 0;
         float bestD = std::numeric_limits<float>::infinity();
         for (std::size_t i = 0; i < starts.size(); ++i) {
-            const float d = std::hypot(from.x - starts[i].x, from.y - starts[i].y);
+            const float dx = from.x - starts[i].x;
+            const float dy = from.y - starts[i].y;
+            const float d = dx * dx + dy * dy;   // squared: only the order matters
             if (d < bestD) {
                 bestD = d;
                 best = i;
@@ -146,7 +152,8 @@ namespace Huginn::Core::Needs::ProbeDebug
                 addSegment(k.from, { k.from.x, k.from.y, k.from.z - cfg.waistHeight }, Look::Skipped);
                 continue;
             }
-            const Look look = DownLook(feet.z, h, cfg);
+            const float fromZ = EdgeReferenceZ(feet.z, hits, i);
+            const Look look = DownLook(fromZ, h, cfg);
             const bool hit = k.result.outcome == RayResult::Outcome::Hit;
             const float len = hit ? k.result.distance : std::min(k.length, kVoidDrawLength);
             const Vec3 end{ k.from.x, k.from.y, k.from.z - len };
@@ -158,8 +165,10 @@ namespace Huginn::Core::Needs::ProbeDebug
                 addSegment({ k.from.x - dir.x * t, k.from.y - dir.y * t, h.waterZ },
                            { k.from.x + dir.x * t, k.from.y + dir.y * t, h.waterZ }, Look::Water);
             }
-            if (f.markCount < f.marks.size()) {
-                f.marks[f.markCount++] = { end, look, DropAtProbe(feet.z, h, cfg), WaterDepthAtProbe(feet.z, h, cfg), !hit,
+            // No label for a point the pass could not read (a knee pick blocked
+            // it after its down ray: /code-review #262 saw "drop 16050").
+            if (h.known && f.markCount < f.marks.size()) {
+                f.marks[f.markCount++] = { end, look, DropAtProbe(fromZ, h, cfg), WaterDepthAtProbe(fromZ, h, cfg), !hit,
                                            i >= kNearPoints };
             }
         }

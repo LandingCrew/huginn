@@ -49,7 +49,9 @@ namespace Huginn::UI::ProbeOverlay
       const auto& worldToCam = camera->GetRuntimeData().worldToCam;
       const auto& port = camera->GetRuntimeData2().port;
       const ImVec2 size = ImGui::GetIO().DisplaySize;
-      ImDrawList* dl = ImGui::GetForegroundDrawList();
+      // Under the debug windows, over the game (/code-review #262: the
+      // foreground list drew over the windows' text).
+      ImDrawList* dl = ImGui::GetBackgroundDrawList();
 
       // World point -> screen pixels; false behind the camera.
       auto project = [&](const Core::Needs::Vec3& p, ImVec2& out) {
@@ -83,14 +85,18 @@ namespace Huginn::UI::ProbeOverlay
             dl->AddCircleFilled(at, 4.0f, col);
          }
          char text[48];
+         // A far point's drop is its step from the point before (EdgeReferenceZ).
+         const char* dropWord = m.farPoint ? "step" : "drop";
          if (m.farPoint && m.look == PD::Look::Okay) {
             text[0] = '\0';   // a far point that sees nothing: no label, the ray says it
+         } else if (m.look == PD::Look::Fall && m.waterDepth > 0.0f) {
+            std::snprintf(text, sizeof(text), "%s %.0f (water %.0f)", dropWord, m.drop, m.waterDepth);
          } else if (m.waterDepth > 0.0f) {
             std::snprintf(text, sizeof(text), "water %.0f", m.waterDepth);
          } else if (m.voidBelow) {
             std::snprintf(text, sizeof(text), "void (%.0f+)", m.drop);
          } else {
-            std::snprintf(text, sizeof(text), "drop %.0f", m.drop);
+            std::snprintf(text, sizeof(text), "%s %.0f", dropWord, m.drop);
          }
          if (text[0] != '\0') {
             const ImVec2 textAt(at.x + 8.0f, at.y - 7.0f);

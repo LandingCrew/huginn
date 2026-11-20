@@ -7,10 +7,11 @@
 // THE DROP / EDGE PROBE OVERLAY (0.24.40)
 // =============================================================================
 // Draws the drop / edge probe's last pass in the world, over the game
-// (ImGui's foreground draw list, from the D3D11 Present hook): each ray it
+// (from the D3D11 Present hook): each ray it
 // cast, coloured by core/ProbeDebug.h -- red a fall, blue water, green fine,
 // yellow a pick that hit something, grey out of recasts or never reached --
-// with the drop or the water depth at each down ray's end.
+// with the drop (a far point: its step) or the water depth at each down
+// ray's end. Drawn on ImGui's background list: under the debug windows.
 //
 // The rays are cast on the main thread (DropAheadProbe's PlayerCharacter::
 // Update hook) and published as a picture; this projects that picture through
