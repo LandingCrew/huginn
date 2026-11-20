@@ -38,6 +38,17 @@ namespace Huginn::State::DropAheadProbe
       std::mutex g_mutex;
       Reading g_latest;
 
+      // 0.24.40: the debug overlay's picture of the last pass (core/ProbeDebug.h).
+      std::atomic<bool> g_debugDraw{ false };
+      std::mutex g_debugMutex;
+      Core::Needs::ProbeDebug::Frame g_debugFrame;
+
+      void StoreDebug(const Core::Needs::ProbeDebug::Frame& frame)
+      {
+         std::lock_guard lock(g_debugMutex);
+         g_debugFrame = frame;
+      }
+
       // Hook-thread only (PlayerCharacter::Update): the throttle, the last
       // position for the movement direction, and the transition log.
       std::chrono::steady_clock::time_point g_lastProbe{};
@@ -481,6 +492,7 @@ namespace Huginn::State::DropAheadProbe
             // No pass: the approach window restarts after it (EdgeApproachTracker).
             ResetEdge();
             Store(s, -1.0f, -1.0f, nowSec);
+            if (g_debugDraw.load(std::memory_order_relaxed)) StoreDebug({});   // nothing cast: nothing drawn
             if (WantTransitionLog(s, nowSec)) LogTransition(s, nowSec, "");
          };
          if (auto* ui = RE::UI::GetSingleton()) {
@@ -493,6 +505,7 @@ namespace Huginn::State::DropAheadProbe
                g_lastPosGameAt = -1.0;
                ResetEdge();
                Store(Status::NotLoaded, -1.0f, -1.0f, -1.0);  // no reading: nothing for a paused age to keep
+               StoreDebug({});
                if (WantTransitionLog(Status::NotLoaded, nowSec)) LogTransition(Status::NotLoaded, nowSec, "");
                return;
             }
@@ -563,10 +576,19 @@ namespace Huginn::State::DropAheadProbe
          const auto dir = Core::Needs::ProbeDirection(velocity, player->GetAngleZ(), cfg.minMoveSpeed);
          HavokCast cast{ world.get(), RayFilter(player) };
          std::array<Core::Needs::ProbeHit, 3> hits{};
+         // 0.24.40: the debug overlay records each cast as it is made.
+         const bool drawing = g_debugDraw.load(std::memory_order_relaxed);
+         std::array<Core::Needs::ProbeDebug::Cast, Core::Needs::ProbeDebug::kMaxCasts> casts{};
+         std::size_t castCount = 0;
+         auto recorded = [&](Core::Needs::Vec3 from, Core::Needs::Vec3 unit, float length, Core::Needs::RayKind kind) {
+            const auto result = cast(from, unit, length, kind);
+            if (drawing && castCount < casts.size()) casts[castCount++] = { from, unit, length, kind, result };
+            return result;
+         };
          {
             Huginn_ZONE_NAMED("DropAhead::ProbeAll (ray casts)");
             RE::BSReadLockGuard lock(world->worldLock);
-            hits = Core::Needs::ProbeAll(feet, dir, cfg, cast);
+            hits = Core::Needs::ProbeAll(feet, dir, cfg, recorded);
          }
          // Water at each reached point: the water of the cell the point lies in
          // (ReadWater), at that XY. Sampled at the ray's real start -- the
@@ -615,6 +637,7 @@ namespace Huginn::State::DropAheadProbe
          reading.edgeProximity = Core::Needs::EdgeProximity(feet.z, hits, cfg);
          reading.edgeApproach = g_edgeTracker.Add({ gameNow, dir, reading.edgeProximity });
          Store(reading);
+         if (drawing) StoreDebug(Core::Needs::ProbeDebug::Build(feet, dir, casts, castCount, hits, cfg));
          if (status == Status::Measured) g_measuredCount.fetch_add(1, std::memory_order_relaxed);
          if (!WantTransitionLog(status, nowSec)) return;
          // Per probe: the hit Z (or "void"), the RAW water height the game
@@ -733,6 +756,7 @@ namespace Huginn::State::DropAheadProbe
       g_loadGeneration.fetch_add(1, std::memory_order_acq_rel);
       g_gameLoaded.store(loaded, std::memory_order_release);
       Store(Status::NotLoaded, -1.0f, -1.0f, -1.0);
+      StoreDebug({});
    }
 
    std::uint32_t MeasuredCount() noexcept { return g_measuredCount.load(std::memory_order_relaxed); }
@@ -743,6 +767,20 @@ namespace Huginn::State::DropAheadProbe
    {
       std::lock_guard lock(g_mutex);
       return g_latest;
+   }
+
+   void SetDebugDraw(bool on) noexcept
+   {
+      g_debugDraw.store(on, std::memory_order_relaxed);
+      if (!on) StoreDebug({});   // off: the last picture does not linger
+   }
+
+   bool DebugDrawOn() noexcept { return g_debugDraw.load(std::memory_order_relaxed); }
+
+   Core::Needs::ProbeDebug::Frame LatestDebugFrame() noexcept
+   {
+      std::lock_guard lock(g_debugMutex);
+      return g_debugFrame;
    }
 
    std::string_view StatusName(Status s) noexcept

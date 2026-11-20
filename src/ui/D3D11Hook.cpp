@@ -4,7 +4,9 @@
 #include "WelcomeBanner.h"
 #include "effect/EffectCatalog.h"
 #ifdef _DEBUG
-#include "StateManagerDebugWidget.h"
+#include "CharacterDebugWidget.h"
+#include "EnvironmentDebugWidget.h"  // 0.24.40
+#include "ProbeOverlay.h"            // 0.24.40
 #include "RegistryDebugWidget.h"  // v0.7.5
 #include "UtilityScorerDebugWidget.h"  // v0.9.0
 #include "DebugInputHook.h"
@@ -51,7 +53,9 @@ namespace Huginn::UI
 
             // Debug widgets (only in debug builds)
 #ifdef _DEBUG
-            StateManagerDebugWidget::GetSingleton().Draw();
+            ProbeOverlay::Draw();  // 0.24.40: under the windows
+            CharacterDebugWidget::GetSingleton().Draw();
+            EnvironmentDebugWidget::GetSingleton().Draw();  // 0.24.40
             RegistryDebugWidget::GetSingleton().Draw();    // v0.7.5
             UtilityScorerDebugWidget::GetSingleton().Draw();  // v0.9.0
 #endif

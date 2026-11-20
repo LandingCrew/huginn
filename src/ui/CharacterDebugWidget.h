@@ -10,28 +10,28 @@
 namespace Huginn::UI
 {
    /**
-    * @brief Debug widget to display StateManager output (v0.6.1)
+    * @brief Debug window: the player's own state (v0.6.1; 0.24.40 split off the
+    * world around them into EnvironmentDebugWidget)
     *
-    * Shows all three state models in a collapsible ImGui window:
-    *   - WorldState (time, lighting, locks, ore veins, workstations)
-    *   - PlayerActorState (vitals, effects, buffs, equipment, survival, position)
-    *   - TargetCollection (primary target + tracked targets with aggregate queries)
+    * PlayerActorState: vitals and their tracking, debuffs, buffs, resistances,
+    * equipment, survival, transformation. Shared colours and helpers:
+    * StateDebugCommon.h.
     *
     * USAGE:
-    *   - Toggle visibility with StateManagerDebugWidget::GetSingleton().ToggleVisible()
+    *   - Toggle visibility with CharacterDebugWidget::GetSingleton().ToggleVisible()
     *   - Auto-updates each frame when visible
     *   - Position persists across frames (draggable)
     */
-   class StateManagerDebugWidget
+   class CharacterDebugWidget
    {
    public:
-      static StateManagerDebugWidget& GetSingleton() noexcept;
+      static CharacterDebugWidget& GetSingleton() noexcept;
 
       // Disable copy/move
-      StateManagerDebugWidget(const StateManagerDebugWidget&) = delete;
-      StateManagerDebugWidget(StateManagerDebugWidget&&) = delete;
-      StateManagerDebugWidget& operator=(const StateManagerDebugWidget&) = delete;
-      StateManagerDebugWidget& operator=(StateManagerDebugWidget&&) = delete;
+      CharacterDebugWidget(const CharacterDebugWidget&) = delete;
+      CharacterDebugWidget(CharacterDebugWidget&&) = delete;
+      CharacterDebugWidget& operator=(const CharacterDebugWidget&) = delete;
+      CharacterDebugWidget& operator=(CharacterDebugWidget&&) = delete;
 
       /**
        * @brief Draw the debug widget (called each frame)
@@ -54,47 +54,29 @@ namespace Huginn::UI
       void ToggleVisible() { m_isVisible = !m_isVisible; }
 
    private:
-      StateManagerDebugWidget() = default;
-      ~StateManagerDebugWidget() = default;
+      CharacterDebugWidget() = default;
+      ~CharacterDebugWidget() = default;
 
       // Section renderers (matches ContextSensorDebugWidget structure)
       void DrawVitalsSection(const State::ActorVitals& vitals);
       void DrawEffectsSection(const State::ActorEffects& effects);
       void DrawActiveBuffsSection(const State::ActorBuffs& buffs);
       void DrawResistancesSection(const State::ActorResistances& resistances);  // v0.6.6
-      void DrawEnvironmentSection(const State::WorldState& world, const State::PlayerActorState& player);
-      void DrawCrosshairSection(const State::WorldState& world, const State::TargetCollection& targets);
       void DrawEquipmentSection(const State::PlayerActorState& state);
       void DrawSurvivalSection(const State::PlayerActorState& state);
       void DrawTransformationSection(const State::PlayerActorState& state);  // v0.6.6
-      void DrawCombatAwarenessSection(const State::TargetCollection& targets);
       void DrawHealthTrackingSection(const State::HealthTrackingState& state);
       void DrawStaminaTrackingSection(const State::StaminaTrackingState& state);   // v0.6.9
       void DrawMagickaTrackingSection(const State::MagickaTrackingState& state);   // v0.6.9
 
-      // Helpers
-      void DrawIndicator(const char* label, bool active, ImVec4 activeColor = ImVec4(0.2f, 1.0f, 0.2f, 1.0f)) const;
-      void DrawProgressBar(const char* label, float value, ImVec4 color, const char* overlay = nullptr) const;
-      void DrawVitalBarWithDebuff(const char* label, float current, float effectiveMax, float baseMax,
-                                  ImVec4 normalColor, ImVec4 debuffColor) const;
-
-      // Compact layout helpers (v0.6.7)
-      void DrawIndicatorPair(const char* label1, bool active1, ImVec4 activeColor1,
-                             const char* label2, bool active2, ImVec4 activeColor2,
-                             float columnWidth = 100.0f) const;
-      void DrawIndicatorRow3(const char* label1, bool active1, ImVec4 activeColor1,
-                             const char* label2, bool active2, ImVec4 activeColor2,
-                             const char* label3, bool active3, ImVec4 activeColor3,
-                             float spacing = 12.0f) const;
-
       bool m_isVisible = false;  // OFF until DebugSettings says otherwise.
-      // Must match DebugDefaults::STATE_MANAGER_VISIBLE. It did not: the
+      // Must match DebugDefaults::CHARACTER_VISIBLE. It did not: the
       // default here was true while the setting default was false, so the
       // widget rendered over the main menu and the whole loading sequence
       // and only went away at kPostLoadGame, when ApplyToWidgets() finally
       // ran -- or never, for a player with no dMenu INI to load.
-      float m_posX = Config::STATE_MANAGER_DEBUG_POS_X;
-      float m_posY = Config::STATE_MANAGER_DEBUG_POS_Y;
+      float m_posX = Config::CHARACTER_DEBUG_POS_X;
+      float m_posY = Config::CHARACTER_DEBUG_POS_Y;
    };
 }
 

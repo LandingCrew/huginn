@@ -230,8 +230,8 @@ namespace Huginn::Config
    // -----------------------------------------------------------------------------
 
    // Debug UI positioning (only affects debug builds)
-   inline constexpr float STATE_MANAGER_DEBUG_POS_X = 500.0f;  // Legacy, not used for initial position
-   inline constexpr float STATE_MANAGER_DEBUG_POS_Y = 10.0f;
+   inline constexpr float CHARACTER_DEBUG_POS_X = 500.0f;  // Legacy, not used for initial position
+   inline constexpr float CHARACTER_DEBUG_POS_Y = 10.0f;
 
    // -----------------------------------------------------------------------------
    // Long-Play Soak Telemetry (v0.18.x)

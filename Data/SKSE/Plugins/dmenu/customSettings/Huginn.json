@@ -205,13 +205,37 @@
         {
           "type": "checkbox",
           "text": {
-            "name": "Show State Manager",
-            "desc": "Display player state, world state, and target tracking"
+            "name": "Show Character",
+            "desc": "Display the player's state: vitals and their tracking, buffs, debuffs, resistances, equipment, survival (debug builds)"
           },
           "default": false,
           "ini": {
             "section": "Debug",
-            "id": "bShowStateManager"
+            "id": "bShowCharacter"
+          }
+        },
+        {
+          "type": "checkbox",
+          "text": {
+            "name": "Show Environment",
+            "desc": "Display the world around the player: time, light, the crosshair, combat awareness, the drop / edge probe (debug builds)"
+          },
+          "default": false,
+          "ini": {
+            "section": "Debug",
+            "id": "bShowEnvironment"
+          }
+        },
+        {
+          "type": "checkbox",
+          "text": {
+            "name": "Draw Probe Rays",
+            "desc": "Draw the drop / edge probe's rays in the world: red a fall, blue water, green fine, yellow blocked, grey skipped (debug builds)"
+          },
+          "default": false,
+          "ini": {
+            "section": "Debug",
+            "id": "bDrawEnvProbe"
           }
         },
         {

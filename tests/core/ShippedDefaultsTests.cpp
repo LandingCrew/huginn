@@ -223,7 +223,9 @@ TEST_CASE("DMenuDefaults: Huginn.json's defaults, as dMenu writes them on a fres
         { "Widget", "bMinimalCounts", "true" },
         { "Widget", "sSlotEffect", "0" },
         { "Debug", "iRecommendationLog", "1.000000" },
-        { "Debug", "bShowStateManager", "false" },
+        { "Debug", "bShowCharacter", "false" },
+        { "Debug", "bShowEnvironment", "false" },
+        { "Debug", "bDrawEnvProbe", "false" },
         { "Debug", "bShowRegistry", "false" },
         { "Debug", "bShowUtilityScorer", "false" },
     };

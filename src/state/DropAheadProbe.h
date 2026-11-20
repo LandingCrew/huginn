@@ -44,6 +44,7 @@
 
 #include "core/DropAhead.h"
 #include "core/EdgeApproach.h"
+#include "core/ProbeDebug.h"
 
 #include <array>
 #include <cstdint>
@@ -123,4 +124,14 @@ namespace Huginn::State::DropAheadProbe
    /// down ray casts on through anything else (actors, clutter). The
    /// horizontal reachability picks count any hit at all.
    [[nodiscard]] bool IsGroundLayer(RE::COL_LAYER layer) noexcept;
+
+   /// 0.24.40: the debug overlay (ui/ProbeOverlay, [Debug] bDrawEnvProbe).
+   /// On, each pass records its casts and publishes their picture
+   /// (core/ProbeDebug.h); off, nothing is recorded. Any thread.
+   void SetDebugDraw(bool on) noexcept;
+   [[nodiscard]] bool DebugDrawOn() noexcept;
+
+   /// The last pass's picture (thread-safe copy). `measured` false: the last
+   /// pass was skipped (or the overlay is off), nothing to draw.
+   [[nodiscard]] Core::Needs::ProbeDebug::Frame LatestDebugFrame() noexcept;
 }

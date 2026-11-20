@@ -1,7 +1,8 @@
 // Only compile in debug mode
 #ifdef _DEBUG
 
-#include "StateManagerDebugWidget.h"
+#include "CharacterDebugWidget.h"
+#include "StateDebugCommon.h"
 #include "../state/StateConstants.h"          // For threshold constants
 #include "../state/StateTypes.h"              // For HealthTrackingState
 #include <format>
@@ -9,202 +10,15 @@
 
 namespace Huginn::UI
 {
-   // =============================================================================
-   // COLOR CONSTANTS (ImGui colors)
-   // =============================================================================
+   using namespace StateDebug;
 
-   namespace Colors
+   CharacterDebugWidget& CharacterDebugWidget::GetSingleton() noexcept
    {
-      // UI colors
-      constexpr ImVec4 HEADER_YELLOW{0.8f, 0.8f, 0.2f, 1.0f};
-      constexpr ImVec4 ACTIVE_INDICATOR{1.0f, 0.8f, 0.2f, 1.0f};
-      constexpr ImVec4 INACTIVE_GRAY{0.5f, 0.5f, 0.5f, 1.0f};
-
-      // Health colors
-      constexpr ImVec4 HEALTH_CRITICAL{1.0f, 0.2f, 0.2f, 1.0f};     // Red
-      constexpr ImVec4 HEALTH_LOW{1.0f, 0.7f, 0.2f, 1.0f};          // Orange
-      constexpr ImVec4 HEALTH_VERY_LOW{0.8f, 0.2f, 0.2f, 1.0f};     // Dark red
-      constexpr ImVec4 HEALTH_DEBUFF{1.0f, 0.5f, 0.2f, 0.6f};       // Orange (debuffed portion)
-
-      // Magicka colors
-      constexpr ImVec4 MAGICKA_LOW{0.2f, 0.5f, 1.0f, 1.0f};         // Bright blue
-      constexpr ImVec4 MAGICKA_NORMAL{0.2f, 0.4f, 0.8f, 1.0f};      // Dark blue
-      constexpr ImVec4 MAGICKA_DEBUFF{0.5f, 0.4f, 0.8f, 0.6f};      // Purple (debuffed portion)
-
-      // Stamina colors
-      constexpr ImVec4 STAMINA_LOW{0.2f, 1.0f, 0.2f, 1.0f};         // Bright green
-      constexpr ImVec4 STAMINA_NORMAL{0.2f, 0.8f, 0.2f, 1.0f};      // Dark green
-      constexpr ImVec4 STAMINA_DEBUFF{0.6f, 0.8f, 0.2f, 0.6f};      // Yellow-green (debuffed portion)
-
-      // Effect colors
-      constexpr ImVec4 EFFECT_FIRE{1.0f, 0.5f, 0.1f, 1.0f};         // Orange
-      constexpr ImVec4 EFFECT_POISON{0.5f, 1.0f, 0.2f, 1.0f};       // Green
-      constexpr ImVec4 EFFECT_FROST{0.5f, 0.8f, 1.0f, 1.0f};        // Light blue
-      constexpr ImVec4 EFFECT_SHOCK{0.8f, 0.8f, 1.0f, 1.0f};        // Purple-blue
-      constexpr ImVec4 EFFECT_DISEASE{0.7f, 0.4f, 0.2f, 1.0f};      // Brown
-
-      // Drain colors
-      constexpr ImVec4 DRAIN_HEALTH{1.0f, 0.3f, 0.3f, 1.0f};        // Red
-      constexpr ImVec4 DRAIN_MAGICKA{0.3f, 0.5f, 1.0f, 1.0f};       // Blue
-      constexpr ImVec4 DRAIN_STAMINA{0.3f, 1.0f, 0.3f, 1.0f};       // Green
-
-      // Buff/Debuff colors (unified color scheme)
-      constexpr ImVec4 BUFF_COLOR{0.3f, 0.6f, 1.0f, 1.0f};          // Blue (all buffs)
-      constexpr ImVec4 DEBUFF_COLOR{1.0f, 0.9f, 0.2f, 1.0f};        // Yellow (all debuffs)
-
-      // Legacy buff colors (kept for backward compatibility if needed)
-      constexpr ImVec4 BUFF_ARMOR{0.8f, 0.6f, 0.2f, 1.0f};          // Gold
-      constexpr ImVec4 BUFF_CLOAK{0.8f, 0.4f, 1.0f, 1.0f};          // Purple
-      constexpr ImVec4 BUFF_INVISIBILITY{0.5f, 0.5f, 0.8f, 1.0f};   // Light blue-gray
-      constexpr ImVec4 BUFF_SUMMON{0.8f, 0.2f, 0.8f, 1.0f};         // Magenta
-
-      // Weapon charge colors
-      constexpr ImVec4 CHARGE_LOW{1.0f, 0.3f, 0.3f, 1.0f};          // Red
-      constexpr ImVec4 CHARGE_NORMAL{0.5f, 0.8f, 1.0f, 1.0f};       // Blue
-
-      // Survival hunger colors (red spectrum)
-      constexpr ImVec4 HUNGER_RAVENOUS{1.0f, 0.2f, 0.2f, 1.0f};
-      constexpr ImVec4 HUNGER_VERY_HUNGRY{1.0f, 0.5f, 0.2f, 1.0f};
-      constexpr ImVec4 HUNGER_HUNGRY{1.0f, 0.8f, 0.2f, 1.0f};
-      constexpr ImVec4 HUNGER_PECKISH{0.8f, 0.8f, 0.5f, 1.0f};
-      constexpr ImVec4 HUNGER_SLIGHTLY_HUNGRY{0.6f, 0.6f, 0.5f, 1.0f};
-
-      // Survival cold colors (blue spectrum)
-      constexpr ImVec4 COLD_FREEZING{0.5f, 0.8f, 1.0f, 1.0f};
-      constexpr ImVec4 COLD_VERY_COLD{0.6f, 0.8f, 1.0f, 1.0f};
-      constexpr ImVec4 COLD_COLD{0.7f, 0.8f, 1.0f, 1.0f};
-      constexpr ImVec4 COLD_CHILLY{0.8f, 0.9f, 1.0f, 1.0f};
-
-      // Survival fatigue colors (purple spectrum)
-      constexpr ImVec4 FATIGUE_EXHAUSTED{0.6f, 0.4f, 0.8f, 1.0f};
-      constexpr ImVec4 FATIGUE_VERY_TIRED{0.6f, 0.5f, 0.7f, 1.0f};
-      constexpr ImVec4 FATIGUE_TIRED{0.7f, 0.6f, 0.7f, 1.0f};
-      constexpr ImVec4 FATIGUE_WEARY{0.7f, 0.7f, 0.7f, 1.0f};
-      constexpr ImVec4 FATIGUE_SLIGHTLY_TIRED{0.8f, 0.8f, 0.8f, 1.0f};
-
-      // Position state colors
-      constexpr ImVec4 UNDERWATER{0.3f, 0.5f, 1.0f, 1.0f};
-      constexpr ImVec4 SWIMMING{0.4f, 0.7f, 1.0f, 1.0f};
-      constexpr ImVec4 FALLING{1.0f, 0.8f, 0.2f, 1.0f};
-      constexpr ImVec4 OVERENCUMBERED{1.0f, 0.5f, 0.2f, 1.0f};
-      constexpr ImVec4 MOUNTED{0.7f, 0.5f, 0.3f, 1.0f};
-
-      // Target state colors
-      constexpr ImVec4 CASTING{0.8f, 0.5f, 1.0f, 1.0f};
-
-      // Indicator colors
-      constexpr ImVec4 INACTIVE_INDICATOR{0.4f, 0.4f, 0.4f, 1.0f};
-   }
-
-   // =============================================================================
-   // LAYOUT CONSTANTS (v0.6.7 space efficiency)
-   // =============================================================================
-
-   namespace Layout
-   {
-      constexpr float COLUMN_WIDTH = 130.0f;      // Width for 2-column grid
-      constexpr float INDICATOR_SPACING = 12.0f;  // Spacing for horizontal rows
-   }
-
-   // =============================================================================
-   // ENUM-TO-STRING MAPPING HELPERS
-   // =============================================================================
-
-   constexpr const char* GetLockLevelName(int lockLevel) noexcept
-   {
-      switch (lockLevel) {
-         case State::LockLevel::NOVICE: return "Novice";
-         case State::LockLevel::APPRENTICE: return "Apprentice";
-         case State::LockLevel::ADEPT: return "Adept";
-         case State::LockLevel::EXPERT: return "Expert";
-         case State::LockLevel::MASTER: return "Master";
-         case State::LockLevel::REQUIRES_KEY: return "Requires Key";
-         default: return "Unknown";
-      }
-   }
-
-   constexpr const char* GetCloakTypeName(State::EffectType cloakType) noexcept
-   {
-      switch (cloakType) {
-         case State::EffectType::CloakFire: return "Fire";
-         case State::EffectType::CloakFrost: return "Frost";
-         case State::EffectType::CloakShock: return "Shock";
-         default: return "Unknown";
-      }
-   }
-
-   constexpr const char* GetHungerLevelName(int level) noexcept
-   {
-      // Names from CC Survival Mode (UESP)
-      switch (level) {
-         case 5: return "Starving";
-         case 4: return "Famished";
-         case 3: return "Hungry";
-         case 2: return "Peckish";
-         case 1: return "Satisfied";
-         default: return "Well Fed";
-      }
-   }
-
-   constexpr const char* GetColdLevelName(int level) noexcept
-   {
-      switch (level) {
-         case 5: return "Numb";
-         case 4: return "Freezing";
-         case 3: return "Very Cold";
-         case 2: return "Chilly";
-         case 1: return "Comfortable";
-         default: return "Warm";
-      }
-   }
-
-   // Names taken from SurvivalThreshold's own constants, which this table used
-   // to contradict: ranks 2 and 3 were swapped, so FATIGUE_TIRED printed
-   // "Weary" and FATIGUE_WEARY -- the Weary rank itself -- printed
-   // "Tired". FATIGUE_DEBILITATED, the critical state, printed "Very Tired",
-   // and case 5 was dead code because the vanilla path tops out at 4.
-   //
-   // That swap is what made the widget look like it was speaking some other
-   // mod's vocabulary. It was speaking its own, one row out.
-   //
-   // Negative ranks are the well-rested bonuses (FATIGUE_LOVERS_COMFORT = -3),
-   // which the default arm still covers.
-   constexpr const char* GetFatigueLevelName(int level) noexcept
-   {
-      switch (level) {
-         case 4: return "Debilitated";     // FATIGUE_DEBILITATED - critical
-         case 3: return "Weary";           // FATIGUE_WEARY
-         case 2: return "Tired";           // FATIGUE_TIRED
-         case 1: return "Slightly Tired";  // FATIGUE_SLIGHTLY_TIRED
-         case 0: return "Refreshed";       // FATIGUE_REFRESHED
-         default: return "Well Rested";    // negative: bonus states
-      }
-   }
-
-   constexpr const char* GetWorkstationTypeName(uint8_t type) noexcept
-   {
-      // Values from RE::TESFurniture::WorkBenchData::BenchType
-      switch (type) {
-         case 1: return "Forge";
-         case 2: return "Smithing";
-         case 3: return "Enchanting";
-         case 4: return "Enchant Exp";
-         case 5: return "Alchemy";
-         case 6: return "Alchemy Exp";
-         case 7: return "Tanning";
-         case 8: return "Smelter";
-         case 9: return "Cooking";
-         default: return "Unknown";
-      }
-   }
-
-   StateManagerDebugWidget& StateManagerDebugWidget::GetSingleton() noexcept
-   {
-      static StateManagerDebugWidget instance;
+      static CharacterDebugWidget instance;
       return instance;
    }
 
-   void StateManagerDebugWidget::Draw()
+   void CharacterDebugWidget::Draw()
    {
       if (!m_isVisible) {
          return;
@@ -232,7 +46,7 @@ namespace Huginn::UI
       ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.0f, 4.0f));
 
       // Build window title with current version (static to avoid per-frame allocation)
-      static const std::string windowTitle = std::format("StateManager [v{} DEBUG]", Huginn::VERSION_STRING);
+      static const std::string windowTitle = std::format("Character [v{} DEBUG]", Huginn::VERSION_STRING);
 
       if (ImGui::Begin(windowTitle.c_str(), &m_isVisible, flags)) {
          // Save position when moved
@@ -241,9 +55,7 @@ namespace Huginn::UI
          m_posY = windowPos.y;
 
          // Get current states (thread-safe copies)
-         auto worldState = stateManager.GetWorldState();
          auto playerState = stateManager.GetPlayerState();
-         auto targets = stateManager.GetTargets();
 
          // =============================================================================
          // SECTIONS (matches ContextSensorDebugWidget structure)
@@ -294,18 +106,6 @@ namespace Huginn::UI
         DrawResistancesSection(playerState.resistances);
          }
 
-         // Environment (time, light, position state)
-         static const std::string environmentHeader = std::format("Environment | Poll: {:.0f}ms", State::PollInterval::WORLD_MS);
-         if (ImGui::CollapsingHeader(environmentHeader.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
-        DrawEnvironmentSection(worldState, playerState);
-         }
-
-         // Crosshair (locks, ore, primary target)
-         static const std::string crosshairHeader = std::format("Crosshair | Poll: {:.0f}ms", State::PollInterval::WORLD_MS);
-         if (ImGui::CollapsingHeader(crosshairHeader.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
-        DrawCrosshairSection(worldState, targets);
-         }
-
          // Equipment
          static const std::string equipmentHeader = std::format("Equipment | Poll: {:.0f}ms", State::PollInterval::PLAYER_EQUIPMENT_MS);
          if (ImGui::CollapsingHeader(equipmentHeader.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -323,12 +123,6 @@ namespace Huginn::UI
          if (ImGui::CollapsingHeader(transformationHeader.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
         DrawTransformationSection(playerState);
          }
-
-         // Combat Awareness (derived from target tracking)
-         static const std::string combatHeader = std::format("Combat Awareness | Poll: {:.0f}ms", State::PollInterval::TARGETS_MS);
-         if (ImGui::CollapsingHeader(combatHeader.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
-        DrawCombatAwarenessSection(targets);
-         }
       }
       ImGui::End();
 
@@ -339,7 +133,7 @@ namespace Huginn::UI
    // VITALS SECTION (matches ContextSensorDebugWidget)
    // =============================================================================
 
-   void StateManagerDebugWidget::DrawVitalsSection(const State::ActorVitals& vitals)
+   void CharacterDebugWidget::DrawVitalsSection(const State::ActorVitals& vitals)
    {
       ImGui::Indent(8.0f);
 
@@ -381,7 +175,7 @@ namespace Huginn::UI
    // DEBUFFS SECTION (matches ContextSensorDebugWidget)
    // =============================================================================
 
-   void StateManagerDebugWidget::DrawEffectsSection(const State::ActorEffects& effects)
+   void CharacterDebugWidget::DrawEffectsSection(const State::ActorEffects& effects)
    {
       ImGui::Indent(8.0f);
 
@@ -406,7 +200,7 @@ namespace Huginn::UI
    // BUFFS SECTION (matches ContextSensorDebugWidget)
    // =============================================================================
 
-   void StateManagerDebugWidget::DrawActiveBuffsSection(const State::ActorBuffs& buffs)
+   void CharacterDebugWidget::DrawActiveBuffsSection(const State::ActorBuffs& buffs)
    {
       ImGui::Indent(8.0f);
 
@@ -456,7 +250,7 @@ namespace Huginn::UI
    // RESISTANCES SECTION (v0.6.6, v0.6.9 - Compact 2-column layout)
    // =============================================================================
 
-   void StateManagerDebugWidget::DrawResistancesSection(const State::ActorResistances& resistances)
+   void CharacterDebugWidget::DrawResistancesSection(const State::ActorResistances& resistances)
    {
       ImGui::Indent(8.0f);
 
@@ -495,7 +289,7 @@ namespace Huginn::UI
    // EQUIPMENT SECTION (matches ContextSensorDebugWidget)
    // =============================================================================
 
-   void StateManagerDebugWidget::DrawEquipmentSection(const State::PlayerActorState& state)
+   void CharacterDebugWidget::DrawEquipmentSection(const State::PlayerActorState& state)
    {
       ImGui::Indent(8.0f);
 
@@ -544,7 +338,7 @@ namespace Huginn::UI
    // SURVIVAL SECTION (matches ContextSensorDebugWidget)
    // =============================================================================
 
-   void StateManagerDebugWidget::DrawSurvivalSection(const State::PlayerActorState& state)
+   void CharacterDebugWidget::DrawSurvivalSection(const State::PlayerActorState& state)
    {
       ImGui::Indent(8.0f);
 
@@ -606,7 +400,7 @@ namespace Huginn::UI
    // =============================================================================
    // Displays vampire and werewolf transformation state separately from survival.
 
-   void StateManagerDebugWidget::DrawTransformationSection(const State::PlayerActorState& state)
+   void CharacterDebugWidget::DrawTransformationSection(const State::PlayerActorState& state)
    {
       ImGui::Indent(8.0f);
 
@@ -633,205 +427,10 @@ namespace Huginn::UI
    }
 
    // =============================================================================
-   // ENVIRONMENT SECTION (v0.6.9 - Compact 2-column layout)
-   // =============================================================================
-   // Combines WorldState (time/light/interior) + PlayerActorState (position flags)
-   // =============================================================================
-
-   void StateManagerDebugWidget::DrawEnvironmentSection(const State::WorldState& world, const State::PlayerActorState& player)
-   {
-      ImGui::Indent(8.0f);
-
-      // Time and lighting - compact single line
-      ImGui::Text("Time: %.0f:00 (%s)", world.timeOfDay,
-         world.IsNightTime() ? "Night" : "Day");
-      ImGui::SameLine(Layout::COLUMN_WIDTH);
-      ImGui::Text("Light: %.2f (%s)", world.lightLevel,
-         world.IsDark() ? "Dark" : world.IsWellLit() ? "Bright" : "Mod");
-
-      ImGui::Text("Location: %s", world.isInterior ? "Interior" : "Exterior");
-
-      ImGui::Separator();
-
-      // Position states - 2-column layout
-      DrawIndicatorPair("Underwater", player.isUnderwater, Colors::DRAIN_MAGICKA,
-                        "Swimming", player.isSwimming, Colors::SWIMMING, Layout::COLUMN_WIDTH);
-      DrawIndicatorPair("Falling", player.isFalling, Colors::ACTIVE_INDICATOR,
-                        "Encumbered", player.isOverencumbered, Colors::HUNGER_VERY_HUNGRY, Layout::COLUMN_WIDTH);
-      DrawIndicatorPair("Sneaking", player.isSneaking, Colors::BUFF_INVISIBILITY,
-                        "In Combat", player.isInCombat, Colors::HEALTH_CRITICAL, Layout::COLUMN_WIDTH);
-      DrawIndicatorPair("Mounted", player.isMounted, Colors::MOUNTED,
-                        "On Dragon", player.isMountedOnDragon, Colors::BUFF_SUMMON, Layout::COLUMN_WIDTH);
-
-      ImGui::Unindent(8.0f);
-   }
-
-   // =============================================================================
-   // CROSSHAIR SECTION (matches ContextSensorDebugWidget)
-   // =============================================================================
-   // Combines WorldState (locks/ore/workstations) + TargetCollection (primary target)
-   // =============================================================================
-
-   void StateManagerDebugWidget::DrawCrosshairSection(const State::WorldState& world, const State::TargetCollection& targets)
-   {
-      ImGui::Indent(8.0f);
-
-      // World objects - horizontal layout (v0.6.7)
-      if (world.isLookingAtLock) {
-         ImGui::TextColored(Colors::ACTIVE_INDICATOR, "[X] Lock (%s)", GetLockLevelName(world.lockLevel));
-      } else {
-         ImGui::TextColored(Colors::INACTIVE_INDICATOR, "[ ] Lock");
-      }
-      ImGui::SameLine(0.0f, Layout::INDICATOR_SPACING);
-      DrawIndicator("Ore", world.isLookingAtOreVein, Colors::ACTIVE_INDICATOR);
-      ImGui::SameLine(0.0f, Layout::INDICATOR_SPACING);
-      if (world.isLookingAtWorkstation) {
-         ImGui::TextColored(Colors::ACTIVE_INDICATOR, "[X] %s", GetWorkstationTypeName(world.workstationType));
-      } else {
-         ImGui::TextColored(Colors::INACTIVE_INDICATOR, "[ ] Workstation");
-      }
-
-      ImGui::Separator();
-
-      // Primary target NPC (from TargetCollection)
-      // Always show section (static layout prevents flickering when target appears/disappears)
-      ImGui::TextColored(targets.primary ? Colors::ACTIVE_INDICATOR : Colors::INACTIVE_GRAY, "NPC Target:");
-      ImGui::Indent(8.0f);
-
-      if (targets.primary) {
-         const auto& target = *targets.primary;
-
-         ImGui::Text("FormID: 0x%08X", target.actorFormID);
-         ImGui::Text("Distance: %.0f units", target.GetDistanceToPlayer());
-         ImGui::Text("Type: %s", State::GetTargetTypeName(target.targetType));
-
-         // v0.6.12: IFF (Identification Friend or Foe) display
-         {
-        const char* iffLabel = target.isHostile ? "Hostile" : (target.isFollower ? "Follower" : "Allied");
-        ImVec4 iffColor = target.isHostile ? Colors::DRAIN_HEALTH :
-                          (target.isFollower ? Colors::BUFF_COLOR : Colors::ACTIVE_INDICATOR);
-        ImGui::Text("IFF:");
-        ImGui::SameLine();
-        ImGui::TextColored(iffColor, "%s", iffLabel);
-         }
-         ImGui::SameLine();
-         DrawIndicator("Dead", target.isDead, Colors::INACTIVE_GRAY);
-         ImGui::SameLine();
-         DrawIndicator("Casting", target.isCasting, Colors::CASTING);
-
-         DrawIndicator("Staggered", target.isStaggered, Colors::ACTIVE_INDICATOR);
-
-         // v0.6.11: Dragon/Mage indicators
-         const bool isDragon = (target.targetType == State::TargetType::Dragon);
-         DrawIndicatorPair("Dragon", isDragon, Colors::EFFECT_FIRE,
-                           "Mage", target.isMage, Colors::CASTING, Layout::COLUMN_WIDTH);
-
-         // v0.6.11: Vitals freshness indicator (shows if secondary target vitals are stale)
-         // Primary targets always have fresh vitals; secondary targets may have cached vitals
-         const bool isPrimary = (target.source == State::TargetSource::Crosshair ||
-                                 target.source == State::TargetSource::CombatPrimary);
-         if (!isPrimary) {
-        ImGui::TextDisabled("(Vitals: cached @ 500ms)");
-         }
-
-         // Target vitals bar
-         ImVec4 healthColor = target.IsTargetHealthCritical() ?
-        Colors::HEALTH_CRITICAL :
-        Colors::HEALTH_VERY_LOW;
-         DrawProgressBar("Target HP", target.vitals.health, healthColor);
-      } else {
-         ImGui::TextDisabled("None");
-      }
-
-      ImGui::Unindent(8.0f);
-
-      ImGui::Unindent(8.0f);
-   }
-
-   // =============================================================================
-   // COMBAT AWARENESS SECTION (matches ContextSensorDebugWidget)
-   // =============================================================================
-   // Derived from TargetCollection aggregate queries
-   // =============================================================================
-
-   void StateManagerDebugWidget::DrawCombatAwarenessSection(const State::TargetCollection& targets)
-   {
-      ImGui::Indent(8.0f);
-
-      // Enemy count
-      const int enemyCount = targets.GetEnemyCount();
-      ImGui::Text("Enemy Count: %d", enemyCount);
-
-      // Closest enemy
-      if (enemyCount > 0) {
-         const auto closestEnemy = targets.GetClosestEnemy();
-         if (closestEnemy) {
-        const float dist = closestEnemy->GetDistanceToPlayer();
-        ImGui::Text("Nearest Enemy: %.1f units", dist);
-         }
-
-         // Casting enemies
-         const int castingCount = targets.CountCastingEnemies();
-         DrawIndicator("Enemy Casting", castingCount > 0, Colors::EFFECT_SHOCK);
-      } else {
-         ImGui::TextDisabled("No nearby enemies");
-      }
-
-      ImGui::Separator();
-
-      // Combat warnings
-      DrawIndicator("Outnumbered", targets.IsOutnumbered(), Colors::HEALTH_CRITICAL);
-      DrawIndicator("Enemy in Melee Range", targets.CountEnemiesInMeleeRange() > 0, Colors::HEALTH_LOW);
-
-      ImGui::Separator();
-
-      // Follower tracking (v0.6.10, enhanced v0.6.12)
-      ImGui::TextColored(Colors::HEADER_YELLOW, "Followers:");
-      int followerCount = 0;
-      for (const auto& target : targets.targets) {
-         if (target.isFollower && !target.isDead) {
-        ++followerCount;
-        // Show HP bar color based on health level
-        ImVec4 hpColor = Colors::STAMINA_NORMAL;  // Green for healthy
-        if (target.vitals.health < 0.25f) {
-           hpColor = Colors::HEALTH_CRITICAL;  // Red for critical
-        } else if (target.vitals.health < 0.50f) {
-           hpColor = Colors::HEALTH_LOW;  // Orange for low
-        } else if (target.vitals.health < 0.75f) {
-           hpColor = Colors::ACTIVE_INDICATOR;  // Yellow for medium
-        }
-        ImGui::TextColored(hpColor, "  %08X: %.0f%% HP (%.0f units)",
-                           target.actorFormID, target.vitals.health * 100.0f, target.GetDistanceToPlayer());
-         }
-      }
-      if (followerCount == 0) {
-         ImGui::TextDisabled("  No followers");
-      }
-
-      // v0.6.12: Debug - show all tracked targets
-      ImGui::Separator();
-      ImGui::Text("All Tracked (%zu):", targets.targets.size());
-      for (const auto& target : targets.targets) {
-         const char* srcName = "?";
-         switch (target.source) {
-        case State::TargetSource::Crosshair: srcName = "XHR"; break;
-        case State::TargetSource::CombatPrimary: srcName = "CMB"; break;
-        case State::TargetSource::NearbyEnemy: srcName = "ENM"; break;
-        case State::TargetSource::NearbyAlly: srcName = "ALY"; break;
-        default: break;
-         }
-         const char* iff = target.isHostile ? "H" : (target.isFollower ? "F" : "A");
-         ImGui::Text("  %08X %s %s %.0f", target.actorFormID, srcName, iff, target.GetDistanceToPlayer());
-      }
-
-      ImGui::Unindent(8.0f);
-   }
-
-   // =============================================================================
    // HEALTH TRACKING SECTION (v0.6.9 - Renamed from Damage Tracking)
    // =============================================================================
 
-   void StateManagerDebugWidget::DrawHealthTrackingSection(const State::HealthTrackingState& state)
+   void CharacterDebugWidget::DrawHealthTrackingSection(const State::HealthTrackingState& state)
    {
       ImGui::Indent(8.0f);
 
@@ -911,7 +510,7 @@ namespace Huginn::UI
    // STAMINA TRACKING SECTION (v0.6.9)
    // =============================================================================
 
-   void StateManagerDebugWidget::DrawStaminaTrackingSection(const State::StaminaTrackingState& state)
+   void CharacterDebugWidget::DrawStaminaTrackingSection(const State::StaminaTrackingState& state)
    {
       ImGui::Indent(8.0f);
 
@@ -968,7 +567,7 @@ namespace Huginn::UI
    // MAGICKA TRACKING SECTION (v0.6.9)
    // =============================================================================
 
-   void StateManagerDebugWidget::DrawMagickaTrackingSection(const State::MagickaTrackingState& state)
+   void CharacterDebugWidget::DrawMagickaTrackingSection(const State::MagickaTrackingState& state)
    {
       ImGui::Indent(8.0f);
 
@@ -1025,162 +624,6 @@ namespace Huginn::UI
       ImGui::Unindent(8.0f);
    }
 
-   // =============================================================================
-   // HELPER METHODS
-   // =============================================================================
-
-   void StateManagerDebugWidget::DrawIndicator(const char* label, bool active, ImVec4 activeColor) const
-   {
-      ImVec4 color = active ? activeColor : Colors::INACTIVE_INDICATOR;
-      ImGui::TextColored(color, "[%c] %s", active ? 'X' : ' ', label);
-   }
-
-   void StateManagerDebugWidget::DrawProgressBar(const char* label, float value, ImVec4 color, const char* overlay) const
-   {
-      ImGui::PushStyleColor(ImGuiCol_PlotHistogram, color);
-
-      if (overlay) {
-         ImGui::ProgressBar(value, ImVec2(150.0f, 12.0f), overlay);
-      } else {
-         char buf[32];
-         snprintf(buf, sizeof(buf), "%.0f%%", value * 100.0f);
-         ImGui::ProgressBar(value, ImVec2(150.0f, 12.0f), buf);
-      }
-
-      ImGui::PopStyleColor();
-
-      ImGui::SameLine(0.0f, 10.0f);
-      ImGui::Text("%s", label);
-   }
-
-   void StateManagerDebugWidget::DrawVitalBarWithDebuff(const char* label, float current, float effectiveMax, float baseMax,
-                                                        ImVec4 normalColor, ImVec4 debuffColor) const
-   {
-      // Bar dimensions
-      constexpr float BAR_WIDTH = 150.0f;
-      constexpr float BAR_HEIGHT = 12.0f;
-
-      // Calculate proportions
-      const float effectiveRatio = (baseMax > 0.0f) ? (effectiveMax / baseMax) : 1.0f;
-      const float currentRatio = (effectiveMax > 0.0f) ? std::clamp(current / effectiveMax, 0.0f, 1.0f) : 0.0f;
-      const float hasDebuff = (baseMax - effectiveMax) > 1.0f;
-
-      // Get draw position
-      ImVec2 pos = ImGui::GetCursorScreenPos();
-      ImDrawList* drawList = ImGui::GetWindowDrawList();
-
-      // Background (dark gray)
-      drawList->AddRectFilled(
-         pos,
-         ImVec2(pos.x + BAR_WIDTH, pos.y + BAR_HEIGHT),
-         IM_COL32(40, 40, 40, 255),
-         2.0f  // Rounding
-      );
-
-      // Draw debuff portion (effectiveMax to baseMax) - right side of bar
-      if (hasDebuff) {
-         const float debuffStart = effectiveRatio * BAR_WIDTH;
-         drawList->AddRectFilled(
-        ImVec2(pos.x + debuffStart, pos.y),
-        ImVec2(pos.x + BAR_WIDTH, pos.y + BAR_HEIGHT),
-        ImGui::ColorConvertFloat4ToU32(debuffColor),
-        2.0f
-         );
-      }
-
-      // Draw filled portion (0 to current) within the effective range
-      const float filledWidth = currentRatio * effectiveRatio * BAR_WIDTH;
-      if (filledWidth > 0.0f) {
-         drawList->AddRectFilled(
-        pos,
-        ImVec2(pos.x + filledWidth, pos.y + BAR_HEIGHT),
-        ImGui::ColorConvertFloat4ToU32(normalColor),
-        2.0f
-         );
-      }
-
-      // Draw border
-      drawList->AddRect(
-         pos,
-         ImVec2(pos.x + BAR_WIDTH, pos.y + BAR_HEIGHT),
-         IM_COL32(80, 80, 80, 255),
-         2.0f
-      );
-
-      // Draw separator line at effectiveMax boundary if debuffed
-      if (hasDebuff) {
-         const float separatorX = pos.x + effectiveRatio * BAR_WIDTH;
-         drawList->AddLine(
-        ImVec2(separatorX, pos.y),
-        ImVec2(separatorX, pos.y + BAR_HEIGHT),
-        IM_COL32(255, 255, 255, 180),
-        1.0f
-         );
-      }
-
-      // Draw overlay text (centered)
-      char overlay[48];
-      if (hasDebuff) {
-         snprintf(overlay, sizeof(overlay), "%.0f/%.0f (%.0f)", current, effectiveMax, baseMax);
-      } else {
-         snprintf(overlay, sizeof(overlay), "%.0f/%.0f", current, effectiveMax);
-      }
-
-      ImVec2 textSize = ImGui::CalcTextSize(overlay);
-      ImVec2 textPos = ImVec2(
-         pos.x + (BAR_WIDTH - textSize.x) * 0.5f,
-         pos.y + (BAR_HEIGHT - textSize.y) * 0.5f
-      );
-
-      // Text shadow for readability
-      drawList->AddText(ImVec2(textPos.x + 1, textPos.y + 1), IM_COL32(0, 0, 0, 200), overlay);
-      drawList->AddText(textPos, IM_COL32(255, 255, 255, 255), overlay);
-
-      // Advance cursor past the bar
-      ImGui::Dummy(ImVec2(BAR_WIDTH, BAR_HEIGHT));
-
-      // Label
-      ImGui::SameLine(0.0f, 10.0f);
-      ImGui::Text("%s", label);
-   }
-
-   // =============================================================================
-   // COMPACT LAYOUT HELPERS (v0.6.7)
-   // =============================================================================
-
-   void StateManagerDebugWidget::DrawIndicatorPair(
-      const char* label1, bool active1, ImVec4 activeColor1,
-      const char* label2, bool active2, ImVec4 activeColor2,
-      float columnWidth) const
-   {
-      ImVec4 color1 = active1 ? activeColor1 : Colors::INACTIVE_INDICATOR;
-      ImGui::TextColored(color1, "[%c] %s", active1 ? 'X' : ' ', label1);
-
-      ImGui::SameLine(columnWidth);
-
-      if (label2 && label2[0] != '\0') {
-         ImVec4 color2 = active2 ? activeColor2 : Colors::INACTIVE_INDICATOR;
-         ImGui::TextColored(color2, "[%c] %s", active2 ? 'X' : ' ', label2);
-      }
-   }
-
-   void StateManagerDebugWidget::DrawIndicatorRow3(
-      const char* label1, bool active1, ImVec4 activeColor1,
-      const char* label2, bool active2, ImVec4 activeColor2,
-      const char* label3, bool active3, ImVec4 activeColor3,
-      float spacing) const
-   {
-      ImVec4 color1 = active1 ? activeColor1 : Colors::INACTIVE_INDICATOR;
-      ImGui::TextColored(color1, "[%c] %s", active1 ? 'X' : ' ', label1);
-
-      ImGui::SameLine(0.0f, spacing);
-      ImVec4 color2 = active2 ? activeColor2 : Colors::INACTIVE_INDICATOR;
-      ImGui::TextColored(color2, "[%c] %s", active2 ? 'X' : ' ', label2);
-
-      ImGui::SameLine(0.0f, spacing);
-      ImVec4 color3 = active3 ? activeColor3 : Colors::INACTIVE_INDICATOR;
-      ImGui::TextColored(color3, "[%c] %s", active3 ? 'X' : ' ', label3);
-   }
 }
 
 #endif  // _DEBUG
