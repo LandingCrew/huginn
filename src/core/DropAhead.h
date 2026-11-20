@@ -25,6 +25,13 @@
 // point and every one beyond it are unknown, so rising ground, a wall, a
 // parapet or an invisible wall at an edge never reads as a cliff.
 //
+// Far points (0.24.40, the user: "stretch the rays based on movement speed"):
+// the chain goes on past the near three to the distance the player covers in
+// farLookaheadSec at their speed toward the probe direction (LayoutFor), so an
+// edge is seen ~2 s ahead at any pace. Only time_to_edge reads them
+// (NearestEdgeDistance over every point); drop_ahead, deep_water_ahead and the
+// edge proximity keep the near three, the layout their curves were set on.
+//
 // Skyrim units: 1 m ~ 70 units. Heading: angle Z in radians, 0 = +Y (north),
 // increasing clockwise, so forward = (sin z, cos z).
 //
@@ -35,8 +42,10 @@
 #include <array>
 #include <cmath>
 #include <initializer_list>
+#include <utility>
 #include <cstddef>
 #include <optional>
+#include <span>
 
 namespace Huginn::Core::Needs
 {
@@ -81,7 +90,50 @@ namespace Huginn::Core::Needs
         // and that one was the real sea.
         float rayLength = 16000.0f;
         float minMoveSpeed = 20.0f;  // units/s below which the facing is used
+        // 0.24.40, the far points (time_to_edge only): out to the distance
+        // covered in farLookaheadSec at the speed toward the probe direction
+        // (game units per game second), at most farMaxReach; none unless that
+        // is farMinGap past the last near point (walking pace: 2 s is ~300).
+        float farLookaheadSec = 2.0f;
+        float farMaxReach = 1400.0f;   // ~20 m: a sprint's 2 s
+        float farMinGap = 100.0f;
     };
+
+    /// The near points (drop_ahead's three) and up to three far ones.
+    inline constexpr std::size_t kNearPoints = 3;
+    inline constexpr std::size_t kFarPoints = 3;
+    inline constexpr std::size_t kMaxPoints = kNearPoints + kFarPoints;
+
+    /// One pass's points: their distances ahead along the probe direction.
+    struct ProbeLayout
+    {
+        std::array<float, kMaxPoints> distances{};
+        std::size_t count = kNearPoints;
+        float reach = 0.0f;   // the farthest distance (the last point)
+
+        [[nodiscard]] std::span<const float> Distances() const noexcept { return { distances.data(), count }; }
+    };
+
+    /// The near three, then (0.24.40) far points evenly out to
+    /// speed x farLookaheadSec, capped at farMaxReach, when that reaches
+    /// farMinGap past the last near point. `speedToward`: the horizontal
+    /// speed along the probe direction, game units per game second (< 0 or
+    /// not finite: none).
+    [[nodiscard]] inline ProbeLayout LayoutFor(float speedToward, const DropProbeConfig& cfg) noexcept
+    {
+        ProbeLayout l;
+        for (std::size_t i = 0; i < kNearPoints; ++i) l.distances[i] = cfg.distances[i];
+        const float last = cfg.distances[kNearPoints - 1];
+        l.reach = last;
+        const float want = std::isfinite(speedToward) ? std::min(speedToward * cfg.farLookaheadSec, cfg.farMaxReach) : 0.0f;
+        if (!(want >= last + cfg.farMinGap)) return l;
+        for (std::size_t k = 1; k <= kFarPoints; ++k) {
+            l.distances[kNearPoints + k - 1] = last + (want - last) * static_cast<float>(k) / static_cast<float>(kFarPoints);
+        }
+        l.count = kMaxPoints;
+        l.reach = want;
+        return l;
+    }
 
     /// One probe's result, as the game read it. `known` is false when the
     /// probe could not be read: its start point is not reachable from the
@@ -142,13 +194,17 @@ namespace Huginn::Core::Needs
         return !(d <= kTeleportDistance);  // NaN counts as a jump
     }
 
+    /// A ray start point: `distance` ahead of the feet along `dir`, at waist height.
+    [[nodiscard]] inline Vec3 ProbeStartAt(Vec3 feet, Dir2 dir, float distance, const DropProbeConfig& cfg) noexcept
+    {
+        return { feet.x + dir.x * distance, feet.y + dir.y * distance, feet.z + cfg.waistHeight };
+    }
+
     /// Ray start points: `distances` ahead of the feet along `dir`, at waist height.
     [[nodiscard]] inline std::array<Vec3, 3> ProbeStarts(Vec3 feet, Dir2 dir, const DropProbeConfig& cfg) noexcept
     {
         std::array<Vec3, 3> out{};
-        for (std::size_t i = 0; i < out.size(); ++i) {
-            out[i] = { feet.x + dir.x * cfg.distances[i], feet.y + dir.y * cfg.distances[i], feet.z + cfg.waistHeight };
-        }
+        for (std::size_t i = 0; i < out.size(); ++i) out[i] = ProbeStartAt(feet, dir, cfg.distances[i], cfg);
         return out;
     }
 
@@ -342,11 +398,17 @@ namespace Huginn::Core::Needs
     ///
     /// Known limit: an obstacle open between the knee and the waist (a railing
     /// with a gap there) is not seen, so a void behind it reads as a cliff.
+    ///
+    /// ProbeChain (0.24.40) walks any layout (LayoutFor: the near three and
+    /// the far points, one chain, each point picked from the one before);
+    /// ProbeAll is the near three.
     template <class Cast>
-    [[nodiscard]] std::array<ProbeHit, 3> ProbeAll(Vec3 feet, Dir2 dir, const DropProbeConfig& cfg, Cast&& cast)
+    [[nodiscard]] std::array<ProbeHit, kMaxPoints> ProbeChain(Vec3 feet, Dir2 dir, const ProbeLayout& layout,
+                                                              const DropProbeConfig& cfg, Cast&& cast)
     {
-        std::array<ProbeHit, 3> hits{};
-        const auto starts = ProbeStarts(feet, dir, cfg);
+        std::array<ProbeHit, kMaxPoints> hits{};
+        std::array<Vec3, kMaxPoints> starts{};
+        for (std::size_t i = 0; i < layout.count; ++i) starts[i] = ProbeStartAt(feet, dir, layout.distances[i], cfg);
         Vec3 previous = feet;  // XY of the last reached point
         float groundZ = feet.z;  // the ground under it
         bool blocked = false;
@@ -362,7 +424,7 @@ namespace Huginn::Core::Needs
             return cast(from, unit, length, RayKind::Horizontal).outcome == RayResult::Outcome::Clear;
         };
 
-        for (std::size_t i = 0; i < starts.size(); ++i) {
+        for (std::size_t i = 0; i < layout.count; ++i) {
             auto& h = hits[i];
             if (blocked) {
                 h.known = false;
@@ -402,6 +464,13 @@ namespace Huginn::Core::Needs
             }
         }
         return hits;
+    }
+
+    template <class Cast>
+    [[nodiscard]] std::array<ProbeHit, 3> ProbeAll(Vec3 feet, Dir2 dir, const DropProbeConfig& cfg, Cast&& cast)
+    {
+        const auto all = ProbeChain(feet, dir, LayoutFor(0.0f, cfg), cfg, std::forward<Cast>(cast));
+        return { all[0], all[1], all[2] };
     }
     // =========================================================================
     // The age of the last reading, in UNPAUSED seconds (0.23.16)

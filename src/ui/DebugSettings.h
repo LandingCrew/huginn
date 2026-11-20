@@ -10,7 +10,9 @@ namespace Huginn::UI
      */
     namespace DebugDefaults
     {
-        constexpr bool STATE_MANAGER_VISIBLE = false;
+        constexpr bool CHARACTER_VISIBLE = false;     // 0.24.40: the old StateManager window, the player half
+        constexpr bool ENVIRONMENT_VISIBLE = false;   // 0.24.40: its world half, with the movement sensors
+        constexpr bool DRAW_ENV_PROBE = false;        // 0.24.40: the drop / edge probe's rays on screen
         constexpr bool REGISTRY_VISIBLE = false;
         constexpr bool UTILITY_SCORER_VISIBLE = false;
         constexpr int REC_LOG_VERBOSITY = 1;  // 0=off, 1=compact top-5, 2=full detail
@@ -23,7 +25,9 @@ namespace Huginn::UI
      */
     struct DebugSettings
     {
-        bool stateManagerVisible = DebugDefaults::STATE_MANAGER_VISIBLE;
+        bool characterVisible = DebugDefaults::CHARACTER_VISIBLE;
+        bool environmentVisible = DebugDefaults::ENVIRONMENT_VISIBLE;
+        bool drawEnvProbe = DebugDefaults::DRAW_ENV_PROBE;
         bool registryVisible = DebugDefaults::REGISTRY_VISIBLE;
         bool utilityScorerVisible = DebugDefaults::UTILITY_SCORER_VISIBLE;
 

@@ -38,6 +38,17 @@ namespace Huginn::State::DropAheadProbe
       std::mutex g_mutex;
       Reading g_latest;
 
+      // 0.24.40: the debug overlay's picture of the last pass (core/ProbeDebug.h).
+      std::atomic<bool> g_debugDraw{ false };
+      std::mutex g_debugMutex;
+      Core::Needs::ProbeDebug::Frame g_debugFrame;
+
+      void StoreDebug(const Core::Needs::ProbeDebug::Frame& frame)
+      {
+         std::lock_guard lock(g_debugMutex);
+         g_debugFrame = frame;
+      }
+
       // Hook-thread only (PlayerCharacter::Update): the throttle, the last
       // position for the movement direction, and the transition log.
       std::chrono::steady_clock::time_point g_lastProbe{};
@@ -481,6 +492,7 @@ namespace Huginn::State::DropAheadProbe
             // No pass: the approach window restarts after it (EdgeApproachTracker).
             ResetEdge();
             Store(s, -1.0f, -1.0f, nowSec);
+            if (g_debugDraw.load(std::memory_order_relaxed)) StoreDebug({});   // nothing cast: nothing drawn
             if (WantTransitionLog(s, nowSec)) LogTransition(s, nowSec, "");
          };
          if (auto* ui = RE::UI::GetSingleton()) {
@@ -493,6 +505,7 @@ namespace Huginn::State::DropAheadProbe
                g_lastPosGameAt = -1.0;
                ResetEdge();
                Store(Status::NotLoaded, -1.0f, -1.0f, -1.0);  // no reading: nothing for a paused age to keep
+               StoreDebug({});
                if (WantTransitionLog(Status::NotLoaded, nowSec)) LogTransition(Status::NotLoaded, nowSec, "");
                return;
             }
@@ -562,11 +575,24 @@ namespace Huginn::State::DropAheadProbe
          const Core::Needs::DropProbeConfig cfg;
          const auto dir = Core::Needs::ProbeDirection(velocity, player->GetAngleZ(), cfg.minMoveSpeed);
          HavokCast cast{ world.get(), RayFilter(player) };
-         std::array<Core::Needs::ProbeHit, 3> hits{};
+         // 0.24.40: the near three and, at a pace, far points out to ~2 s
+         // ahead (core LayoutFor); one chain. time_to_edge reads them all.
+         const float speedToward = Core::Needs::SpeedToward(gameVelocity, dir);
+         const auto layout = Core::Needs::LayoutFor(speedToward, cfg);
+         std::array<Core::Needs::ProbeHit, Core::Needs::kMaxPoints> hits{};
+         // 0.24.40: the debug overlay records each cast as it is made.
+         const bool drawing = g_debugDraw.load(std::memory_order_relaxed);
+         std::array<Core::Needs::ProbeDebug::Cast, Core::Needs::ProbeDebug::kMaxCasts> casts{};
+         std::size_t castCount = 0;
+         auto recorded = [&](Core::Needs::Vec3 from, Core::Needs::Vec3 unit, float length, Core::Needs::RayKind kind) {
+            const auto result = cast(from, unit, length, kind);
+            if (drawing && castCount < casts.size()) casts[castCount++] = { from, unit, length, kind, result };
+            return result;
+         };
          {
-            Huginn_ZONE_NAMED("DropAhead::ProbeAll (ray casts)");
+            Huginn_ZONE_NAMED("DropAhead::ProbeChain (ray casts)");
             RE::BSReadLockGuard lock(world->worldLock);
-            hits = Core::Needs::ProbeAll(feet, dir, cfg, cast);
+            hits = Core::Needs::ProbeChain(feet, dir, layout, cfg, recorded);
          }
          // Water at each reached point: the water of the cell the point lies in
          // (ReadWater), at that XY. Sampled at the ray's real start -- the
@@ -576,29 +602,33 @@ namespace Huginn::State::DropAheadProbe
          // does not stop at water (IsGroundLayer), so its hit is the bed and
          // water above it gives the depth (core MeasureAhead). Water on a
          // plane the self-check proved false this load is unknown (0.23.23).
-         const auto starts = Core::Needs::ProbeStarts(feet, dir, cfg);
-         int unknown = 0;
+         int unknown = 0;   // of the near three
          int neighbourCells = 0;
          int unknownCells = 0;
-         std::array<PointWater, 3> water{};  // what the game returned, for the log
-         for (std::size_t i = 0; i < hits.size(); ++i) {
+         std::array<PointWater, Core::Needs::kMaxPoints> water{};  // what the game returned, for the log
+         for (std::size_t i = 0; i < layout.count; ++i) {
             if (!hits[i].known) {
-               ++unknown;
+               if (i < Core::Needs::kNearPoints) ++unknown;
                continue;
             }
-            const RE::NiPoint3 at{ starts[i].x, starts[i].y, hits[i].startZ.value_or(starts[i].z) };
+            const auto start = Core::Needs::ProbeStartAt(feet, dir, layout.distances[i], cfg);
+            const RE::NiPoint3 at{ start.x, start.y, hits[i].startZ.value_or(start.z) };
             water[i] = ReadWater(cell, at);
-            if (water[i].which == WaterCell::Neighbour) ++neighbourCells;
+            // the log's cell counts are the near three's, as its probes are
+            const bool nearPoint = i < Core::Needs::kNearPoints;
+            if (nearPoint && water[i].which == WaterCell::Neighbour) ++neighbourCells;
             if (!water[i].cell) {
-               ++unknownCells;
+               if (nearPoint) ++unknownCells;
                continue;
             }
             hits[i].waterKnown = water[i].Usable();
             hits[i].waterZ = hits[i].waterKnown ? water[i].water.z : 0.0f;
          }
          // One pass, two readings: the drop (water deep enough to land in is
-         // no drop) and the deepest water ahead (deep_water_ahead).
-         const auto ahead = Core::Needs::MeasureAhead(feet.z, hits, cfg);
+         // no drop) and the deepest water ahead (deep_water_ahead). The near
+         // three only: the layout their curves were set on (0.24.40).
+         const std::array<Core::Needs::ProbeHit, 3> nearHits{ hits[0], hits[1], hits[2] };
+         const auto ahead = Core::Needs::MeasureAhead(feet.z, nearHits, cfg);
          const float drop = ahead.drop;
          const Status status = drop < 0.0f ? Status::AllUnknown : Status::Measured;
          // time_to_edge and edge_approach (0.23.50, core/EdgeApproach.h): the
@@ -610,11 +640,17 @@ namespace Huginn::State::DropAheadProbe
          reading.drop = drop;
          reading.waterDepth = ahead.waterDepth;
          reading.atSec = nowSec;
-         reading.edgeDistance = Core::Needs::NearestEdgeDistance(feet.z, hits, cfg).value_or(-1.0f);
-         reading.edgeSpeed = Core::Needs::SpeedToward(gameVelocity, dir);
-         reading.edgeProximity = Core::Needs::EdgeProximity(feet.z, hits, cfg);
+         // The edge over every point, far ones included (0.24.40): an edge is
+         // seen ~2 s ahead at any pace. The proximity keeps the near three.
+         const std::span<const Core::Needs::ProbeHit> allHits(hits.data(), layout.count);
+         reading.edgeDistance = Core::Needs::NearestEdgeDistance(feet.z, allHits, layout.Distances(), cfg).value_or(-1.0f);
+         reading.edgeSpeed = speedToward;
+         reading.reach = layout.reach;
+         reading.farPoints = static_cast<std::uint8_t>(layout.count - Core::Needs::kNearPoints);
+         reading.edgeProximity = Core::Needs::EdgeProximity(feet.z, nearHits, cfg);
          reading.edgeApproach = g_edgeTracker.Add({ gameNow, dir, reading.edgeProximity });
          Store(reading);
+         if (drawing) StoreDebug(Core::Needs::ProbeDebug::Build(feet, dir, layout, casts, castCount, allHits, cfg));
          if (status == Status::Measured) g_measuredCount.fetch_add(1, std::memory_order_relaxed);
          if (!WantTransitionLog(status, nowSec)) return;
          // Per probe: the hit Z (or "void"), the RAW water height the game
@@ -648,12 +684,14 @@ namespace Huginn::State::DropAheadProbe
          };
          LogTransition(status, nowSec, fmt::format(": drop {:.0f} | deep water {:.0f} (safe landing >= {:.0f}) | dir "
                                            "({:.2f}, {:.2f}) | probes [{}] [{}] [{}] | water cells: {} neighbour, "
-                                           "{} unknown | unknown {} rejected {} | feet z {:.0f} | edge {} speed {:.0f}/game s "
-                                           "proximity {:.2f} approach {:+.2f}/game s",
+                                           "{} unknown | unknown {} rejected {} (all points) | feet z {:.0f} | edge {} speed {:.0f}/game s "
+                                           "proximity {:.2f} approach {:+.2f}/game s | reach {:.0f}{}",
             drop, ahead.waterDepth, Core::Needs::kSafeLandingDepth, dir.x, dir.y, probe(0), probe(1), probe(2),
             neighbourCells, unknownCells, unknown, cast.rejected, feet.z,
             reading.edgeDistance < 0.0f ? std::string("none") : fmt::format("{:.0f}", reading.edgeDistance),
-            reading.edgeSpeed, reading.edgeProximity, reading.edgeApproach));
+            reading.edgeSpeed, reading.edgeProximity, reading.edgeApproach, layout.reach,
+            layout.count > Core::Needs::kNearPoints
+               ? fmt::format(" far [{}] [{}] [{}]", probe(3), probe(4), probe(5)) : std::string()));
       }
 
       void HookUpdate(RE::PlayerCharacter* a_this, float a_delta)
@@ -733,6 +771,7 @@ namespace Huginn::State::DropAheadProbe
       g_loadGeneration.fetch_add(1, std::memory_order_acq_rel);
       g_gameLoaded.store(loaded, std::memory_order_release);
       Store(Status::NotLoaded, -1.0f, -1.0f, -1.0);
+      StoreDebug({});
    }
 
    std::uint32_t MeasuredCount() noexcept { return g_measuredCount.load(std::memory_order_relaxed); }
@@ -743,6 +782,20 @@ namespace Huginn::State::DropAheadProbe
    {
       std::lock_guard lock(g_mutex);
       return g_latest;
+   }
+
+   void SetDebugDraw(bool on) noexcept
+   {
+      g_debugDraw.store(on, std::memory_order_relaxed);
+      if (!on) StoreDebug({});   // off: the last picture does not linger
+   }
+
+   bool DebugDrawOn() noexcept { return g_debugDraw.load(std::memory_order_relaxed); }
+
+   Core::Needs::ProbeDebug::Frame LatestDebugFrame() noexcept
+   {
+      std::lock_guard lock(g_debugMutex);
+      return g_debugFrame;
    }
 
    std::string_view StatusName(Status s) noexcept

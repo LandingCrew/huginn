@@ -190,7 +190,7 @@ The descriptor defines:
 The *Intuition Widget* group covers all ten `[Widget]` keys (`bEnabled`,
 `fPositionX`, `fPositionY`, `fAlpha`, `fScale`, `fAlphaChild`, `bReadOnly`,
 `bHideWhileWheelOpen`, `sDisplayMode`, `sSlotEffect`); *Debug & Logging* covers
-`iRecommendationLog`, `bShowStateManager`, `bShowRegistry`, `bShowUtilityScorer`.
+`iRecommendationLog`, `bShowCharacter`, `bShowEnvironment`, `bDrawEnvProbe` (0.24.40, the old `bShowStateManager` split in two and the probe's rays), `bShowRegistry`, `bShowUtilityScorer`.
 
 **Dropdowns serialize as an integer index, not a label.** dMenu writes
 `sDisplayMode=0`, not `sDisplayMode=minimal`. `IntuitionSettings::LoadFromIni`

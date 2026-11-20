@@ -44,6 +44,7 @@
 
 #include "core/DropAhead.h"
 #include "core/EdgeApproach.h"
+#include "core/ProbeDebug.h"
 
 #include <array>
 #include <cstdint>
@@ -93,6 +94,10 @@ namespace Huginn::State::DropAheadProbe
       float edgeSpeed = 0.0f;      // horizontal speed along the probe direction, units per GAME second (< 0 away)
       float edgeProximity = 0.0f;  // the pass's proximity, 0-1 (EdgeProximity)
       float edgeApproach = 0.0f;   // the trend: proximity per game second over the window (EdgeApproachTracker)
+      // 0.24.40: the pass's farthest point (core LayoutFor; 280 at a walk)
+      // and how many far points it cast past the near three (0 or 3).
+      float reach = 0.0f;
+      std::uint8_t farPoints = 0;
    };
 
    /// The last reading (thread-safe copy).
@@ -123,4 +128,14 @@ namespace Huginn::State::DropAheadProbe
    /// down ray casts on through anything else (actors, clutter). The
    /// horizontal reachability picks count any hit at all.
    [[nodiscard]] bool IsGroundLayer(RE::COL_LAYER layer) noexcept;
+
+   /// 0.24.40: the debug overlay (ui/ProbeOverlay, [Debug] bDrawEnvProbe).
+   /// On, each pass records its casts and publishes their picture
+   /// (core/ProbeDebug.h); off, nothing is recorded. Any thread.
+   void SetDebugDraw(bool on) noexcept;
+   [[nodiscard]] bool DebugDrawOn() noexcept;
+
+   /// The last pass's picture (thread-safe copy). `measured` false: the last
+   /// pass was skipped (or the overlay is off), nothing to draw.
+   [[nodiscard]] Core::Needs::ProbeDebug::Frame LatestDebugFrame() noexcept;
 }

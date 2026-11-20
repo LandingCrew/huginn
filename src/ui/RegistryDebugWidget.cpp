@@ -21,7 +21,7 @@
 namespace Huginn::UI
 {
    // =============================================================================
-   // COLOR CONSTANTS (reused from StateManagerDebugWidget)
+   // COLOR CONSTANTS (reused from the state windows, StateDebugCommon.h)
    // =============================================================================
 
    namespace Colors

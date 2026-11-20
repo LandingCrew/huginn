@@ -1859,6 +1859,42 @@ after R8.
 | A resist before the hit (falmer, spiders: the user, 2026-10-10) | `threat_<element>` needs: the element damage the visible hostiles are expected to deal, learned per race from the damage this player took, × `resist_<element>`; plus the missing `poison_damage_rate` ([doc 11, section 8](architecture/11-sequences-and-redundancy.md)). Spiders are designed as an obvious pair (`target_arthropod` × `resist_poison`), but the R3 needs are logged only and not live until R8; today the old engine offers Resist Poison only once poisoned and reads spiders as Beast. Falmer have no route | Missing: hits keep their element but not their attacker; poison is classified but not summed |
 | Resist Disease before a fight with disease carriers | A `disease_exposure` need (hostiles of a disease-carrying race in the fight: skeevers, wolves, bears, sabre cats, vampires -- a race table, as the target families) x `resist_disease`. 0.23.16 removed `diseased` x Resist Disease: resisting does not cure a disease already caught | Missing; no existing need covers it (`target_animal` also holds deer and horses) |
 
+## Parked: the ranking is slow in places (2026-11-19)
+
+Talked through with the user on 2026-11-19 and parked ("skip this one for
+now and log it somewhere"). Two kinds of slow: the right item is not near
+the top (the weights), or it is #1 and the keys hold it back (placement).
+Today's logs say placement: on 2026-11-19 14:38 (0.24.34) Healing Hands was
+#1 within 1.7 s of the follower being hurt and reached a key 5.8 s after it.
+The overrides now cover the emergencies (the player's critical vitals,
+CriticalAllyHealth since 0.24.35), so these are about what sits just below.
+
+- **The combat freeze queues an obvious winner.** A challenger takes a frozen
+  key after leading by 1.00 for 1.5 s, one change per page per 3 s, first come
+  first served. Healing Hands, leading by +6.57, waited 4.1 s behind two
+  smaller changes (Fracture, a resist potion). Proposal: grant the next change
+  by lead, not by arrival; let a lead several times the 1.00 line (or several
+  sd) skip the page's 3 s, keeping the 1.5 s it must be wanted. Not a looser
+  freeze: the freeze is there for mid-fight misclicks (#207 / #208). Core:
+  `core/ChallengerRule.h`, the combat upsert in SlotLocker; host tests.
+- **Fire Shell over heals at low health.** At 16:35:18 (0.24.35), player at
+  13.7% health, Fire Shell on Target ranked #4 (mu 4.68) on
+  `target_element_fire` x `resist_fire` (+2.83) and `fire_damage_rate` x
+  `resist_fire` (+2.43). Three element needs (`enemy_casting_X`,
+  `target_element_X`, `X_damage_rate`) state one fact, "a fire fight", and
+  each adds its own term, all at the 0.24.29 strength 2.5; a heal gets one
+  `health_deficit` term, and a spell grades higher on `resist_fire` than a
+  potion. Learning lowers those pairs each time a heal is taken over it, so:
+  watch, do not re-tune by hand (the hand-tuned layer is debt). If it
+  persists, the principled fix is one shared term for the element needs, a
+  model change of its own.
+- **The same potion graded 0.40 in a fight and 0.67 out of one.** Cause not
+  confirmed. Suspects: the live grading's population (0.24.30: graded among
+  what the player carries) moved, and a re-grade held until the fight's end
+  (`bHoldConditionRegradesInCombat`) left the fight's value stale. If either
+  holds, potions grade low exactly in fights. First step, logs only: line up
+  the potion's v3 cap against the `[LiveValues]` re-grade lines.
+
 ## Kept outside the rewrite
 
 Filters, display and slot features the rewrite does not replace. None should

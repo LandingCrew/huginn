@@ -38,7 +38,7 @@
 #include "ui/HudVisibilityManager.h"
 
 #ifdef _DEBUG
-#include "ui/StateManagerDebugWidget.h"
+#include "ui/CharacterDebugWidget.h"
 #include "ui/DebugInputHook.h"
 #endif
 

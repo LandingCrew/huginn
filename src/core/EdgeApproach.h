@@ -79,6 +79,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 
 namespace Huginn::Core::Needs
 {
@@ -95,14 +96,42 @@ namespace Huginn::Core::Needs
     /// when no known point is an edge. Unknown points are skipped (never an
     /// edge); a known point past an unknown one still counts (an out-of-recasts
     /// point leaves the next one known, core ProbeAll).
+    /// The height point `i`'s drop is measured from, for the edge (0.24.40,
+    /// /code-review #262). A near point: the feet, drop_ahead's own drop. A far
+    /// point: the surface at the last known point before it with a hit (the
+    /// ground, or the water over it), so an edge out there is a sudden step and
+    /// not the sum of a long slope -- from the feet, a sprint down a 19 degree
+    /// hill put the 1400-unit point 482 below them, past the edge line. With no
+    /// earlier hit (the near points out of recasts), the feet.
+    [[nodiscard]] inline float EdgeReferenceZ(float feetZ, std::span<const ProbeHit> hits, std::size_t i) noexcept
+    {
+        if (i < kNearPoints) return feetZ;
+        for (std::size_t j = std::min(i, hits.size()); j-- > 0;) {
+            const auto& h = hits[j];
+            if (!h.known || !h.hit) continue;
+            return HasWater(h) && h.waterZ > h.hitZ ? h.waterZ : h.hitZ;
+        }
+        return feetZ;
+    }
+
+    /// 0.24.40: over any layout's points (the far ones too), `distances[i]`
+    /// the distance of `hits[i]`; a far point's drop from EdgeReferenceZ.
+    [[nodiscard]] inline std::optional<float> NearestEdgeDistance(float feetZ, std::span<const ProbeHit> hits,
+                                                                  std::span<const float> distances,
+                                                                  const DropProbeConfig& cfg) noexcept
+    {
+        const std::size_t n = std::min(hits.size(), distances.size());
+        for (std::size_t i = 0; i < n; ++i) {
+            if (!hits[i].known) continue;
+            if (DropAtProbe(EdgeReferenceZ(feetZ, hits, i), hits[i], cfg) >= kEdgeDropThreshold) return distances[i];
+        }
+        return std::nullopt;
+    }
+
     [[nodiscard]] inline std::optional<float> NearestEdgeDistance(float feetZ, const std::array<ProbeHit, 3>& hits,
                                                                   const DropProbeConfig& cfg) noexcept
     {
-        for (std::size_t i = 0; i < hits.size(); ++i) {
-            if (!hits[i].known) continue;
-            if (DropAtProbe(feetZ, hits[i], cfg) >= kEdgeDropThreshold) return cfg.distances[i];
-        }
-        return std::nullopt;
+        return NearestEdgeDistance(feetZ, std::span<const ProbeHit>(hits), std::span<const float>(cfg.distances), cfg);
     }
 
     /// The horizontal velocity's component along `dir` (a unit vector), units

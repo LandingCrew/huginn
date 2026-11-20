@@ -6,7 +6,9 @@
 
 // Debug widgets only exist in debug builds
 #ifdef _DEBUG
-#include "StateManagerDebugWidget.h"
+#include "CharacterDebugWidget.h"
+#include "EnvironmentDebugWidget.h"
+#include "../state/DropAheadProbe.h"
 #include "RegistryDebugWidget.h"
 #include "UtilityScorerDebugWidget.h"
 #endif
@@ -24,7 +26,9 @@ namespace Huginn::UI
     {
         const char* section = "Debug";
 
-        stateManagerVisible = ini.GetBoolValue(section, "bShowStateManager", DebugDefaults::STATE_MANAGER_VISIBLE);
+        characterVisible = ini.GetBoolValue(section, "bShowCharacter", DebugDefaults::CHARACTER_VISIBLE);
+        environmentVisible = ini.GetBoolValue(section, "bShowEnvironment", DebugDefaults::ENVIRONMENT_VISIBLE);
+        drawEnvProbe = ini.GetBoolValue(section, "bDrawEnvProbe", DebugDefaults::DRAW_ENV_PROBE);
         registryVisible = ini.GetBoolValue(section, "bShowRegistry", DebugDefaults::REGISTRY_VISIBLE);
         utilityScorerVisible = ini.GetBoolValue(section, "bShowUtilityScorer", DebugDefaults::UTILITY_SCORER_VISIBLE);
         // A dMenu slider: dMenu writes it as a float ("2.000000"), and
@@ -36,8 +40,8 @@ namespace Huginn::UI
             ? static_cast<int>(std::clamp(std::lround(recLog), 0L, 2L))
             : DebugDefaults::REC_LOG_VERBOSITY;
 
-        logger::info("[DebugSettings] Loaded: StateManager={}, Registry={}, UtilityScorer={}, RecLog={}"sv,
-            stateManagerVisible, registryVisible, utilityScorerVisible, recLogVerbosity);
+        logger::info("[DebugSettings] Loaded: Character={}, Environment={}, ProbeRays={}, Registry={}, UtilityScorer={}, RecLog={}"sv,
+            characterVisible, environmentVisible, drawEnvProbe, registryVisible, utilityScorerVisible, recLogVerbosity);
         // No ApplyToWidgets() here — LoadFromIni is a pure loader (Phase 1), like
         // every other settings class. Callers apply visibility explicitly:
         // InitializeGameSystems (and its early kDataLoaded read), and the reload path's
@@ -48,7 +52,9 @@ namespace Huginn::UI
     {
 #ifdef _DEBUG
         // Only apply in debug builds where widgets exist
-        StateManagerDebugWidget::GetSingleton().SetVisible(stateManagerVisible);
+        CharacterDebugWidget::GetSingleton().SetVisible(characterVisible);
+        EnvironmentDebugWidget::GetSingleton().SetVisible(environmentVisible);
+        State::DropAheadProbe::SetDebugDraw(drawEnvProbe);
         RegistryDebugWidget::GetSingleton().SetVisible(registryVisible);
         UtilityScorerDebugWidget::GetSingleton().SetVisible(utilityScorerVisible);
 
