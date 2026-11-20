@@ -79,6 +79,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 
 namespace Huginn::Core::Needs
 {
@@ -95,14 +96,24 @@ namespace Huginn::Core::Needs
     /// when no known point is an edge. Unknown points are skipped (never an
     /// edge); a known point past an unknown one still counts (an out-of-recasts
     /// point leaves the next one known, core ProbeAll).
+    /// 0.24.40: over any layout's points (the far ones too), `distances[i]`
+    /// the distance of `hits[i]`.
+    [[nodiscard]] inline std::optional<float> NearestEdgeDistance(float feetZ, std::span<const ProbeHit> hits,
+                                                                  std::span<const float> distances,
+                                                                  const DropProbeConfig& cfg) noexcept
+    {
+        const std::size_t n = std::min(hits.size(), distances.size());
+        for (std::size_t i = 0; i < n; ++i) {
+            if (!hits[i].known) continue;
+            if (DropAtProbe(feetZ, hits[i], cfg) >= kEdgeDropThreshold) return distances[i];
+        }
+        return std::nullopt;
+    }
+
     [[nodiscard]] inline std::optional<float> NearestEdgeDistance(float feetZ, const std::array<ProbeHit, 3>& hits,
                                                                   const DropProbeConfig& cfg) noexcept
     {
-        for (std::size_t i = 0; i < hits.size(); ++i) {
-            if (!hits[i].known) continue;
-            if (DropAtProbe(feetZ, hits[i], cfg) >= kEdgeDropThreshold) return cfg.distances[i];
-        }
-        return std::nullopt;
+        return NearestEdgeDistance(feetZ, std::span<const ProbeHit>(hits), std::span<const float>(cfg.distances), cfg);
     }
 
     /// The horizontal velocity's component along `dir` (a unit vector), units

@@ -83,16 +83,20 @@ namespace Huginn::UI::ProbeOverlay
             dl->AddCircleFilled(at, 4.0f, col);
          }
          char text[48];
-         if (m.waterDepth > 0.0f) {
+         if (m.farPoint && m.look == PD::Look::Okay) {
+            text[0] = '\0';   // a far point that sees nothing: no label, the ray says it
+         } else if (m.waterDepth > 0.0f) {
             std::snprintf(text, sizeof(text), "water %.0f", m.waterDepth);
          } else if (m.voidBelow) {
             std::snprintf(text, sizeof(text), "void (%.0f+)", m.drop);
          } else {
             std::snprintf(text, sizeof(text), "drop %.0f", m.drop);
          }
-         const ImVec2 textAt(at.x + 8.0f, at.y - 7.0f);
-         dl->AddText(ImVec2(textAt.x + 1, textAt.y + 1), kShadow, text);
-         dl->AddText(textAt, col, text);
+         if (text[0] != '\0') {
+            const ImVec2 textAt(at.x + 8.0f, at.y - 7.0f);
+            dl->AddText(ImVec2(textAt.x + 1, textAt.y + 1), kShadow, text);
+            dl->AddText(textAt, col, text);
+         }
       }
 
       // points the pass never reached (a pick before them was blocked)

@@ -94,6 +94,10 @@ namespace Huginn::State::DropAheadProbe
       float edgeSpeed = 0.0f;      // horizontal speed along the probe direction, units per GAME second (< 0 away)
       float edgeProximity = 0.0f;  // the pass's proximity, 0-1 (EdgeProximity)
       float edgeApproach = 0.0f;   // the trend: proximity per game second over the window (EdgeApproachTracker)
+      // 0.24.40: the pass's farthest point (core LayoutFor; 280 at a walk)
+      // and how many far points it cast past the near three (0 or 3).
+      float reach = 0.0f;
+      std::uint8_t farPoints = 0;
    };
 
    /// The last reading (thread-safe copy).

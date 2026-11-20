@@ -117,6 +117,11 @@ namespace Huginn::UI
       ImGui::Text("Proximity: %.2f", r.edgeProximity);
       ImGui::SameLine(Layout::COLUMN_WIDTH + 20.0f);
       ImGui::Text("Approach: %+.2f/game s", approach);
+      if (r.farPoints > 0) {
+         ImGui::Text("Reach: %.0f (%u far points, ~2 s ahead)", r.reach, static_cast<unsigned>(r.farPoints));
+      } else {
+         ImGui::TextDisabled("Reach: %.0f (near points only)", r.reach);
+      }
 
       ImGui::Separator();
       bool draw = State::DropAheadProbe::DebugDrawOn();

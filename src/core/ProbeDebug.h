@@ -26,6 +26,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <span>
 
 namespace Huginn::Core::Needs::ProbeDebug
 {
@@ -48,8 +49,8 @@ namespace Huginn::Core::Needs::ProbeDebug
         RayResult result;
     };
 
-    /// At most two picks and one down ray per point.
-    inline constexpr std::size_t kMaxCasts = 9;
+    /// At most two picks and one down ray per point, near and far (0.24.40).
+    inline constexpr std::size_t kMaxCasts = 3 * kMaxPoints;
 
     struct Segment
     {
@@ -66,16 +67,18 @@ namespace Huginn::Core::Needs::ProbeDebug
         float drop = 0.0f;         // units; DropAtProbe
         float waterDepth = 0.0f;   // units; WaterDepthAtProbe (0: none)
         bool voidBelow = false;    // no hit: the ray found nothing to its end
+        bool farPoint = false;     // a far point (time_to_edge only, 0.24.40)
     };
 
     struct Frame
     {
-        std::array<Segment, kMaxCasts + 2> segments{};   // + the water surface ticks
+        std::array<Segment, kMaxCasts + kMaxPoints> segments{};   // + the water surface ticks
         std::size_t segmentCount = 0;
-        std::array<Mark, 3> marks{};
+        std::array<Mark, kMaxPoints> marks{};
         std::size_t markCount = 0;
-        std::array<Vec3, 3> unreached{};   // probe points the pass never reached
+        std::array<Vec3, kMaxPoints> unreached{};   // probe points the pass never reached
         std::size_t unreachedCount = 0;
+        float reach = 0.0f;   // the layout's farthest point (0.24.40)
         Vec3 feet;
         bool measured = false;   // false: a skipped pass, nothing to draw
     };
@@ -93,7 +96,7 @@ namespace Huginn::Core::Needs::ProbeDebug
     }
 
     /// The probe point a down ray was cast at: the one whose XY it starts at.
-    [[nodiscard]] inline std::size_t PointOf(const Vec3& from, const std::array<Vec3, 3>& starts) noexcept
+    [[nodiscard]] inline std::size_t PointOf(const Vec3& from, std::span<const Vec3> starts) noexcept
     {
         std::size_t best = 0;
         float bestD = std::numeric_limits<float>::infinity();
@@ -107,17 +110,22 @@ namespace Huginn::Core::Needs::ProbeDebug
         return best;
     }
 
-    /// The picture of one pass: `casts` in the order ProbeAll made them, `hits`
-    /// as the game finished them (water read in), `dir` the probe direction.
+    /// The picture of one pass: `casts` in the order ProbeChain made them over
+    /// `layout`, `hits` as the game finished them (water read in; one per
+    /// layout point), `dir` the probe direction.
     template <std::size_t N>
-    [[nodiscard]] Frame Build(Vec3 feet, Dir2 dir, const std::array<Cast, N>& casts, std::size_t castCount,
-                              const std::array<ProbeHit, 3>& hits, const DropProbeConfig& cfg) noexcept
+    [[nodiscard]] Frame Build(Vec3 feet, Dir2 dir, const ProbeLayout& layout, const std::array<Cast, N>& casts,
+                              std::size_t castCount, std::span<const ProbeHit> hits, const DropProbeConfig& cfg) noexcept
     {
         Frame f;
         f.feet = feet;
         f.measured = true;
-        const auto starts = ProbeStarts(feet, dir, cfg);
-        std::array<bool, 3> cast{};
+        f.reach = layout.reach;
+        const std::size_t points = std::min(layout.count, hits.size());
+        std::array<Vec3, kMaxPoints> startAt{};
+        for (std::size_t i = 0; i < points; ++i) startAt[i] = ProbeStartAt(feet, dir, layout.distances[i], cfg);
+        const std::span<const Vec3> starts(startAt.data(), points);
+        std::array<bool, kMaxPoints> cast{};
         auto addSegment = [&](Vec3 a, Vec3 b, Look look) {
             if (f.segmentCount < f.segments.size()) f.segments[f.segmentCount++] = { a, b, look };
         };
@@ -130,6 +138,7 @@ namespace Huginn::Core::Needs::ProbeDebug
                            clear ? Look::Okay : Look::Blocked);
                 continue;
             }
+            if (points == 0) break;
             const std::size_t i = PointOf(k.from, starts);
             cast[i] = true;
             const ProbeHit& h = hits[i];
@@ -150,7 +159,8 @@ namespace Huginn::Core::Needs::ProbeDebug
                            { k.from.x + dir.x * t, k.from.y + dir.y * t, h.waterZ }, Look::Water);
             }
             if (f.markCount < f.marks.size()) {
-                f.marks[f.markCount++] = { end, look, DropAtProbe(feet.z, h, cfg), WaterDepthAtProbe(feet.z, h, cfg), !hit };
+                f.marks[f.markCount++] = { end, look, DropAtProbe(feet.z, h, cfg), WaterDepthAtProbe(feet.z, h, cfg), !hit,
+                                           i >= kNearPoints };
             }
         }
         for (std::size_t i = 0; i < starts.size(); ++i) {

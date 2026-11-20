@@ -2,11 +2,14 @@
 // picture -- each ray ProbeAll casts, coloured by what it found.
 
 #include "core/ProbeDebug.h"
+#include "core/EdgeApproach.h"
 
 #include <doctest/doctest.h>
 
 #include <cmath>
 #include <functional>
+#include <limits>
+#include <span>
 #include <vector>
 
 using namespace Huginn::Core::Needs;
@@ -52,14 +55,15 @@ namespace
     constexpr Vec3 kFeet{ 0.0f, 0.0f, 1000.0f };
     constexpr Dir2 kNorth{ 0.0f, 1.0f };
 
-    PD::Frame Picture(World& w, std::array<ProbeHit, 3>* hitsOut = nullptr,
-                      std::function<void(std::array<ProbeHit, 3>&)> addWater = {})
+    PD::Frame Picture(World& w, std::array<ProbeHit, kMaxPoints>* hitsOut = nullptr,
+                      std::function<void(std::array<ProbeHit, kMaxPoints>&)> addWater = {}, float speed = 0.0f)
     {
         const DropProbeConfig cfg;
-        auto hits = ProbeAll(kFeet, kNorth, cfg, w);
+        const auto layout = LayoutFor(speed, cfg);
+        auto hits = ProbeChain(kFeet, kNorth, layout, cfg, w);
         if (addWater) addWater(hits);
         if (hitsOut) *hitsOut = hits;
-        return PD::Build(kFeet, kNorth, w.casts, w.count, hits, cfg);
+        return PD::Build(kFeet, kNorth, layout, w.casts, w.count, std::span<const ProbeHit>(hits.data(), layout.count), cfg);
     }
 
     std::size_t CountLook(const PD::Frame& f, PD::Look look)
@@ -124,7 +128,7 @@ TEST_CASE("probe picture: water under a probe is blue, with a tick at its surfac
 {
     World w;
     w.ground = [](float y) { return y < 150.0f ? 1000.0f : 400.0f; };   // a 600 drop onto a lake bed
-    const auto f = Picture(w, nullptr, [](std::array<ProbeHit, 3>& hits) {
+    const auto f = Picture(w, nullptr, [](std::array<ProbeHit, kMaxPoints>& hits) {
         for (std::size_t i = 1; i < 3; ++i) {
             hits[i].waterKnown = true;
             hits[i].waterZ = 700.0f;   // 300 deep: a safe landing, no fall
@@ -152,6 +156,19 @@ TEST_CASE("probe picture: a wall is yellow, and the points behind it are unreach
     CHECK(CountLook(f, PD::Look::Fall) == 0);      // red only ever means a fall
 }
 
+TEST_CASE("probe picture: running, the far points are drawn and marked far")
+{
+    World w;
+    w.ground = [](float y) { return y < 600.0f ? 1000.0f : std::nanf(""); };   // a cliff 600 ahead
+    const auto f = Picture(w, nullptr, {}, 400.0f);   // 400 units/game s: reach 800
+    CHECK(f.reach == doctest::Approx(800.0));
+    REQUIRE(f.markCount == 6);
+    for (std::size_t i = 0; i < 3; ++i) CHECK_FALSE(f.marks[i].farPoint);
+    for (std::size_t i = 3; i < 6; ++i) CHECK(f.marks[i].farPoint);
+    CHECK(f.marks[2].look == PD::Look::Okay);   // the near three see no edge
+    CHECK(f.marks[5].look == PD::Look::Fall);   // the last far point (800) is past it
+}
+
 TEST_CASE("probe picture: a down ray out of recasts is grey, never red")
 {
     World w;
@@ -160,4 +177,61 @@ TEST_CASE("probe picture: a down ray out of recasts is grey, never red")
     const auto f = Picture(w);
     CHECK(CountLook(f, PD::Look::Skipped) == 1);
     CHECK(CountLook(f, PD::Look::Fall) == 0);
+}
+
+// 0.24.40: the far points (core/DropAhead.h LayoutFor, ProbeChain;
+// core/EdgeApproach.h NearestEdgeDistance over a layout).
+TEST_CASE("probe layout: the near three at a walk; far points out to 2 s ahead at a run, capped")
+{
+    const DropProbeConfig cfg;
+    auto l = LayoutFor(0.0f, cfg);
+    CHECK(l.count == kNearPoints);
+    CHECK(l.reach == doctest::Approx(280.0));
+    l = LayoutFor(150.0f, cfg);   // a walk: 300, within farMinGap of 280
+    CHECK(l.count == kNearPoints);
+    l = LayoutFor(400.0f, cfg);   // a run: 800
+    REQUIRE(l.count == kMaxPoints);
+    CHECK(l.reach == doctest::Approx(800.0));
+    CHECK(l.distances[3] == doctest::Approx(280.0 + 520.0 / 3.0));
+    CHECK(l.distances[5] == doctest::Approx(800.0));
+    l = LayoutFor(5000.0f, cfg);  // capped
+    CHECK(l.reach == doctest::Approx(cfg.farMaxReach));
+    CHECK(LayoutFor(-300.0f, cfg).count == kNearPoints);                       // backing away
+    CHECK(LayoutFor(std::nanf(""), cfg).count == kNearPoints);
+    CHECK(LayoutFor(std::numeric_limits<float>::infinity(), cfg).count == kNearPoints);   // not finite: a bad reading, near only
+}
+
+TEST_CASE("probe layout: running at a cliff 600 ahead, the edge is seen by a far point; drop_ahead still reads the near three")
+{
+    const DropProbeConfig cfg;
+    World w;
+    w.ground = [](float y) { return y < 600.0f ? 1000.0f : std::nanf(""); };
+    const auto layout = LayoutFor(400.0f, cfg);
+    const auto hits = ProbeChain(kFeet, kNorth, layout, cfg, w);
+    const auto edge = NearestEdgeDistance(kFeet.z, std::span<const ProbeHit>(hits.data(), layout.count), layout.Distances(), cfg);
+    REQUIRE(edge.has_value());
+    CHECK(*edge == doctest::Approx(layout.distances[4]));   // ~627, the first far point past 600
+    const std::array<ProbeHit, 3> nearHits{ hits[0], hits[1], hits[2] };
+    CHECK(MeasureAhead(kFeet.z, nearHits, cfg).drop == doctest::Approx(0.0));
+    // walking, the same cliff is not seen yet
+    World w2;
+    w2.ground = w.ground;
+    const auto walk = LayoutFor(100.0f, cfg);
+    const auto walkHits = ProbeChain(kFeet, kNorth, walk, cfg, w2);
+    CHECK_FALSE(NearestEdgeDistance(kFeet.z, std::span<const ProbeHit>(walkHits.data(), walk.count), walk.Distances(), cfg));
+}
+
+TEST_CASE("probe layout: ProbeAll is ProbeChain's near three")
+{
+    const DropProbeConfig cfg;
+    World a, b;
+    a.ground = b.ground = [](float y) { return y < 150.0f ? 1000.0f : 700.0f; };
+    const auto all = ProbeAll(kFeet, kNorth, cfg, a);
+    const auto chain = ProbeChain(kFeet, kNorth, LayoutFor(0.0f, cfg), cfg, b);
+    for (std::size_t i = 0; i < 3; ++i) {
+        CHECK(all[i].known == chain[i].known);
+        CHECK(all[i].hit == chain[i].hit);
+        CHECK(all[i].hitZ == doctest::Approx(chain[i].hitZ));
+    }
+    CHECK(a.count == b.count);
 }
